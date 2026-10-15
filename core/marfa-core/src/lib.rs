@@ -58,7 +58,7 @@ use serde_json::Value;
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
 pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField};
-pub use catch_up::{Change, ChangeEvent, FollowReport, NotDrained};
+pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
@@ -630,12 +630,14 @@ impl Core {
     /// by a follow before this one, so this one says `server.reachable` when
     /// it has its first stream (`device/follow-told-reachable`).
     ///
-    /// Each time it says `server.reachable` with writes queued, it drains
-    /// once, on a thread of its own so the stream is read meanwhile, and
-    /// tells `queue.drained` or `queue.not_drained`
-    /// (`device/follow-drains-reachable`). A stop ends that drain before its
-    /// next write, and this returns once the write in flight is answered or
-    /// its request fails, so no answer is left unrecorded.
+    /// Each time it says `server.reachable` with work queued for a drain,
+    /// it drains once, on a thread of its own so the stream is read
+    /// meanwhile, and tells `queue.drained` or `queue.not_drained`
+    /// (`device/follow-drains-reachable`). That drain waits for one under
+    /// way to end, and then does only the work left. The follow ending,
+    /// however it ends, ends that drain before its next write, and this
+    /// returns once the write in flight is answered or its request fails,
+    /// so no answer is left unrecorded.
     pub fn follow(
         &self,
         stop: &AtomicBool,
@@ -962,28 +964,38 @@ impl Core {
     /// raised. A write already sent keeps its key and is settled by this or
     /// a later drain; answers already recorded remain in the queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
-        let _one = loop {
+        let _one = self.wait_to_drain(stop)?;
+        drain::drain(self, stop)
+    }
+
+    /// Waits as `drain_until` does, then drains only where work is left for
+    /// a drain: whatever held the queue meanwhile may have done it. `None`
+    /// where none is left.
+    pub(crate) fn drain_what_remains(&self, stop: &AtomicBool) -> Option<Result<DrainReport>> {
+        let _one = match self.wait_to_drain(stop) {
+            Ok(one) => one,
+            Err(error) => return Some(Err(error)),
+        };
+        match drain::would_send(self) {
+            Ok(false) => None,
+            Ok(true) => Some(drain::drain(self, stop)),
+            Err(error) => Some(Err(error)),
+        }
+    }
+
+    fn wait_to_drain(&self, stop: &AtomicBool) -> Result<MutexGuard<'_, ()>> {
+        loop {
             catch_up::refuse_if_stopped(stop)?;
             match self.draining.try_lock() {
-                Ok(guard) => break guard,
-                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+                Ok(guard) => return Ok(guard),
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+                    return Ok(poisoned.into_inner());
+                }
                 Err(std::sync::TryLockError::WouldBlock) => {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
-        };
-        drain::drain(self, stop)
-    }
-
-    /// `None` where another drain on this store is running: it sends what
-    /// this one would have.
-    pub(crate) fn drain_unless_running(&self, stop: &AtomicBool) -> Option<Result<DrainReport>> {
-        let _one = match self.draining.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return None,
-        };
-        Some(drain::drain(self, stop))
+        }
     }
 
     pub(crate) fn one_drain(&self) -> MutexGuard<'_, ()> {

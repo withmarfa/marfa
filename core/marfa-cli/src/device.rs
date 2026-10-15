@@ -805,7 +805,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             marfa_core::ChangeEvent::ServerUnreachable(reason) => {
                                 format!(": {reason}")
                             }
-                            marfa_core::ChangeEvent::QueueNotDrained(why) => format!(": {why}"),
+                            marfa_core::ChangeEvent::QueueNotDrained(error) => {
+                                format!(": {error}")
+                            }
                             marfa_core::ChangeEvent::QueueDrained(report) => format!(
                                 ": answered {}, held {}, undelivered {}{}",
                                 report.answered,

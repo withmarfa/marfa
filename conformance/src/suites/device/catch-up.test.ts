@@ -1139,6 +1139,48 @@ describe("catch-up replays from the cursor", () => {
     ]);
   });
 
+  it("tells the error a drain it started ended with", async () => {
+    harness = await startHarness("follow-drain-failed");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", refusal(503, "unavailable", "busy"), {
+      kind: "sse",
+      frames: [connected],
+      hold: true,
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await queueNotes(device, "answered on another contract");
+    scriptWrites(server, {
+      create: [
+        {
+          kind: "json",
+          status: 201,
+          body: {},
+          contract: String(Number(BUILT_FOR) + 1),
+        },
+      ],
+    });
+
+    const followed = await device.follow(5);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.changes.map((change) => change.event),
+      "a drain that ended with an error was not told, or was told as drained",
+    ).toEqual(["server.unreachable", "server.reachable", "queue.not_drained"]);
+    const failed = followed.value.changes[2];
+    expect([failed?.item_id, failed?.edge_id, failed?.drain]).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(failed?.reason, "the caller was not told why").toContain("contract");
+    expect(
+      createsSent(server).length,
+      "the write was not sent, so the error is not the drain's",
+    ).toBe(1);
+  });
+
   it("drains once more when its server is back again while its drain is under way", async () => {
     harness = await startHarness("follow-drain-again");
     const { server, device } = harness;

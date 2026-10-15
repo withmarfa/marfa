@@ -1972,7 +1972,7 @@ Where an app follows through a binding, a device MUST tell it `catalog.changed`,
 
 ### `device/follow-drains-reachable`
 
-Where an app or the CLI follows a working copy, when a device tells its caller `server.reachable` while the queue holds a write a drain would send, a device MUST drain the queue once.
+Where an app or the CLI follows a working copy, when a device tells its caller `server.reachable` while the queue holds work a drain would do, such as a write to send or a read-back owed, a device MUST drain the queue once.
 
 **Reason:** an app told only that the server is back would have to drain the queue itself, and one that did not would leave what its person saved unsent. A folder's watch drains in its own pass, which keeps the folder's records, so its stream drains nothing.
 
@@ -1980,13 +1980,15 @@ Where an app or the CLI follows a working copy, when a device tells its caller `
 
 ### `device/follow-drain-told`
 
-When a drain that a held stream started ends, a device MUST tell its caller `queue.drained` with the drain's report, or `queue.not_drained` with the error the drain ended with, naming no item and no edge.
+When a drain that a held stream started ends other than because the held stream ended, a device MUST tell its caller `queue.drained` with the drain's report, or `queue.not_drained` with the error the drain ended with, naming no item and no edge.
 
-**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`, `› tries a refused credential once each time its server is back, and says why it sent nothing`.
+**Reason:** a held stream that ends, by its caller's stop or by an error, ends its drain before the next write, and the caller is told how the held stream ended instead.
+
+**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`, `› tries a refused credential once each time its server is back, and says why it sent nothing`, `› tells the error a drain it started ended with`.
 
 ### `device/follow-drain-quiet`
 
-When a device tells its caller `server.reachable` while the queue holds no write a drain would send, a device MUST tell the caller neither `queue.drained` nor `queue.not_drained`.
+When a device tells its caller `server.reachable` while the queue holds no work a drain would do, a device MUST tell the caller neither `queue.drained` nor `queue.not_drained`.
 
 **Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
 
@@ -2008,7 +2010,7 @@ While a held stream's server stays reachable, a device MUST NOT drain the queue 
 
 ### `device/follow-drain-again`
 
-When a device tells its caller `server.reachable` while the drain it started for an earlier `server.reachable` is under way, a device MUST drain the queue once more after that drain ends.
+When a device tells its caller `server.reachable` while the drain it started for an earlier `server.reachable` is under way, a device MUST drain the queue once more after that drain ends, where work a drain would do remains.
 
 **Reason:** the server may have been lost again while that drain sent, leaving writes it could not deliver.
 
@@ -2016,15 +2018,9 @@ When a device tells its caller `server.reachable` while the drain it started for
 
 ### `device/follow-drain-one`
 
-If a drain the caller started is under way when a device tells its caller `server.reachable`, then a device MUST NOT start a second drain.
+If a drain the caller started is under way when a device tells its caller `server.reachable`, then a device MUST start the held stream's drain only after that drain ends, and only where work a drain would do remains.
 
-**Reason:** the drain under way sends what a second would have.
-
-**Tests:** waiting on #1890.
-
-### `device/follow-drain-running-told`
-
-If a drain the caller started is under way when a device tells its caller `server.reachable` while the queue holds a write a drain would send, then a device MUST tell its caller `queue.not_drained`.
+**Reason:** the drain under way may already send what the held stream's would have, or end before it, and a write sent once is not sent again.
 
 **Tests:** waiting on #1890.
 

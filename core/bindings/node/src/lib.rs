@@ -1134,19 +1134,17 @@ pub enum Change {
     CatalogChanged { cursor: String },
     /// No stream can be had, for `reason`; told once until one is had again.
     ServerUnreachable { reason: String, cursor: String },
-    /// A stream is had again. Where writes waited, the follow drains them
-    /// once and tells `queueDrained` or `queueNotDrained`.
+    /// A stream is had again. Where a drain has work queued, the follow
+    /// drains once and tells `queueDrained` or `queueNotDrained`.
     ServerReachable { cursor: String },
     /// The queue was drained once a stream was had again, and what that
     /// drain did, as `drain` returns it.
     QueueDrained { report: DrainReport, cursor: String },
-    /// Writes waited when a stream was had again, and the queue was not
-    /// drained. `running` where another drain on the store was under way,
-    /// which sends them; otherwise `code` is the error the drain ended
-    /// with, the same word a thrown error carries. `reason` says why.
+    /// The drain started once a stream was had again ended with an error:
+    /// `code` is the same word a thrown error carries, and `reason` its
+    /// message. The answers it had recorded stay recorded.
     QueueNotDrained {
-        running: bool,
-        code: Option<String>,
+        code: String,
         reason: String,
         cursor: String,
     },
@@ -1172,21 +1170,17 @@ impl From<&marfa_core::Change> for Change {
                 Ok(report) => Change::QueueDrained { report, cursor },
                 // A report whose verdict cannot be read is told as a drain
                 // that failed with that error.
-                Err(error) => not_drained(&marfa_core::NotDrained::Failed(error), cursor),
+                Err(error) => not_drained(&error, cursor),
             },
-            marfa_core::ChangeEvent::QueueNotDrained(why) => not_drained(why, cursor),
+            marfa_core::ChangeEvent::QueueNotDrained(error) => not_drained(error, cursor),
         }
     }
 }
 
-fn not_drained(why: &marfa_core::NotDrained, cursor: String) -> Change {
+fn not_drained(error: &marfa_core::CoreError, cursor: String) -> Change {
     Change::QueueNotDrained {
-        running: *why == marfa_core::NotDrained::Running,
-        code: match why {
-            marfa_core::NotDrained::Running => None,
-            marfa_core::NotDrained::Failed(error) => Some(error.code().to_string()),
-        },
-        reason: why.to_string(),
+        code: error.code().to_string(),
+        reason: error.to_string(),
         cursor,
     }
 }
@@ -1546,9 +1540,9 @@ impl MarfaCore {
     /// null where it was stopped. Neither callback keeps the process alive. An
     /// `onChange` that throws ends the follow, and `onEnd` is given an error
     /// whose `code` is `listener_threw` and whose message says what it threw.
-    /// Each time it tells `serverReachable` with writes waiting, it drains
-    /// them once and tells `queueDrained` or `queueNotDrained`; `onEnd`
-    /// follows that drain's end.
+    /// Each time it tells `serverReachable` with work queued for a drain, it
+    /// drains once, after any drain under way, and tells `queueDrained` or
+    /// `queueNotDrained`; `onEnd` follows that drain's end.
     #[napi(
         ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
     )]

@@ -1451,38 +1451,15 @@ pub enum Change {
     /// the failure, such as the network failing, a rate limit, a failing
     /// server or a refusal naming no contract.
     ServerUnreachable { reason: MarfaError, cursor: String },
-    /// A stream is had again. Where writes waited, the follow drains them
-    /// once and tells `QueueDrained` or `QueueNotDrained`.
+    /// A stream is had again. Where a drain has work queued, the follow
+    /// drains once and tells `QueueDrained` or `QueueNotDrained`.
     ServerReachable { cursor: String },
     /// The queue was drained once a stream was had again, and what that
     /// drain did, as `drain` returns it.
     QueueDrained { report: DrainReport, cursor: String },
-    /// Writes waited when a stream was had again, and the queue was not
-    /// drained, for `reason`.
-    QueueNotDrained { reason: NotDrained, cursor: String },
-}
-
-/// Why a follow did not drain the writes that waited when its stream was
-/// had again.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Enum)]
-pub enum NotDrained {
-    /// Another drain on the store was under way. It sends what this one
-    /// would have.
-    Running,
-    /// The drain ended with `error`. The answers it had recorded stay
-    /// recorded.
-    Failed { error: MarfaError },
-}
-
-impl From<marfa_core::NotDrained> for NotDrained {
-    fn from(why: marfa_core::NotDrained) -> Self {
-        match why {
-            marfa_core::NotDrained::Running => NotDrained::Running,
-            marfa_core::NotDrained::Failed(error) => NotDrained::Failed {
-                error: error.into(),
-            },
-        }
-    }
+    /// The drain started once a stream was had again ended with `error`.
+    /// The answers it had recorded stay recorded.
+    QueueNotDrained { error: MarfaError, cursor: String },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1505,13 +1482,10 @@ impl From<&marfa_core::Change> for Change {
                 Ok(report) => Change::QueueDrained { report, cursor },
                 // A report whose verdict cannot be read is told as a drain
                 // that failed with that error.
-                Err(error) => Change::QueueNotDrained {
-                    reason: NotDrained::Failed { error },
-                    cursor,
-                },
+                Err(error) => Change::QueueNotDrained { error, cursor },
             },
-            marfa_core::ChangeEvent::QueueNotDrained(why) => Change::QueueNotDrained {
-                reason: why.clone().into(),
+            marfa_core::ChangeEvent::QueueNotDrained(error) => Change::QueueNotDrained {
+                error: error.clone().into(),
                 cursor,
             },
         }
@@ -1573,8 +1547,9 @@ impl Core {
     /// refused. `told_unreachable` says the app was last told
     /// `ServerUnreachable` by a follow before this one, so this one tells
     /// `ServerReachable` when it has its first stream. Each time it tells
-    /// `ServerReachable` with writes waiting, it drains them once and tells
-    /// `QueueDrained` or `QueueNotDrained`; `ended` follows that drain's end.
+    /// `ServerReachable` with work queued for a drain, it drains once, after
+    /// any drain under way, and tells `QueueDrained` or `QueueNotDrained`;
+    /// `ended` follows that drain's end.
     pub fn follow(
         self: Arc<Self>,
         told_unreachable: bool,
@@ -2330,24 +2305,13 @@ mod tests {
             }
         );
         assert_eq!(
-            change(E::QueueNotDrained(marfa_core::NotDrained::Running), None),
-            Change::QueueNotDrained {
-                reason: NotDrained::Running,
-                cursor: "11".into()
-            }
-        );
-        assert_eq!(
             change(
-                E::QueueNotDrained(marfa_core::NotDrained::Failed(
-                    marfa_core::CoreError::Network("refused".into())
-                )),
+                E::QueueNotDrained(marfa_core::CoreError::Network("refused".into())),
                 None
             ),
             Change::QueueNotDrained {
-                reason: NotDrained::Failed {
-                    error: MarfaError::Network {
-                        message: "network: refused".into()
-                    }
+                error: MarfaError::Network {
+                    message: "network: refused".into()
                 },
                 cursor: "11".into()
             }
