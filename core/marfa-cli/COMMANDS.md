@@ -984,7 +984,7 @@ marfa types get [OPTIONS] <ID>
 
 Print a starting definition for a type, ready for `types register` or `device types declare`.
 
-Needs no server, working copy or key, sends nothing, and takes neither `--url` nor `--key`. The id and the fields are checked as a registration checks them, and one that would be refused is refused here with the reason.
+Needs no server, working copy or key, sends nothing, and takes none of `--url`, `--key` and `--socket`. An id, field or parent the registry would refuse for its form is refused here with the reason. What only a server knows is left to it: whether a parent exists, and whether a key may register the type.
 
 A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `status:enum:open,closed`, and an `array` field the type of its elements, as `tags:array:string`.
 

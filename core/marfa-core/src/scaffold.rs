@@ -73,17 +73,10 @@ pub fn scaffold_type(
         match field.kind.as_str() {
             "enum" => {
                 let values = &field.enum_values;
-                if values.is_empty() || values.iter().any(String::is_empty) {
+                if values.is_empty() {
                     return Err(invalid(format!(
-                        "{name} is an enum, which needs its allowed values, none of them empty"
+                        "{name} is an enum, which needs its allowed values"
                     )));
-                }
-                if let Some(twice) = values
-                    .iter()
-                    .enumerate()
-                    .find_map(|(at, value)| values[..at].contains(value).then_some(value))
-                {
-                    return Err(invalid(format!("{name} lists the value {twice:?} twice")));
                 }
                 definition.insert("enum_values".into(), json!(values));
             }
@@ -93,17 +86,9 @@ pub fn scaffold_type(
                         "{name} is an array, which needs the type of its elements"
                     )));
                 };
-                if !kinds.iter().any(|kind| kind == items)
-                    || ["array", "enum", "thumbnail"].contains(&items)
-                {
+                if items == "thumbnail" {
                     return Err(invalid(format!(
-                        "{name} is an array of {items:?}, which is not an element type: one of {}",
-                        kinds
-                            .iter()
-                            .filter(|kind| !["array", "enum", "thumbnail"].contains(&kind.as_str()))
-                            .cloned()
-                            .collect::<Vec<_>>()
-                            .join(", ")
+                        "{name} is an array of thumbnails, which a type cannot have: declare a thumbnail field of its own"
                     )));
                 }
                 definition.insert("items_type".into(), items.into());
@@ -346,27 +331,13 @@ mod tests {
             (vec![field("a", "string"), field("a", "number")], "twice"),
             (vec![field("a", "blob")], "not a field type"),
             (vec![field("a", "enum")], "allowed values"),
-            (
-                vec![ScaffoldField {
-                    enum_values: vec!["x".into(), "x".into()],
-                    ..field("a", "enum")
-                }],
-                "twice",
-            ),
             (vec![field("a", "array")], "type of its elements"),
             (
                 vec![ScaffoldField {
                     items_type: Some("thumbnail".into()),
                     ..field("a", "array")
                 }],
-                "not an element type",
-            ),
-            (
-                vec![ScaffoldField {
-                    items_type: Some("nothing".into()),
-                    ..field("a", "array")
-                }],
-                "not an element type",
+                "array of thumbnails",
             ),
             (
                 vec![field("a", "thumbnail"), field("b", "thumbnail")],

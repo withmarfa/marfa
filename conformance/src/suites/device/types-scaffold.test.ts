@@ -209,25 +209,34 @@ describe("a starting definition for a type", () => {
     expect(ran.code, ran.stderr).toBe(0);
   });
 
-  it("refuses a field type outside the grammar, an enum with no values and an array with no element type", async () => {
+  it("refuses a field type outside the grammar, an enum with no values, and an array with no element type or of thumbnails", async () => {
     expect(
       await refused(["user.recipe", "--field", "a:blob"], "invalid", 1),
     ).toContain("not a field type");
-    for (const spec of ["a:enum", "a:enum:", "a:enum:x,,y", "a:enum:x,x"]) {
-      await refused(["user.recipe", "--field", spec], "invalid", 1);
-    }
+    expect(
+      await refused(["user.recipe", "--field", "a:enum"], "invalid", 1),
+    ).toContain("allowed values");
     expect(
       await refused(["user.recipe", "--field", "a:array"], "invalid", 1),
     ).toContain("type of its elements");
-    for (const items of ["thumbnail", "array", "enum", "nothing"]) {
-      expect(
-        await refused(
-          ["user.recipe", "--field", `a:array:${items}`],
-          "invalid",
-          1,
-        ),
-        items,
-      ).toContain("not an element type");
+    expect(
+      await refused(
+        ["user.recipe", "--field", "a:array:thumbnail"],
+        "invalid",
+        1,
+      ),
+    ).toContain("array of thumbnails");
+    // Witness: the server registers each of these, so the command takes them.
+    for (const spec of [
+      "a:enum:x,x",
+      "a:enum:x,,y",
+      "a:enum:",
+      "a:array:array",
+      "a:array:enum",
+      "a:array:nothing",
+    ]) {
+      const taken = await scaffold(["user.recipe", "--field", spec]);
+      expect(taken.code, `${spec}: ${taken.stderr}`).toBe(0);
     }
     // Witness: every field type the grammar names is taken with what it needs.
     const ran = await scaffold([

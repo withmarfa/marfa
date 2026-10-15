@@ -264,7 +264,7 @@ fn a_field_the_server_would_refuse_is_refused_here_with_the_reason() {
         ("a:blob", "not a field type"),
         ("a:enum", "allowed values"),
         ("a:array", "type of its elements"),
-        ("a:array:thumbnail", "not an element type"),
+        ("a:array:thumbnail", "array of thumbnails"),
         ("title:thumbnail:x", "third part"),
         ("a", "NAME:TYPE"),
     ] {

@@ -3626,9 +3626,9 @@ If a `--field` of `marfa types scaffold` names a field an item has of its own (`
 
 ### `device/types-scaffold-field-type-refused`
 
-If a `--field` of `marfa types scaffold` gives a type outside the field grammar, an `enum` with no values or with a repeated or empty one, or an `array` with no element type or with an element type of `thumbnail`, `array` or `enum` (`types/field-grammar`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+If a `--field` of `marfa types scaffold` gives a type outside the field grammar, an `enum` with no values, or an `array` with no element type (`types/field-grammar`), or an `array` whose element type is `thumbnail` (`types/thumbnail-name`), then the CLI MUST exit 1 with `invalid`, naming the reason.
 
-**Tests:** `device/types-scaffold.test.ts › refuses a field type outside the grammar, an enum with no values and an array with no element type`.
+**Tests:** `device/types-scaffold.test.ts › refuses a field type outside the grammar, an enum with no values, and an array with no element type or of thumbnails`.
 
 ### `device/types-scaffold-thumbnail-refused`
 
