@@ -99,7 +99,11 @@ describe("where a file sits", () => {
     label: string,
     notes: Placed[],
     settings?: FolderSettings,
-  ): Promise<{ harness: FolderHarness; edges: EdgeDoor }> {
+  ): Promise<{
+    harness: FolderHarness;
+    edges: EdgeDoor;
+    held: Map<string, DoorRow>;
+  }> {
     const edges = new EdgeDoor();
     const rows = notes.map((note) => ({
       item: {
@@ -141,7 +145,7 @@ describe("where a file sits", () => {
         },
       };
     });
-    scriptFolderWrites(made, { edges });
+    const held = scriptFolderWrites(made, { edges });
     const hydrated = await made.folder.hydrate();
     if (!hydrated.ok) {
       await made.stop();
@@ -149,7 +153,7 @@ describe("where a file sits", () => {
         `the fixture could not hydrate: ${JSON.stringify(hydrated)}`,
       );
     }
-    return { harness: made, edges };
+    return { harness: made, edges, held };
   }
 
   /** Another Mac: its own directory and store, bound to the same folder. */
@@ -2346,6 +2350,419 @@ describe("where a file sits", () => {
     ).toBe(unplaced);
     expect(pulled.value.written).toBe(2);
   });
+
+  describe("a document's name and its title", () => {
+    const NOTE = "01a00000-0000-7000-8000-0000000019a1";
+
+    /** A note the server holds, placed and pulled into the folder. */
+    async function notePlaced(
+      label: string,
+      title = "Plan",
+      path = "Plan.md",
+    ): Promise<{ edges: EdgeDoor; held: Map<string, DoorRow> }> {
+      const placed = await placedHarness(label, [{ id: NOTE, title, path }]);
+      harness = placed.harness;
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(idIn(harness, path)).toBe(NOTE);
+      return placed;
+    }
+
+    /** Changes the note's title as an app on the Mac does, through its copy. */
+    async function retitle(mac: FolderHarness, title: string): Promise<void> {
+      const item = await mac.folder.device().get(NOTE);
+      expect(item.ok, JSON.stringify(item)).toBe(true);
+      if (!item.ok) return;
+      const queued = await mac.folder
+        .device()
+        .update(NOTE, { properties: { title }, version: item.value.version });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    }
+
+    /** Pushes, and expects it to send and write nothing more. */
+    async function settled(mac: FolderHarness): Promise<void> {
+      const files = readdirSync(mac.dir).sort();
+      const before = mac.server.requests.filter(isContentWrite).length;
+      const pushed = await mac.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        mac.server.requests.filter(isContentWrite).length,
+        "the folder went on writing once its name and title agreed",
+      ).toBe(before);
+      expect(readdirSync(mac.dir).sort()).toEqual(files);
+    }
+
+    function names(mac: FolderHarness): string[] {
+      return readdirSync(mac.dir)
+        .filter((name) => name.endsWith(".md"))
+        .sort();
+    }
+
+    function titleOf(held: Map<string, DoorRow>, id = NOTE): unknown {
+      return held.get(id)?.properties.title;
+    }
+
+    it("sends a renamed note's new name as its title, and rewrites only its title line", async () => {
+      const { edges, held } = await notePlaced("title-rename");
+      // A line no render writes, which a rewrite of the title keeps.
+      const shown = read(harness!, "Plan.md").replace(
+        "title: Plan\n",
+        "title: Plan\n# the name it goes by\n",
+      );
+      expect(shown).toContain("# the name it goes by");
+      writeFileSync(join(harness!.dir, "Plan.md"), shown);
+      expect((await harness!.folder.push()).ok).toBe(true);
+      const before = read(harness!, "Plan.md");
+      expect(before).toContain("# the name it goes by");
+
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      expect((await harness!.folder.scan()).ok).toBe(true);
+      expect(
+        read(harness!, "Roadmap.md"),
+        "the rename did not leave the file's title line saying its new name, every other byte as it was",
+      ).toBe(before.replace("title: Plan\n", "title: Roadmap\n"));
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        titleOf(held),
+        "the renamed note kept a title its file no longer has",
+      ).toBe("Roadmap");
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Roadmap.md",
+      );
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+      expect(read(harness!, "Roadmap.md")).toContain("title: Roadmap\n");
+      await settled(harness!);
+    });
+
+    it("sends a rename and an edit of the body made in one pass together", async () => {
+      const { held } = await notePlaced("title-rename-edit");
+      appendFileSync(join(harness!.dir, "Plan.md"), "a second thought\n");
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(held.get(NOTE)?.properties.body).toBe("Plan\na second thought\n");
+      const text = read(harness!, "Roadmap.md");
+      expect(text).toContain("title: Roadmap\n");
+      expect(text.endsWith("Plan\na second thought\n")).toBe(true);
+      await settled(harness!);
+    });
+
+    it("sends a renamed note's title alone where its file shows no title line", async () => {
+      const { held } = await notePlaced("title-rename-unshown");
+      writeFileSync(
+        join(harness!.dir, "Plan.md"),
+        read(harness!, "Plan.md").replace("title: Plan\n", ""),
+      );
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held), "taking the title line out left the title").toBe(
+        undefined,
+      );
+      expect(read(harness!, "Plan.md")).not.toContain("title:");
+      const sent = sentUpdates(harness!).length;
+
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        sentUpdates(harness!)
+          .slice(sent)
+          .map((update) => update.body.properties),
+        "a rename of a file with no title line did not send its new name as the title, alone",
+      ).toEqual([{ title: "Roadmap" }]);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(read(harness!, "Roadmap.md")).toContain("title: Roadmap\n");
+      await settled(harness!);
+    });
+
+    it("sends no title for a rename to a name the title already makes, and the new name's for any other", async () => {
+      const { edges, held } = await notePlaced(
+        "title-rename-in-step",
+        "Plan: v2",
+        "Draft.md",
+      );
+      renameSync(
+        join(harness!.dir, "Draft.md"),
+        join(harness!.dir, "Plan- v2.md"),
+      );
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(
+        sentUpdates(harness!),
+        "a rename to the name the title makes wrote a title no file name can hold over it",
+      ).toEqual([]);
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Plan- v2.md",
+      );
+      // A name differing only in case is the same name.
+      renameSync(
+        join(harness!.dir, "Plan- v2.md"),
+        join(harness!.dir, "plan- V2.md"),
+      );
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(sentUpdates(harness!)).toEqual([]);
+      expect(titleOf(held)).toBe("Plan: v2");
+
+      // The witness: a rename to another name sends it.
+      renameSync(
+        join(harness!.dir, "plan- V2.md"),
+        join(harness!.dir, "Other.md"),
+      );
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Other");
+    });
+
+    it("renames a note's file when its title changes in Marfa", async () => {
+      const { edges, held } = await notePlaced("title-renames");
+      await retitle(harness!, "Roadmap");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(
+        names(harness!),
+        "the note's file kept a name its title no longer gives it",
+      ).toEqual(["Roadmap.md"]);
+      expect(idIn(harness!, "Roadmap.md")).toBe(NOTE);
+      expect(read(harness!, "Roadmap.md")).toContain("title: Roadmap\n");
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Roadmap.md",
+      );
+      await settled(harness!);
+    });
+
+    it("renames a note's file when its title line is changed in the file", async () => {
+      const { edges, held } = await notePlaced("title-line-renames");
+      writeFileSync(
+        join(harness!.dir, "Plan.md"),
+        read(harness!, "Plan.md").replace("title: Plan\n", "title: Roadmap\n"),
+      );
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Roadmap.md",
+      );
+      await settled(harness!);
+    });
+
+    it("keeps the name of a note whose name was not its title", async () => {
+      const { held } = await notePlaced("title-drifted", "Plan", "Notes.md");
+      await retitle(harness!, "Roadmap");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(
+        names(harness!),
+        "a retitle renamed a file whose name was not its title",
+      ).toEqual(["Notes.md"]);
+      expect(read(harness!, "Notes.md")).toContain("title: Roadmap\n");
+      await settled(harness!);
+    });
+
+    it("numbers the name a new title makes where another file has it", async () => {
+      const other = "01a00000-0000-7000-8000-0000000019a2";
+      const placed = await placedHarness("title-rename-numbered", [
+        { id: NOTE, title: "Plan", path: "Plan.md" },
+        { id: other, title: "Roadmap", path: "Roadmap.md" },
+      ]);
+      harness = placed.harness;
+      expect((await harness.folder.pull()).ok).toBe(true);
+      await retitle(harness, "Roadmap");
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(names(harness)).toEqual(["Roadmap (2).md", "Roadmap.md"]);
+      expect(idIn(harness, "Roadmap (2).md")).toBe(NOTE);
+      expect(idIn(harness, "Roadmap.md")).toBe(other);
+      expect(placed.edges.placements(harness.settings.id).get(NOTE)).toBe(
+        "Roadmap (2).md",
+      );
+      expect(placed.edges.placements(harness.settings.id).get(other)).toBe(
+        "Roadmap.md",
+      );
+      await settled(harness);
+    });
+
+    it("keeps the name of a note whose new title names a path the folder leaves out", async () => {
+      const placed = await placedHarness(
+        "title-rename-outside",
+        [{ id: NOTE, title: "Plan", path: "Plan.md" }],
+        { ignore: ["Private*"] },
+      );
+      harness = placed.harness;
+      expect((await harness.folder.pull()).ok).toBe(true);
+      await retitle(harness, "Private notes");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(titleOf(placed.held)).toBe("Private notes");
+      // The witness that a retitle renames is `renames a note's file when its
+      // title changes in Marfa`; here the name stays, and the file is kept
+      // current under it rather than left unwritten.
+      expect(names(harness)).toEqual(["Plan.md"]);
+      expect(read(harness, "Plan.md")).toContain("title: Private notes\n");
+      expect(pushed.value.pull?.outside).toBe(0);
+      await settled(harness);
+    });
+
+    it("counts a name in another case, Unicode form or cleaned spelling as the title's", async () => {
+      const decomposed = "Café.md";
+      await notePlaced("title-forms", "Café", decomposed);
+      expect(names(harness!)).toEqual([decomposed]);
+      await settled(harness!);
+      for (const title of ["Café", "CAFÉ"]) {
+        await retitle(harness!, title);
+        expect((await harness!.folder.push()).ok).toBe(true);
+        expect(
+          names(harness!),
+          `a retitle to ${title} renamed the file`,
+        ).toEqual([decomposed]);
+        await settled(harness!);
+      }
+      // The witness: a title that makes another name renames the file.
+      await retitle(harness!, "Plan: v2");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(names(harness!)).toEqual(["Plan- v2.md"]);
+      await retitle(harness!, "Plan/ v2");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(names(harness!)).toEqual(["Plan- v2.md"]);
+      await settled(harness!);
+    });
+
+    it("keeps the name of a file it holds for a refused change, and renames it once the change is taken", async () => {
+      const { held } = await notePlaced("title-held");
+      const text = read(harness!, "Plan.md");
+      writeFileSync(
+        join(harness!.dir, "Plan.md"),
+        text.replace(
+          "title: Plan\n",
+          `title: Plan\ntags:\n  - ${"a".repeat(129)}\n`,
+        ),
+      );
+      const flagged = await harness!.folder.push();
+      expect(flagged.ok, JSON.stringify(flagged)).toBe(true);
+      await retitle(harness!, "Roadmap");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(
+        names(harness!),
+        "a file held for a change the folder did not send was renamed",
+      ).toEqual(["Plan.md"]);
+
+      writeFileSync(join(harness!.dir, "Plan.md"), text);
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+      await settled(harness!);
+    });
+
+    it("keeps the name when the title is made blank, and takes the next title's", async () => {
+      const { held } = await notePlaced("title-blank");
+      await retitle(harness!, "");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(titleOf(held)).toBe("");
+      expect(names(harness!), "a blank title renamed the file").toEqual([
+        "Plan.md",
+      ]);
+      await settled(harness!);
+      await retitle(harness!, "Roadmap");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+      await settled(harness!);
+    });
+
+    it.each([false, true])(
+      "keeps a person's rename over a title changed in Marfa before it synced, heard of first: %s",
+      async (heard) => {
+        const { edges, held } = await notePlaced(`title-both-${String(heard)}`);
+        second = await anotherMac(
+          harness!,
+          `title-both-${String(heard)}-second`,
+        );
+        expect((await second.folder.pull()).ok).toBe(true);
+        await retitle(second, "Roadmap");
+        expect((await second.folder.device().drain()).ok).toBe(true);
+        expect(titleOf(held)).toBe("Roadmap");
+        if (heard) {
+          expect((await harness!.folder.device().catchUp()).ok).toBe(true);
+        }
+        renameSync(
+          join(harness!.dir, "Plan.md"),
+          join(harness!.dir, "Draft.md"),
+        );
+        const pushed = await harness!.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        expect(
+          titleOf(held),
+          "the title changed in Marfa won over the person's later rename",
+        ).toBe("Draft");
+        expect(
+          sentUpdates(harness!)
+            .filter((update) => update.body.properties !== undefined)
+            .map((update) => [
+              (update.body.properties as Record<string, unknown>).title,
+              update.body.version,
+            ]),
+          "the rename's title went on a version other than the one its file showed",
+        ).toEqual([
+          ["Roadmap", 1],
+          ["Draft", 1],
+        ]);
+        expect(names(harness!)).toEqual(["Draft.md"]);
+        expect(read(harness!, "Draft.md")).toContain("title: Draft\n");
+        expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+          "Draft.md",
+        );
+        expect((await second.folder.push()).ok).toBe(true);
+        expect(names(second)).toEqual(["Draft.md"]);
+        await settled(harness!);
+        await settled(second);
+      },
+    );
+
+    it("settles two Macs that rename one note's file for one new title", async () => {
+      const { edges, held } = await notePlaced("title-two-macs");
+      second = await anotherMac(harness!, "title-two-macs-second");
+      expect((await second.folder.pull()).ok).toBe(true);
+      await retitle(second, "Roadmap");
+      expect((await second.folder.device().drain()).ok).toBe(true);
+      // The second Mac renames its file and queues the placement, unsent,
+      // while the first renames its own and sends its placement first.
+      const pulled = await second.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      expect(names(second)).toEqual(["Roadmap.md"]);
+      const first = await harness!.folder.push();
+      expect(first.ok, JSON.stringify(first)).toBe(true);
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+      expect(titleOf(held)).toBe("Roadmap");
+      const late = await second.folder.push();
+      expect(late.ok, JSON.stringify(late)).toBe(true);
+      if (!late.ok) return;
+      expect(
+        late.value.drain.gave_way,
+        "the second Mac's placement went unanswered as stale, or was not sent",
+      ).toBe(1);
+      for (const mac of [harness!, second]) {
+        expect(names(mac)).toEqual(["Roadmap.md"]);
+        expect(idIn(mac, "Roadmap.md")).toBe(NOTE);
+      }
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Roadmap.md",
+      );
+      const queued = await second.folder.device().queue();
+      expect(
+        queued.ok && queued.value.filter((row) => row.verdict === "blocked"),
+      ).toEqual([]);
+      await settled(harness!);
+      await settled(second);
+    });
+  });
 });
 
 describe("writing", () => {
@@ -2592,9 +3009,11 @@ describe("writing", () => {
       body: "second save\n",
       notes: "theirs",
     });
-    // The file ends on the second save, under the other machine's title.
-    expect(read(harness, "Note.md")).toContain("second save");
-    expect(read(harness, "Note.md")).toContain("title: Retitled");
+    // The file ends on the second save, under the other machine's title and
+    // the name it makes.
+    expect(read(harness, "Retitled.md")).toContain("second save");
+    expect(read(harness, "Retitled.md")).toContain("title: Retitled");
+    expect(existsSync(join(harness.dir, "Note.md"))).toBe(false);
     const copiesIn = (held: Iterable<DoorRow>) =>
       [...held].filter((row) => (row.tags ?? []).includes(CONFLICTED_COPY_TAG));
     // The witness: the same two saves, each sent on the version the file
@@ -2684,13 +3103,17 @@ describe("writing", () => {
       title: "Mine",
       body: "second save\n",
     });
-    expect(read(harness, "Note.md")).toContain("second save");
+    // Its title line changed the title, so the file took the title's name.
+    expect(read(harness, "Mine.md")).toContain("second save");
+    expect(existsSync(join(harness.dir, "Note.md"))).toBe(false);
   });
 
   /**
    * A note an editor holds as the pull wrote it, at version 1, while another
    * machine retitles it and the next push writes that out at version 2.
    * Answers the door, what it holds, and the text the editor still holds.
+   * The new title differs only in case, so the file keeps its name
+   * (`folders/title-in-step`).
    */
   async function heldWhileRetitled(
     label: string,
@@ -2717,7 +3140,7 @@ describe("writing", () => {
             wireItem({
               id,
               version: 2,
-              properties: { title: "Retitled", body: "as read\n", ...extra },
+              properties: { title: "NOTE", body: "as read\n", ...extra },
             }),
           ),
         ]),
@@ -2732,10 +3155,10 @@ describe("writing", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
     const held = read(harness, "Note.md");
     expect(held).toContain("marfa_version: 1");
-    door?.update(id, { properties: { title: "Retitled" }, version: 1 });
+    door?.update(id, { properties: { title: "NOTE" }, version: 1 });
     expect((await harness.folder.push()).ok).toBe(true);
     // The witness that the file was stale: the pull wrote the retitle out.
-    expect(read(harness, "Note.md")).toContain("title: Retitled");
+    expect(read(harness, "Note.md")).toContain("title: NOTE");
     expect(read(harness, "Note.md")).toContain("marfa_version: 2");
     return { door: door!, rows, held };
   }
@@ -2763,7 +3186,7 @@ describe("writing", () => {
       "the second edit went on the line the first already went on, and was merged against the first as though another machine had written it",
     ).toEqual(["accepted", "accepted"]);
     expect(rows.get(id)?.properties).toEqual({
-      title: "Retitled",
+      title: "NOTE",
       body: "my edit, twice\n",
     });
     expect(
@@ -2773,7 +3196,7 @@ describe("writing", () => {
     ).toEqual([]);
     // The pull writes the file anyway, and the line with it.
     const now = read(harness!, "Note.md");
-    expect(now).toContain("title: Retitled");
+    expect(now).toContain("title: NOTE");
     expect(now).toContain("my edit, twice");
     expect(now).toContain("marfa_version: 4");
   });
@@ -2902,7 +3325,7 @@ describe("writing", () => {
       "a file behind the copy went whole, so a line it never showed another machine's change of was cleared",
     ).toEqual([1, undefined]);
     expect(door.rows.get(id)?.properties).toEqual({
-      title: "Retitled",
+      title: "NOTE",
       body: "my edit\n",
       status: "draft",
     });
@@ -2931,7 +3354,7 @@ describe("writing", () => {
             wireItem({
               id,
               version: 3,
-              properties: { title: "Retitled", body: "as read\n" },
+              properties: { title: "NOTE", body: "as read\n" },
             }),
           ),
         ]),
@@ -2944,8 +3367,8 @@ describe("writing", () => {
       },
     });
     expect((await harness.folder.pull()).ok).toBe(true);
-    door?.update(id, { properties: { title: "Titled" }, version: 1 });
-    door?.update(id, { properties: { title: "Retitled" }, version: 2 });
+    door?.update(id, { properties: { title: "note" }, version: 1 });
+    door?.update(id, { properties: { title: "NOTE" }, version: 2 });
     expect((await harness.folder.push()).ok).toBe(true);
     // The copy went from 1 to 3 and never held 2.
     const written = read(harness, "Note.md");
@@ -2967,7 +3390,7 @@ describe("writing", () => {
     ).toEqual([2, undefined]);
     expect(pushed.value.scan.flagged, "the merge was flagged").toEqual([]);
     expect(door?.rows.get(id)?.properties).toEqual({
-      title: "Retitled",
+      title: "NOTE",
       body: "my edit\n",
     });
   });

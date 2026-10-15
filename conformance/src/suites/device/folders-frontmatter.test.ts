@@ -318,7 +318,7 @@ describe("edges in frontmatter", () => {
     ).toContain(`about:\n  - "[[${beta}]]"`);
 
     // And it reads back as the item it names.
-    edit(harness, "Alpha.md", "Alpha\n", "Alpha, edited\n");
+    edit(harness, "Alpha.md", /\nAlpha\n$/, "\nAlpha, edited\n");
     expect((await harness.folder.push()).ok).toBe(true);
     expect(sentEdgeWrites(harness)).toEqual([]);
   });
@@ -428,7 +428,7 @@ describe("edges in frontmatter", () => {
       "an edge to an item with no file on this Mac was not written, or not by its title",
     ).toContain('about:\n  - "[[Kept elsewhere]]"');
 
-    edit(harness, "Alpha.md", "Alpha\n", "Alpha, edited\n");
+    edit(harness, "Alpha.md", /\nAlpha\n$/, "\nAlpha, edited\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
@@ -545,7 +545,7 @@ describe("edges in frontmatter", () => {
       existsSync(join(harness.dir, "Beta (2).md")),
       "the second Beta never reached the folder, so nothing here shares the name",
     ).toBe(true);
-    edit(harness, "Alpha.md", "Alpha\n", "Alpha, edited\n");
+    edit(harness, "Alpha.md", /\nAlpha\n$/, "\nAlpha, edited\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
@@ -5034,7 +5034,10 @@ describe("what frontmatter says", () => {
         heldAs(pushed),
         "a rename cut the file off from its refused edit",
       ).toEqual([["Renamed.md", "refused"]]);
-      expect(read(harness!, "Renamed.md")).toBe(bad);
+      // The rename took the title line with it, and the refused edit stays.
+      expect(read(harness!, "Renamed.md")).toBe(
+        bad.replace("title: T\n", "title: Renamed\n"),
+      );
     });
 
     it("through a save that only reformats it before the drain", async () => {
@@ -5110,7 +5113,9 @@ describe("what frontmatter says", () => {
       expect(heldAs(pushed), "a rename let go of the refused edit").toEqual([
         ["Renamed.md", "refused"],
       ]);
-      expect(read(harness!, "Renamed.md")).toBe(bad);
+      expect(read(harness!, "Renamed.md")).toBe(
+        bad.replace("title: T\n", "title: Renamed\n"),
+      );
     });
   });
 

@@ -1289,6 +1289,21 @@ struct Scanned {
     executable: Option<bool>,
 }
 
+/// What a rename that follows a title may take: the paths other items are
+/// placed at, by folded name, and the lists the folder writes within.
+struct Renaming<'a> {
+    reserved: HashMap<String, Vec<crate::model::Edge>>,
+    lists: &'a Lists,
+}
+
+/// The title a rename gives an item, and what the item held under it.
+struct Retitle {
+    field: String,
+    title: String,
+    held: Option<Value>,
+    version: i64,
+}
+
 impl Scanned {
     fn deferred(
         root: &Path,
@@ -1711,8 +1726,21 @@ impl Folder {
                     bound: Some(bound), ..
                 }) = claim
                 {
+                    let mut writes = bound.writes.clone();
                     if bound.path != file.key {
                         self.unbind_if_still(&bound)?;
+                        // The name alone says the title; the unread line is the
+                        // pull's to rewrite.
+                        if let Some(retitle) =
+                            self.renamed_title(&bound.item_id, &bound, file, None, &catalog)?
+                            && let Some(id) = self.queue_title(&bound.item_id, &retitle)?
+                        {
+                            writes.queued.push(state::Queued {
+                                id,
+                                save: writes.save,
+                                line: None,
+                            });
+                        }
                         self.place(&bound.item_id, &file.key, &withheld)?;
                         report.renamed += 1;
                     }
@@ -1723,6 +1751,7 @@ impl Folder {
                             &state::Bound {
                                 path: file.key.clone(),
                                 identity: file.mark.clone(),
+                                writes,
                                 ..bound
                             },
                         )?;
@@ -1800,6 +1829,7 @@ impl Folder {
                         &item_id,
                         None,
                         file,
+                        None,
                         &catalog,
                         &edge_types,
                         &mut work,
@@ -1857,6 +1887,7 @@ impl Folder {
                         &item_id,
                         Some(&bound),
                         file,
+                        None,
                         &catalog,
                         &edge_types,
                         &mut work,
@@ -1867,16 +1898,32 @@ impl Folder {
                     } else {
                         report.unchanged += 1;
                     }
+                    self.follow_title_line(&item_id, &bound, file, (&catalog, &lists), &withheld)?;
                 }
                 Some(Claim {
                     item_id,
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
+                    let retitle = self.renamed_title(
+                        &item_id,
+                        &bound,
+                        file,
+                        Some(&file.document()),
+                        &catalog,
+                    )?;
+                    let rewritten = retitle
+                        .as_ref()
+                        .and_then(|retitle| self.retitle_file(file, retitle));
+                    // Where the file shows no title line it could say this in,
+                    // the title goes beside its bytes.
+                    let sent_title = retitle.as_ref().filter(|_| rewritten.is_none());
+                    let file = rewritten.as_ref().unwrap_or(file);
                     if self.queue_update(
                         &item_id,
                         Some(&bound),
                         file,
+                        sent_title,
                         &catalog,
                         &edge_types,
                         &mut work,
@@ -2646,13 +2693,15 @@ impl Folder {
         Ok(())
     }
 
-    /// Whole only where the file's version line is the copy's.
+    /// Whole only where the file's version line is the copy's. `retitle` is
+    /// the title a rename gives an item whose file shows no line to say it in.
     #[allow(clippy::too_many_arguments)]
     fn queue_update(
         &self,
         item_id: &str,
         bound: Option<&state::Bound>,
         file: &Scanned,
+        retitle: Option<&Retitle>,
         catalog: &Catalog,
         edge_types: &EdgeTypes,
         work: &mut Vec<EdgeWork>,
@@ -2736,6 +2785,9 @@ impl Folder {
             properties.insert(from.into(), body);
         } else {
             properties.insert(into.into(), body);
+        }
+        if let Some(retitle) = retitle {
+            properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
         }
         if whole {
             // No file can carry these, so leaving them out is no clear.
@@ -2881,6 +2933,19 @@ impl Folder {
             if let Some(state) = changes.state {
                 queued.push((self.core.transition_item(item_id, state)?.id, None));
             }
+        } else if let Some(retitle) = retitle {
+            // Bytes already answered send nothing of their own, so the new
+            // name's title goes alone, spending no version line.
+            match self.queue_title(item_id, retitle) {
+                Err(error) if local_admission_refusal(&error) => {
+                    let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+                    flagged.push(Flagged::of(&file.key, &held_for));
+                    return self
+                        .bind_held(file, item_id, bound, held_for)
+                        .map(|()| false);
+                }
+                other => queued.extend(other?.map(|id| (id, None))),
+            }
         }
         writes.queued.extend(
             queued
@@ -2937,6 +3002,203 @@ impl Folder {
             writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
         };
         self.bind_scanned(file, item_id, links, lines, kept)
+    }
+
+    /// The title a person's rename of a document's file gives its item: the
+    /// new name's stem, where the name changed and is not the one the title
+    /// makes. The title is the line `shown` says, else the item's.
+    fn renamed_title(
+        &self,
+        item_id: &str,
+        bound: &state::Bound,
+        file: &Scanned,
+        shown: Option<&document::Document>,
+        catalog: &Catalog,
+    ) -> Result<Option<Retitle>> {
+        let name = name_of(&file.key);
+        if !carries_frontmatter(Path::new(&file.key))
+            || crate::names::same(name_of(&bound.path), name)
+        {
+            return Ok(None);
+        }
+        let Some(held) = self.core.get(item_id)? else {
+            return Ok(None);
+        };
+        if bytes_of(&held, catalog).is_some() {
+            return Ok(None);
+        }
+        let field = fields::title_field(catalog, &held.r#type);
+        let title = match shown.and_then(|document| document.front.get(field)) {
+            Some(line) => line.as_str(),
+            None => held.properties.get(field).and_then(Value::as_str),
+        };
+        if title.is_some_and(|title| names::in_step(name, title)) {
+            return Ok(None);
+        }
+        Ok(Some(Retitle {
+            field: field.to_string(),
+            title: title_of(&file.key),
+            held: held.properties.get(field).cloned(),
+            version: held.version,
+        }))
+    }
+
+    /// The file as it is once its title line says the rename's title, every
+    /// other byte kept. `None` where it shows no title line, its frontmatter
+    /// cannot be edited in place, or it changed since the scan read it.
+    fn retitle_file(&self, file: &Scanned, retitle: &Retitle) -> Option<Scanned> {
+        let document = file.document();
+        let shown = document.front.get(&retitle.field)?;
+        if shown.as_str() == Some(retitle.title.as_str()) {
+            return None;
+        }
+        let mut front = document.front.clone();
+        front.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
+        let text = document::write(&front, &document.body, Some(&document)).ok()?;
+        let text = match file.text.strip_prefix(document::MARK) {
+            Some(_) => format!("{}{text}", document::MARK),
+            None => text,
+        };
+        let bytes = text.clone().into_bytes();
+        self.land(
+            &file.path,
+            |written, _| std::io::Write::write_all(written, &bytes),
+            |found| found.map(state::hash).as_deref() == Some(file.hash.as_str()),
+        )
+        .ok()?;
+        let metadata = self.metadata(&file.path).ok();
+        Some(Scanned {
+            key: file.key.clone(),
+            path: file.path.clone(),
+            hash: state::hash(&bytes),
+            mark: metadata
+                .as_ref()
+                .and_then(identity::of)
+                .map(|found| found.key()),
+            born: metadata.as_ref().and_then(identity::born),
+            id: file.id.clone(),
+            line: file.line,
+            unreadable: None,
+            deferred: false,
+            source: Some(bytes),
+            executable: file.executable,
+            text,
+        })
+    }
+
+    /// Queues the rename's title as an edit of that property alone, unless
+    /// the item holds it already. Answers the write's id.
+    fn queue_title(&self, item_id: &str, retitle: &Retitle) -> Result<Option<String>> {
+        if retitle
+            .held
+            .as_ref()
+            .is_some_and(|held| held.as_str() == Some(retitle.title.as_str()))
+        {
+            return Ok(None);
+        }
+        let mut properties = Map::new();
+        properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
+        let edit = Edit {
+            properties,
+            base_version: Some(retitle.version),
+            ..Edit::default()
+        };
+        let written =
+            self.core
+                .write_update(item_id, &edit, crate::Based::OnHeld, crate::Body::Folder)?;
+        Ok(Some(written.id))
+    }
+
+    /// Where a person's edit of a document's title line leaves its name, which
+    /// was the old title's, behind the new title, the item's placement moves
+    /// to the new title's name, and the pull moves the file there.
+    fn follow_title_line(
+        &self,
+        item_id: &str,
+        bound: &state::Bound,
+        file: &Scanned,
+        (catalog, lists): (&Catalog, &Lists),
+        withheld: &placement::Withheld,
+    ) -> Result<()> {
+        if !carries_frontmatter(Path::new(&file.key)) || withheld.contains_key(item_id) {
+            return Ok(());
+        }
+        let Some(held) = self.core.get(item_id)? else {
+            return Ok(());
+        };
+        if bytes_of(&held, catalog).is_some() {
+            return Ok(());
+        }
+        let field = fields::title_field(catalog, &held.r#type);
+        let document = file.document();
+        let Some(title) = document.front.get(field).and_then(Value::as_str) else {
+            return Ok(());
+        };
+        let Some(agreed) = &bound.presentation else {
+            return Ok(());
+        };
+        let was = match agreed.front().get(field) {
+            Some(Value::String(was)) => Some(was.as_str()),
+            Some(Value::Null) | None => None,
+            Some(_) => return Ok(()),
+        };
+        if was == Some(title) || !self.follows_title(&bound.path, was, title) {
+            return Ok(());
+        }
+        // A file the scan holds keeps its name until its bytes are taken.
+        if state::bound_at(&*self.core.conn()?, &file.key)?
+            .is_none_or(|now| now.held.is_some() || !now.writes.refused.is_empty())
+        {
+            return Ok(());
+        }
+        let renaming = Renaming {
+            reserved: self.placed_here()?,
+            lists,
+        };
+        if let Some(path) = self.title_path(item_id, &bound.path, title, &renaming) {
+            self.place(item_id, &path, withheld)?;
+        }
+        Ok(())
+    }
+
+    /// Whether a file at `path` takes the name `title` makes, where it was
+    /// in step with the title it showed before, `was`, or that was blank.
+    fn follows_title(&self, path: &str, was: Option<&str>, title: &str) -> bool {
+        let name = name_of(path);
+        !title.trim().is_empty()
+            && !names::in_step(name, title)
+            && was.is_none_or(|was| was.trim().is_empty() || names::in_step(name, was))
+    }
+
+    /// The path beside `path` named from `title`, numbered past a file there
+    /// or another item's placement; `None` where the folder does not write
+    /// there.
+    fn title_path(
+        &self,
+        item_id: &str,
+        path: &str,
+        title: &str,
+        renaming: &Renaming<'_>,
+    ) -> Option<String> {
+        let renamed = format!(
+            "{}{}",
+            crate::body::embed::dir_of(path),
+            names::renamed_for(name_of(path), title)
+        );
+        let taken = |candidate: &str| {
+            !crate::names::same(candidate, path)
+                && (self.exists(self.root.join(candidate))
+                    || renaming
+                        .reserved
+                        .get(&crate::names::folded(candidate))
+                        .is_some_and(|edges| edges.iter().any(|edge| edge.source_id != item_id)))
+        };
+        let renamed = if taken(&renamed) {
+            beside(&renamed, taken)
+        } else {
+            renamed
+        };
+        self.writes_at(renaming.lists, &renamed).then_some(renamed)
     }
 
     /// A move carries the new name as the title where the old name was it.
@@ -3490,6 +3752,10 @@ impl Folder {
         }
         self.hold_edge_ends(&work, &edge_types, &catalog)?;
         let withheld = self.withheld()?;
+        let renaming = Renaming {
+            reserved: self.placed_here()?,
+            lists: &lists,
+        };
         // After the pins, so an embed names an attachment the copy now holds;
         // an item a file here embeds is that file's, never unmatched.
         let embedded = {
@@ -3507,6 +3773,7 @@ impl Folder {
                     &withheld,
                     &settings,
                     &catalog,
+                    &renaming,
                 ) {
                     hosts.push((item, path));
                 }
@@ -3602,6 +3869,7 @@ impl Folder {
                         &withheld,
                         &settings,
                         &catalog,
+                        &renaming,
                     )
                 })
                 // A name its file already has in another case or form is that
@@ -4598,6 +4866,34 @@ impl Folder {
         }))
     }
 
+    /// The path a bound document's file moves to when its item's title
+    /// changed away from the name the file was in step with.
+    fn retitled(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        catalog: &Catalog,
+        renaming: &Renaming<'_>,
+    ) -> Option<String> {
+        if bytes_of(item, catalog).is_some() || !carries_frontmatter(Path::new(&bound.path)) {
+            return None;
+        }
+        let field = fields::title_field(catalog, &item.r#type);
+        let title = item.properties.get(field).and_then(Value::as_str)?;
+        let was = bound.presentation.as_ref()?.front().get(field);
+        let was = match was {
+            Some(Value::String(was)) => Some(was.as_str()),
+            Some(Value::Null) | None => None,
+            // A title no file name was made from.
+            Some(_) => return None,
+        };
+        if !self.follows_title(&bound.path, was, title) {
+            return None;
+        }
+        self.title_path(&item.id, &bound.path, title, renaming)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn path_for(
         &self,
         item: &Item,
@@ -4606,6 +4902,7 @@ impl Folder {
         withheld: &placement::Withheld,
         settings: &Settings,
         catalog: &Catalog,
+        renaming: &Renaming<'_>,
     ) -> Option<String> {
         // A placement the server refused never moved the file away from it.
         if let Some(bound) = bound
@@ -4613,11 +4910,19 @@ impl Folder {
         {
             return Some(bound.path.clone());
         }
+        // Where its file stays, a document whose title changed takes the name
+        // the new title makes.
+        let staying = |path: String| match bound {
+            Some(bound) if crate::names::same(&bound.path, &path) => self
+                .retitled(item, bound, catalog, renaming)
+                .unwrap_or(path),
+            _ => path,
+        };
         if let Some(placed) = placed {
-            return path_of(placed).and_then(cleaned);
+            return path_of(placed).and_then(cleaned).map(staying);
         }
         if let Some(bound) = bound {
-            return Some(bound.path.clone());
+            return Some(staying(bound.path.clone()));
         }
         let title = item
             .properties
@@ -5264,24 +5569,11 @@ fn plainly_inside(root: &Directory, relative: &str) -> bool {
 
 /// A file's name for a title, with `extension` where the title carries none.
 fn name_from_title(title: &str, extension: Option<&str>) -> String {
-    let cleaned: String = title
-        .chars()
-        .map(|glyph| match glyph {
-            '/' | '\\' | ':' => '-',
-            glyph if glyph.is_control() => ' ',
-            other => other,
-        })
-        .collect();
-    let trimmed = cleaned.trim().trim_start_matches('.').trim();
-    let stem = if trimmed.is_empty() {
-        "untitled"
-    } else {
-        trimmed
-    };
+    let stem = names::title_stem(title);
     match extension {
-        Some(extension) => names::fitted(stem, extension),
+        Some(extension) => names::fitted(&stem, extension),
         None => {
-            let (stem, extension) = names::split_extension(stem);
+            let (stem, extension) = names::split_extension(&stem);
             names::fitted(stem, extension)
         }
     }

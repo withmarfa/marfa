@@ -162,8 +162,13 @@ describe("identity", () => {
     expect(id).toBeDefined();
 
     // Moved as some tools move a file, by a copy and a delete: a new inode,
-    // so only the id says which item this is.
-    writeFileSync(join(harness.dir, "after.md"), read(harness, "before.md"));
+    // so only the id says which item this is. Its name stays, so the move
+    // is its placement alone (`folders/placement-rename-only`).
+    mkdirSync(join(harness.dir, "after"));
+    writeFileSync(
+      join(harness.dir, "after", "before.md"),
+      read(harness, "before.md"),
+    );
     rmSync(join(harness.dir, "before.md"));
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -183,12 +188,12 @@ describe("identity", () => {
 
     // And the file stays where the person put it, on this pull and the next.
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(existsSync(join(harness.dir, "after.md"))).toBe(true);
+    expect(existsSync(join(harness.dir, "after", "before.md"))).toBe(true);
     expect(
       existsSync(join(harness.dir, "before.md")),
-      "the old name came back, so the folder now holds the note twice",
+      "the old path came back, so the folder now holds the note twice",
     ).toBe(false);
-    expect(idIn(harness, "after.md")).toBe(id);
+    expect(idIn(harness, "after/before.md")).toBe(id);
   });
 
   it("does not write a new file's body onto the item whose name it took", async () => {

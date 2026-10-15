@@ -33,6 +33,10 @@ impl Document {
 }
 
 impl Presentation {
+    pub(super) fn front(&self) -> &Map<String, Value> {
+        &self.front
+    }
+
     pub(super) fn document(&self) -> Document {
         Document {
             front: self.front.clone(),
