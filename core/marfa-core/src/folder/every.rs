@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use super::registry::Registry;
 use super::watch::{WatchError, WatchEvent};
-use super::{Folder, STATE_DIR, first};
+use super::{Folder, STATE_DIR, StorageCause, first};
 use crate::directory::Directory;
 use crate::error::CoreError;
 use crate::{Core, store};
@@ -91,6 +91,14 @@ pub enum Every<'a, F = Folder> {
         dir: &'a Path,
         folder: &'a F,
         event: WatchEvent,
+    },
+    /// The folder at `dir` is watched, and its directory is in cloud-synced or
+    /// network storage, for `cause`. Told at every start of its watch, before
+    /// anything else of that start, even where the start is held back from
+    /// [`Every::Watching`].
+    Storage {
+        dir: &'a Path,
+        cause: &'a StorageCause,
     },
     /// The folder at `dir` is not watched, for `reason`, and is tried again.
     /// Told once for as long as the reason stays the same.
@@ -550,7 +558,10 @@ fn run<S: Supervised>(
     let watched = folder.watch(stop, |event| {
         {
             let mut start = lock(start);
-            if matches!(event, WatchEvent::Watching { .. }) {
+            if let WatchEvent::Watching { storage, .. } = &event {
+                if let Some(cause) = storage {
+                    every.tell(Every::Storage { dir, cause })?;
+                }
                 if start.quiet {
                     start.said = Said::Held(Instant::now());
                     return Ok(());
@@ -595,6 +606,10 @@ mod tests {
         /// Tells a pass, then lasts.
         Passes,
         Panics,
+        /// Tells it is watched in synced storage, then lasts.
+        Synced,
+        /// Tells it is watched in synced storage, then ends with this.
+        EndsSynced(Unwatched),
     }
 
     struct Fake {
@@ -607,19 +622,22 @@ mod tests {
             stop: &AtomicBool,
             mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
         ) -> Result<(), WatchError<E>> {
+            let storage = matches!(self.goes, Goes::Synced | Goes::EndsSynced(_))
+                .then_some(StorageCause::CloudService);
             tell(WatchEvent::Watching {
                 dir: PathBuf::from("/resolved"),
+                storage,
             })
             .map_err(WatchError::Told)?;
             match &self.goes {
-                Goes::Ends(reason) => {
+                Goes::Ends(reason) | Goes::EndsSynced(reason) => {
                     return Err(WatchError::Unwatchable(reason.message.clone()));
                 }
                 Goes::Panics => panic!("a folder's watch panicked"),
                 Goes::Passes => {
                     tell(WatchEvent::Reach(None)).map_err(WatchError::Told)?;
                 }
-                Goes::Lasts => {}
+                Goes::Lasts | Goes::Synced => {}
             }
             while !stop.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(2));
@@ -689,6 +707,7 @@ mod tests {
                 Every::Folder { dir, event, .. } => {
                     format!("{} {}", dir.display(), short(&event))
                 }
+                Every::Storage { dir, cause } => format!("storage {} {cause:?}", dir.display()),
                 Every::Unwatched { dir, reason } => {
                     format!("unwatched {} {}", dir.display(), reason.code)
                 }
@@ -816,6 +835,46 @@ mod tests {
         assert_eq!(count(&machine, "watching /a"), 1);
         // The witness that it was tried at every turn, though told once.
         assert_eq!(machine.opened("/held"), 5);
+    }
+
+    #[test]
+    fn a_folder_in_synced_storage_says_so_at_every_start_of_its_watch_and_one_elsewhere_never() {
+        let machine = Machine::default();
+        machine.opens(
+            "/synced",
+            vec![
+                Ok(Goes::EndsSynced(reason("watch"))),
+                Ok(Goes::EndsSynced(reason("watch"))),
+                Ok(Goes::Synced),
+            ],
+        );
+        machine.opens("/plain", vec![Ok(Goes::Lasts)]);
+        let listing = listed(&["/synced", "/plain"]);
+        supervised(&machine, &listing, |machine| {
+            count(machine, "watching /synced") == 2 && count(machine, "watching /plain") == 1
+        })
+        .unwrap();
+        let synced: Vec<String> = machine
+            .told()
+            .into_iter()
+            .filter(|told| told.contains("/synced") && told.starts_with("storage"))
+            .collect();
+        // A start held back from `watching` still says where it is.
+        assert_eq!(
+            synced,
+            vec!["storage /synced CloudService"; 3],
+            "{:?}",
+            machine.told()
+        );
+        // The witness: the folder elsewhere started, and said nothing of storage.
+        assert!(
+            !machine
+                .told()
+                .iter()
+                .any(|told| told.contains("/plain") && told.starts_with("storage")),
+            "{:?}",
+            machine.told()
+        );
     }
 
     #[test]

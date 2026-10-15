@@ -47,4 +47,5 @@ core-foundation = "0.10"
 xattr = "1"
 
 [target.'cfg(unix)'.dependencies]
+libc = "0.2"
 rustix = { version = "1", features = ["process", "fs"] }

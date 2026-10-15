@@ -12,12 +12,15 @@ use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
 use crate::output::{self, Printer};
 use crate::remote::{Named, Remote, Session, renewing};
+use crate::storage;
 use crate::watch;
 
 #[derive(Debug, Subcommand)]
 pub enum FoldersCommand {
     /// Make a directory a folder that follows a `system.folder`'s settings,
-    /// which `folders create` makes. Needs read on `system.folder`.
+    /// which `folders create` makes. Needs read on `system.folder`. Warns on
+    /// standard error, once, and goes on, if the directory is in iCloud Drive,
+    /// a cloud service's synced location or a network file system.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
@@ -132,6 +135,9 @@ pub enum FoldersCommand {
         idempotency: IdempotencyArgs,
     },
     /// Watch a folder and keep it in step, or every folder on this machine.
+    /// Warns on standard error, once per folder, and goes on, if a folder's
+    /// directory is in iCloud Drive, a cloud service's synced location or a
+    /// network file system.
     Watch {
         /// The directory to watch, recursively. Without one, the command
         /// watches every folder the folder registry lists, in one process.
@@ -152,6 +158,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
                 .map_err(held(&dir))?;
+            storage::warn(&folder);
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
             let (mut plan, mut confirmed, mut unread) = (None, true, None);

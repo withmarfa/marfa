@@ -3043,7 +3043,7 @@ marfa folders [OPTIONS] <COMMAND>
 
 ### marfa folders add
 
-Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`.
+Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system.
 
 ```text
 marfa folders add [OPTIONS] --folder <ID> <DIR>
@@ -3260,7 +3260,7 @@ marfa folders revoke [OPTIONS] <ID>
 
 ### marfa folders watch
 
-Watch a folder and keep it in step, or every folder on this machine.
+Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system.
 
 ```text
 marfa folders watch [OPTIONS] [DIR]

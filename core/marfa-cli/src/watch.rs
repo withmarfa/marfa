@@ -13,6 +13,7 @@ use crate::folders;
 use crate::interrupt;
 use crate::output;
 use crate::remote::{Named, Session};
+use crate::storage;
 
 /// How long a pass under way gets to finish once Ctrl-C has arrived. A pass
 /// can wait on a server that never answers, and Ctrl-C has to end the command
@@ -168,6 +169,10 @@ impl EveryFolder for Machine {
         match event {
             Every::Watching { dir } => {
                 say(json, dir).line(serde_json::json!({ "watching": true }), || "watching".into())
+            }
+            Every::Storage { dir, cause } => {
+                storage::warn_of(dir, cause);
+                Ok(())
             }
             Every::Folder { dir, folder, event } => {
                 let mut folders = self.folders();
@@ -345,7 +350,10 @@ fn tell(
     event: WatchEvent,
 ) -> Result<(), CliError> {
     match event {
-        WatchEvent::Watching { dir } => {
+        WatchEvent::Watching { dir, storage } => {
+            if let Some(cause) = &storage {
+                storage::warn_of(&dir, cause);
+            }
             say.note(&format!("watching {} (interrupt to stop)", dir.display()));
             Ok(())
         }

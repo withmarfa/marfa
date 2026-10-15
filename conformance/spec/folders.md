@@ -5087,3 +5087,69 @@ When a folder-health receipt reports a stored sequence at least as high as the d
 **Reason:** a restored local backup can be behind the report already held by the server.
 
 **Tests:** `device/folder-health.test.ts › refreshes the newest local observation above a restored backup sequence`.
+
+## Where a folder sits
+
+A storage warning is one line on standard error that begins `marfa: warning: ` and names the cause. A folder is warned of when `folders add` makes it and when a watch starts on it, whether `folders watch` names the folder or watches every folder. The home directory is the one the operating system records for the user, or the one `HOME` names. Refusing such a folder is not a rule.
+
+### `folders/icloud-storage-warns`
+
+When a folder is added, or a watch starts on a folder, whose directory is below `Library/Mobile Documents` in the home directory, the CLI MUST print a storage warning that names iCloud Drive.
+
+**Reason:** iCloud Drive syncs those files itself, so a second program syncs the same files as Marfa and the two can overwrite each other’s changes or leave conflicting copies.
+
+**Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to iCloud Drive, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in iCloud Drive, and watches all the same`, `› warns of a synced folder whose first sync waits only once its watch has started, after the first sync is confirmed`.
+
+### `folders/icloud-ubiquitous-warns`
+
+When a folder is added, or a watch starts on a folder, whose directory is not below `Library/Mobile Documents` or `Library/CloudStorage` in the home directory and that macOS reports as ubiquitous (the URL resource key `isUbiquitousItem`), the CLI MUST print a storage warning that names iCloud Drive or another cloud service’s synced location.
+
+**Reason:** With iCloud’s “Desktop & Documents” on, `Desktop` and `Documents` are real directories outside `Library/Mobile Documents` that iCloud Drive syncs. macOS reports every File Provider item as ubiquitous, so the key alone does not say which service syncs it.
+
+**Tests:** waiting on #2027.
+
+### `folders/cloud-storage-warns`
+
+When a folder is added, or a watch starts on a folder, whose directory is below `Library/CloudStorage` in the home directory, the CLI MUST print a storage warning that names a cloud service’s synced location.
+
+**Reason:** The File Provider services (such as Dropbox, OneDrive, Google Drive and Box) keep their files there and sync them themselves, with the same effect as iCloud Drive.
+
+**Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to a cloud service's synced location, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in a cloud service's synced location, and watches all the same`.
+
+### `folders/network-storage-warns`
+
+When a folder is added, or a watch starts on a folder, whose directory is on a file system that `statfs` reports as `smbfs`, `nfs`, `afpfs` or `webdav` on macOS, or as the NFS (0x6969), CIFS (0xFF534D42) or SMB2 (0xFE534D42) file system type on Linux, the CLI MUST print a storage warning that names the file system type and says that a change made from another computer may not be noticed.
+
+**Reason:** A network file system may not send change notifications for what another computer writes.
+
+**Tests:** waiting on #2027.
+
+### `folders/storage-warning-continues`
+
+If the CLI prints a storage warning, then the CLI MUST add the folder or watch it as it would a directory elsewhere.
+
+**Reason:** The warning informs the person; refusing such a folder is not a rule.
+
+**Tests:** `device/folders-storage-warning.test.ts › warns once on standard error when it is added to iCloud Drive, and adds it all the same`, `› warns once on standard error when a watch starts on a folder in iCloud Drive, and watches all the same`.
+
+### `folders/storage-warning-once`
+
+While a command runs, the CLI MUST NOT print a storage warning for the same folder more than once.
+
+**Reason:** A watch of every folder starts a folder’s watch again after it ends or after the folder is listed again.
+
+**Tests:** `device/folders-storage-warning.test.ts › warns once per synced folder, and not again when a folder is taken off the list and put back`.
+
+### `folders/storage-warning-elsewhere`
+
+While a folder’s directory is not below `Library/Mobile Documents` or `Library/CloudStorage` in the home directory, is not one that macOS reports as ubiquitous, and is on none of the file systems that `folders/network-storage-warns` names, the CLI MUST NOT print a storage warning for it.
+
+**Tests:** `device/folders-storage-warning.test.ts › prints no warning when it is added or watched, where the same home warns of a synced one`, `› is not taken for a synced one by a name that only begins like a synced location`.
+
+### `folders/storage-warning-json`
+
+Where `--json` is given, the CLI MUST print a storage warning on standard error and not in the JSON on standard output.
+
+**Reason:** A program reading standard output gets only JSON, as it does when the CLI warns of a plain `http` address.
+
+**Tests:** `device/folders-storage-warning.test.ts › keeps standard output to its JSON document under --json, with the warning a plain line on standard error`.
