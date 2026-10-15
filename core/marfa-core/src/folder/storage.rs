@@ -140,9 +140,10 @@ pub fn user_home() -> std::io::Result<PathBuf> {
     }
 }
 
-/// Whether macOS reports `dir` as an item iCloud Drive syncs
-/// (`kCFURLIsUbiquitousItemKey`). That is how `Desktop` and `Documents` are
-/// told, being real directories outside `Library/Mobile Documents`. The
+/// Whether macOS reports `dir` as ubiquitous (`kCFURLIsUbiquitousItemKey`),
+/// as it does for every File Provider item, not only iCloud Drive's. It is
+/// how `Desktop` and `Documents` are told with iCloud's "Desktop & Documents"
+/// on, being real directories outside `Library/Mobile Documents`. The
 /// question is answered locally, with no prompt.
 #[cfg(target_os = "macos")]
 fn ubiquitous(dir: &Path) -> bool {
