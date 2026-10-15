@@ -498,7 +498,7 @@ fn resolved(store: &std::path::Path) -> Result<PathBuf, CliError> {
 }
 
 #[cfg(unix)]
-fn user_home() -> Result<PathBuf, CliError> {
+pub(crate) fn user_home() -> Result<PathBuf, CliError> {
     use std::ffi::CStr;
     use std::os::unix::ffi::OsStrExt;
     let mut size = 1024;

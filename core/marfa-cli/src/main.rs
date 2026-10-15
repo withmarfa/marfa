@@ -13,6 +13,7 @@ mod output;
 #[cfg(test)]
 mod reference;
 mod remote;
+mod storage;
 mod telemetry;
 mod values;
 mod watch;

@@ -28,7 +28,7 @@ pub fn watch(
     json: bool,
 ) -> Result<(), CliError> {
     let server = session.server.url.clone();
-    let folder = folders::opened(dir, Some(session))?;
+    let folder = folders::opened_to_watch(dir, Some(session))?;
     // Once the folder is open, so that an interrupt before then ends the
     // command as it always did.
     interrupt::stop_on_interrupt();
@@ -150,7 +150,8 @@ impl EveryFolder for Machine {
         if let Some(refused) = self.still_refused(dir, &bearer) {
             return Err(refused);
         }
-        let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
+        let folder =
+            folders::opened_to_watch(dir, Some(session)).map_err(|error| unwatched(&error))?;
         self.opened_with(dir, server, bearer);
         Ok(folder)
     }
