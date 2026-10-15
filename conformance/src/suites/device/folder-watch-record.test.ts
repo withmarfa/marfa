@@ -456,6 +456,9 @@ describe("the record of folder watches", () => {
       await new Promise<void>((resolve, reject) => {
         holder.stdout.once("data", () => resolve());
         holder.once("error", reject);
+        holder.once("close", () =>
+          reject(new Error("the lock holder ended before it held the lock")),
+        );
       });
       put(a, "Locked.md", "---\ntitle: Locked\n---\nsynced under the lock\n");
       const watch = hold(a.folder.watchEvery());
