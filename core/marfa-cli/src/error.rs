@@ -499,12 +499,13 @@ pub fn exit_codes_help() -> &'static str {
         let mut help = String::from("Exit codes:\n");
         for exit in Exit::ALL {
             let mut line = format!("  {}  ", exit as u8);
+            let indent = line.len();
             let mut first = true;
             for word in exit.meaning().split(' ') {
                 if !first && line.len() + 1 + word.len() > MEANING_WIDTH {
                     help.push_str(&line);
                     help.push('\n');
-                    line = " ".repeat(5);
+                    line = " ".repeat(indent);
                 } else if !first {
                     line.push(' ');
                 }
