@@ -441,7 +441,7 @@ export interface paths {
         };
         /**
          * List outbound edges
-         * @description Returns the edges that start at an item. An item in the trash still lists its edges. `GET /items/{id}/backrefs` lists the edges that point at it.
+         * @description Returns the edges that start at an item. An item in the trash still lists its edges. If `source_filter` leaves the item out, none of its edges appear here. `GET /items/{id}/backrefs` lists the edges that point at it.
          */
         get: operations["listItemEdges"];
         put?: never;
@@ -461,7 +461,7 @@ export interface paths {
         };
         /**
          * List inbound edges
-         * @description Returns the edges that point at an item. An item in the trash still lists its edges. `GET /items/{id}/edges` lists the edges that start at it.
+         * @description Returns the edges that point at an item. An item in the trash still lists its edges. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of this item. `GET /items/{id}/edges` lists the edges that start at it.
          */
         get: operations["listItemBackrefs"];
         put?: never;
@@ -481,7 +481,7 @@ export interface paths {
         };
         /**
          * List edges
-         * @description Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions.
+         * @description Returns the edges you can read, newest first, whether or not the items they join are in the trash. A deleted edge doesn't appear here: `GET /events` reports deletions. An edge whose source item `source_filter` leaves out doesn't appear here, whatever the source of the item it points to.
          */
         get: operations["listEdges"];
         put?: never;

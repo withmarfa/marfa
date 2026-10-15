@@ -2351,6 +2351,10 @@ export interface EdgeListFilters {
   edge_type?: string | string[];
   limit?: number;
   cursor?: string;
+  /** The `source_filter` lever in force for the reader. An edge is left out,
+   *  before the page is cut, when the lever refuses its source item: the
+   *  item's own type and source decide, whatever the target's. */
+  source_filter?: SourceFilterSettings;
   /** Inclusive lower bound on `updated_at`, the edge's modification
    *  time. The edge half of the catch-up read; same inclusivity and same
    *  reasoning as {@link ItemFilters.updated_after}.

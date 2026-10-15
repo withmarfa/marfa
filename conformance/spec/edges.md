@@ -1587,9 +1587,31 @@ When `GET /edges` meets an edge whose source item's type or whose edge type the 
 
 **Tests:** `compliance/edge-permissions.test.ts › drops an edge whose source is a type the credential cannot read`, `› drops an edge of an edge type the credential cannot read`.
 
+### `edges/read-source-filter`
+
+Where a source filter applies to the key, the server MUST leave an edge out of `GET /edges`, `GET /items/{id}/edges` and `GET /items/{id}/backrefs` when the filter leaves out its source item, and not when it leaves out only its target item.
+
+**Reason:** an edge is a statement its source makes about its target (`edges/target-named`), so the source decides where the statement shows. The filter narrows a listing and not a read by id (`types/source-filter-by-id`).
+
+**Tests:** `compliance/edge-source-filter.test.ts › decides an edge on GET /edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/edges by the source of its source item, whatever the source of its target`, `› decides an edge on GET /items/{id}/backrefs by the source of its source item, whatever the source of its target`, `› lists the edges of every source a filter names that names several, and no other`.
+
+### `edges/read-source-filter-bin`
+
+While the source item of an edge is in the bin, the server MUST judge the edge under a source filter by the source of that item, as it does for an item that is not.
+
+**Tests:** `compliance/edge-source-filter.test.ts › lists an edge on every listing while its source item is in the bin, by that item's source`.
+
+### `edges/read-source-filter-page`
+
+If a source filter leaves out an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`.
+
+**Reason:** a caller stops on a `next_cursor` of `null` and not on a short page, so a filter that cut a page after the fact would hand back pages of a few edges, or none, for a filter that leaves most of a listing out.
+
+**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`.
+
 ### `edges/read-list-short`
 
-When `GET /edges` leaves edges out of a page, the server MUST take `next_cursor` from the whole listing, so that a page can be shorter than `limit`, or empty with a `next_cursor` still to follow.
+When `GET /edges` leaves out of a page an edge whose source item's type or whose edge type the credential may not read, the server MUST take `next_cursor` from the whole listing, so that a page can be shorter than `limit`, or empty with a `next_cursor` still to follow.
 
 **Reason:** a caller stops on `next_cursor` `null` and not on an empty page.
 

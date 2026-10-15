@@ -37,7 +37,9 @@ import {
 import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
-import { edges, edgeTypes } from "./schema.js";
+import { edges, edgeTypes, items } from "./schema.js";
+import { sourceFilterToSql } from "../filter-sql.js";
+import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncEdgeBlobReferences } from "./blob-references.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -48,6 +50,23 @@ const MAX_LIMIT = 500;
 function clampLimit(n: number | undefined): number {
   if (!n || n <= 0) return DEFAULT_LIMIT;
   return Math.min(n, MAX_LIMIT);
+}
+
+/**
+ * The source filter as a predicate on an edge, decided by the row of the
+ * edge's source item and never the target's.
+ *
+ * Phrased as the absence of a source item the filter refuses, not the
+ * presence of one it admits, so an edge whose source row is gone keeps the
+ * reading the route gives it (`sourceTypeReadable`). The source item's state
+ * does not enter: an item in the bin is judged by its source like any other.
+ */
+function sourceFilterCondition(
+  filter: SourceFilterSettings | undefined,
+): SQL | undefined {
+  const admitted = sourceFilterToSql(filter, items.type, items.source);
+  if (!admitted) return undefined;
+  return sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.id} = ${edges.source_id} AND NOT ${admitted})`;
 }
 
 function typeFilter(value: string | string[] | undefined) {
@@ -149,6 +168,8 @@ export class SqliteEdgeStore implements EdgeStore {
     const conditions = [eq(keyColumn, value)];
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
+    const sourceAdmitted = sourceFilterCondition(filters?.source_filter);
+    if (sourceAdmitted) conditions.push(sourceAdmitted);
 
     if (filters?.cursor) {
       const { v, id } = decodeKeyedCursor(filters.cursor, cursorKey);
@@ -236,6 +257,8 @@ export class SqliteEdgeStore implements EdgeStore {
     const conditions = [];
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
+    const sourceAdmitted = sourceFilterCondition(filters?.source_filter);
+    if (sourceAdmitted) conditions.push(sourceAdmitted);
     if (updatedAfter !== undefined) {
       conditions.push(gte(edges.updated_at, updatedAfter));
     }
