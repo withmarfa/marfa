@@ -1932,7 +1932,7 @@ When the reader of `follow`'s output has gone, the CLI MUST end the follow.
 
 If a held stream cannot be had for a reason that clears on its own, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
 
-**Reason:** an app told nothing would show offline and online alike, and would have to drain on a timer to send what it queued once the server came back.
+**Reason:** an app told nothing would show offline and online alike.
 
 **Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
 
@@ -1964,9 +1964,67 @@ If a held stream cannot be had for a reason that clears on its own, and its call
 
 ### `device/follow-change-kinds`
 
-Where an app follows through a binding, a device MUST tell it `catalog.changed`, `server.unreachable` and `server.reachable` each as a change of its own kind, apart from the events the stream applied.
+Where an app follows through a binding, a device MUST tell it `catalog.changed`, `server.unreachable`, `server.reachable`, `queue.drained` and `queue.not_drained` each as a change of its own kind, apart from the events the stream applied.
 
 **Reason:** an app that told them from events by name would take an event of that name for one of them, and would miss one renamed.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-drains-reachable`
+
+Where an app or the CLI follows a working copy, when a device tells its caller `server.reachable` while the queue holds a write a drain would send, a device MUST drain the queue once.
+
+**Reason:** an app told only that the server is back would have to drain the queue itself, and one that did not would leave what its person saved unsent. A folder's watch drains in its own pass, which keeps the folder's records, so its stream drains nothing.
+
+**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`.
+
+### `device/follow-drain-told`
+
+When a drain that a held stream started ends, a device MUST tell its caller `queue.drained` with the drain's report, or `queue.not_drained` with the error the drain ended with, naming no item and no edge.
+
+**Tests:** `device/catch-up.test.ts › sends what waited once its server is back, and tells what the drain did`, `› tries a refused credential once each time its server is back, and says why it sent nothing`.
+
+### `device/follow-drain-quiet`
+
+When a device tells its caller `server.reachable` while the queue holds no write a drain would send, a device MUST tell the caller neither `queue.drained` nor `queue.not_drained`.
+
+**Tests:** `device/catch-up.test.ts › tells a held stream's caller once that the server cannot be reached, and once that it can again`.
+
+### `device/follow-drain-only-back`
+
+While a held stream has not told its caller `server.reachable`, a device MUST NOT drain the queue for it.
+
+**Reason:** a server never lost had every write the caller drained, and draining on a timer would send what the caller chose to hold.
+
+**Tests:** `device/catch-up.test.ts › drains nothing for a held stream whose server was never lost`.
+
+### `device/follow-drain-once`
+
+While a held stream's server stays reachable, a device MUST NOT drain the queue for it again, whatever the drain answered.
+
+**Reason:** a drain refused for its credential or its copy would be refused again at once, and a loop would ask the server without end.
+
+**Tests:** `device/catch-up.test.ts › tries a refused credential once each time its server is back, and says why it sent nothing`.
+
+### `device/follow-drain-again`
+
+When a device tells its caller `server.reachable` while the drain it started for an earlier `server.reachable` is under way, a device MUST drain the queue once more after that drain ends.
+
+**Reason:** the server may have been lost again while that drain sent, leaving writes it could not deliver.
+
+**Tests:** `device/catch-up.test.ts › drains once more when its server is back again while its drain is under way`.
+
+### `device/follow-drain-one`
+
+If a drain the caller started is under way when a device tells its caller `server.reachable`, then a device MUST NOT start a second drain.
+
+**Reason:** the drain under way sends what a second would have.
+
+**Tests:** waiting on #1890.
+
+### `device/follow-drain-running-told`
+
+If a drain the caller started is under way when a device tells its caller `server.reachable` while the queue holds a write a drain would send, then a device MUST tell its caller `queue.not_drained`.
 
 **Tests:** waiting on #1890.
 

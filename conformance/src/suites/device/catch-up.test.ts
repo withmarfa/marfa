@@ -32,8 +32,13 @@ import {
   wireItem,
   wireType,
 } from "../../device/marfa-answers.js";
-import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
-import type { FollowReport } from "../../device/protocol.js";
+import {
+  BUILT_FOR,
+  type Answer,
+  type RecordedRequest,
+  type Responder,
+} from "../../device/scripted-server.js";
+import type { Change, FollowReport } from "../../device/protocol.js";
 
 /**
  * "Events apply in log order, gated by version", and "a stale cursor means
@@ -964,6 +969,243 @@ describe("catch-up replays from the cursor", () => {
       "a change about the server named a row",
     ).toEqual([null, null]);
     expect(lost?.reason, "the caller was not told why").toContain("503");
+  });
+
+  /**
+   * Takes every create, answering with the row it was sent, and answers a
+   * read of each row it took. The answers `ahead` makes from the taking
+   * answer go first, one per create.
+   */
+  function takeCreates(
+    server: Harness["server"],
+    ahead: (
+      take: (request: RecordedRequest) => Answer,
+    ) => Responder[] = () => [],
+  ) {
+    const rows = new Map<string, Record<string, unknown>>();
+    const take = (request: { body: string }): Answer => {
+      const sent = JSON.parse(request.body) as {
+        id: string;
+        properties: Record<string, unknown>;
+      };
+      const row = wireItem({ id: sent.id, properties: sent.properties });
+      rows.set(sent.id, row);
+      return answers.created(row);
+    };
+    scriptWrites(server, {
+      create: [...ahead(take), take],
+      read: [
+        (request) => {
+          const row = rows.get(request.pathname.split("/").at(-1) ?? "");
+          return row
+            ? answers.updated(row)
+            : refusal(404, "item_not_found", "no such item");
+        },
+      ],
+    });
+  }
+
+  function createsSent(server: Harness["server"]): string[] {
+    return server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => (JSON.parse(request.body) as { id: string }).id);
+  }
+
+  async function queueNotes(
+    device: Harness["device"],
+    ...titles: string[]
+  ): Promise<string[]> {
+    const ids: string[] = [];
+    for (const title of titles) {
+      const queued = await device.create({
+        type: "core.note",
+        properties: { title, body: title },
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (queued.ok) ids.push(queued.value.item_id ?? "");
+    }
+    return ids;
+  }
+
+  it("sends what waited once its server is back, and tells what the drain did", async () => {
+    harness = await startHarness("follow-drains");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", refusal(503, "unavailable", "busy"), {
+      kind: "sse",
+      frames: [connected],
+      hold: true,
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await queueNotes(device, "first", "second");
+    takeCreates(server);
+
+    const followed = await device.follow(5);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.changes.map((change) => change.event),
+      "the follow did not drain once its server was back, or did not say so",
+    ).toEqual(["server.unreachable", "server.reachable", "queue.drained"]);
+    const drained = followed.value.changes[2];
+    expect(
+      [drained?.item_id, drained?.edge_id],
+      "a change about the queue named a row",
+    ).toEqual([null, null]);
+    expect(drained?.drain?.answered, JSON.stringify(drained)).toBe(2);
+    expect(drained?.drain?.verdicts.map((verdict) => verdict.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    expect(
+      createsSent(server),
+      "each write that waited was not sent once, in the order it was made",
+    ).toEqual(queued);
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => row.verdict),
+      "the drain the follow ran did not record its answers in the queue",
+    ).toEqual(["accepted", "accepted"]);
+  });
+
+  it("drains nothing for a held stream whose server was never lost", async () => {
+    harness = await startHarness("follow-drain-only-back");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", {
+      kind: "sse",
+      frames: [connected],
+      hold: true,
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await queueNotes(device, "waiting");
+    takeCreates(server);
+    const streams = () =>
+      server.requests.filter((request) => request.pathname === "/events")
+        .length;
+    const before = streams();
+
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      [streams() - before, followed.value.report.failed_opens],
+      "the follow never had a stream, or lost one, so the absence below is about nothing",
+    ).toEqual([1, 0]);
+    // The witness that a drain sends this write is the fixture above.
+    expect(
+      createsSent(server),
+      "a held stream whose server was never lost drained the queue",
+    ).toEqual([]);
+    expect(followed.value.changes).toEqual([]);
+  });
+
+  it("tries a refused credential once each time its server is back, and says why it sent nothing", async () => {
+    harness = await startHarness("follow-drain-refused");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.copyAnswer("GET", "/events", refusal(503, "unavailable", "busy"), {
+      kind: "sse",
+      frames: [connected],
+      hold: true,
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await queueNotes(device, "refused");
+    scriptWrites(server, {
+      create: [refusal(401, "unauthorized", "the key was revoked")],
+    });
+
+    const followed = await device.follow(5);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(followed.value.changes.map((change) => change.event)).toEqual([
+      "server.unreachable",
+      "server.reachable",
+      "queue.drained",
+    ]);
+    expect(
+      followed.value.changes[2]?.drain?.stopped,
+      "the follow did not say the drain stopped on a refused credential",
+    ).toContain("credential");
+    expect(
+      createsSent(server).length,
+      "a refused credential was tried again while the server stayed, or never",
+    ).toBe(1);
+    const queue = await device.queue();
+    expect(queue.ok && queue.value.map((row) => row.verdict)).toEqual([
+      "blocked",
+    ]);
+  });
+
+  it("drains once more when its server is back again while its drain is under way", async () => {
+    harness = await startHarness("follow-drain-again");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    let backTwice: () => void = () => {};
+    const answered = new Promise<void>((resolve) => {
+      backTwice = resolve;
+    });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      refusal(503, "unavailable", "busy"),
+      { kind: "sse", frames: [connected] },
+      refusal(503, "unavailable", "busy"),
+      { kind: "sse", frames: [connected], hold: true },
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const [first, second] = await queueNotes(device, "first", "second");
+    // The first write is answered once the server is back a second time,
+    // and the second write then finds it gone.
+    takeCreates(server, (take) => [
+      (request) => ({ kind: "gated", until: answered, then: take(request) }),
+      refusal(503, "unavailable", "busy"),
+    ]);
+
+    const follow = device.holdFollow(60);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.stdout.split('"server.reachable"').length - 1,
+            follow.stderr,
+          ).toBe(2);
+        },
+        { timeout: 40_000, interval: 50 },
+      );
+      expect(
+        createsSent(server),
+        "the first drain was not under way when the server was back again",
+      ).toEqual([first]);
+      backTwice();
+      await vi.waitFor(
+        () => {
+          expect(follow.stdout.split('"queue.drained"').length - 1).toBe(2);
+        },
+        { timeout: 20_000, interval: 50 },
+      );
+    } finally {
+      await follow.stop();
+    }
+    const drains = follow.stdout
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as Change)
+      .filter((change) => change.event === "queue.drained")
+      .map((change) => [change.drain?.answered, change.drain?.undelivered]);
+    expect(
+      drains,
+      "the second return was not drained once after the drain under way",
+    ).toEqual([
+      [1, 1],
+      [1, 0],
+    ]);
+    expect(
+      createsSent(server),
+      "a write was sent other than once for each drain that came to it",
+    ).toEqual([first, second, second]);
   });
 
   it("refuses an event id that is not a number, keeping the cursor it had", async () => {

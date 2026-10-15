@@ -537,6 +537,28 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
+/// Whether a drain now would send a write or read one back: a write with no
+/// verdict, one blocked for a reason a drain clears itself, a read-back owed,
+/// or a body whose names wait. A dead write, or one blocked until something
+/// outside the queue changes, is no reason to drain.
+pub(crate) fn would_send(core: &Core) -> Result<bool> {
+    let conn = core.conn()?;
+    let sendable = store::waiting_writes(&conn)?
+        .iter()
+        .any(|row| match row.verdict {
+            None => true,
+            Some(Verdict::Blocked) => {
+                row.blocked_reason() == Some(BlockedReason::CredentialRefused)
+                    || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+            }
+            Some(_) => false,
+        });
+    Ok(sendable
+        || !store::owed_read_backs(&conn)?.is_empty()
+        || crate::body::rule::waiting(&conn)?
+        || crate::body::rule::has_answer_work(&conn)?)
+}
+
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
