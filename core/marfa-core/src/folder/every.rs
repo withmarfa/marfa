@@ -29,6 +29,10 @@ const RETRY_ENDED: Duration = Duration::from_secs(60);
 /// How often a folder let go to a command is tried again, so it is taken back
 /// soon after the command ends.
 pub const RETRY_HANDED: Duration = Duration::from_secs(1);
+/// The longest wait between two looks at a folder whose directory cannot be
+/// found. A volume that is away comes back at any time, but a directory
+/// deleted long ago is looked at for as long as the registry lists it.
+const RETRY_MISSING_MOST: Duration = Duration::from_secs(300);
 
 /// How long a folder tried again is watched before it is said to be watched,
 /// so one that fails the same way at every try is said to fail once.
@@ -130,6 +134,12 @@ pub enum Every<'a, F = Folder> {
     /// The folder at `dir`, let go to a command, is watched again. Told in
     /// place of [`Every::Watching`].
     TakenBack { dir: &'a Path },
+    /// The listed folders at `dirs` are not watched because their
+    /// directories cannot be found, as a deleted directory or a volume that
+    /// is away. Told once the set has settled, and again only when a folder
+    /// joins it; each is tried again, less often the longer it stays away,
+    /// and is not told as [`Every::Unwatched`].
+    Missing { dirs: &'a [PathBuf] },
     /// The registry no longer lists the folder at `dir`, and its watch ended.
     Left { dir: &'a Path },
     /// The registry lists no folder. Told once each time it comes to.
@@ -257,6 +267,7 @@ struct Timing {
     /// standing before it is said to be held by another process.
     held: Duration,
     recovered: Duration,
+    missing_most: Duration,
 }
 
 impl Default for Timing {
@@ -269,6 +280,7 @@ impl Default for Timing {
             handed: RETRY_HANDED,
             held: handover::HANDOVER_WAIT,
             recovered: RECOVERED,
+            missing_most: RETRY_MISSING_MOST,
         }
     }
 }
@@ -295,6 +307,9 @@ impl Watched for Folder {
 trait Supervised: Sync {
     type Folder: Watched;
     type Error: Send;
+    /// Whether the folder's directory cannot be found: the file system
+    /// answers that it is not there, rather than failing to answer.
+    fn missing(&self, dir: &Path) -> bool;
     fn open(&self, dir: &Path) -> Result<Self::Folder, Unwatched>;
     fn tell(&self, event: Every<'_, Self::Folder>) -> Result<(), Self::Error>;
     fn ended(&self, dir: &Path, reason: &Unwatched);
@@ -305,6 +320,11 @@ struct Machine<'a, W>(&'a W);
 impl<W: EveryFolder> Supervised for Machine<'_, W> {
     type Folder = Folder;
     type Error = W::Error;
+
+    fn missing(&self, dir: &Path) -> bool {
+        std::fs::symlink_metadata(dir)
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+    }
 
     fn open(&self, dir: &Path) -> Result<Folder, Unwatched> {
         let recorded = recorded(dir).map_err(|error| Unwatched::of(&error))?;
@@ -351,6 +371,8 @@ enum Outcome<E> {
     Stopped,
     /// A command asked for it, and the folder was let go.
     HandedOver,
+    /// Its directory cannot be found.
+    Missing,
     Unopened(Unwatched),
     Ended(Unwatched),
     Told(E),
@@ -377,6 +399,8 @@ struct Entry<'scope, E> {
     parked: bool,
     /// When a command was last seen asking for or working the folder.
     asked_at: Option<Instant>,
+    /// The wait before the next look, while its directory cannot be found.
+    missing: Option<Duration>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -404,6 +428,7 @@ fn supervise<S: Supervised>(
         let mut entries: BTreeMap<PathBuf, Entry<'_, S::Error>> = BTreeMap::new();
         let mut unread: Option<String> = None;
         let mut none_said = false;
+        let mut missing = Missing::new();
         let mut next_read = Instant::now();
         let watched = loop {
             if stop.load(Ordering::SeqCst) {
@@ -417,6 +442,9 @@ fn supervise<S: Supervised>(
             // said to be no folder.
             if parked_due(&entries) {
                 next_read = Instant::now();
+            }
+            if let Err(error) = missing.tell(&entries, every, timing) {
+                break Err(error);
             }
             if Instant::now() >= next_read {
                 next_read = Instant::now() + timing.reread;
@@ -459,6 +487,51 @@ fn parked_due<E>(entries: &BTreeMap<PathBuf, Entry<'_, E>>) -> bool {
     entries
         .values()
         .any(|entry| entry.parked && matches!(entry.run, Run::Waiting { until } if until <= now))
+}
+
+/// The folders whose directories cannot be found, told together: a machine's
+/// registry can list many folders deleted long ago.
+struct Missing {
+    /// The set as last seen, and since when it has been so.
+    seen: (Vec<PathBuf>, Instant),
+    /// Those told, less any found since.
+    told: Vec<PathBuf>,
+}
+
+impl Missing {
+    fn new() -> Missing {
+        Missing {
+            seen: (Vec::new(), Instant::now()),
+            told: Vec::new(),
+        }
+    }
+
+    /// Tells the set once it has stayed the same for a reread, where it holds
+    /// a folder not told yet. The folders are tried at once at the start, so
+    /// the set settles before it is told.
+    fn tell<S: Supervised>(
+        &mut self,
+        entries: &BTreeMap<PathBuf, Entry<'_, S::Error>>,
+        every: &S,
+        timing: Timing,
+    ) -> Result<(), S::Error> {
+        let now: Vec<PathBuf> = entries
+            .iter()
+            .filter(|(_, entry)| entry.missing.is_some() && !entry.leaving)
+            .map(|(dir, _)| dir.clone())
+            .collect();
+        self.told.retain(|dir| now.contains(dir));
+        if now != self.seen.0 {
+            self.seen = (now, Instant::now());
+            return Ok(());
+        }
+        if self.seen.1.elapsed() >= timing.reread && now.iter().any(|dir| !self.told.contains(dir))
+        {
+            every.tell(Every::Missing { dirs: &now })?;
+            self.told = now;
+        }
+        Ok(())
+    }
 }
 
 /// Takes in the watches that ended, and decides what comes of each.
@@ -543,6 +616,22 @@ fn reap<S: Supervised>(
             continue;
         }
         entry.parked = false;
+        if let Outcome::Missing = ended {
+            let wait = entry
+                .missing
+                .map_or(timing.unopened, |wait| (wait * 2).min(timing.missing_most));
+            entry.missing = Some(wait);
+            entry.run = Run::Waiting { until: now + wait };
+            let reason = Unwatched::of(&CoreError::Io(format!(
+                "{} cannot be found; it is watched once it is back",
+                dir.display()
+            )));
+            record.unwatched(&dir, Some(&reason.code));
+            // Told with the others that cannot be found, by the supervisor.
+            entry.told = Some(reason);
+            continue;
+        }
+        entry.missing = None;
         let (reason, wait) = match ended {
             // Raised for a folder the registry lists again since: it starts
             // again at once.
@@ -564,6 +653,7 @@ fn reap<S: Supervised>(
             }
             Outcome::Told(_) => unreachable!("a failed tell ended the watch above"),
             Outcome::HandedOver => unreachable!("a folder let go is parked above"),
+            Outcome::Missing => unreachable!("a missing directory is taken in above"),
         };
         entry.run = Run::Waiting { until: now + wait };
         record.unwatched(&dir, Some(&reason.code));
@@ -614,6 +704,7 @@ fn reconcile<S: Supervised>(
                 leaving: false,
                 parked: false,
                 asked_at: None,
+                missing: None,
             });
     }
     let unlisted: Vec<PathBuf> = entries
@@ -702,6 +793,9 @@ fn run<S: Supervised>(
     stop: &AtomicBool,
     start: &Mutex<Start>,
 ) -> Outcome<S::Error> {
+    if every.missing(dir) {
+        return Outcome::Missing;
+    }
     let folder = match every.open(dir) {
         Ok(folder) => folder,
         Err(reason) => return Outcome::Unopened(reason),
@@ -840,6 +934,9 @@ mod tests {
         /// network volume that does not answer.
         hung: Mutex<Vec<PathBuf>>,
         hanging: AtomicBool,
+        /// Directories that cannot be found, and each look at one.
+        missing: Mutex<Vec<PathBuf>>,
+        looked: Mutex<Vec<PathBuf>>,
     }
 
     impl Machine {
@@ -862,6 +959,11 @@ mod tests {
     impl Supervised for Machine {
         type Folder = Fake;
         type Error = String;
+
+        fn missing(&self, dir: &Path) -> bool {
+            lock(&self.looked).push(dir.to_path_buf());
+            lock(&self.missing).iter().any(|missing| missing == dir)
+        }
 
         fn open(&self, dir: &Path) -> Result<Fake, Unwatched> {
             lock(&self.opened).push(dir.to_path_buf());
@@ -893,6 +995,7 @@ mod tests {
                 Every::Unwatched { dir, reason } => {
                     format!("unwatched {} {}", dir.display(), reason.code)
                 }
+                Every::Missing { dirs } => format!("missing {}", dirs.len()),
                 Every::Left { dir } => format!("left {}", dir.display()),
                 Every::HandedOver { dir } => format!("handed {}", dir.display()),
                 Every::TakenBack { dir } => format!("taken back {}", dir.display()),
@@ -932,6 +1035,7 @@ mod tests {
             handed: Duration::from_millis(15),
             held: Duration::from_millis(120),
             recovered: Duration::from_millis(150),
+            missing_most: Duration::from_millis(160),
         }
     }
 
@@ -995,6 +1099,67 @@ mod tests {
 
     fn count(machine: &Machine, line: &str) -> usize {
         machine.told().iter().filter(|told| *told == line).count()
+    }
+
+    #[test]
+    fn folders_whose_directories_cannot_be_found_are_told_once_together_and_tried_less_often() {
+        let machine = Machine::default();
+        machine.opens("/real", vec![Ok(Goes::Lasts)]);
+        let mut dirs = vec!["/real".to_string()];
+        for n in 0..50 {
+            let dir = format!("/gone{n}");
+            // What opening one would say, were it opened.
+            machine.opens(&dir, vec![Err(reason("io"))]);
+            lock(&machine.missing).push(PathBuf::from(&dir));
+            dirs.push(dir);
+        }
+        let listing = listed(&dirs.iter().map(String::as_str).collect::<Vec<_>>());
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        let started = Instant::now();
+        supervised_timed(&machine, &listing, &record, quick(), |machine| {
+            count(machine, "watching /real") == 1
+                && count(machine, "missing 50") == 1
+                && started.elapsed() >= Duration::from_secs(1)
+        })
+        .unwrap();
+        let told = machine.told();
+        assert_eq!(
+            told.iter()
+                .filter(|told| told.starts_with("missing"))
+                .count(),
+            1,
+            "{told:?}"
+        );
+        assert!(
+            !told.iter().any(|told| told.starts_with("unwatched /gone")),
+            "a folder that cannot be found was told on its own: {told:?}"
+        );
+        assert_eq!(
+            machine.opened("/gone0"),
+            0,
+            "a directory not there was opened"
+        );
+        // Tried every 20 milliseconds for a second, it would be looked at
+        // about 50 times; backing off to 160, about 9.
+        let looks = lock(&machine.looked)
+            .iter()
+            .filter(|looked| *looked == Path::new("/gone0"))
+            .count();
+        assert!((2..=12).contains(&looks), "looked at {looks} times");
+        let entry = std::fs::read_to_string(record.path()).unwrap();
+        assert!(entry.contains("\"dir\": \"/gone0\""), "{entry}");
+
+        // The witness: one that is back is watched, and the rest are told
+        // together still.
+        lock(&machine.missing).retain(|missing| missing != Path::new("/gone0"));
+        machine.opens("/gone0", vec![Ok(Goes::Lasts)]);
+        let machine_back = machine;
+        lock(&machine_back.told).clear();
+        supervised_timed(&machine_back, &listing, &record, quick(), |machine| {
+            count(machine, "watching /gone0") == 1 && count(machine, "missing 49") == 1
+        })
+        .unwrap();
     }
 
     #[test]

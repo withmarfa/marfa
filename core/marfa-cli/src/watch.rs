@@ -17,9 +17,9 @@ use crate::output;
 use crate::remote::Named;
 use crate::storage;
 
-/// How long a pass under way gets to finish once Ctrl-C has arrived. A pass
-/// can wait on a server that never answers, and Ctrl-C has to end the command
-/// anyway.
+/// How long a pass under way gets to finish once Ctrl-C or `SIGTERM` has
+/// arrived. A pass can wait on a server that never answers, and the stop has
+/// to end the command anyway.
 const INTERRUPT_GRACE: Duration = Duration::from_secs(2);
 
 const POLL: Duration = Duration::from_millis(100);
@@ -54,7 +54,7 @@ pub fn watch(
             kept.as_deref(),
         ));
     });
-    let result = await_end(&ended, interrupt::signaled, INTERRUPT_GRACE);
+    let result = await_end(&ended, interrupt::asked_to_stop, INTERRUPT_GRACE);
     if let Some(record) = &record {
         record.finish();
     }
@@ -92,7 +92,7 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
             &registry, stop, &machine, &kept,
         ));
     });
-    let result = await_end(&ended, interrupt::signaled, INTERRUPT_GRACE);
+    let result = await_end(&ended, interrupt::asked_to_stop, INTERRUPT_GRACE);
     // A watch left behind at the end of the grace is not stopped, so its
     // folders are marked not watched here.
     record.finish();
@@ -227,6 +227,19 @@ impl EveryFolder for Machine {
                 HANDED_OVER_LINE.into()
             }),
             Every::TakenBack { dir } => say(json, dir).line(taken_back(), || TAKEN_BACK_LINE.into()),
+            Every::Missing { dirs } => self.line(
+                &serde_json::json!({ "missing": dirs, "watching": false }),
+                || {
+                    format!(
+                        "{} listed folder(s) cannot be found, so they are not watched; each is watched once its directory is back, and `marfa folders remove DIR` takes one off the list: {}",
+                        dirs.len(),
+                        dirs.iter()
+                            .map(|dir| dir.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                },
+            ),
             Every::Left { dir } => {
                 self.folders().remove(dir);
                 say(json, dir).line(

@@ -222,29 +222,40 @@ describe("a watch of every folder", () => {
       watch.stdout
         .split("\n")
         .filter((line) => line.startsWith(`${dir}: not watched`));
+    // A folder whose directory cannot be found is told with every other
+    // such folder, in one line.
+    const missingLines = (): string[] =>
+      watch.stdout
+        .split("\n")
+        .filter((line) => / listed folder\(s\) cannot be found/.test(line));
     await vi.waitFor(() => {
-      for (const dir of [b.dir, waiting.dir, gone.dir]) {
+      for (const dir of [b.dir, waiting.dir]) {
         expect(notWatched(dir), watch.stdout).toHaveLength(1);
       }
+      expect(missingLines(), watch.stdout).toHaveLength(1);
     }, WAIT);
     expect(notWatched(b.dir)[0]).toContain("another process");
     expect(notWatched(waiting.dir)[0]).toContain("first sync");
-    expect(notWatched(gone.dir)[0]).toContain("cannot be found");
+    expect(missingLines()[0]).toMatch(/^1 listed folder\(s\) cannot be found/);
+    expect(missingLines()[0]).toContain(gone.dir);
+    expect(notWatched(gone.dir)).toEqual([]);
     put(a, "Goes on.md", "---\ntitle: Goes on\n---\nthe others go on\n");
     await vi.waitFor(() => expect(sentTitles(a)).toContain("Goes on"), WAIT);
     // Past two more tries of each: still said once.
     await new Promise((resolve) => setTimeout(resolve, 12_000));
-    for (const dir of [b.dir, waiting.dir, gone.dir]) {
+    for (const dir of [b.dir, waiting.dir]) {
       expect(
         notWatched(dir),
         `why a folder is not watched was said again unchanged: ${watch.stdout}`,
       ).toHaveLength(1);
     }
+    expect(missingLines()).toHaveLength(1);
     expect(watch.running(), watch.stderr).toBe(true);
     expect(
       watch.stdout
         .split("\n")
         .filter((line) => line.trim() !== "")
+        .filter((line) => !missingLines().includes(line))
         .filter(
           (line) =>
             ![a.dir, b.dir, waiting.dir, gone.dir].some((dir) =>
@@ -259,12 +270,86 @@ describe("a watch of every folder", () => {
     await alone.exited();
     expect((await waiting.folder.confirm()).ok).toBe(true);
     renameSync(`${gone.dir}-away`, gone.dir);
-    await vi.waitFor(() => {
-      for (const dir of [b.dir, waiting.dir, gone.dir]) {
-        expect(watch.stdout, dir).toContain(`${dir}: watching`);
-      }
-    }, WAIT);
+    // A directory that cannot be found is looked at less often the longer it
+    // stays away: 5, 10 and then 20 seconds after the last look by now.
+    await vi.waitFor(
+      () => {
+        for (const dir of [b.dir, waiting.dir, gone.dir]) {
+          expect(watch.stdout, dir).toContain(`${dir}: watching`);
+        }
+      },
+      { ...WAIT, timeout: 60_000 },
+    );
     await vi.waitFor(() => expect(sentTitles(a)).toContain("Before"), WAIT);
+  });
+
+  it("says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step", async () => {
+    const a = await folderHarness("every-missing", { settings: tagged("a") });
+    made.push(a);
+    scriptFolderWrites(a);
+    const root = mkdtempSync(
+      join(realpathSync(tmpdir()), "marfa-every-missing-"),
+    );
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    // Folders deleted long ago, as test runs leave behind.
+    const gone = Array.from({ length: 40 }, (_, n) =>
+      join(root, `run-${n}`, "notes"),
+    );
+    const listed = JSON.parse(readFileSync(a.registry, "utf8")) as {
+      folders: Array<Record<string, unknown>>;
+    };
+    listed.folders.push(...gone.map((dir) => ({ dir, folder: randomUUID() })));
+    writeFileSync(a.registry, JSON.stringify(listed));
+
+    const watch = hold(a.folder.watchEveryText());
+    const missingLines = (): string[] =>
+      watch.stdout
+        .split("\n")
+        .filter((line) => / listed folder\(s\) cannot be found/.test(line));
+    await vi.waitFor(() => {
+      expect(watch.stdout).toContain(`${a.dir}: watching`);
+      expect(missingLines(), watch.stdout).toHaveLength(1);
+    }, WAIT);
+    expect(missingLines()[0]).toMatch(/^40 listed folder\(s\) cannot be found/);
+    for (const dir of gone) expect(missingLines()[0]).toContain(dir);
+    put(a, "Goes on.md", "---\ntitle: Goes on\n---\nbeside forty gone\n");
+    await vi.waitFor(() => expect(sentTitles(a)).toContain("Goes on"), WAIT);
+    // Past several looks at each: still one line, and none of its own.
+    await new Promise((resolve) => setTimeout(resolve, 12_000));
+    expect(missingLines()).toHaveLength(1);
+    expect(
+      watch.stdout
+        .split("\n")
+        .filter((line) => gone.some((dir) => line.startsWith(`${dir}: `))),
+    ).toEqual([]);
+    // Kept listed, since a volume that is away cannot be told from a
+    // directory deleted.
+    const after = JSON.parse(readFileSync(a.registry, "utf8")) as {
+      folders: Array<{ dir: string }>;
+    };
+    expect(after.folders.map((entry) => entry.dir)).toEqual(
+      expect.arrayContaining([a.dir, ...gone]),
+    );
+    const record = JSON.parse(
+      readFileSync(join(a.registry, "..", "folder-watch.json"), "utf8"),
+    ) as {
+      processes: Array<{
+        pid: number;
+        folders: Array<{
+          dir: string;
+          watching: boolean;
+          reason: string | null;
+        }>;
+      }>;
+    };
+    const entries = record.processes.find(
+      (process) => process.pid === watch.pid(),
+    )!.folders;
+    expect(entries.find((entry) => entry.dir === gone[0])).toMatchObject({
+      watching: false,
+      reason: "io",
+    });
+    expect(watch.running(), watch.stderr).toBe(true);
   });
 
   it("ends only the watch of a folder whose credential the server refuses", async () => {

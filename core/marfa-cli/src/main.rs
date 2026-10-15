@@ -1,4 +1,5 @@
 mod auth;
+mod autostart;
 mod cleartext;
 mod commands;
 mod credentials;
@@ -9,6 +10,7 @@ mod error;
 mod folders;
 mod interrupt;
 mod local;
+mod logfile;
 mod output;
 #[cfg(test)]
 mod reference;
