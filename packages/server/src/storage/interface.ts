@@ -1600,6 +1600,8 @@ export interface OauthClientRow {
   /** The unique business key — what RPs identify themselves with. */
   clientId: string;
   name: string | null;
+  /** `web` or `native` as registered, or `null` where the row names none. */
+  applicationType: string | null;
   redirectUris: string[];
   /** Exact post-logout redirect URIs accepted for this client. */
   postLogoutRedirectUris: string[];
@@ -1727,6 +1729,15 @@ export interface OauthProviderStore {
   /** Full client row by business key. Used by the device-flow initiation
    *  path to validate `redirect_uri` and resolve a display name. */
   getClient(clientId: string): Promise<OauthClientRow | null>;
+  /**
+   * The registration of every client a live grant names: a
+   * `system.connection { kind: "app" }` projection that is `active` in both
+   * its state and its `status`, which is what the connected apps list shows.
+   * A client with two such grants appears once.
+   */
+  listLiveGrantClients(): Promise<
+    { applicationType: string | null; redirectUris: string[] }[]
+  >;
   /**
    * Widen a client's stored scope ceiling, but only while it still holds
    * exactly `expectedScopes`. Returns true when the write landed, false

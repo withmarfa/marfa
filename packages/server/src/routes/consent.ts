@@ -74,7 +74,11 @@ import { PERMISSION_LABELS, permissionShort } from "./permission-labels.js";
 import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
-import { escapeHtml, unverifiedAppCallout } from "./auth-html.js";
+import {
+  escapeHtml,
+  pageOriginLine,
+  unverifiedAppCallout,
+} from "./auth-html.js";
 import { isOpenEnded, reachLine } from "./scope-openness.js";
 import {
   operationSentence,
@@ -85,6 +89,8 @@ import {
 
 interface ConsentParams {
   clientName: string;
+  /** The addresses approving lets reach the server, from `webOriginsOf`. */
+  webOrigins?: readonly string[];
   /** The nonce the response's content security policy names, which the
    *  inline script carries. */
   nonce: string;
@@ -1097,6 +1103,7 @@ export function renderConsentScreen(params: ConsentParams): string {
   const bodyHtml = `
     <h1 class="title">${escapeHtml(title)}</h1>
     <p class="sub">${sub}</p>
+    ${pageOriginLine(params.webOrigins ?? [])}
     ${callout}
     ${errorBanner}
     <form method="POST" action="/auth/authorize/decision" class="consent-form" novalidate>

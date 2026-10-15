@@ -16,11 +16,11 @@
  *
  * **The gap is invisible on some deployments, which is why it survived.**
  * Hono's `cors` middleware reads `c.res` before `next()`, materializing the
- * response for the whole chain behind it — so where `CORS_ORIGINS` is set,
- * every handler here already kept its prepared headers. `CORS_ORIGINS` is
- * empty by default, and the test harness leaves it empty, so the routes
- * below lost them on a default deployment and in every test that did not
- * look.
+ * response for the whole chain behind it — so on a request carrying an
+ * `Origin`, every handler here already kept its prepared headers. A program
+ * sends no `Origin`, and neither does the test harness, so the routes below
+ * lost them for every client that is not a browser on another origin and in
+ * every test that did not look.
  *
  * **Precedence, stated as it actually is rather than as it reads.** The
  * merge below lets `response` win, but Hono then re-applies the prepared

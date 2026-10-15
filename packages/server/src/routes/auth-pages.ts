@@ -36,6 +36,7 @@ import { prefersHtml } from "./http-error-page.js";
 import { KeyedThrottle } from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
+import { webOriginsOf } from "../auth/web-origins.js";
 import {
   listActiveAppGrants,
   revokeProjectedGrant,
@@ -323,6 +324,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       id: string;
       kind: string;
       client_id: string;
+      client_name: string | null;
+      origins: string[];
       scopes: string[];
       status: string;
       granted_at: string;
@@ -330,10 +333,18 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }[] = [];
     for (const item of await listActiveAppGrants(storage)) {
       const props = item.properties;
+      const clientId =
+        typeof props.client_id === "string" ? props.client_id : "";
+      const client =
+        clientId === ""
+          ? null
+          : ((await storage.oauthProvider?.getClient(clientId)) ?? null);
       grants.push({
         id: item.id,
         kind: "app",
-        client_id: typeof props.client_id === "string" ? props.client_id : "",
+        client_id: clientId,
+        client_name: client?.name ?? null,
+        origins: client === null ? [] : webOriginsOf(client),
         scopes: Array.isArray(props.scopes) ? (props.scopes as string[]) : [],
         status: typeof props.status === "string" ? props.status : "active",
         granted_at:
@@ -795,6 +806,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       renderDeviceConsentScreen({
         nonce: c.var.cspNonce,
         clientName: client.name ?? client.clientId,
+        webOrigins: webOriginsOf(client),
         scopes: parsedScopes,
         userCode,
         descriptions,

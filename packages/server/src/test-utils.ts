@@ -194,7 +194,14 @@ export async function closeTestContexts(
 export async function seedOauthBearer(
   ctx: TestContext,
   scopes: string[],
-  opts: { clientName?: string; authUserId?: string; clientId?: string } = {},
+  opts: {
+    clientName?: string;
+    authUserId?: string;
+    clientId?: string;
+    /** Registers a web client on this redirect URI instead of the native
+     *  app on the loopback. */
+    webRedirectUri?: string;
+  } = {},
 ): Promise<{
   token: string;
   grantId: string;
@@ -215,6 +222,7 @@ export async function seedOauthBearer(
       );
     return (await response.json()) as Record<string, unknown>;
   }
+  const redirectUri = opts.webRedirectUri ?? "http://localhost:5173/callback";
   const registered = opts.clientId
     ? { client_id: opts.clientId }
     : await checked(
@@ -222,17 +230,17 @@ export async function seedOauthBearer(
           headers: { origin },
           body: {
             client_name: opts.clientName ?? "Test App",
-            application_type: "native",
+            application_type:
+              opts.webRedirectUri === undefined ? "native" : "web",
             grant_types: ["authorization_code", "refresh_token"],
             token_endpoint_auth_method: "none",
-            redirect_uris: ["http://localhost:5173/callback"],
+            redirect_uris: [redirectUri],
             response_types: ["code"],
           },
         }),
         201,
       );
   const clientId = registered.client_id as string;
-  const redirectUri = "http://localhost:5173/callback";
   const verifier = randomBytes(32).toString("base64url");
   const query = new URLSearchParams({
     client_id: clientId,

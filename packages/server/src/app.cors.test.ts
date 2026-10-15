@@ -118,12 +118,8 @@ describe("CORS localhost auto-reflect gating", () => {
       headers: { Origin: LOCALHOST_ORIGIN },
     });
     // The localhost origin is not in CORS_ORIGINS, so production must not
-    // echo it back. The callback falls back to the first explicit origin
-    // instead — never the attacker-supplied localhost value.
-    expect(res.headers.get("access-control-allow-origin")).not.toBe(
-      LOCALHOST_ORIGIN,
-    );
-    expect(res.headers.get("access-control-allow-origin")).toBe(ALLOWED_ORIGIN);
+    // echo it back, nor name any other origin in its place.
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("still honors an explicitly listed origin in production", async () => {

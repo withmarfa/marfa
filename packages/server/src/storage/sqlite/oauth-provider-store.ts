@@ -36,6 +36,17 @@ import type { DrizzleDb } from "./connection.js";
 import { WriteTracker } from "../write-tracker.js";
 import { sameScopeSet } from "../consent-scopes.js";
 
+function parseRedirectUris(column: string): string[] {
+  const parsed = safeJsonParse<unknown>(
+    column,
+    [],
+    "auth_oauth_client.redirect_uris",
+  );
+  return Array.isArray(parsed)
+    ? parsed.filter((s): s is string => typeof s === "string")
+    : [];
+}
+
 export class SqliteOauthProviderStore implements OauthProviderStore {
   constructor(private db: DrizzleDb) {}
 
@@ -253,6 +264,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         id: auth_oauth_client.id,
         clientId: auth_oauth_client.clientId,
         name: auth_oauth_client.name,
+        applicationType: auth_oauth_client.applicationType,
         redirectUris: auth_oauth_client.redirectUris,
         postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
         scopes: auth_oauth_client.scopes,
@@ -287,14 +299,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     const grantTypes = Array.isArray(parsedGrantTypes)
       ? parsedGrantTypes.filter((s): s is string => typeof s === "string")
       : null;
-    const parsed = safeJsonParse<unknown>(
-      row.redirectUris,
-      [],
-      "auth_oauth_client.redirect_uris",
-    );
-    const redirectUris = Array.isArray(parsed)
-      ? parsed.filter((s): s is string => typeof s === "string")
-      : [];
+    const redirectUris = parseRedirectUris(row.redirectUris);
     const parsedPostLogoutRedirectUris = safeJsonParse<unknown>(
       row.postLogoutRedirectUris ?? "[]",
       [],
@@ -309,11 +314,30 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       id: row.id,
       clientId: row.clientId,
       name: row.name,
+      applicationType: row.applicationType,
       redirectUris,
       postLogoutRedirectUris,
       scopes,
       grantTypes,
     };
+  }
+
+  async listLiveGrantClients(): Promise<
+    { applicationType: string | null; redirectUris: string[] }[]
+  > {
+    const rows = await this.db
+      .select({
+        applicationType: auth_oauth_client.applicationType,
+        redirectUris: auth_oauth_client.redirectUris,
+      })
+      .from(auth_oauth_client)
+      .where(
+        sql`EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.state} = 'active' AND json_extract(${items.properties}, '$.kind') = 'app' AND json_extract(${items.properties}, '$.status') = 'active' AND json_extract(${items.properties}, '$.client_id') = ${auth_oauth_client.clientId})`,
+      );
+    return rows.map((row) => ({
+      applicationType: row.applicationType,
+      redirectUris: parseRedirectUris(row.redirectUris),
+    }));
   }
 
   async widenClientScopes(

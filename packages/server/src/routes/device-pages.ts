@@ -22,7 +22,12 @@ import {
 import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { labelFor } from "./consent.js";
-import { escapeHtml, confirmIcon, unverifiedAppCallout } from "./auth-html.js";
+import {
+  escapeHtml,
+  confirmIcon,
+  pageOriginLine,
+  unverifiedAppCallout,
+} from "./auth-html.js";
 import { reachLine } from "./scope-openness.js";
 
 interface DevicePageParams {
@@ -39,6 +44,8 @@ interface DeviceConsentParams {
   /** The nonce the response's content security policy names. */
   nonce: string;
   clientName: string;
+  /** The addresses approving lets reach the server, from `webOriginsOf`. */
+  webOrigins?: readonly string[];
   scopes: ParsedScope[];
   userCode: string;
   descriptions?: Record<string, string>;
@@ -320,6 +327,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   const bodyHtml = `
     <h1 class="title">Approve sign-in</h1>
     <p class="sub"><b>${safeClient}</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
+    ${pageOriginLine(params.webOrigins ?? [])}
     ${unverifiedAppCallout()}
     <div class="codetile">${safeUserCode}</div>
     <div class="actions">

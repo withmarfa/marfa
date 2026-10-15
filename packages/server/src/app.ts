@@ -73,6 +73,7 @@ import {
   oauthProviderOpenIdConfigMetadata,
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
+import { isApprovedWebOrigin } from "./auth/web-origins.js";
 import { renderHttpErrorPage, prefersHtml } from "./routes/http-error-page.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
@@ -277,41 +278,43 @@ export function createApp(
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
 
-  // CORS — explicit origins from config. In non-production, any
-  // localhost/127.0.0.1 origin (any port) is also reflected so the
-  // local dev loop (Vite on a shifting port, curl, etc.) works without
-  // enumerating every port in CORS_ORIGINS. In production that
-  // auto-reflect is OFF: an operator must list real dev origins in
-  // CORS_ORIGINS explicitly, so a production server can't be coerced
-  // into echoing an attacker-controlled `http://localhost:<port>`
-  // Origin back as allowed.
-  const reflectLocalhost = !config.isProduction;
-  if (config.corsOrigins.length > 0) {
-    app.use(
-      "*",
-      cors({
-        exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
-        origin: (origin) => {
-          if (!origin) return config.corsOrigins[0];
-          if (config.corsOrigins.includes(origin)) return origin;
-          if (reflectLocalhost) {
-            try {
-              const url = new URL(origin);
-              if (
-                url.hostname === "localhost" ||
-                url.hostname === "127.0.0.1"
-              ) {
-                return origin;
-              }
-            } catch {
-              // invalid origin, ignore
-            }
-          }
-          return config.corsOrigins[0];
-        },
-      }),
-    );
-  }
+  // CORS: the origins `CORS_ORIGINS` names, and the address of every web
+  // page the owner approved (`auth/web-origins.ts`). Beside a configured
+  // origin, and outside production, any localhost or 127.0.0.1 origin is also
+  // reflected, so the local dev loop works without listing every port; an
+  // instance that names no origin reflects none, and a production server
+  // can't be coerced into echoing an attacker-controlled
+  // `http://localhost:<port>`.
+  //
+  // A refused origin gets no `Access-Control-Allow-Origin` at all. A request
+  // with no `Origin` is no browser's cross-origin request and skips the layer.
+  const reflectLocalhost =
+    !config.isProduction && config.corsOrigins.length > 0;
+  const allowedOrigin = async (origin: string): Promise<string | null> => {
+    if (config.corsOrigins.includes(origin)) return origin;
+    if (reflectLocalhost) {
+      try {
+        const url = new URL(origin);
+        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+          return origin;
+        }
+      } catch {
+        // invalid origin, ignore
+      }
+    }
+    return (await isApprovedWebOrigin(storage, origin)) ? origin : null;
+  };
+  const corsLayer = cors({
+    exposeHeaders: [...EXPOSED_RESPONSE_HEADERS],
+    origin: allowedOrigin,
+  });
+  app.use(
+    "*",
+    createMiddleware<AppEnv>(async (c, next) => {
+      if (c.req.header("origin") === undefined) return next();
+      return corsLayer(c, next);
+    }),
+  );
 
   // Security headers.
   //
