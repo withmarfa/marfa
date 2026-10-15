@@ -3620,9 +3620,9 @@ If the identifier `marfa types scaffold` is given breaks the type grammar (`type
 
 ### `device/types-scaffold-field-name-refused`
 
-If a `--field` of `marfa types scaffold` names a field an item has of its own (`types/field-shadows-item`), a field already given, or a name that is not lowercase letters, digits and underscores starting with a letter, then the CLI MUST exit 1 with `invalid`, naming the reason.
+If a `--field` of `marfa types scaffold` names a field an item has of its own (`types/field-shadows-item`), or a field already given, then the CLI MUST exit 1 with `invalid`, naming the reason.
 
-**Tests:** `device/types-scaffold.test.ts › refuses a field name an item has, a name given twice and a name outside the grammar`.
+**Tests:** `device/types-scaffold.test.ts › refuses a field name an item has and a name given twice`.
 
 ### `device/types-scaffold-field-type-refused`
 

@@ -49,15 +49,6 @@ pub fn scaffold_type(
     let mut thumbnail = false;
     for field in fields {
         let name = field.name.as_str();
-        if !name.starts_with(|first: char| first.is_ascii_lowercase())
-            || !name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        {
-            return Err(invalid(format!(
-                "{name:?} is not a field name: lowercase letters, digits and underscores, starting with a letter"
-            )));
-        }
         if reserved.iter().any(|held| held == name) {
             return Err(invalid(format!(
                 "{name} is a name every item has, so a type cannot declare it as a field: {}",
@@ -350,9 +341,6 @@ mod tests {
     #[test]
     fn a_field_a_registration_would_refuse_is_refused_with_the_reason() {
         let cases: Vec<(Vec<ScaffoldField>, &str)> = vec![
-            (vec![field("Title", "string")], "not a field name"),
-            (vec![field("1st", "string")], "not a field name"),
-            (vec![field("", "string")], "not a field name"),
             (vec![field("state", "string")], "every item has"),
             (vec![field("type", "string")], "every item has"),
             (vec![field("a", "string"), field("a", "number")], "twice"),
@@ -390,7 +378,8 @@ mod tests {
             let message = refusal("user.recipe", None, &fields);
             assert!(message.contains(reason), "{fields:?}: {message}");
         }
-        // Witness: the same names and kinds, written so the rule is met, are taken.
+        // Witness: the same names and kinds, written so the rule is met, are taken,
+        // and so is any name the registry takes, however it is spelled.
         scaffold_type(
             "user.recipe",
             None,
@@ -398,6 +387,10 @@ mod tests {
             &[
                 field("status_text", "string"),
                 field("a", "string"),
+                field("Title", "string"),
+                field("1st", "string"),
+                field("toString", "string"),
+                field("a-b.c", "string"),
                 field("image", "thumbnail"),
                 ScaffoldField {
                     enum_values: vec!["x".into()],

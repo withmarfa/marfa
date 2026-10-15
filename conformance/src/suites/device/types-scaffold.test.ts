@@ -165,7 +165,7 @@ describe("a starting definition for a type", () => {
     }
   });
 
-  it("refuses a field name an item has, a name given twice and a name outside the grammar", async () => {
+  it("refuses a field name an item has and a name given twice", async () => {
     for (const name of [
       "id",
       "type",
@@ -198,23 +198,13 @@ describe("a starting definition for a type", () => {
         1,
       ),
     ).toContain("given twice");
-    for (const name of ["Title", "1st", "a-b", "a.b"]) {
-      expect(
-        await refused(
-          ["user.recipe", "--field", `${name}:string`],
-          "invalid",
-          1,
-        ),
-        name,
-      ).toContain("not a field name");
-    }
-    // Witness: names that only resemble them are taken.
+    // Witness: names that only resemble them are taken, and so is any name
+    // the registry takes, however it is spelled.
     const ran = await scaffold([
       "user.recipe",
-      "--field",
-      "state_text:string",
-      "--field",
-      "types:string",
+      ...["state_text", "types", "Title", "1st", "toString", "a-b.c"].flatMap(
+        (name) => ["--field", `${name}:string`],
+      ),
     ]);
     expect(ran.code, ran.stderr).toBe(0);
   });

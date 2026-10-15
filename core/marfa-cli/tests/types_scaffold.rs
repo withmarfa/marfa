@@ -261,7 +261,6 @@ fn an_id_outside_the_grammar_or_under_a_reserved_root_is_refused_with_the_reason
 fn a_field_the_server_would_refuse_is_refused_here_with_the_reason() {
     for (field, reason) in [
         ("state:string", "every item has"),
-        ("Title:string", "not a field name"),
         ("a:blob", "not a field type"),
         ("a:enum", "allowed values"),
         ("a:array", "type of its elements"),
