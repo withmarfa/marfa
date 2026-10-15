@@ -573,9 +573,12 @@ fn start_due<'scope, 'env, S: Supervised>(
                     handle,
                 };
             }
-            Run::Watching { start, .. } => {
+            Run::Watching { start, handle, .. } => {
                 let mut start = lock(start);
+                // A watch that has ended has not lasted, however long it ran
+                // before the supervisor looked.
                 if let Said::Held(at) = start.said
+                    && !handle.is_finished()
                     && now.duration_since(at) >= timing.recovered
                 {
                     every.tell(Every::Watching { dir })?;
@@ -831,10 +834,20 @@ mod tests {
         record: &WatchRecord,
         until: impl Fn(&Machine) -> bool,
     ) -> Result<(), String> {
+        supervised_timed(machine, listed, record, quick(), until)
+    }
+
+    fn supervised_timed(
+        machine: &Machine,
+        listed: &Mutex<Listing>,
+        record: &WatchRecord,
+        timing: Timing,
+        until: impl Fn(&Machine) -> bool,
+    ) -> Result<(), String> {
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let running =
-                scope.spawn(|| supervise(|| lock(listed).clone(), &stop, machine, record, quick()));
+                scope.spawn(|| supervise(|| lock(listed).clone(), &stop, machine, record, timing));
             let bound = Instant::now() + Duration::from_secs(10);
             while !until(machine) && !running.is_finished() {
                 assert!(
@@ -1281,7 +1294,14 @@ mod tests {
         let record = WatchRecord::at(temp.path().join("record.json"), 7, Duration::from_secs(5));
         let (failed, lasting) = (AtomicBool::new(false), AtomicBool::new(false));
         let recovered = Mutex::new(Vec::new());
-        supervised_with(&machine, &listing, &record, |machine| {
+        // No wall-clock time is allowed to recover the folder: a watch that
+        // is starved for longer than a short hold would be told, rightly, as
+        // having lasted, and the test would then say nothing of the order.
+        let never = Timing {
+            recovered: Duration::from_secs(3600),
+            ..quick()
+        };
+        supervised_timed(&machine, &listing, &record, never, |machine| {
             if record.state_of(Path::new("/b")) == Some((true, None)) {
                 lasting.store(true, Ordering::SeqCst);
             }
@@ -1304,6 +1324,31 @@ mod tests {
         );
         // The witness: a folder that lasts is shown as watched.
         assert!(lasting.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_retry_that_lasts_is_shown_as_watched_once_it_is_told() {
+        let machine = Machine::default();
+        machine.opens(
+            "/a",
+            vec![Ok(Goes::EndsSlowly(reason("watch"))), Ok(Goes::Lasts)],
+        );
+        let listing = listed(&["/a"]);
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 7, Duration::from_secs(5));
+        let failed = AtomicBool::new(false);
+        supervised_with(&machine, &listing, &record, |machine| {
+            let state = record.state_of(Path::new("/a"));
+            if matches!(state, Some((_, Some(_)))) {
+                failed.store(true, Ordering::SeqCst);
+            }
+            // The witness for the test above: with the hold allowed to pass,
+            // the same folder is shown as watched, and its reason is gone.
+            failed.load(Ordering::SeqCst)
+                && state == Some((true, None))
+                && count(machine, "watching /a") == 2
+        })
+        .unwrap();
     }
 
     #[test]

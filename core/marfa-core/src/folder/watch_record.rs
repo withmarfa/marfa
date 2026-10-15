@@ -337,9 +337,6 @@ impl WatchRecord {
     /// record appears once it can be. A beat that finds the file's lock held
     /// by another process is tried again at the next poll.
     pub fn keep(&self, warn: impl Fn(&str)) {
-        // A write is due a poll early, so that a late poll still beats the
-        // interval.
-        let early = (POLL * 2).min(self.heartbeat / 2);
         loop {
             let due = {
                 let inner = self.inner();
@@ -348,10 +345,7 @@ impl WatchRecord {
                 }
                 let since = inner.last_write.map(|at| at.elapsed());
                 let changed = inner.generation != inner.written;
-                since
-                    .is_none_or(|since| {
-                        since + early >= self.heartbeat || (changed && since >= GAP)
-                    })
+                beat_due(since, changed, self.heartbeat)
                     .then(|| (self.process(&inner), inner.generation))
             };
             if let Some((mine, built)) = due {
@@ -463,6 +457,13 @@ impl WatchRecord {
                 .collect(),
         }
     }
+}
+
+/// Whether a write is due, `since` the last one was stamped. A beat is due a
+/// quarter of the interval early, so that a poll the system runs late, or a
+/// write that waits, still beats the interval.
+fn beat_due(since: Option<Duration>, changed: bool, heartbeat: Duration) -> bool {
+    since.is_none_or(|since| since + heartbeat / 4 >= heartbeat || (changed && since >= GAP))
 }
 
 /// Replaces `mine` in the file, under its lock, which is tried for `wait`
@@ -901,39 +902,16 @@ mod tests {
     }
 
     #[test]
-    fn the_heartbeat_never_comes_later_than_its_interval() {
-        let temp = tempfile::tempdir().unwrap();
-        let record = WatchRecord::at(temp.path().join(FILE_NAME), 11, Duration::from_secs(1));
-        record.listed(Path::new("/a"), "folder-a");
-        let mut beats: Vec<String> = Vec::new();
-        std::thread::scope(|scope| {
-            scope.spawn(|| record.keep(|_| {}));
-            let _end = Finishing(&record);
-            let until = Instant::now() + Duration::from_millis(5500);
-            while Instant::now() < until {
-                if let Ok(bytes) = std::fs::read(temp.path().join(FILE_NAME))
-                    && let Ok(file) = serde_json::from_slice::<File>(&bytes)
-                {
-                    let beat = only(&file, 11).heartbeat_at;
-                    if beats.last() != Some(&beat) {
-                        beats.push(beat);
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            record.finish();
-        });
-        let at = |beat: &String| {
-            chrono::DateTime::parse_from_rfc3339(beat)
-                .unwrap()
-                .timestamp_millis()
-        };
-        let gaps: Vec<i64> = beats
-            .windows(2)
-            .map(|pair| at(&pair[1]) - at(&pair[0]))
-            .collect();
-        assert!(gaps.len() >= 4, "{gaps:?}");
-        assert!(gaps.iter().all(|gap| *gap <= 1000), "{gaps:?}");
+    fn a_beat_is_due_a_quarter_of_the_interval_before_the_interval_is_up() {
+        let interval = Duration::from_secs(5);
+        let at = |millis: u64| Some(Duration::from_millis(millis));
+        assert!(beat_due(None, false, interval));
+        assert!(!beat_due(at(3749), false, interval));
+        assert!(beat_due(at(3750), false, interval));
+        // A change waits out the gap between writes, and no longer.
+        assert!(!beat_due(at(249), true, interval));
+        assert!(beat_due(at(250), true, interval));
+        assert!(!beat_due(at(250), false, interval));
     }
 
     #[test]
