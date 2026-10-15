@@ -213,7 +213,18 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     let telemetry = telemetry::start(&command, json);
-    let result = telemetry.within(|| run(cli));
+    // A panic is what error tracking is for. It is reported, the trace is
+    // ended, and the panic then goes on unwinding, so that the message on
+    // standard error and the exit status are what they are without telemetry.
+    let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        telemetry.within(|| run(cli))
+    })) {
+        Ok(result) => result,
+        Err(panic) => {
+            telemetry.panicked();
+            std::panic::resume_unwind(panic)
+        }
+    };
     let status = match &result {
         Ok(exit) => interrupt::status(*exit as u8),
         Err(CliError::ClosedOutput) => 0,
@@ -327,6 +338,10 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
 }
 
 fn run(cli: Cli) -> Result<Exit, CliError> {
+    #[cfg(debug_assertions)]
+    if let Ok(message) = std::env::var("MARFA_TEST_PANIC") {
+        panic!("{message}");
+    }
     if cli.allow_http || cleartext::allowed_by_environment() {
         cleartext::allow();
     }

@@ -6,8 +6,10 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
+use url::Url;
 
 use super::settings::Settings;
+use crate::cleartext::is_loopback;
 
 /// A span or an event attribute. The allowlist in `layer` decides which keys
 /// exist; nothing here accepts a key it was not given as a `&'static str`.
@@ -110,6 +112,30 @@ pub fn request(resource: &Resource, spans: &[Finished]) -> Vec<u8> {
 /// answers at costs less than the whole budget.
 const CONNECT_LIMIT: Duration = Duration::from_secs(1);
 
+/// An HTTP client for a post to `target` that must go to the address named
+/// and nowhere else, since it can carry a credential: it follows no
+/// redirect, and no post it makes takes longer than `total`. A proxy in the
+/// environment is used for an address on another host and not for one on
+/// this machine, which a proxy cannot reach and which the post must not
+/// leave in the clear on the way.
+pub fn agent(total: Duration, target: &str) -> ureq::Agent {
+    let tls = ureq::tls::TlsConfig::builder()
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    let mut config = ureq::Agent::config_builder()
+        .tls_config(tls)
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .max_redirects_will_error(false)
+        .timeout_global(Some(total))
+        .timeout_connect(Some(total.min(CONNECT_LIMIT)))
+        .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")));
+    if Url::parse(target).is_ok_and(|url| is_loopback(&url)) {
+        config = config.proxy(None);
+    }
+    config.build().into()
+}
+
 pub struct Poster {
     agent: ureq::Agent,
     url: String,
@@ -118,23 +144,8 @@ pub struct Poster {
 
 impl Poster {
     pub fn new(settings: &Settings) -> Poster {
-        let tls = ureq::tls::TlsConfig::builder()
-            .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-            .build();
-        // The credential a header carries goes to the address named and
-        // nowhere else, so no redirect is followed.
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .max_redirects_will_error(false)
-            .timeout_global(Some(settings.timeout))
-            .timeout_connect(Some(settings.timeout.min(CONNECT_LIMIT)))
-            .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
         Poster {
-            agent,
+            agent: agent(settings.timeout, &settings.url),
             url: settings.url.clone(),
             headers: settings.headers.clone(),
         }
