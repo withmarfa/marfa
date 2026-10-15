@@ -1505,7 +1505,7 @@ export function itemRoutes(storage: Storage) {
     // decided there too, so two sends of one key land on one row. What the
     // answer reads is read inside it as well, so a write that committed is
     // never answered with a failure.
-    const { result, hydrated } = await runAuditedTransaction(
+    const { result, hydrated, sourceFilter } = await runAuditedTransaction(
       storage,
       async () => {
         const result = await writeItem(
@@ -1541,6 +1541,10 @@ export function itemRoutes(storage: Storage) {
           hydrated:
             result.outcome === "updated"
               ? await hydrateEdgesForItem(storage, key, result.item.id)
+              : undefined,
+          sourceFilter:
+            result.outcome === "created"
+              ? await edgeListingSourceFilter(storage, key)
               : undefined,
         };
       },
@@ -1617,10 +1621,7 @@ export function itemRoutes(storage: Storage) {
     // on a read.
     const itemWithEdges = {
       ...item,
-      edges: sourceFilterIncludesItem(
-        await edgeListingSourceFilter(storage, key),
-        item,
-      )
+      edges: sourceFilterIncludesItem(sourceFilter, item)
         ? groupAndCap(orderedEdges, HYDRATE_PER_TYPE_CAP, ITEM_EDGES_CURSOR_KEY)
         : {},
     };

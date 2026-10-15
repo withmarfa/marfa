@@ -555,4 +555,49 @@ describe("the source filter on the edges an item read carries", () => {
       sorted([...(block?.data ?? []), ...rest.data.data].map((e) => e.id)),
     ).toEqual(sorted(shownIds));
   });
+
+  it("fills the block an item listing carries to its cap, whatever the source of the targets, and continues it at the listing", async () => {
+    // Every outbound edge of an item has the item's own source, so a block
+    // is all kept or all left out; what the filter must not do is let the
+    // hidden targets count, or cut the block short of its cap.
+    const anchor = await note(shownWriter);
+    const made: string[] = [];
+    for (let n = 0; n < 55; n++) {
+      made.push(await edge(shownWriter, anchor, await note(hiddenWriter)));
+    }
+
+    const carried = async (reader: MarfaClient) => {
+      let cursor: string | undefined;
+      do {
+        const r = await reader.listItems({
+          include: "edges",
+          limit: 100,
+          cursor,
+        });
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        const row = r.data.data.find((i) => i.id === anchor);
+        if (row) return row.edges?.[edgeType];
+        cursor = r.data.next_cursor ?? undefined;
+      } while (cursor);
+      return undefined;
+    };
+
+    // The witness: with no filter the block is full and has more to give.
+    const whole = await carried(unfiltered);
+    expect(whole?.data).toHaveLength(50);
+    expect(whole?.next_cursor).toBeTruthy();
+
+    const block = await carried(filtered);
+    expect(block?.data).toHaveLength(50);
+    expect(block?.next_cursor).toBeTruthy();
+    const rest = await filtered.listItemEdges(anchor, {
+      edge_type: edgeType,
+      cursor: block?.next_cursor ?? undefined,
+    });
+    expect(rest.status, JSON.stringify(rest.error)).toBe(200);
+    expect(rest.data.next_cursor).toBeNull();
+    expect(
+      sorted([...(block?.data ?? []), ...rest.data.data].map((e) => e.id)),
+    ).toEqual(sorted(made));
+  });
 });

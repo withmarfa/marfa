@@ -1603,11 +1603,11 @@ While the source item of an edge is in the bin, the server MUST judge the edge u
 
 ### `edges/read-source-filter-page`
 
-If a source filter leaves out an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`, or against the cap of a block that an item read carries.
+If a source filter leaves out an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`, or against the cap of an `edges` or `backrefs` block that `edges/read-source-filter` names.
 
 **Reason:** a caller stops on a `next_cursor` of `null` and not on a short page or block, so one cut before the filter would hand back a fraction of its size, or none, while the listing it continues at held more.
 
-**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`.
+**Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`, `› fills the block an item listing carries to its cap, whatever the source of the targets, and continues it at the listing`.
 
 ### `edges/read-list-short`
 
