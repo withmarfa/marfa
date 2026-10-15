@@ -256,6 +256,39 @@ describe("an edge named by an id that is malformed or unknown", () => {
 });
 
 describe("PATCH /edges/{id} versions and grants", () => {
+  it("refuses an update body key the operation does not declare, naming each one, and writes nothing", async () => {
+    const a = await makeItem("undeclared-update-a");
+    const b = await makeItem("undeclared-update-b");
+    const created = await makeEdge(a, b, "about", { note: "first" });
+    const refused = await client.rawRequest<unknown>(`/edges/${created.id}`, {
+      method: "PATCH",
+      body: {
+        version: created.version,
+        properties: { note: "second" },
+        weight: 9,
+        data: {},
+      },
+    });
+    expect(
+      refused.status,
+      "an update naming fields the operation does not declare was answered as success",
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(messages(refused.error?.error.details)).toContain('"weight"');
+    expect(messages(refused.error?.error.details)).toContain('"data"');
+    const stored = await client.getEdge(created.id);
+    expect(stored.data.edge.version).toBe(created.version);
+    expect(stored.data.edge.properties).toEqual({ note: "first" });
+
+    // The witness: the same change without the undeclared keys is written.
+    const landed = await client.updateEdge(created.id, {
+      properties: { note: "second" },
+      version: created.version,
+    });
+    expect(landed.status).toBe(200);
+    expect(landed.data.edge.properties).toEqual({ note: "second" });
+  });
+
   it("refuses a version other than the current one, lower or higher, and writes nothing", async () => {
     const a = await makeItem("ver-a");
     const b = await makeItem("ver-b");

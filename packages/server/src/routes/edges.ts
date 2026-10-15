@@ -465,7 +465,9 @@ const updateEdgeRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          /** Strict, as `POST /edges` is. `.strict()` does not recurse, so
+           *  `properties` stays open to the edge type's keys. */
+          schema: z.strictObject({
             properties: z
               .record(z.string(), z.unknown())
               .optional()
@@ -525,7 +527,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
+        "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
     },
     403: {
       content: {

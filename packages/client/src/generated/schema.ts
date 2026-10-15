@@ -10888,9 +10888,9 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.
-             *     - `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.
+             *     - `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.
              *     - `invalid_id`: `source_id` or `target_id` isn't a valid ID.
-             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.
+             *     - `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.
              */
             400: {
                 headers: {

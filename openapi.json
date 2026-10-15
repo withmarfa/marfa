@@ -19971,7 +19971,8 @@
                 },
                 "required": [
                   "version"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -20008,7 +20009,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body moves both ends, the edge type can't move that end, or a property is invalid or breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its edge type's rules.",
+            "description": "- `missing_required_field`: `version` is missing, or `properties` is missing and no end moves.\n- `validation_error`, `invalid_properties`: the body has an undeclared key, moves both ends or an end its type can't move, or a property breaks its schema.\n- `invalid_id`: `source_id` or `target_id` isn't a valid ID.\n- `edge_constraint_violation`, `edge_cycle`: the moved edge breaks its type's rules.",
             "content": {
               "application/json": {
                 "schema": {

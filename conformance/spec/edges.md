@@ -65,6 +65,14 @@ If `POST /edges` carries a top-level body key the operation does not declare, th
 
 **Tests:** `compliance/edge-refusals.test.ts › refuses a body key the operation does not declare, naming each one, and creates nothing`.
 
+### `edges/update-undeclared-key`
+
+If `PATCH /edges/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+
+**Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the edge type's, not the operation's.
+
+**Tests:** `compliance/edge-refusals.test.ts › refuses an update body key the operation does not declare, naming each one, and writes nothing`.
+
 ### `edges/create-invalid-id`
 
 If `POST /edges` names a `source_id`, a `target_id` or an `id` that is not a lowercase UUIDv7, then the server MUST answer `400 invalid_id`.
@@ -403,9 +411,9 @@ Where one request meets more than one rule of this section or the next, `edges/u
 
 ### `edges/update-order`
 
-When `PATCH /edges/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing `version`; an edge the key may not read; no write on the source's type; no write on the edge type; a stale `version`; a malformed id; both ends moved; an edge type no longer registered; an end the edge type cannot move; a new source no item holds or the key may not read; no write on the new source's type; an end that stays no item holds, in the bin or that the key may not read; neither `properties` nor a moved end; then the order of `edges/create-order` from a self-loop on.
+When `PATCH /edges/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a missing `version`; a key the operation does not declare; an edge the key may not read; no write on the source's type; no write on the edge type; a stale `version`; a malformed id; both ends moved; an edge type no longer registered; an end the edge type cannot move; a new source no item holds or the key may not read; no write on the new source's type; an end that stays no item holds, in the bin or that the key may not read; neither `properties` nor a moved end; then the order of `edges/create-order` from a self-loop on.
 
-**Tests:** `compliance/edge-check-order.test.ts › answers an edge whose source's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new source`, `› answers a new source the key cannot read as missing before it asks for write on it`, `› refuses a new source the key cannot write before it looks for the end that stays`, `› refuses write on the new source's type before it finds a source moved onto its own target`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses an undeclared key after a missing version and before it looks for the edge`, `› answers an edge whose source's type the key cannot read as missing before it asks for write on that type`, `› refuses write on the source's type before write on the edge type`, `› refuses write on the edge type before it judges a stale version`, `› refuses a stale version before it judges a malformed id in a move`, `› refuses a stale version before it finds the update names nothing`, `› refuses a malformed id before it finds both ends moved`, `› refuses a move of both ends before it looks up the edge type`, `› refuses a move the edge type cannot make before it looks for the new source`, `› answers a new source the key cannot read as missing before it asks for write on it`, `› refuses a new source the key cannot write before it looks for the end that stays`, `› refuses write on the new source's type before it finds a source moved onto its own target`, `compliance/edge-refusals.test.ts › names version in details.field where an update names none, and asks for it before it looks for the edge`.
 
 ### `edges/move-invalid-id`
 
@@ -459,7 +467,7 @@ When `PATCH /edges/{id}` answers `409 version_conflict`, the server MUST carry t
 
 ### `edges/update-stale-first`
 
-When `PATCH /edges/{id}` names a stale `version`, the server MUST refuse it `409 version_conflict` before it judges anything else the body names.
+When `PATCH /edges/{id}` names a stale `version`, the server MUST refuse it `409 version_conflict` before it judges any end or property the body names.
 
 **Reason:** a move onto an item that does not exist, a malformed id or a cardinality the move would break is refused at the current version, and a stale write is told it is stale first.
 

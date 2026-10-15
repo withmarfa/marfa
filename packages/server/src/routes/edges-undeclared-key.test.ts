@@ -1,6 +1,7 @@
 /**
- * Every door that creates an edge refuses a body key it does not declare,
- * for a key and for an app the owner signed in alike, and creates nothing.
+ * Every door that creates or updates an edge refuses a body key it does not
+ * declare, for a key and for an app the owner signed in alike, and writes
+ * nothing.
  *
  * Keys inside `properties` are the edge type's, not the door's, so a
  * property the edge type's schema does not name still lands.
@@ -29,7 +30,7 @@ beforeAll(async () => {
     return ((await res.json()) as { item: { id: string } }).item.id;
   };
   source = await note();
-  for (let i = 0; i < 13; i += 1) targets.push(await note());
+  for (let i = 0; i < 15; i += 1) targets.push(await note());
 });
 
 afterAll(async () => {
@@ -84,6 +85,59 @@ function messages(details: unknown): string {
 }
 
 describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
+  it("PATCH /edges/{id} refuses every undeclared key and writes nothing, where the declared body updates the edge", async () => {
+    const created = await send(caller, "/edges", {
+      edge_type: "about",
+      source_id: source,
+      target_id: target(),
+      properties: { note: "first" },
+    });
+    expect(created.status, await created.clone().text()).toBe(201);
+    const { edge } = (await created.json()) as { edge: { id: string } };
+    const bearer = caller === "key" ? ctx.workingKey : appToken;
+
+    const refused = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: bearer,
+      body: {
+        version: 1,
+        properties: { note: "second" },
+        weight: 9,
+        data: {},
+      },
+    });
+    const body = (await refused.json()) as ValidationRefusal;
+    expect(refused.status, JSON.stringify(body)).toBe(400);
+    expect(body.error.code).toBe("validation_error");
+    expect(messages(body.error.details)).toContain('"weight"');
+    expect(messages(body.error.details)).toContain('"data"');
+
+    const read = async () => {
+      const res = await request(ctx.app, "GET", `/edges/${edge.id}`, {
+        key: ctx.workingKey,
+      });
+      return (
+        (await res.json()) as {
+          edge: { version: number; properties: Record<string, unknown> };
+        }
+      ).edge;
+    };
+    expect(await read()).toMatchObject({
+      version: 1,
+      properties: { note: "first" },
+    });
+
+    // The witness: the same change without the undeclared keys is written.
+    const updated = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: bearer,
+      body: { version: 1, properties: { note: "second" } },
+    });
+    expect(updated.status, await updated.clone().text()).toBe(200);
+    expect(await read()).toMatchObject({
+      version: 2,
+      properties: { note: "second" },
+    });
+  });
+
   it("POST /edges refuses every undeclared key and creates nothing, where the declared body creates the edge", async () => {
     const to = target();
     const refused = await send(caller, "/edges", {
