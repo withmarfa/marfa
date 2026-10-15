@@ -867,6 +867,8 @@ const NOT_DRIVEN: Record<string, string> = {
   "keys forget":
     "forgets a kept credential, sending nothing, which needs a keychain of its own; held by its own case in credential-locks.test.ts",
   operations: "prints the table, sending nothing; held by its own case",
+  "types scaffold":
+    "prints a definition from its arguments, sending nothing; held by types-scaffold.test.ts",
   "docs search":
     "reads the docs site, which is not a server; held by its own case",
   "docs topics":
