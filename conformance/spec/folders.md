@@ -4264,7 +4264,7 @@ When an unmatched file holds bytes other than those the device last wrote, a dev
 
 **Reason:** the bytes are the person's.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`.
 
 ### `folders/unmatched-remove-waiting-kept`
 
@@ -4278,7 +4278,7 @@ While the item of an unmatched file has a write waiting to be sent, a device MUS
 
 When an unmatched file named for removal is kept, a device MUST report the file with its reason in `kept`.
 
-**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`.
+**Tests:** `device/folders-unmatched.test.ts › removes the files it may with --yes, ends their placements, and keeps the rest and says why`, `device/folders-unmatched.test.ts › goes on with the rest where a file was deleted or changed by hand while it asked`, `device/folders-unmatched.test.ts › keeps a file saved just as its removal reached it, and the next push places it again`.
 
 ### `folders/unmatched-remove-gone-kept`
 

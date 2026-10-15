@@ -18,6 +18,7 @@ import {
   read,
   scriptFolderWrites,
   sentUpdates,
+  withFault,
 } from "./folders.shared.js";
 
 const execute = promisify(execFile);
@@ -362,7 +363,7 @@ describe("a folder's unmatched files", () => {
     expect(files(made)).toEqual([]);
   });
 
-  it.each(["yes", "no"])(
+  it.each(["yes", "Y", "no"])(
     "asks at a terminal before removing, and obeys %s",
     async (answer) => {
       const { harness: made } = await unmatchedFolder(
@@ -372,7 +373,7 @@ describe("a folder's unmatched files", () => {
       const { output } = await atTerminal(made, answer);
       expect(output).toContain("Remove them? [y/N]");
       expect(output).toContain("Note 1.md");
-      if (answer === "yes") {
+      if (answer !== "no") {
         expect(files(made)).toEqual([]);
         expect(output).toContain("2 file(s) removed");
       } else {
@@ -399,6 +400,40 @@ describe("a folder's unmatched files", () => {
       "the files left alone were not exactly the one changed by hand",
     ).toEqual(["Note 3.md"]);
     expect(read(made, "Note 3.md")).toContain("changed while it asked");
+  });
+
+  it("keeps a file saved just as its removal reached it, and the next push places it again", async () => {
+    const { harness: made, edges } = await unmatchedFolder(
+      "unmatched-last-look",
+      2,
+    );
+    // The fault saves into each file after its check passed and its
+    // placement ended, just before it would go.
+    const removed = await withFault("save-before-last-look", () =>
+      made.folder.removeUnmatched({ yes: true }),
+    );
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.value.removed).toEqual([]);
+    expect(removed.value.ended).toBe(0);
+    expect(removed.value.kept.map((file) => file.path)).toEqual([
+      "Note 1.md",
+      "Note 2.md",
+    ]);
+    expect(
+      [read(made, "Note 1.md"), read(made, "Note 2.md")],
+      "a file the person saved as it was being removed was taken away",
+    ).toEqual([
+      expect.stringContaining("saved meanwhile"),
+      expect.stringContaining("saved meanwhile"),
+    ]);
+
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      placedPaths(edges),
+      "a file kept with the person's save in it lost its item's placement",
+    ).toEqual(["Note 1.md", "Note 2.md"]);
   });
 
   it("is refused while a watch holds the folder, and while the first sync waits", async () => {
