@@ -3266,7 +3266,7 @@ marfa folders watch [OPTIONS] [DIR]
 
 | Argument | Description |
 | --- | --- |
-| `[DIR]` | The directory to watch, recursively. Without one, every folder `folders list` shows is watched in this one process, each with the server its copy came from, and each line names its folder. A folder listed or removed while it runs joins or leaves the watch, and one that cannot be watched is said once and tried again. |
+| `[DIR]` | The directory to watch, recursively. Without one, the command watches every folder that `folders list` shows, in one process. Each folder uses the server its copy came from, and each line names its folder. A folder added or removed while the watch runs joins or leaves it. A folder that can't be watched is reported once and tried again. |
 
 | Option | Description |
 | --- | --- |

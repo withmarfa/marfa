@@ -175,7 +175,7 @@ impl EveryFolder for Machine {
                     }),
                     || {
                         format!(
-                            "not watched: {}; it is tried again, and said again only if why changes",
+                            "not watched: {}; trying again",
                             reason.message
                         )
                     },
@@ -199,11 +199,11 @@ impl EveryFolder for Machine {
             ),
             Every::Registry(Some(reason)) => self.line(
                 &serde_json::json!({ "registry": self.registry, "readable": false, "reason": reason }),
-                || format!("{reason}; the folders watched go on as they are"),
+                || format!("{reason}; the folders already watched keep syncing"),
             ),
             Every::Registry(None) => self.line(
                 &serde_json::json!({ "registry": self.registry, "readable": true, "reason": null }),
-                || format!("the folder registry {} reads again", self.registry.display()),
+                || format!("the folder registry {} can be read again", self.registry.display()),
             ),
         }
     }
