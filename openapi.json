@@ -376,7 +376,8 @@
             "description": "When the edge last changed, in UTC."
           },
           "version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
             "description": "The edge's version. It goes up by one on every update, including one that changes nothing."
           }
         },
@@ -429,11 +430,13 @@
             ]
           },
           "version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
             "description": "The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is."
           },
           "schema_version": {
             "type": "integer",
+            "minimum": 0,
             "description": "The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it."
           },
           "source": {
@@ -682,7 +685,8 @@
             "description": "The ID of the item."
           },
           "version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
             "description": "The item version the snapshot records."
           },
           "properties": {
@@ -837,7 +841,8 @@
             "description": "The ID of the item."
           },
           "version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
             "description": "The item version this side shows."
           },
           "properties": {
@@ -1360,7 +1365,8 @@
             ]
           },
           "requested_version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
             "description": "The `version` you sent."
           }
         },
@@ -3172,7 +3178,8 @@
             "description": "The type's own fields, by name. `GET /types/{id}` adds the fields it inherits."
           },
           "version": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
             "description": "The version number the type was last saved with."
           },
           "display_hints": {

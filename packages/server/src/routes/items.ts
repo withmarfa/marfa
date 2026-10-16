@@ -147,7 +147,11 @@ export const AncestorUnavailableSchema = z
   .object({
     error: AncestorUnavailableErrorSchema.describe(CONFLICT_SIDES.error),
     current: ConflictSnapshotSchema.describe(CONFLICT_SIDES.current),
-    requested_version: z.number().describe("The `version` you sent."),
+    requested_version: z
+      .number()
+      .int()
+      .min(0)
+      .describe("The `version` you sent."),
   })
   .describe(
     "A write Marfa can't merge, because it holds no snapshot you can read of the `version` you sent: the error and the item now.",

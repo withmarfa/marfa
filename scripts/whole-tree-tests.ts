@@ -26,6 +26,7 @@ export const ROOT_FILTERS: readonly string[] = [
   "openapi-open-objects.test.ts",
   "openapi-routes.test.ts",
   "openapi-style.test.ts",
+  "openapi-version-integers.test.ts",
   "packages/client/src/client.test.ts",
   "webhooks/retry.test.ts",
   // Walks of the server's source for a pattern.

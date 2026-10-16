@@ -153,6 +153,8 @@ export const EdgeSchema = z
     updated_at: z.string().describe("When the edge last changed, in UTC."),
     version: z
       .number()
+      .int()
+      .min(1)
       .describe(
         "The edge's version. It goes up by one on every update, including one that changes nothing.",
       ),
@@ -243,12 +245,15 @@ export const ItemSchema = z
     ),
     version: z
       .number()
+      .int()
+      .min(1)
       .describe(
         "The item's version. It starts at 1 and goes up by one on each update to the item's properties, `tier`, `occurred_at`, `source_id` or type. A change to its state, tags, extensions or edges leaves it as it is.",
       ),
     schema_version: z
       .number()
       .int()
+      .min(0)
       .describe(
         "The `version` the item's type had when the item was created. Marfa never changes it, even when the item moves to another type, and doesn't act on it.",
       ),
@@ -585,7 +590,11 @@ export const VersionSchema = z
   .object({
     id: z.string().describe("Unique identifier for the snapshot."),
     item_id: z.string().describe("The ID of the item."),
-    version: z.number().describe("The item version the snapshot records."),
+    version: z
+      .number()
+      .int()
+      .min(1)
+      .describe("The item version the snapshot records."),
     properties: z
       .record(z.string(), z.unknown())
       .describe(AT_THIS_VERSION.properties),
