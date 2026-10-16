@@ -621,7 +621,7 @@ pub(super) fn beside(path: &str, taken: impl Fn(&str) -> bool) -> String {
         None => (String::new(), path),
     };
     let (stem, extension) = super::names::split_extension(name);
-    let stem = unnumbered(stem);
+    let (stem, _) = super::names::unnumbered(stem);
     (2u64..)
         .map(|n| {
             let name = super::names::fitted(stem, &format!(" ({n}){extension}"));
@@ -629,17 +629,6 @@ pub(super) fn beside(path: &str, taken: impl Fn(&str) -> bool) -> String {
         })
         .find(|candidate| !taken(candidate))
         .unwrap_or_else(|| path.to_string())
-}
-
-fn unnumbered(stem: &str) -> &str {
-    if let Some(open) = stem.rfind(" (")
-        && let Some(digits) = stem[open + 2..].strip_suffix(')')
-        && !digits.is_empty()
-        && digits.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return &stem[..open];
-    }
-    stem
 }
 
 /// Whether a path keeps the item its kind, or its next edit would send it as

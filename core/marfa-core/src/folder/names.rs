@@ -33,6 +33,60 @@ pub(crate) fn fitted(stem: &str, tail: &str) -> String {
     format!("{}{tail}", stem[..end].trim_end())
 }
 
+/// The stem a file named from `title` takes before it is fitted: separators
+/// and controls replaced, surrounding whitespace and leading dots trimmed,
+/// and `untitled` where nothing is left.
+pub(crate) fn title_stem(title: &str) -> String {
+    let cleaned: String = title
+        .chars()
+        .map(|glyph| match glyph {
+            '/' | '\\' | ':' => '-',
+            glyph if glyph.is_control() => ' ',
+            other => other,
+        })
+        .collect();
+    let trimmed = cleaned.trim().trim_start_matches('.').trim();
+    if trimmed.is_empty() {
+        "untitled".into()
+    } else {
+        trimmed.into()
+    }
+}
+
+/// `stem` without the ` (2)` a taken name is numbered with, and that number.
+pub(crate) fn unnumbered(stem: &str) -> (&str, Option<&str>) {
+    if let Some(open) = stem.rfind(" (")
+        && let Some(digits) = stem[open + 2..].strip_suffix(')')
+        && !digits.is_empty()
+        && digits.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return (&stem[..open], Some(digits));
+    }
+    (stem, None)
+}
+
+/// Whether a file's `name` is the one its nonblank `title` makes, as a folder
+/// compares names, numbered or not. A blank title makes no name.
+pub(crate) fn in_step(name: &str, title: &str) -> bool {
+    if title.trim().is_empty() {
+        return false;
+    }
+    let (stem, extension) = split_extension(name);
+    let made = title_stem(title);
+    let name = folded(name);
+    if name == folded(&fitted(&made, extension)) {
+        return true;
+    }
+    unnumbered(stem)
+        .1
+        .is_some_and(|number| name == folded(&fitted(&made, &format!(" ({number}){extension}"))))
+}
+
+/// The name a file called `name` takes for `title`, keeping its extension.
+pub(crate) fn renamed_for(name: &str, title: &str) -> String {
+    fitted(&title_stem(title), split_extension(name).1)
+}
+
 /// For each of `keys`, the one of them that holds its name: the one `bound`
 /// names, else the first.
 pub(crate) fn holders(keys: &[String], bound: impl Fn(&str) -> bool) -> Vec<usize> {
@@ -52,6 +106,40 @@ pub(crate) fn holders(keys: &[String], bound: impl Fn(&str) -> bool) -> Vec<usiz
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_is_in_step_with_the_title_it_is_made_from() {
+        assert!(in_step("Plan.md", "Plan"));
+        assert!(in_step("plan.md", "PLAN"));
+        assert!(in_step("Plan (2).md", "Plan"));
+        assert!(in_step("Plan- v2.md", "Plan: v2"));
+        assert!(in_step("a-b.md", "a/b"));
+        assert!(in_step("hidden.md", "  ..hidden "));
+        assert!(in_step("Cafe\u{301}.md", "Caf\u{e9}"));
+        assert!(in_step("Caf\u{e9}.markdown", "Cafe\u{301}"));
+        assert!(!in_step("Plan.md", "Plans"));
+        assert!(!in_step("Plan (x).md", "Plan"));
+        assert!(!in_step("Plan (2).md", "Plan (3)"));
+        assert!(!in_step("untitled.md", ""));
+        assert!(!in_step("untitled.md", "  "));
+        let long = "\u{e9}".repeat(200);
+        let made = renamed_for("x.md", &long);
+        assert!(made.len() <= NAME_LIMIT && made.ends_with(".md"));
+        assert!(in_step(&made, &long));
+        let numbered = fitted(&title_stem(&long), " (2).md");
+        assert!(in_step(&numbered, &long));
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_extension() {
+        assert_eq!(
+            renamed_for("a/old.markdown", "New: one"),
+            "New- one.markdown"
+        );
+        assert_eq!(renamed_for("old.MD", "  "), "untitled.MD");
+        assert_eq!(unnumbered("Plan (12)"), ("Plan", Some("12")));
+        assert_eq!(unnumbered("Plan (x)"), ("Plan (x)", None));
+    }
 
     #[test]
     fn one_file_holds_a_name_the_bound_one_else_the_first() {

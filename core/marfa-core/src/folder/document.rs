@@ -33,6 +33,19 @@ impl Document {
 }
 
 impl Presentation {
+    pub(super) fn front(&self) -> &Map<String, Value> {
+        &self.front
+    }
+
+    /// The same, showing `value` under `field`, or nothing there for `None`.
+    pub(super) fn with(mut self, field: &str, value: Option<Value>) -> Presentation {
+        match value {
+            Some(value) => self.front.insert(field.to_string(), value),
+            None => self.front.remove(field),
+        };
+        self
+    }
+
     pub(super) fn document(&self) -> Document {
         Document {
             front: self.front.clone(),

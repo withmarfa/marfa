@@ -292,7 +292,7 @@ fn running(_pid: i32) -> bool {
 }
 
 /// A person's save made between the folder's decision and its last look.
-fn save_meanwhile(dir: &Directory, target: &Path) {
+pub(crate) fn save_meanwhile(dir: &Directory, target: &Path) {
     if crate::fault::named("save-before-last-look").is_some()
         && target
             .extension()
@@ -307,20 +307,38 @@ fn save_meanwhile(dir: &Directory, target: &Path) {
 
 /// Named so the built-in lists never take it (`*.tmp`), and in the target's
 /// own directory, so the rename never crosses a volume.
-fn beside(dir: &Directory) -> io::Result<(File, PathBuf)> {
+fn aside_name() -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
+    PathBuf::from(format!(
+        ".marfa-{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn beside(dir: &Directory) -> io::Result<(File, PathBuf)> {
     loop {
-        let path = PathBuf::from(format!(
-            ".marfa-{}-{}.tmp",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let path = aside_name();
         match dir.open_file(
             &path,
             OFlags::RDWR | OFlags::CREATE | OFlags::EXCL,
             Mode::from_raw_mode(0o666),
         ) {
             Ok(file) => return Ok((file, path)),
+            // Left by a crashed process that had this id.
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Renames `target` out of the way, to a name of the kind [`beside`] makes in
+/// its own directory, replacing nothing. Answers that name.
+pub(crate) fn set_aside(dir: &Directory, target: &Path) -> io::Result<PathBuf> {
+    loop {
+        let aside = aside_name();
+        match rename_new_at(dir, target, dir, &aside) {
+            Ok(()) => return Ok(aside),
             // Left by a crashed process that had this id.
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error),

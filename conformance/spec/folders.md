@@ -2192,9 +2192,9 @@ When unbound files claim the same item ID and have distinct birth times, a devic
 
 ### `folders/copy-new-item`
 
-When a file copies another file's item ID, a device MUST create a separate item for the copy under a fresh ID.
+When a file copies another file's item ID, a device MUST create a separate item for the copy under a fresh ID, unless it is an old buffer of that item's file as `folders/moved-save-taken` says.
 
-**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`.
+**Tests:** `device/folders-identity.test.ts › makes a copy a new item with a fresh id`, `device/folders-placement.test.ts › makes a later copy at the old name a new item, and leaves the note as it was`.
 
 ### `folders/copy-write-id`
 
@@ -2356,9 +2356,9 @@ When a checked-out document is first bound, a device MUST place its item where t
 
 ### `folders/placement-rename-only`
 
-When a file is renamed without a content change, a device MUST send only its placement change.
+When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folders/rename-title`) or a file item whose title is its old file name.
 
-**Tests:** `device/folders-placement.test.ts › sends only the placement for a rename`.
+**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`.
 
 ### `folders/placement-not-document`
 
@@ -2376,7 +2376,7 @@ When another device's existing placement causes this device's placement create t
 
 When another device's accepted placement causes this device's move to be refused as stale, a device MUST follow the accepted placement.
 
-**Tests:** `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`.
+**Tests:** `device/folders-placement.test.ts › follows another Mac's move of the same file, giving its own way`, `› settles two Macs that rename one note's file for one new title`.
 
 ### `folders/placement-give-way-count`
 
@@ -2490,7 +2490,7 @@ When a pull assigns a numbered sibling path, a device MUST move the item's place
 
 When devices have received the same accepted placements and settled path conflicts, a device MUST stop sending unchanged placements.
 
-**Tests:** `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`.
+**Tests:** `device/folders-placement.test.ts › gives a path two Macs made a file at to the item placed there first, the same on every Mac`, `› settles two Macs that rename one note's file for one new title`.
 
 ### `folders/placement-outside`
 
@@ -2654,15 +2654,15 @@ When two remote placements swap paths occupied by each other's files, a device M
 
 ### `folders/placement-move-publish-first`
 
-When publishing a moved file at its new placement fails, a device MUST leave the old file intact at its previous path.
+If writing a moved file at its new placement fails, then a device MUST leave the file whole with the bytes it had, at its previous path where the rename that moves it has not been made and at its new path where it has.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › keeps the old file when publishing a move fails and leaves emptied directories after success`.
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps the moved file whole when writing it at its new placement fails, and leaves emptied directories after success`, `device/folders-placement.test.ts › keeps a file at its old path, whole, when the rename that moves it is refused`.
 
 ### `folders/placement-empty-directories`
 
 When a file moves to a new placement, a device MUST retain the directories emptied by that move.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › keeps the old file when publishing a move fails and leaves emptied directories after success`.
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps the moved file whole when writing it at its new placement fails, and leaves emptied directories after success`.
 
 ### `folders/placement-add-non-key`
 
@@ -2675,6 +2675,184 @@ When `GET /keys/current` answers `403 forbidden` for a credential that is not a 
 When a watch cannot read the current key, a device MUST suppress repeated key requests across successive passes.
 
 **Tests:** `device/folders-placement.test.ts › asks a key it could not read again at most once a minute while watching`.
+
+## A document's name and its title
+
+A Markdown document's file name and its item's title name one note. A file item keeps its title as `folders/binary-title-preserved` says.
+
+### `folders/title-in-step`
+
+When a device compares a Markdown document's file name with a title, a device MUST count them in step only where the title is not blank and the name, compared as `folders/name-comparison` says, is the one the device makes from the title with the file's extension, or that name numbered as `folders/placement-collision-number` numbers it.
+
+**Reason:** a title that cannot be a file name as written, such as one holding `/` or `:`, is in step with the name made from it, so renaming the file to that name changes nothing, and a name in another Unicode form, as macOS can give, never reads as a change.
+
+**Tests:** `device/folders-placement.test.ts › counts a name in another case, Unicode form or cleaned spelling as the title's`, `› sends no title for a rename to a name the title already makes, and the new name's for any other`, `› numbers the name a new title makes where another file has it`.
+
+### `folders/rename-title`
+
+When a person renames a Markdown document's file to a name not in step with the document's title, as its title line shows it or else as its item holds it, a device MUST send the new name without its extension as the item's title.
+
+**Reason:** links resolve by a title or by a file name (`folders/edge-filename-read`, `folders/edge-lookup-title-field`), so a note whose name and title differ answers to two names.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title, and rewrites only its title line`, `› sends a rename and an edit of the body made in one pass together`, `› sends a renamed note's title alone where its file shows no title line`, `› sends no title for a rename to a name the title already makes, and the new name's for any other`, `› sends a title typed in the line, then the new name's, when a rename and a line edit come in one pass`.
+
+### `folders/rename-typed-title-first`
+
+When a person renames a Markdown document's file and, in the same save, changes its title line from the title the file last showed to another nonblank title not in step with the new name, a device MUST send the line's title before the new name's title.
+
+**Reason:** both titles are the person's, so the item's history holds each, and the name's, the later, is the one the item keeps.
+
+**Tests:** `device/folders-placement.test.ts › sends a title typed in the line, then the new name's, when a rename and a line edit come in one pass`.
+
+### `folders/rename-title-line`
+
+When a device sends a renamed Markdown document's new name as its title and the file, still holding the bytes the device read, has a title line, a device MUST rewrite that line to the new title and keep every other byte of the file.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title, and rewrites only its title line`.
+
+### `folders/rename-title-wins`
+
+When a person renames a Markdown document's file after its item's title changed elsewhere and before the device next syncs the folder, a device MUST send the new name as the item's title on the version the file last showed.
+
+**Reason:** the rename is the later write. The server settles the two titles by the title property's merge policy (`types/merge-policy`, `versions/auto-resolved`), so where that is last-writer-wins, as it is for every type Marfa ships, the item takes the file's name, and the title it had stays in its history.
+
+**Tests:** `device/folders-placement.test.ts › keeps a person's rename over a title changed in Marfa before it synced, heard of first: %s`, `› sends a renamed note's title alone on the version its file last showed`.
+
+### `folders/title-renames-file`
+
+When a pull finds that a bound Markdown document's item title changed to a nonblank title its file name is not in step with, and the name was in step with the title the file last showed or that title was blank, a device MUST rename the file within its directory to the name the device makes from the new title.
+
+**Tests:** `device/folders-placement.test.ts › renames a note's file when its title changes in Marfa`, `› keeps the name when the title is made blank, and takes the next title's`.
+
+### `folders/title-line-renames`
+
+When the server takes a title a person typed in a bound Markdown document's title line, where the file's name is not in step with that title and was in step with the title the line showed before or that title was blank, a device MUST rename the file within its directory to the name the device makes from the new title.
+
+**Reason:** another Mac hears of the edit as a title changed in Marfa and renames its file (`folders/title-renames-file`), so the Mac where the edit was made renames its own.
+
+**Tests:** `device/folders-placement.test.ts › renames a note's file when its title line is changed in the file`.
+
+### `folders/title-line-refused-kept`
+
+If the server refuses the edit that carries a title typed in a document's title line, then a device MUST NOT move the item's placement or the file for that title.
+
+**Reason:** a placement moved for a title the item never took would leave every Mac's file named after a title the item does not have.
+
+**Tests:** `device/folders-placement.test.ts › keeps a note's name and placement when the server refuses its edited title line`.
+
+### `folders/title-rename-answered`
+
+While a document's item has a write this copy has not had answered, a device MUST NOT rename its file to follow its item's title.
+
+**Reason:** the title the copy shows until then is one the server may still refuse.
+
+**Tests:** `device/folders-placement.test.ts › renames a note's file when its title line is changed in the file`.
+
+### `folders/title-rename-placement`
+
+When a device renames a file to follow its item's title, a device MUST move the item's placement to the new path.
+
+**Tests:** `device/folders-placement.test.ts › renames a note's file when its title changes in Marfa`, `› renames a note's file when its title line is changed in the file`.
+
+### `folders/title-rename-refused-placement`
+
+If the rename that follows an item's title is refused, then a device MUST leave the item's placement at the path its file keeps.
+
+**Tests:** `device/folders-placement.test.ts › keeps the placement at the old name when the rename for a new title is refused`.
+
+### `folders/title-rename-refused-once`
+
+When the file system refuses the rename that follows an item's title, a device MUST NOT try that rename again while the folder stays open and the item's title and placement are unchanged.
+
+**Reason:** a volume that refuses such renames refuses them every time, and each try moves the placement and back, which a watch would repeat at every pass.
+
+**Tests:** `device/folders-placement.test.ts › asks a volume that refused the rename for a new title once, not at every pass of a watch`.
+
+### `folders/title-rename-numbered`
+
+When the name the device makes from a document's new title is taken by another file or by another item's placement, a device MUST rename the file to the first free name numbered as `folders/placement-collision-number` numbers it.
+
+**Tests:** `device/folders-placement.test.ts › numbers the name a new title makes where another file has it`.
+
+### `folders/title-rename-outside`
+
+If the name the device makes from a document's new title is a path the folder does not write at, then a device MUST NOT rename the file.
+
+**Reason:** the file goes on being written under the name it has, rather than left unwritten at a path the folder's lists leave out.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name of a note whose new title names a path the folder leaves out`.
+
+### `folders/title-blank-keeps-name`
+
+When a Markdown document's item title changes to a blank title, a device MUST NOT rename its file.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name when the title is made blank, and takes the next title's`.
+
+### `folders/title-drift-kept`
+
+If a bound Markdown document's file name is not in step with the nonblank title the file last showed, then a device MUST NOT rename the file when its item's title changes.
+
+**Reason:** a name that already differs from the title is one the device cannot tell from a choice, so only a rename by the person, which sets the title (`folders/rename-title`), brings the two back in step.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name of a note whose name was not its title`.
+
+### `folders/title-held-not-renamed`
+
+While a device holds a bound document's change unsent, a device MUST NOT rename its file to follow its item's title.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name of a file it holds for a refused change, and renames it once the change is taken`.
+
+### `folders/move-by-rename`
+
+When a pull moves a bound file whose bytes are still the ones it is bound to, a device MUST move it with a rename that replaces nothing, and its item's placement with it, before writing new bytes over it.
+
+**Reason:** an editor holding the file follows a rename, where it would lose a file written anew and deleted at its old path.
+
+**Tests:** `device/folders-placement.test.ts › moves a note's file by a rename when its title changes, so an editor holding it follows`, `› moves a file by a rename when another Mac moves its placement`.
+
+### `folders/moved-save-taken`
+
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
+
+**Reason:** it is an editor's save of the buffer it held before the move, and as a new item it would be a second note holding the person's edit.
+
+**Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`.
+
+### `folders/moved-save-held`
+
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds a change the device has not read, or one it holds unsent or refused, a device MUST hold the file, flagged `waiting`, without making an item of it, until the person changes or removes that file.
+
+**Reason:** the person decides which of the two to keep, however the item's file changes meanwhile.
+
+**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`.
+
+### `folders/moved-save-race`
+
+If an item's file is saved while a device puts an old buffer in its place, then a device MUST keep that save in the item's file and hold the old buffer, flagged `waiting`.
+
+**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file while an old buffer is taken over it`.
+
+### `folders/moved-save-kept-beside`
+
+If another file takes an item's file's path while a device puts an old buffer in its place, and the item's file was saved meanwhile, then a device MUST move that save to the first free numbered name beside the path, as `folders/placement-collision-number` numbers it.
+
+**Reason:** the save is the person's, and a name the folder treats as its own scratch would lose it.
+
+**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file under a numbered name where another file took its path meanwhile`.
+
+### `folders/moved-save-not-missing`
+
+When a device puts an old buffer in an item's file's place, a device MUST NOT count the item's file missing.
+
+**Tests:** `device/folders-placement.test.ts › counts nothing missing when it finishes taking an old buffer after a crash`.
+
+### `folders/moved-save-ends`
+
+When a person edits or moves the file a pull moved, a device MUST treat a later file at the path it was moved from as `folders/copy-new-item` says.
+
+**Reason:** a file made there after the person worked on the moved file is the person's own, not an old buffer of it.
+
+**Tests:** `device/folders-placement.test.ts › makes an old buffer saved at the old name a new item once the moved file was edited`.
 
 ## Ending a placement
 
@@ -2822,7 +3000,7 @@ When a settings-file write crashes before landing, a device MUST retain the old 
 
 When a person changes a file before a pull's final check, a device MUST preserve that save instead of overwriting, removing, or letting go of the file.
 
-**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it meanwhile`, `device/folders-placement.test.ts › leaves the file a move would take away where the person saved it meanwhile`, `device/folders-one-mac.test.ts › leaves a file it let go where the person saved it meanwhile`.
+**Tests:** `device/folders-identity.test.ts › leaves a file it would take away or rewrite where the person saved it meanwhile`, `device/folders-placement.test.ts › keeps a save made while a move writes the file, in the moved file`, `device/folders-one-mac.test.ts › leaves a file it let go where the person saved it meanwhile`.
 
 ### `folders/write-new-target-race`
 

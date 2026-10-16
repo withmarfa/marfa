@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -270,6 +272,69 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
         found.push((key[prefix.len()..].to_string(), value));
     }
     Ok(found)
+}
+
+/// One `meta` row per item a pull last moved, naming the path its file left,
+/// where an editor that did not follow the move may save it again, and the
+/// item's version when it moved. Cleared once the moved file is edited or
+/// moved by the person.
+const MOVED_FROM: &str = "folder_moved_from:";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MovedFrom {
+    pub path: String,
+    pub version: i64,
+}
+
+pub fn set_moved_from(
+    conn: &Connection,
+    item_id: &str,
+    moved: &MovedFrom,
+) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(moved).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{MOVED_FROM}{item_id}"), &value)
+}
+
+pub fn clear_moved_from(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{MOVED_FROM}{item_id}"))
+}
+
+/// Where each item's file last left in a pull's move, by item. A row that
+/// does not read names nothing.
+pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreError> {
+    Ok(under(conn, MOVED_FROM)?
+        .into_iter()
+        .filter_map(|(item, value)| Some((item, serde_json::from_str(&value).ok()?)))
+        .collect())
+}
+
+/// One `meta` row per old buffer held at the path a pull moved a file from:
+/// the bytes it was held at and why. It stands until those bytes change or
+/// the file goes.
+const STALE_WAIT: &str = "folder_stale_wait:";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StaleWait {
+    pub hash: String,
+    pub reason: String,
+}
+
+pub fn set_stale_wait(conn: &Connection, path: &str, wait: &StaleWait) -> Result<(), CoreError> {
+    let value = serde_json::to_string(wait).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{STALE_WAIT}{path}"), &value)
+}
+
+pub fn clear_stale_wait(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{STALE_WAIT}{path}"))
+}
+
+/// The old buffers held, by path. A row that does not read holds nothing.
+pub fn stale_waits(conn: &Connection) -> Result<HashMap<String, StaleWait>, CoreError> {
+    Ok(under(conn, STALE_WAIT)?
+        .into_iter()
+        .filter_map(|(path, value)| Some((path, serde_json::from_str(&value).ok()?)))
+        .collect())
 }
 
 /// The edge ends lines hold, each with whether the folder made its pin.
