@@ -45,15 +45,15 @@ When direct owner or local authority mints a key from a body naming no permissio
 
 While a credential's type map grants `write` on a type, the server MUST let the credential read items of that type wherever a `read` entry on it would.
 
-**Reason:** A map entry names the most a credential may do with a type, so a credential that writes a type is never given a second entry to read what it writes.
+**Reason:** A map entry names the most a credential may do with a type, and `write` is the level above `read`, so a credential that writes a type can read back what it writes.
 
-**Tests:** `compliance/type-scoped-access.test.ts › mixed permissions: read notes, read+write bookmarks`, `› wildcard write grants full access to all types`.
+**Tests:** `compliance/type-scoped-access.test.ts › note-write key can create and read notes but not bookmarks`, `› mixed permissions: read notes, read+write bookmarks`.
 
 ### `keys-and-oauth/edge-write-includes-read`
 
 While a credential's edge map grants `write` on an edge type, the server MUST let the credential read edges of that type wherever a `read` entry on it would.
 
-**Reason:** An edge map entry names the most a credential may do with an edge type, as a type map entry does with a type.
+**Reason:** An edge map entry names the most a credential may do with an edge type, and `write` is the level above `read`.
 
 **Tests:** `compliance/edge-permissions.test.ts › an edge type granted write is readable without a read entry`.
 
