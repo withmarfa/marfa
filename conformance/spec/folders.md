@@ -306,7 +306,7 @@ While a folder’s first sync waits, a device MUST refuse restoration of removal
 
 While a folder's first sync waits, a device MUST refuse removal of unmatched files with `first_sync_waiting`.
 
-**Tests:** `device/folders-unmatched.test.ts › is refused while a watch holds the folder, and while the first sync waits`.
+**Tests:** `device/folders-unmatched.test.ts › takes files away from a folder a watch holds, and is refused while the first sync waits`.
 
 ### `folders/first-sync-terminal-question`
 
@@ -3832,17 +3832,11 @@ When a folder is added and the registry’s existing contents cannot be parsed, 
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
-### `folders/one-folder-worker`
-
-While a process holds a folder for work, the CLI MUST refuse another working command on that folder with `reading_handle` before changing local or server state.
-
-**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder a watch holds`, `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`, `device/folders-unmatched.test.ts › is refused while a watch holds the folder, and while the first sync waits`.
-
 ### `folders/status-beside-watch`
 
 While another process watches a folder, the CLI MUST answer `folders status` without acquiring the folder’s working handle.
 
-**Tests:** `device/folders-one-mac.test.ts › lets one process work a folder at a time, and answers its status beside it`.
+**Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
 
 ### `folders/cross-folder-copy`
 
@@ -4088,7 +4082,7 @@ While a folder that a watch of every folder lists is not said to be watched, a d
 
 **Reason:** A program showing folder syncing tells a folder that is failing from one that is not listed. The code is the one `folders watch` reports, and the record holds no message, which may name a path.
 
-**Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`.
+**Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`, `device/folders-handover.test.ts › says a folder it let go is held by another process once that process keeps it`.
 
 ### `folders/watch-record-health`
 
@@ -4197,6 +4191,98 @@ If another process has held the lock on `folder-watch.lock` for more than three 
 When the record can be written again, a device MUST write it.
 
 **Tests:** `device/folder-watch-record.test.ts › says once that the record cannot be written, and the watch goes on and writes it once it can`.
+
+## Handing a folder to a command
+
+One process works a folder at a time. A command that works a folder, such as `folders confirm`, `folders restore`, `folders remove`, `folders push` or `folders unmatched --remove`, asks a running `folders watch` for the folder, and the watch lets it go and takes it back.
+
+### `folders/handover-asked`
+
+When a command that works a folder finds the folder held by a running `folders watch`, the CLI MUST work the folder once the watch lets it go.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-unmatched.test.ts › takes files away from a folder a watch holds, and is refused while the first sync waits`, `device/folders-handover.test.ts › hands a folder a watch holds to folders add over it`.
+
+### `folders/handover-wait-refused`
+
+If the process that holds a folder does not let it go within 10 seconds of a command asking for it, then the CLI MUST refuse the command with `reading_handle` before changing local or server state.
+
+**Reason:** A watch that is suspended or stuck never lets go, and a command must not wait on it without end.
+
+**Tests:** `device/folders-handover.test.ts › refuses a command once a suspended watch has not let the folder go in 10 seconds, and both go on once it resumes`.
+
+### `folders/handover-step-whole`
+
+If a command asks a running `folders watch` for a folder while the watch's pass waits on the server's answer to a write, then the CLI MUST let the folder go only after that answer is taken in.
+
+**Reason:** A write cut off mid-pass would be sent again, or its answer lost.
+
+**Tests:** `device/folders-handover.test.ts › lets a folder go only once the write its pass is sending is answered`.
+
+### `folders/handover-others-go-on`
+
+While a watch of every folder has let one folder go to a command, the CLI MUST keep the other folders it watches in step.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`.
+
+### `folders/handover-taken-back`
+
+When a command a running `folders watch` let a folder go to ends and the folder is still there, the CLI MUST keep the folder in step again without a restart.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-handover.test.ts › keeps watching a folder named through a linked parent after letting it go`, `device/folders-handover.test.ts › takes a folder back with the credential it began with, though the keychain cannot be read meanwhile`.
+
+### `folders/handover-removed-ends`
+
+When a command that a `folders watch` of one directory let the folder go to removes the folder, the CLI MUST end that watch with exit code 0.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
+
+### `folders/handover-unlisted-ends`
+
+When a command that a running `folders watch` let a folder go to takes the folder off the machine’s folder registry, the CLI MUST end the watch of that folder and leave it off the registry.
+
+**Tests:** `device/folders-handover.test.ts › keeps a folder off the list that the command took off it, ending its watch`.
+
+### `folders/handover-held-elsewhere`
+
+If a folder that a running `folders watch` let go is held by another process, with no command asking for it, for longer than 10 seconds, then the CLI MUST report the folder once as not watched, with `watching` false and `code` `reading_handle` in `--json`.
+
+**Reason:** Another watch or an app that takes the folder keeps it until it ends, so reporting the folder as let go to a command would hide why it is not synced.
+
+**Tests:** `device/folders-handover.test.ts › says a folder it let go is held by another process once that process keeps it`, `device/folders-handover.test.ts › says a folder its own watch let go is held by another process once that process keeps it`.
+
+### `folders/handover-let-go-said`
+
+When a running `folders watch` lets a folder go to a command, the CLI MUST report it once, with `watching` false and `code` `handed_over` in `--json`.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
+
+### `folders/handover-taken-back-said`
+
+When a running `folders watch` takes back a folder it let go to a command, the CLI MUST report it, with `watching` true and `taken_back` true in `--json`.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
+
+### `folders/handover-ended-asker`
+
+If a command that asked for a folder ends before the folder is let go, then the CLI MUST keep the watch of that folder in step.
+
+**Reason:** A command killed while it waits must not leave the folder unsynced.
+
+**Tests:** `device/folders-handover.test.ts › goes on syncing a folder whose asking command was killed before the watch let it go`.
+
+### `folders/handover-record-reason`
+
+While a running `folders watch` has let a folder go to a command, a device MUST list that folder in the record of folder watches with `watching` set to `false` and `reason` set to `handed_over`.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
+
+### `folders/one-watch-per-folder`
+
+While a process holds a folder, the CLI MUST refuse `folders watch` of that folder with `reading_handle`.
+
+**Reason:** A watch does not ask for a folder; two watches that asked would take one folder from each other in turn.
+
+**Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
 
 ## Taking in another folder’s file
 

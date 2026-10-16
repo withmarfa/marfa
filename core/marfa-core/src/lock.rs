@@ -24,6 +24,8 @@ pub struct WriterLock {
     /// is not `Sync` and the bindings hand a `Core` across threads.
     _claim: Mutex<Option<Connection>>,
     handle: Handle,
+    /// Another lock held for as long as this one.
+    _with: Option<Box<WriterLock>>,
 }
 
 impl WriterLock {
@@ -33,6 +35,7 @@ impl WriterLock {
             return Ok(WriterLock {
                 _claim: Mutex::new(None),
                 handle: Handle::Writer,
+                _with: None,
             });
         };
         let path = lock_path(store);
@@ -45,12 +48,23 @@ impl WriterLock {
     pub(crate) fn claim_directory(
         vfs: &crate::directory_vfs::DirectoryVfs,
     ) -> Result<Self, CoreError> {
-        Self::claim_connection(vfs.open(
-            DIRECTORY_LOCK,
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
-                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        )?)
+        Self::claim_named(vfs, DIRECTORY_LOCK, true)
+    }
+
+    /// The lock in the file `name` of the directory `vfs` reaches. Without
+    /// `create`, a file that is not there is an error.
+    #[cfg(unix)]
+    pub(crate) fn claim_named(
+        vfs: &crate::directory_vfs::DirectoryVfs,
+        name: &str,
+        create: bool,
+    ) -> Result<Self, CoreError> {
+        let mut flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        if create {
+            flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
+        }
+        Self::claim_connection(vfs.open(name, flags)?)
     }
 
     fn claim_connection(claim: Connection) -> Result<Self, CoreError> {
@@ -61,10 +75,12 @@ impl WriterLock {
             Ok(()) => Ok(WriterLock {
                 _claim: Mutex::new(Some(claim)),
                 handle: Handle::Writer,
+                _with: None,
             }),
             Err(error) if is_busy(&error) => Ok(WriterLock {
                 _claim: Mutex::new(None),
                 handle: Handle::Reader,
+                _with: None,
             }),
             Err(error) => Err(error.into()),
         }
@@ -76,7 +92,14 @@ impl WriterLock {
         WriterLock {
             _claim: Mutex::new(None),
             handle: Handle::Reader,
+            _with: None,
         }
+    }
+
+    /// This lock, holding `other` until it is dropped.
+    pub(crate) fn holding(mut self, other: WriterLock) -> WriterLock {
+        self._with = Some(Box::new(other));
+        self
     }
 
     pub fn handle(&self) -> Handle {

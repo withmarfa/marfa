@@ -1169,7 +1169,8 @@ export class CliFolder {
     private readonly options: {
       binary: string;
       url: string;
-      key: string;
+      /** Unnamed, a command reads the credential the keychain keeps. */
+      key?: string;
       /** The registry of the machine this folder is on (`folders/registry-lists-folders`). */
       registry?: string;
       /** A home whose own registry the binary finds, in place of either. */
@@ -1329,6 +1330,12 @@ export class CliFolder {
     ]);
   }
 
+  /** A folder command left running, such as one waiting for a watch to let
+   *  the folder go, which the caller stops. */
+  hold(args: string[], env: NodeJS.ProcessEnv = {}): HeldCommand {
+    return this.device().hold(args, "root", env);
+  }
+
   /** A watch left running, which the caller stops. */
   watch(): HeldCommand {
     return this.device().hold(["folders", "watch", this.dir], "root");
@@ -1364,7 +1371,11 @@ export class CliFolder {
   }
 
   private server(): string[] {
-    return ["--url", this.options.url, "--key", this.options.key];
+    return [
+      "--url",
+      this.options.url,
+      ...(this.options.key === undefined ? [] : ["--key", this.options.key]),
+    ];
   }
 
   private async run<T>(args: string[]): Promise<Outcome<T>> {

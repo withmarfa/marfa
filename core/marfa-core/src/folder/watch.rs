@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher};
 
+use super::handover::{self, Requests};
 use super::lists::Lists;
 use super::{
     Drained, Flagged, Folder, PullReport, SETTINGS_FILE, STATE_DIR, ScanReport, SettingsFileReport,
@@ -87,6 +88,17 @@ pub struct WatchPass {
     pub notices_changed: bool,
 }
 
+/// How a watch ended where nothing went wrong.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WatchEnd {
+    /// Its stop was raised.
+    Stopped,
+    /// A command asked for the folder, and the watch stopped at the end of
+    /// a step of its pass. The caller drops the folder, so the command can
+    /// take it, and opens it again once the command lets it go.
+    HandedOver,
+}
+
 /// Why a watch ended other than by its stop.
 #[derive(Debug)]
 pub enum WatchError<E> {
@@ -136,6 +148,8 @@ enum Wake {
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
     Ended(CoreError),
+    /// A command asks for the folder.
+    Asked,
 }
 
 impl Folder {
@@ -146,26 +160,62 @@ impl Folder {
     pub fn watch<E>(
         &self,
         stop: &AtomicBool,
-        mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
+        tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<(), WatchError<E>> {
+        self.watching(stop, None, tell).map(|_| ())
+    }
+
+    /// `watch`, but a command asking for the folder, as `open_asking` does,
+    /// ends it with `WatchEnd::HandedOver` once the step of the pass under
+    /// way ends, and at once where one asks as it starts.
+    pub fn watch_handing_over<E>(
+        &self,
+        stop: &AtomicBool,
+        tell: impl FnMut(WatchEvent) -> Result<(), E>,
+    ) -> Result<WatchEnd, WatchError<E>> {
+        let mut requests = Requests::of(&self.state_dir);
+        if requests.asked() {
+            return Ok(WatchEnd::HandedOver);
+        }
+        self.watching(stop, Some(requests), tell)
+    }
+
+    fn watching<E>(
+        &self,
+        stop: &AtomicBool,
+        requests: Option<Requests>,
+        mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
+    ) -> Result<WatchEnd, WatchError<E>> {
         // Only a person's go-ahead lets it write or send, and none can reach
         // a folder this watch holds.
         self.refuse_while_waiting()?;
         // Raised as the passes end, whatever ended them, so the follow and a
         // hydration it runs end with them.
         let ended = AtomicBool::new(false);
+        let asked = AtomicBool::new(false);
         let (sender, wakes) = mpsc::channel::<Wake>();
         let health = Mutex::new(FollowHealth::default());
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
             let follower = scope.spawn(|| follow(self, &ended, server_wakes, &health));
             let reporter = scope.spawn(|| self.health_follow(&ended));
+            let looker = requests.map(|requests| {
+                let (wakes, ended, asked) = (sender.clone(), &ended, &asked);
+                scope.spawn(move || look(requests, ended, asked, wakes))
+            });
             let watched = {
                 // A guard, so a pass or a `tell` that panics still ends the
                 // follow: the scope waits for it before the panic goes on.
                 let _ending = Raise(&ended);
-                self.watch_files(stop, sender, &wakes, &mut tell, &health)
+                self.watch_files(stop, &asked, sender, &wakes, &mut tell, &health)
             };
+            if let Some(looker) = looker {
+                looker.join().map_err(|_| {
+                    WatchError::Unwatchable(
+                        "looking for a command asking for the folder ended in a fault".into(),
+                    )
+                })?;
+            }
             reporter.join().map_err(|_| {
                 WatchError::Unwatchable("folder health reporting ended in a fault".into())
             })?;
@@ -174,18 +224,19 @@ impl Folder {
                     "the follow of the server's changes ended in a fault".into(),
                 )
             })?;
-            watched.and(followed.map_err(WatchError::Core))
+            watched.and_then(|end| followed.map(|()| end).map_err(WatchError::Core))
         })
     }
 
     fn watch_files<E>(
         &self,
         stop: &AtomicBool,
+        asked: &AtomicBool,
         sender: mpsc::Sender<Wake>,
         events: &mpsc::Receiver<Wake>,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
         health: &Mutex<FollowHealth>,
-    ) -> Result<(), WatchError<E>> {
+    ) -> Result<WatchEnd, WatchError<E>> {
         let absolute = std::path::absolute(&self.root)
             .map_err(|error| WatchError::Unwatchable(error.to_string()))?;
         let dir = &absolute;
@@ -212,6 +263,9 @@ impl Folder {
         loop {
             if stop.load(Ordering::SeqCst) {
                 break;
+            }
+            if asked.load(Ordering::SeqCst) {
+                return Ok(WatchEnd::HandedOver);
             }
             match events.recv_timeout(TICK) {
                 Ok(Wake::File(Ok(event))) => {
@@ -248,6 +302,7 @@ impl Folder {
                     return Err(WatchError::CredentialRefused(error));
                 }
                 Ok(Wake::Ended(error)) => return Err(WatchError::FollowEnded(error)),
+                Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -260,7 +315,7 @@ impl Folder {
             if full {
                 last_full = Some(Instant::now());
             }
-            let passed = self.pass(full, &mut telling, tell, health);
+            let passed = self.pass(full, asked, &mut telling, tell, health);
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 self.health_observe(false, full, None, Some(error), false);
             }
@@ -280,17 +335,25 @@ impl Folder {
             gate.passed(Instant::now());
             lists = self.settings().and_then(|settings| settings.lists()).ok();
         }
-        Ok(())
+        Ok(WatchEnd::Stopped)
     }
 
+    /// Ends early, telling nothing, where a command asks for the folder: each
+    /// step has committed what it did, so the next pass, or the command,
+    /// takes up from there.
     fn pass<E>(
         &self,
         full: bool,
+        asked: &AtomicBool,
         telling: &mut Telling,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
         health: &Mutex<FollowHealth>,
     ) -> Result<(), WatchError<E>> {
+        let asking = || asked.load(Ordering::SeqCst);
         let settings = self.send_settings_edit()?;
+        if asking() {
+            return Ok(());
+        }
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
@@ -299,6 +362,9 @@ impl Folder {
             if let Some(event) = telling.waiting(settings, scan) {
                 tell(event).map_err(WatchError::Told)?;
             }
+            return Ok(());
+        }
+        if asking() {
             return Ok(());
         }
         let generation = health.lock().expect("follow health lock").generation;
@@ -310,6 +376,9 @@ impl Folder {
         };
         if let Some(event) = reached {
             tell(event).map_err(WatchError::Told)?;
+        }
+        if asking() {
+            return Ok(());
         }
         let pull = self.pull()?;
         let problem = drain
@@ -458,6 +527,18 @@ fn follow(
         }
     }
     Ok(())
+}
+
+/// Raises `asked` once a command asks for the folder, and wakes the watch.
+fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: mpsc::Sender<Wake>) {
+    while !ended.load(Ordering::SeqCst) {
+        if requests.asked() {
+            asked.store(true, Ordering::SeqCst);
+            let _ = wakes.send(Wake::Asked);
+            return;
+        }
+        wait_unless_stopped(ended, handover::LOOK);
+    }
 }
 
 fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {

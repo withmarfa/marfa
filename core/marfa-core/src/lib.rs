@@ -64,8 +64,8 @@ pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};
 pub use folder::{
     CaughtUp, Confirmed, Drained, FOLDER_TYPE, FileStatus, FirstSync, Folder, Paused, PullReport,
     Removal, Restored, ScanReport, SendReport, Settings, SettingsFileReport, StatusReport,
-    StorageCause, SyncReport, Synced, Unmatched, UnmatchedRemoved, WatchError, WatchEvent,
-    WatchPass,
+    StorageCause, SyncReport, Synced, Unmatched, UnmatchedRemoved, WatchEnd, WatchError,
+    WatchEvent, WatchPass,
 };
 pub use folder_settings::FolderRow;
 pub use lock::Handle;

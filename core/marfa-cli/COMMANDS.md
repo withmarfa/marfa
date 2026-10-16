@@ -3180,7 +3180,7 @@ marfa folders push [OPTIONS] <DIR>
 
 ### marfa folders unmatched
 
-List the files the folder keeps whose items its search no longer matches, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. Refused while another process, such as a watch, works the folder. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+List the files the folder keeps whose items its search no longer matches, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
 
 ```text
 marfa folders unmatched [OPTIONS] <DIR>
@@ -3260,7 +3260,7 @@ marfa folders revoke [OPTIONS] <ID>
 
 ### marfa folders watch
 
-Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system.
+Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system. A command that works a folder the watch holds, such as `folders confirm`, asks for it: the watch lets it go at the end of the step of its pass under way, and takes it back once the command ends.
 
 ```text
 marfa folders watch [OPTIONS] [DIR]

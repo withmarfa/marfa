@@ -106,10 +106,11 @@ pub enum FoldersCommand {
     /// and only while its bytes are the ones the folder wrote and no edit of
     /// it waits to be sent; any other is kept and said. The item stays in
     /// Marfa as it was, and the folder's placement of it ends, sent at the
-    /// next push. Takes away no `held`, `outside` or `unreached` file. Refused
-    /// while another process, such as a watch, works the folder. Delete an
-    /// unmatched file with this, not by hand: a file deleted by hand sends a
-    /// delete of its item.
+    /// next push. Takes away no `held`, `outside` or `unreached` file. With
+    /// `--remove`, a watch holding the folder lets it go while this runs, and
+    /// this is refused if the process holding the folder does not let it go
+    /// within 10 seconds. Delete an unmatched file with this, not by hand: a
+    /// file deleted by hand sends a delete of its item.
     Unmatched {
         /// The folder.
         dir: PathBuf,
@@ -138,6 +139,9 @@ pub enum FoldersCommand {
     /// Warns on standard error, once per folder, and goes on, if a folder's
     /// directory is in iCloud Drive, a cloud service's synced location or a
     /// network file system.
+    /// A command that works a folder the watch holds, such as `folders
+    /// confirm`, asks for it: the watch lets it go at the end of the step of
+    /// its pass under way, and takes it back once the command ends.
     Watch {
         /// The directory to watch, recursively. Without one, the command
         /// watches every folder the folder registry lists, in one process.
@@ -159,7 +163,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
-                .map_err(held(&dir))?;
+                .map_err(asked(&dir))?;
             storage::warn(&folder);
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
@@ -231,23 +235,25 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     .join("\n")
             })
         }
-        FoldersCommand::Remove { dir } => match Folder::remove_at(&dir).map_err(held(&dir))? {
-            Removal::Deleted(dir) => output::report(
-                &serde_json::json!({ "dir": dir, "removed": true }),
-                json,
-                || format!("{} is no longer a folder; its files stay", dir.display()),
-            ),
-            Removal::Unlisted { dir, reason } => output::report(
-                &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
-                json,
-                || {
-                    format!(
-                        "{} was taken off the list; nothing was deleted because {reason}",
-                        dir.display()
-                    )
-                },
-            ),
-        },
+        FoldersCommand::Remove { dir } => {
+            match Folder::remove_at_asking(&dir).map_err(asked(&dir))? {
+                Removal::Deleted(dir) => output::report(
+                    &serde_json::json!({ "dir": dir, "removed": true }),
+                    json,
+                    || format!("{} is no longer a folder; its files stay", dir.display()),
+                ),
+                Removal::Unlisted { dir, reason } => output::report(
+                    &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
+                    json,
+                    || {
+                        format!(
+                            "{} was taken off the list; nothing was deleted because {reason}",
+                            dir.display()
+                        )
+                    },
+                ),
+            }
+        }
         FoldersCommand::Status { dir } => {
             let report = Folder::status_of(&dir)?;
             output::report(&report, json, || describe_status(&report))
@@ -259,7 +265,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_health(&report))
         }
         FoldersCommand::Confirm { dir } => {
-            let folder = Folder::open(&dir, None).map_err(held(&dir))?;
+            let folder = working(&dir, None)?;
             // The first sync goes first; a removal paused beside it waits for
             // the next confirm.
             let first_sync = folder.confirm_first_sync()?;
@@ -297,7 +303,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             )
         }
         FoldersCommand::Restore { dir } => {
-            let restored = opened(&dir, named.session_if_named()?)?.restore()?;
+            let restored = working(&dir, named.session_if_named()?)?.restore()?;
             output::report(&restored, json, || {
                 format!(
                     "{} file(s) written back; {} item(s) restored, sent at the next push",
@@ -306,26 +312,26 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Hydrate { dir } => {
-            let folder = opened(&dir, Some(named.session()?))?;
+            let folder = working(&dir, Some(named.session()?))?;
             let report = folder.hydrate()?;
             output::report(&report, json, || {
                 format!("{} item(s) into {}", report.items, dir.display())
             })
         }
         FoldersCommand::Scan { dir } => {
-            let report = Folder::open(&dir, None).map_err(held(&dir))?.scan()?;
+            let report = working(&dir, None)?.scan()?;
             output::report(&report, json, || describe_scan(&report))
         }
         FoldersCommand::Pull { dir } => {
             // Optional: without a server, unheld bytes are reported, not fetched.
-            let report = opened(&dir, named.session_if_named()?)?.pull()?;
+            let report = working(&dir, named.session_if_named()?)?.pull()?;
             output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push {
             dir,
             send_only: true,
         } => {
-            let folder = opened(&dir, Some(named.session()?))?;
+            let folder = working(&dir, Some(named.session()?))?;
             let SendReport {
                 hydrated,
                 settings,
@@ -364,7 +370,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             dir,
             send_only: false,
         } => {
-            let folder = opened(&dir, Some(named.session()?))?;
+            let folder = working(&dir, Some(named.session()?))?;
             let SyncReport {
                 hydrated,
                 settings,
@@ -449,7 +455,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Watch {
             dir: Some(dir),
             r#for,
-        } => watch::watch(&dir, named.session()?, r#for.map(Duration::from_secs), json),
+        } => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
         FoldersCommand::Watch { dir: None, r#for } => watch::watch_every(named, r#for, json),
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
         FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
@@ -474,7 +480,7 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
             "`folders unmatched --remove` asks only at a terminal and without --json, and otherwise takes away nothing; pass --yes to confirm it".into(),
         ));
     }
-    let folder = Folder::open(dir, None).map_err(held(dir))?;
+    let folder = working(dir, None)?;
     let files = folder.unmatched_files()?;
     let going: Vec<String> = files
         .iter()
@@ -671,9 +677,54 @@ fn held(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
     }
 }
 
+fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
+    move |error| match error {
+        CoreError::ReadingHandle => CliError::FolderNotHandedOver(dir.to_path_buf()),
+        other => other.into(),
+    }
+}
+
+/// The folder, for a watch: refused at once where another process holds it,
+/// since a watch that asked would take a folder from another watch.
 pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let (server, renew) = Session::split(session);
     let folder = Folder::open(dir, server).map_err(held(dir))?;
+    renewing(folder.core(), renew);
+    Ok(folder)
+}
+
+/// A session's renewal, shared by every open of one folder a watch makes.
+pub type Renewal = std::sync::Arc<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
+
+/// The server and renewal of `session`, kept for a watch to open its folder
+/// again with, rather than reading the credential each time.
+pub fn kept_session(session: Session) -> (marfa_core::Server, Option<Renewal>) {
+    let Session { server, renew } = session;
+    (server, renew.map(Renewal::from))
+}
+
+/// The folder, for a watch, opened with a kept server and renewal: refused
+/// at once where another process holds it.
+pub fn reopened(
+    dir: &Path,
+    server: &marfa_core::Server,
+    renew: Option<&Renewal>,
+) -> Result<Folder, CliError> {
+    let folder = Folder::open(dir, Some(server.clone())).map_err(held(dir))?;
+    if let Some(renew) = renew {
+        let renew = std::sync::Arc::clone(renew);
+        folder
+            .core()
+            .renew_credential_with(Box::new(move |refused| renew(refused)));
+    }
+    Ok(folder)
+}
+
+/// The folder, for a command that works it: a watch holding it is asked to
+/// let it go, and takes it back once this command ends.
+fn working(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
+    let (server, renew) = Session::split(session);
+    let folder = Folder::open_asking(dir, server).map_err(asked(dir))?;
     renewing(folder.core(), renew);
     Ok(folder)
 }
