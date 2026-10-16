@@ -429,6 +429,8 @@ const TypeSchemaResponse = z
       ),
     version: z
       .number()
+      .int()
+      .min(0)
       .describe("The version number the type was last saved with."),
     display_hints: DisplayHintsSchema.optional().describe(DISPLAY_HINTS),
     link_field: LinkFieldSchema.optional(),

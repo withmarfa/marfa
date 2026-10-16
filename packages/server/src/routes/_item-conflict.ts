@@ -11,7 +11,11 @@ export const ConflictSnapshotSchema = z
     // The row, because a create names a natural key and not an id: refused
     // here, it learns which row the key resolved from this and nothing else.
     id: z.string().describe("The ID of the item."),
-    version: z.number().describe("The item version this side shows."),
+    version: z
+      .number()
+      .int()
+      .min(1)
+      .describe("The item version this side shows."),
     properties: z
       .record(z.string(), z.unknown())
       .describe(AT_THIS_VERSION.properties),
