@@ -126,6 +126,32 @@ describe("a write that names an instance", () => {
     expect(plain.status).toBe(400);
   });
 
+  it("refuses another instance before a body nested too deep, and the depth before a missing credential", async () => {
+    let deep: unknown = "x";
+    for (let level = 0; level < 70; level++) deep = [deep];
+    const body = { type: "core.note", properties: { body: "deep", deep } };
+    const elsewhere = await write("/items", {
+      body,
+      headers: { [HEADER]: OTHER },
+    });
+    expect(elsewhere.status).toBe(409);
+    expect(await codeOf(elsewhere)).toBe("instance_changed");
+    // The witnesses: the same body is refused for its depth naming this
+    // instance or none, and before the credential when there is none.
+    for (const headers of [{ [HEADER]: own }, {}] as Record<string, string>[]) {
+      const res = await write("/items", { body, headers });
+      expect(res.status, JSON.stringify(headers)).toBe(400);
+      expect(await codeOf(res)).toBe("validation_error");
+    }
+    const anonymous = await write("/items", {
+      body,
+      key: null,
+      headers: { [HEADER]: OTHER },
+    });
+    expect(anonymous.status).toBe(400);
+    expect(await codeOf(anonymous)).toBe("validation_error");
+  });
+
   it("keeps no refusal under an Idempotency-Key, and replays an answer whatever instance header the repeat carries", async () => {
     const key = `instance-${generateId()}`;
     const body = note(`keyed ${key}`);

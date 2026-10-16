@@ -24,6 +24,7 @@ import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { AppConfig } from "./config.js";
 import { DEFAULT_KEYS_RATE_LIMIT, getPermissionBundles } from "./config.js";
+import type { Context } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import {
   copyReadBoundary,
@@ -87,7 +88,10 @@ import { ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/items.js";
 import { TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/types.js";
 import { BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./bulk-actions/types.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
-import { instanceHeaderMiddleware } from "./middleware/instance-header.js";
+import {
+  INSTANCE_HEADER,
+  instanceHeaderMiddleware,
+} from "./middleware/instance-header.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import {
@@ -408,7 +412,18 @@ export function createApp(
       return requestBodyLimit(c, next);
     }),
   );
-  app.use("*", jsonDepthLimit);
+  // A write naming an instance has its depth judged after the instance, so
+  // another instance refuses it for that alone (`instance/write-instance-order`).
+  // Without a credential the depth still comes first, as for any write.
+  const namesInstance = (c: Context<AppEnv>) =>
+    c.req.header(INSTANCE_HEADER) !== undefined &&
+    !/^\/auth(?:\/|$)/.test(c.req.path);
+  app.use(
+    "*",
+    createMiddleware<AppEnv>((c, next) =>
+      namesInstance(c) ? next() : jsonDepthLimit(c, next),
+    ),
+  );
 
   // Public routes (before auth) — mounted directly to avoid prefix matching issues.
   //
@@ -639,6 +654,12 @@ export function createApp(
   // Ahead of the idempotency claim, so a write refused for naming another
   // instance is never recorded under its key and replayed.
   app.use("*", instanceHeaderMiddleware(instanceId));
+  app.use(
+    "*",
+    createMiddleware<AppEnv>((c, next) =>
+      namesInstance(c) ? jsonDepthLimit(c, next) : next(),
+    ),
+  );
 
   // `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`, so a client that
   // lost a response can ask what its first attempt did instead of asking

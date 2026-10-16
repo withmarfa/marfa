@@ -130,7 +130,7 @@ describe("a write that names an instance", () => {
     expect(await held(`malformed ${ctx.runId}`)).toBe(0);
   });
 
-  it("answers 401 before it judges the header, and judges it before the write's own refusals", async () => {
+  it("answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals", async () => {
     for (const value of [OTHER, "not-an-instance"]) {
       const res = await send("/items", {
         body: note("no credential"),
@@ -159,6 +159,26 @@ describe("a write that names an instance", () => {
     });
     expect(malformed.status).toBe(400);
     expect(await codeOf(malformed)).toBe("validation_error");
+
+    // A body nested past 64 levels: another instance first, the depth before
+    // a missing credential.
+    let deep: unknown = "x";
+    for (let level = 0; level < 70; level++) deep = [deep];
+    const nested = { type: "core.note", properties: { body: "deep", deep } };
+    const deepElsewhere = await send("/items", {
+      body: nested,
+      headers: { [HEADER]: OTHER },
+    });
+    expect(deepElsewhere.status).toBe(409);
+    expect(await codeOf(deepElsewhere)).toBe("instance_changed");
+    for (const [headers, credential] of [
+      [{ [HEADER]: own }, true],
+      [{ [HEADER]: OTHER }, false],
+    ] as const) {
+      const res = await send("/items", { body: nested, headers, credential });
+      expect(res.status, JSON.stringify({ credential })).toBe(400);
+      expect(await codeOf(res)).toBe("validation_error");
+    }
 
     // The witnesses: without the header each is refused for itself.
     expect(

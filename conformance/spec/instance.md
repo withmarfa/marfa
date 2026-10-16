@@ -90,15 +90,15 @@ The server MUST NOT refuse a write for naming no `X-Marfa-Instance-Id`.
 
 If a write names an `X-Marfa-Instance-Id` that is empty, repeated, or not one lowercase UUIDv7, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/instance-header.test.ts › refuses an empty, repeated, uppercase or malformed instance id 400 validation_error`, `› answers 401 before it judges the header, and judges it before the write's own refusals`.
+**Tests:** `compliance/instance-header.test.ts › refuses an empty, repeated, uppercase or malformed instance id 400 validation_error`, `› answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`.
 
 ### `instance/write-instance-order`
 
-When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, an answer recorded under its `Idempotency-Key` among them.
+When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`, or `400` before it to a body nested more than 64 levels; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels and an answer recorded under its `Idempotency-Key` among them.
 
 **Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
 
-**Tests:** `compliance/instance-header.test.ts › answers 401 before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
 
 ### `instance/write-instance-not-recorded`
 
