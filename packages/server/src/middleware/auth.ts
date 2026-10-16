@@ -937,6 +937,10 @@ export function writableRowOf<T extends { type: string; state: string }>(
 ): T {
   if (!row || !mayRead(row.type)) throw notFound();
   if (row.state === "trashed") {
+    // The refusal says the row is in the bin, so a kept answer replays only
+    // while the key may still read the row.
+    if ("id" in row && typeof row.id === "string")
+      rememberItemSubject({ id: row.id, type: row.type }, "read");
     const refusal = notFound();
     throw new MarfaError(refusal.code, refusal.message, {
       ...refusal.details,

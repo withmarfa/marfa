@@ -2205,7 +2205,7 @@ export function itemRoutes(storage: Storage) {
           () =>
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
@@ -2259,7 +2259,7 @@ export function itemRoutes(storage: Storage) {
           () =>
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
@@ -2332,7 +2332,7 @@ export function itemRoutes(storage: Storage) {
           () =>
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
 
@@ -2428,7 +2428,7 @@ export function itemRoutes(storage: Storage) {
           () =>
             new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
         );
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
         // The metadata layer reaches the same row the properties doors
         // guard, so it answers to the same row-level rule.
         const written = await storage.metadata.removeTag(id, tag);

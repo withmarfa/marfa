@@ -75,6 +75,8 @@ pub enum ItemsCommand {
         /// One or more tags.
         #[arg(required = true)]
         tags: Vec<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Take one tag off an item.
     Untag {
@@ -82,6 +84,8 @@ pub enum ItemsCommand {
         id: String,
         /// The tag to take off.
         tag: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// The edges leaving an item.
     Edges(ItemEdgesArgs),
@@ -918,8 +922,16 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         } => idempotency.apply(transition_request(id, *state)),
         ItemsCommand::Purge { id, idempotency } => idempotency.apply(purge_request(id)),
         ItemsCommand::Versions { id, page } => versions_request(id, page),
-        ItemsCommand::Tag { id, tags } => tag_request(id, tags),
-        ItemsCommand::Untag { id, tag } => untag_request(id, tag),
+        ItemsCommand::Tag {
+            id,
+            tags,
+            idempotency,
+        } => idempotency.apply(tag_request(id, tags)),
+        ItemsCommand::Untag {
+            id,
+            tag,
+            idempotency,
+        } => idempotency.apply(untag_request(id, tag)),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Add(args) => return add(args, remote, out),

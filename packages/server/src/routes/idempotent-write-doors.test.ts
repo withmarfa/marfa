@@ -242,18 +242,6 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/bulk-actions/jobs/:id/cancel":
     "requests cancellation of a job, and asking twice is already a no-op on a terminal job",
   "POST /edges/bulk": "upserts on the triple, so a retry converges",
-  "POST /items/:id/tags":
-    "metadata layer; a tag set is written whole, so a repeat is already a no-op",
-  "DELETE /items/:id/tags/:tag":
-    "metadata layer; removing an absent tag is already a no-op",
-  "PUT /items/:id/metadata":
-    "metadata layer; a replace is already a no-op on repeat",
-  "PATCH /items/:id/metadata":
-    "metadata layer; a merge of the same map is already a no-op",
-  "PUT /items/:id/extensions/:namespace":
-    "extension layer; a replace is already a no-op on repeat",
-  "DELETE /items/:id/extensions/:namespace":
-    "extension layer; removing an absent namespace is already a no-op",
 };
 
 describe("the reference says which doors honor the header", () => {

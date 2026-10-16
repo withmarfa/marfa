@@ -895,6 +895,12 @@ const DOORS = [
   "PATCH /folders/{id}",
   "POST /folders/{id}/revoke",
   "POST /items/bulk-actions",
+  "POST /items/{id}/tags",
+  "DELETE /items/{id}/tags/{tag}",
+  "PUT /items/{id}/metadata",
+  "PATCH /items/{id}/metadata",
+  "PUT /items/{id}/extensions/{namespace}",
+  "DELETE /items/{id}/extensions/{namespace}",
 ];
 
 interface Prepared {
@@ -992,6 +998,40 @@ async function prepare(door: string): Promise<Prepared> {
         },
       };
     }
+    case "POST /items/{id}/tags":
+      return {
+        method,
+        path: `/items/${(await note()).id}/tags`,
+        body: { tags: ["replay-door"] },
+      };
+    case "DELETE /items/{id}/tags/{tag}": {
+      const item = await note(undefined, { tags: ["replay door"] });
+      return {
+        method,
+        path: `/items/${item.id}/tags/${encodeURIComponent("replay door")}`,
+      };
+    }
+    case "PUT /items/{id}/metadata":
+    case "PATCH /items/{id}/metadata":
+      return {
+        method,
+        path: `/items/${(await note()).id}/metadata`,
+        body: { tags: ["replay-door"] },
+      };
+    case "PUT /items/{id}/extensions/{namespace}":
+      return {
+        method,
+        path: `/items/${(await note()).id}/extensions/replay-door`,
+        body: { written: true },
+      };
+    case "DELETE /items/{id}/extensions/{namespace}": {
+      const item = await note();
+      expect(
+        (await client.setItemExtension(item.id, "replay-door", { kept: true }))
+          .ok,
+      ).toBe(true);
+      return { method, path: `/items/${item.id}/extensions/replay-door` };
+    }
     default:
       throw new Error(`no request is written for ${door}`);
   }
@@ -1031,6 +1071,182 @@ describe("guards the replay on every idempotent write operation", () => {
   });
 });
 
+interface ChangedBetween {
+  /** The request sent twice under one key. */
+  send: Prepared;
+  /** What another credential changes between the two sends. */
+  between: () => Promise<void>;
+  /** The item's state once the repeat is answered: the change made between. */
+  kept: () => Promise<void>;
+}
+
+/**
+ * A metadata or extension write sent twice under one key, with another
+ * credential's change to the same tags or namespace landing between the two.
+ * A repeat applied a second time would undo that change.
+ */
+async function changedBetween(door: string): Promise<ChangedBetween> {
+  const [method] = door.split(" ") as [Method, string];
+  const tags = async (id: string): Promise<string[]> => {
+    const read = await client.getMetadata(id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    return read.data.metadata.tags;
+  };
+  const namespace = async (id: string): Promise<unknown> => {
+    const read = await client.getItemExtension(id, "replay-between");
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    return read.data.data;
+  };
+  const ok = async (answer: Promise<Answer>): Promise<void> => {
+    const settled = await answer;
+    expect(settled.status, JSON.stringify(settled.error)).toBe(200);
+  };
+  switch (door) {
+    case "POST /items/{id}/tags": {
+      const item = await note();
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/tags`,
+          body: { tags: ["added"] },
+        },
+        between: () => ok(client.removeTag(item.id, "added")),
+        kept: async () => expect(await tags(item.id)).not.toContain("added"),
+      };
+    }
+    case "DELETE /items/{id}/tags/{tag}": {
+      const item = await note(undefined, { tags: ["taken off"] });
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/tags/${encodeURIComponent("taken off")}`,
+        },
+        between: () => ok(client.addTags(item.id, ["taken off"])),
+        kept: async () => expect(await tags(item.id)).toContain("taken off"),
+      };
+    }
+    case "PUT /items/{id}/metadata": {
+      const item = await note();
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/metadata`,
+          body: { tags: ["mine"] },
+        },
+        between: () =>
+          ok(client.replaceMetadata(item.id, { tags: ["theirs"] })),
+        kept: async () => expect(await tags(item.id)).toEqual(["theirs"]),
+      };
+    }
+    case "PATCH /items/{id}/metadata": {
+      const item = await note();
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/metadata`,
+          body: { tags: ["merged"] },
+        },
+        between: () => ok(client.removeTag(item.id, "merged")),
+        kept: async () => expect(await tags(item.id)).not.toContain("merged"),
+      };
+    }
+    case "PUT /items/{id}/extensions/{namespace}": {
+      const item = await note();
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/extensions/replay-between`,
+          body: { by: "the first device" },
+        },
+        between: () =>
+          ok(
+            client.setItemExtension(item.id, "replay-between", {
+              by: "another device",
+            }),
+          ),
+        kept: async () =>
+          expect(await namespace(item.id)).toEqual({ by: "another device" }),
+      };
+    }
+    case "DELETE /items/{id}/extensions/{namespace}": {
+      const item = await note();
+      await ok(
+        client.setItemExtension(item.id, "replay-between", {
+          by: "the first device",
+        }),
+      );
+      return {
+        send: {
+          method,
+          path: `/items/${item.id}/extensions/replay-between`,
+        },
+        between: () =>
+          ok(
+            client.setItemExtension(item.id, "replay-between", {
+              by: "another device",
+            }),
+          ),
+        kept: async () =>
+          expect(await namespace(item.id)).toEqual({ by: "another device" }),
+      };
+    }
+    default:
+      throw new Error(`no change is written for ${door}`);
+  }
+}
+
+describe("a metadata or extension write sent again under its key", () => {
+  it.each([
+    "POST /items/{id}/tags",
+    "DELETE /items/{id}/tags/{tag}",
+    "PUT /items/{id}/metadata",
+    "PATCH /items/{id}/metadata",
+    "PUT /items/{id}/extensions/{namespace}",
+    "DELETE /items/{id}/extensions/{namespace}",
+  ])(
+    "%s is answered from the record and keeps a change made between the two",
+    async (door) => {
+      const actor = await mint();
+      const { send, between, kept } = await changedBetween(door);
+      const ask = keyed(actor, send.method, send.path, send.body);
+      const first = await ask();
+      expectFirst(first, 200);
+      await between();
+      expectReplay(await ask(), first);
+      await kept();
+    },
+  );
+
+  it("judges a tag replay by the row's current type after a retype", async () => {
+    const actor = await mint();
+    const item = await note();
+    const ask = keyed(actor, "POST", `/items/${item.id}/tags`, {
+      tags: ["retyped"],
+    });
+    const first = await ask();
+    expectFirst(first, 200);
+    const current = await client.getItem(item.id);
+    expect(current.status).toBe(200);
+    const moved = await client.updateItem(item.id, {
+      version: current.data.item.version,
+      type: "core.task",
+      retype: true,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expectReplay(await ask(), first);
+
+    await grant(actor, {
+      type_permissions: { "core.note": "write", "core.task": "read" },
+    });
+    expectRefused(await ask(), 403, "type_not_permitted");
+
+    await grant(actor, {
+      type_permissions: { "core.note": "write", "core.task": "write" },
+    });
+    expectReplay(await ask(), first);
+  });
+});
+
 describe("the key on operations that do not take it, and on a refused write", () => {
   it("takes no Idempotency-Key on the operations that do not list it, and runs each repeat", async () => {
     const document = await client.openApiDocument();
@@ -1062,56 +1278,6 @@ describe("the key on operations that do not take it, and on a refused write", ()
       rows.data.data,
       "a repeat of POST /items/bulk under one key was served from a record",
     ).toHaveLength(2);
-
-    // POST /items/{id}/tags: the tag is removed between the two, so a repeat
-    // that ran puts it back and one served from a record leaves it off.
-    const tagged = await note();
-    expect(
-      listsIdempotencyKey(document.data.paths, "/items/{id}/tags", "POST"),
-    ).toBe(false);
-    const addTag = ask("POST", `/items/${tagged.id}/tags`, {
-      tags: ["replay-tag"],
-    });
-    const tagFirst = await addTag();
-    expect(tagFirst.status).toBe(200);
-    expect((await client.removeTag(tagged.id, "replay-tag")).status).toBe(200);
-    const tagSecond = await addTag();
-    expect(tagSecond.status).toBe(200);
-    expect(replayedHeader(tagSecond)).toBeNull();
-    expect(
-      (await client.getMetadata(tagged.id)).data.metadata.tags,
-      "a repeat of POST /items/{id}/tags under one key was served from a record",
-    ).toContain("replay-tag");
-
-    // PUT /items/{id}/extensions/{namespace}: the extension is deleted
-    // between the two, on the same reasoning.
-    const extended = await note();
-    expect(
-      listsIdempotencyKey(
-        document.data.paths,
-        "/items/{id}/extensions/{namespace}",
-        "PUT",
-      ),
-    ).toBe(false);
-    const putExtension = ask(
-      "PUT",
-      `/items/${extended.id}/extensions/replay-ext`,
-      { kept: true },
-    );
-    const extensionFirst = await putExtension();
-    expect(extensionFirst.status).toBe(200);
-    expect(
-      (await client.deleteItemExtension(extended.id, "replay-ext")).status,
-    ).toBe(200);
-    const extensionSecond = await putExtension();
-    expect(extensionSecond.status).toBe(200);
-    expect(replayedHeader(extensionSecond)).toBeNull();
-    const stored = await client.getItemExtension(extended.id, "replay-ext");
-    expect(
-      stored.status,
-      "a repeat of PUT /items/{id}/extensions/{namespace} under one key was served from a record",
-    ).toBe(200);
-    expect(stored.data.data).toEqual({ kept: true });
   });
 
   it("does not keep a 403 answer, so the key works once the grant is added", async () => {

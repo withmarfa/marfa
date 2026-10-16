@@ -162,6 +162,12 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
         if (method === "PATCH")
           body = { version: edge.version, properties: { label: "Changed" } };
       }
+    } else if (door.includes("/tags") || door.includes("/metadata")) {
+      path = path.replace(":id", item.id).replace(":tag", "replayed");
+      if (method !== "DELETE") body = { tags: ["replayed"] };
+    } else if (door.includes("/extensions")) {
+      path = path.replace(":id", item.id).replace(":namespace", "replayed");
+      if (method === "PUT") body = { replayed: true };
     } else if (door.endsWith("bulk-actions"))
       body = {
         action: "update_tags",
@@ -201,11 +207,12 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
     const first = await ask();
     expect(first.status, await first.clone().text()).toBeLessThan(300);
     const original = await first.text();
+    const mark = await ctx.storage.eventLog.getMaxId();
     const replay = await ask();
     expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
     expect(await replay.text()).toBe(original);
+    expect(await ctx.storage.eventLog.getMaxId()).toBe(mark);
     const stored = await receipt(key.id, headers["Idempotency-Key"]);
-    const mark = await ctx.storage.eventLog.getMaxId();
     await narrow(key.id, { "*": "read" });
     expect((await ask()).status).toBe(403);
     await narrow(key.id, { "*": "write" });
@@ -1179,3 +1186,54 @@ it("ordinary retained edge envelopes remain readable without target read", async
   expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
   expect(await replay.text()).toBe(original);
 });
+
+it.each([
+  ["POST", "/items/:id/tags", { tags: ["binned"] }],
+  ["DELETE", "/items/:id/tags/binned", undefined],
+  ["PUT", "/items/:id/metadata", { tags: ["binned"] }],
+  ["PATCH", "/items/:id/metadata", { tags: ["binned"] }],
+  ["PUT", "/items/:id/extensions/binned", { binned: true }],
+  ["DELETE", "/items/:id/extensions/binned", undefined],
+  ["PATCH", "/items/:id", { version: 1, properties: { title: "Binned" } }],
+  ["DELETE", "/items/:id", undefined],
+] as const)(
+  "withholds a kept bin refusal from %s %s once the key cannot read the row",
+  async (method, template, body) => {
+    const key = await actor();
+    const item = await note();
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${item.id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const path = template.replace(":id", item.id);
+    const headers = { "Idempotency-Key": `binned-${String(sequence++)}` };
+    const ask = (withKey: boolean) =>
+      request(ctx.app, method, path, {
+        key: key.key,
+        ...(body === undefined ? {} : { body }),
+        ...(withKey ? { headers } : {}),
+      });
+    const first = await ask(true);
+    expect(first.status).toBe(404);
+    const original = await first.text();
+    expect(JSON.parse(original).error.details?.trashed).toBe(true);
+
+    await narrow(key.id, { "core.task": "write" });
+    const fresh = await ask(false);
+    expect(fresh.status).toBe(404);
+    expect(await fresh.text()).not.toContain("trashed");
+    const denied = await ask(true);
+    expect(denied.status).toBe(404);
+    expect(denied.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(await denied.text()).not.toContain("trashed");
+
+    // The witness: the kept answer still replays to a key that reads the row.
+    await narrow(key.id, { "*": "write" });
+    const restored = await ask(true);
+    expect(restored.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(await restored.text()).toBe(original);
+  },
+);

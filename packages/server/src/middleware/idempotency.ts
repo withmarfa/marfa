@@ -64,14 +64,15 @@ import { errorMessage } from "../error-text.js";
  * **A door over a free-text PATH segment is safe here; the query is not
  * covered.** `canonicalPath` re-spells each path segment before the digest,
  * so two encodings of one request are one fingerprint and a retry that
- * re-encodes is replayed rather than refused. That is what lets a tag, an
- * extension namespace or any other free-text path segment join this list.
+ * re-encodes is replayed rather than refused. That is what lets the tag and
+ * the extension namespace doors join this list.
  *
  * **The query string is hashed as written**, so a door taking a free-text
  * query value would refuse a retry that re-encoded it. No door here takes
  * one: `PATCH /items/:id` carries `conflict`, a closed enum; item deletion,
  * purge and transition carry `version`; edge creation and deletion carry
- * `source_version`. Both version parameters are whole numbers.
+ * `source_version`. Both version parameters are whole numbers. The tag,
+ * metadata and extension doors take no query at all.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -87,6 +88,12 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "PATCH /folders/:id",
   "POST /folders/:id/revoke",
   "POST /items/bulk-actions",
+  "POST /items/:id/tags",
+  "DELETE /items/:id/tags/:tag",
+  "PUT /items/:id/metadata",
+  "PATCH /items/:id/metadata",
+  "PUT /items/:id/extensions/:namespace",
+  "DELETE /items/:id/extensions/:namespace",
 ];
 
 /**

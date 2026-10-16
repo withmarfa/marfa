@@ -386,7 +386,7 @@ export function extensionRoutes(storage: Storage) {
         );
         // An extension is part of the item's row, so the item's type gate runs
         // first, as it does on the tag doors, whatever the namespace grants.
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
 
         if (RESERVED_NAMESPACES.has(namespace)) {
           throw new MarfaError(
@@ -462,7 +462,7 @@ export function extensionRoutes(storage: Storage) {
         );
         // An extension is part of the item's row, so the item's type gate runs
         // first, as it does on the tag doors, whatever the namespace grants.
-        requireTypeAccess(c, item.type, "write");
+        requireTypeAccess(c, item, "write");
 
         if (RESERVED_NAMESPACES.has(namespace)) {
           throw new MarfaError(

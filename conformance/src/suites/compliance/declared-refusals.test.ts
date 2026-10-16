@@ -228,6 +228,74 @@ describe("a key names one request", () => {
           path: `/items/${await trashed("purge-b")}/purge`,
         }),
       },
+      {
+        method: "POST",
+        template: "/items/{id}/tags",
+        first: async () => ({
+          path: `/items/${await seedItem("tags-a")}/tags`,
+          body: { tags: ["a"] },
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("tags-b")}/tags`,
+          body: { tags: ["a"] },
+        }),
+      },
+      {
+        method: "DELETE",
+        template: "/items/{id}/tags/{tag}",
+        first: async () => ({
+          path: `/items/${await seedItem("untag")}/tags/a`,
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("untag")}/tags/b`,
+        }),
+      },
+      {
+        method: "PUT",
+        template: "/items/{id}/metadata",
+        first: async () => ({
+          path: `/items/${await seedItem("replace-tags")}/metadata`,
+          body: { tags: ["a"] },
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("replace-tags")}/metadata`,
+          body: { tags: ["b"] },
+        }),
+      },
+      {
+        method: "PATCH",
+        template: "/items/{id}/metadata",
+        first: async () => ({
+          path: `/items/${await seedItem("merge-tags")}/metadata`,
+          body: { tags: ["a"] },
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("merge-tags")}/metadata`,
+          body: { tags: ["b"] },
+        }),
+      },
+      {
+        method: "PUT",
+        template: "/items/{id}/extensions/{namespace}",
+        first: async () => ({
+          path: `/items/${await seedItem("extension")}/extensions/conformance`,
+          body: { value: "a" },
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("extension")}/extensions/conformance`,
+          body: { value: "b" },
+        }),
+      },
+      {
+        method: "DELETE",
+        template: "/items/{id}/extensions/{namespace}",
+        first: async () => ({
+          path: `/items/${await seedItem("unextend")}/extensions/conformance`,
+        }),
+        second: async () => ({
+          path: `/items/${await seedItem("unextend")}/extensions/other`,
+        }),
+      },
     ];
 
     for (const door of doors) {

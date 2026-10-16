@@ -2558,15 +2558,15 @@ When a catch-up is stopped, a device MUST keep the cursor of the last event it t
 
 When a drain is stopped while an upload, or a write whose operation takes an idempotency key, is in flight, a device MUST end the drain without waiting for that write's answer.
 
-**Reason:** a server can hold a write, an upload above all, for longer than an app that closes a copy or cancels a sync can wait. The server answers a keyed write sent again from its record of the key, and takes an upload's bytes as the same blob, so the next drain sends either again without writing twice; a tag, metadata or extension write sent again would be applied again, over any newer change, so a stopped drain waits for its answer.
+**Reason:** a server can hold a write, an upload above all, for longer than an app that closes a copy or cancels a sync can wait. The server answers a keyed write sent again from its record of the key (`items/idempotency-operations`), and takes an upload's bytes as the same blob, so the next drain sends either again without writing twice.
 
-**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`, `› ends it without waiting on a tag write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-drain-in-flight-kept`
 
 When a drain is stopped while an upload, or a write whose operation takes an idempotency key, is in flight, a device MUST leave that write queued with no verdict, under the idempotency key it was sent with.
 
-**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+**Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`, `› ends it without waiting on a tag write in flight, which the next drain sends again under its key`.
 
 ### `device/stop-drain-late-answer`
 
@@ -2575,14 +2575,6 @@ When the answer to a write a stopped drain left in flight arrives after the drai
 **Reason:** the drain has ended, and the next drain sends the write again and records the server's answer from its record of the key.
 
 **Tests:** waiting on #1890.
-
-### `device/stop-drain-waits-unkeyed`
-
-When a drain is stopped while a write whose operation takes no idempotency key, other than an upload, is in flight, a device MUST record that write's answer before the drain ends.
-
-**Reason:** the server checks no key and no version on a tag, metadata or extension write, so one sent again could overwrite a newer change made on another device.
-
-**Tests:** `device/stop.test.ts › waits for a tag write in flight at a stop, and records its answer`.
 
 ### `device/stop-drain-no-send`
 

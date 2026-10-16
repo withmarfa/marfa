@@ -1,6 +1,7 @@
 use clap::Subcommand;
 
 use super::BodySource;
+use super::items::IdempotencyArgs;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -28,6 +29,8 @@ pub enum ExtensionsCommand {
         namespace: String,
         #[command(flatten)]
         body: BodySource,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Remove one namespace.
     Delete {
@@ -35,6 +38,8 @@ pub enum ExtensionsCommand {
         id: String,
         /// The namespace, such as `app.cursor`.
         namespace: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
 }
 
@@ -71,8 +76,13 @@ pub fn run(command: ExtensionsCommand, remote: &Remote, out: &Printer) -> Result
             id,
             namespace,
             body,
-        } => write_request(id, namespace, body.read()?)?,
-        ExtensionsCommand::Delete { id, namespace } => delete_request(id, namespace),
+            idempotency,
+        } => idempotency.apply(write_request(id, namespace, body.read()?)?),
+        ExtensionsCommand::Delete {
+            id,
+            namespace,
+            idempotency,
+        } => idempotency.apply(delete_request(id, namespace)),
     };
     out.value(&remote.json(&request)?)
 }

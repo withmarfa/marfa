@@ -201,22 +201,6 @@ impl Method {
     }
 }
 
-/// Whether the server answers this write, sent again under its key, from
-/// its record of the first: its operation takes an `Idempotency-Key` in the
-/// document the server is described by.
-pub(crate) fn answered_by_key(method: Method, segments: &[String]) -> bool {
-    crate::contract::KEYED_WRITES
-        .iter()
-        .any(|(keyed, template)| {
-            let parts: Vec<&str> = template.trim_start_matches('/').split('/').collect();
-            *keyed == method.as_str()
-                && parts.len() == segments.len()
-                && parts.iter().zip(segments).all(|(part, segment)| {
-                    (part.starts_with('{') && part.ends_with('}')) || part == segment
-                })
-        })
-}
-
 pub struct Outgoing<'a> {
     pub method: Method,
     pub segments: Vec<String>,
@@ -1615,8 +1599,25 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
 mod tests {
     use super::*;
 
+    /// Whether the server answers this write, sent again under its key, from
+    /// its record of the first: its operation takes an `Idempotency-Key` in the
+    /// document the server is described by. A drain lets go at a stop of every
+    /// write it sends, so each door it sends to has to be one.
+    fn answered_by_key(method: Method, segments: &[String]) -> bool {
+        crate::contract::KEYED_WRITES
+            .iter()
+            .any(|(keyed, template)| {
+                let parts: Vec<&str> = template.trim_start_matches('/').split('/').collect();
+                *keyed == method.as_str()
+                    && parts.len() == segments.len()
+                    && parts.iter().zip(segments).all(|(part, segment)| {
+                        (part.starts_with('{') && part.ends_with('}')) || part == segment
+                    })
+            })
+    }
+
     #[test]
-    fn only_a_write_whose_operation_takes_a_key_is_answered_by_it() {
+    fn every_door_a_drain_sends_to_takes_a_key() {
         let keyed = |method, path: &str| {
             let segments: Vec<String> = path.split('/').map(str::to_string).collect();
             answered_by_key(method, &segments)
@@ -1630,16 +1631,16 @@ mod tests {
             (Method::Post, "edges"),
             (Method::Patch, "edges/e1"),
             (Method::Delete, "edges/e1"),
-        ] {
-            assert!(keyed(method, path), "{method:?} {path}");
-        }
-        for (method, path) in [
             (Method::Post, "items/n1/tags"),
             (Method::Delete, "items/n1/tags/x"),
             (Method::Put, "items/n1/metadata"),
             (Method::Patch, "items/n1/metadata"),
             (Method::Put, "items/n1/extensions/app.cursor"),
             (Method::Delete, "items/n1/extensions/app.cursor"),
+        ] {
+            assert!(keyed(method, path), "{method:?} {path}");
+        }
+        for (method, path) in [
             (Method::Post, "items/lookup"),
             (Method::Post, "blobs"),
             (Method::Put, "items/n1"),
