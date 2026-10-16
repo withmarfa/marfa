@@ -100,13 +100,23 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /auth/device": "a form post, not a JSON body",
   "POST /auth/device/consent": "a form post, not a JSON body",
   "POST /auth/{wildcard}":
-    "the sign-in library's own protocol endpoints, which answer in their own shapes",
+    "the sign-in library's own protocol endpoints, which answer in their own shapes; its registration follows RFC 7591 and is open by design",
+  "ALL /{wildcard}":
+    "middleware registered for every path, ahead of the handlers; it answers no request of its own and reads no body into a write",
+  "ALL /owner/{wildcard}":
+    "the guard in front of the owner routes, which the document carries; it reads no body",
+  "ALL /setup/{wildcard}":
+    "the guard in front of the setup routes, whose handlers are classified above; it reads no body",
+  "ALL /auth/owner/{wildcard}":
+    "the guard in front of the owner's browser pages, whose writes are classified above; it reads no body",
 };
 
 function servedWrites(): Set<string> {
   const out = new Set<string>();
   for (const route of ctx.app.routes) {
-    if (!["POST", "PUT", "PATCH"].includes(route.method)) continue;
+    // `ALL` is what Hono records for `app.all` and `app.mount` as well as for
+    // middleware, so none can be told from a handler by its method.
+    if (!["POST", "PUT", "PATCH", "ALL"].includes(route.method)) continue;
     const path = route.path
       .replace(/\/\*$/, "/{wildcard}")
       .replace(/:([A-Za-z_]+)/g, "{$1}");
@@ -177,6 +187,16 @@ describe("the JSON write bodies", () => {
   });
 });
 
+/** The served write routes nothing in the document or the table accounts for. */
+function unclassified(
+  served: Iterable<string>,
+  documented: ReadonlySet<string>,
+): string[] {
+  return [...served].filter(
+    (door) => !documented.has(door) && !(door in UNPUBLISHED_WRITES),
+  );
+}
+
 describe("the write routes the app serves", () => {
   it("are the document's, or are classified here with how their body is read", () => {
     const documented = documentedWrites();
@@ -184,10 +204,17 @@ describe("the write routes the app serves", () => {
     // the document would be seen.
     expect(servedWrites()).toContain("POST /items");
     expect(servedWrites()).toContain("POST /setup/claim");
-    const unclassified = [...servedWrites()].filter(
-      (door) => !documented.has(door) && !(door in UNPUBLISHED_WRITES),
+    expect(unclassified(servedWrites(), documented)).toEqual([]);
+  });
+
+  it("find a handler mounted for every method, which the route table records as ALL", () => {
+    const documented = documentedWrites();
+    expect([...servedWrites()].some((door) => door.startsWith("ALL "))).toBe(
+      true,
     );
-    expect(unclassified).toEqual([]);
+    expect(
+      unclassified([...servedWrites(), "ALL /mounted/{wildcard}"], documented),
+    ).toEqual(["ALL /mounted/{wildcard}"]);
   });
 
   it("name no classification that is stale", () => {
