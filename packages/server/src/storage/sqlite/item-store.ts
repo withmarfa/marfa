@@ -38,6 +38,7 @@ import {
   typePatternToSql,
   typeFilterTerms,
   typeSubtreeToSql,
+  GLOBAL_TYPE_WILDCARD,
 } from "@withmarfa/shared";
 import { resolveMergePolicy, resolveTypeSchema } from "../policy.js";
 import {
@@ -45,7 +46,11 @@ import {
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../merge-properties.js";
-import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
+import {
+  filterToSqlConditions,
+  sourceFilterToSql,
+  subtreeBounds,
+} from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
@@ -201,7 +206,8 @@ function typePatternClause(pattern: string): SQL {
   // withholds nothing.
   if (!exact) return sql`1=0`;
   if (!descendantPattern) return sql`${items.type} = ${exact}`;
-  return sql`(${items.type} = ${exact} OR ${items.type} LIKE ${descendantPattern} ESCAPE '\\')`;
+  const { from, before } = subtreeBounds(exact);
+  return sql`(${items.type} = ${exact} OR (${items.type} >= ${from} AND ${items.type} < ${before}))`;
 }
 
 export function allowedTypesCondition(
@@ -506,8 +512,39 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
 
   const conditions: SQL[] = [];
 
+  // `core.entity` and `core.entity.*` mean the same thing: the type and
+  // everything under it. A bare identifier has always included its
+  // subtypes here, so the explicit wildcard must too.
+  let typeClause: SQL | undefined;
+  if (filters.type) {
+    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+      filters.type,
+    );
+    if (!global && exact && descendantPattern) {
+      const { from, before } = subtreeBounds(exact);
+      typeClause = or(
+        eq(items.type, exact),
+        sql`(${items.type} >= ${from} AND ${items.type} < ${before})`,
+        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
+      );
+    }
+  }
+
+  // Without statistics, SQLite can choose the state index even when most
+  // rows are active. Steer typed active reads to the type index, but leave
+  // other states eligible for the state index so selective reads stay cheap.
+  const narrowsByType =
+    typeClause !== undefined ||
+    (filters.allowed_types !== undefined &&
+      filters.allowed_types.length > 0 &&
+      !filters.allowed_types.includes(GLOBAL_TYPE_WILDCARD));
+  const stateIs = (value: string): SQL =>
+    narrowsByType && value === "active"
+      ? sql`+${items.state} = ${value}`
+      : eq(items.state, value);
+
   if (filters.state) {
-    conditions.push(eq(items.state, filters.state));
+    conditions.push(stateIs(filters.state));
   } else if (!filters.all_states) {
     // The default is the active state. A listing answers what the reader
     // is working with, and archived, trashed and revoked are all rows
@@ -525,26 +562,11 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     if (excluded && excluded.length > 0) {
       conditions.push(notInArray(items.state, [...excluded]));
     } else {
-      conditions.push(eq(items.state, "active"));
+      conditions.push(stateIs("active"));
     }
   }
 
-  if (filters.type) {
-    // `core.entity` and `core.entity.*` mean the same thing: the type and
-    // everything under it. A bare identifier has always included its
-    // subtypes here, so the explicit wildcard must too.
-    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-      filters.type,
-    );
-    if (!global && exact && descendantPattern) {
-      const typeClause = or(
-        eq(items.type, exact),
-        sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
-      );
-      if (typeClause) conditions.push(typeClause);
-    }
-  }
+  if (typeClause) conditions.push(typeClause);
 
   if (filters.source) conditions.push(eq(items.source, filters.source));
 
