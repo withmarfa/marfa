@@ -54,6 +54,80 @@ When the server answers `PUT /config`, the server MUST go on answering at the ro
 
 **Tests:** `compliance/instance-config.test.ts › leaves the identity the root answers as it was after any PUT, refused ones included`.
 
+## A write that names an instance
+
+A client that keeps a copy of one instance names that instance in `X-Marfa-Instance-Id` on what it sends, so a write that reaches another instance at the same address is refused where it lands. In this section a write is a `POST`, `PUT`, `PATCH` or `DELETE` to an operation outside `/auth`, `POST /items/bulk-get` and `POST /items/lookup` among them. An inbound webhook address is served ahead of any credential and is not one.
+
+### `instance/write-names-own`
+
+When a write names in `X-Marfa-Instance-Id` the instance's own `instance_id`, the server MUST answer it as it answers the same write without the header.
+
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on POST /items/bulk-get and POST /items/lookup`.
+
+### `instance/write-names-other`
+
+If a write names in `X-Marfa-Instance-Id` a UUIDv7 other than the instance's own `instance_id`, then the server MUST answer `409 instance_changed`.
+
+**Reason:** another instance at the address the client knew holds none of the rows its copy was built from, so a write sent there would land on rows the client never read.
+
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› refuses another instance on every write operation the document publishes outside /auth`.
+
+### `instance/write-names-other-unwritten`
+
+When the server answers a write `409 instance_changed`, the server MUST leave unchanged everything the write would have changed.
+
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+
+### `instance/write-instance-optional`
+
+The server MUST NOT refuse a write for naming no `X-Marfa-Instance-Id`.
+
+**Reason:** a caller that holds no copy, such as a connector, a script or an inbound sender, has no instance to name.
+
+**Tests:** `compliance/instance-header.test.ts › takes a write naming this instance, and refuses one naming another 409 instance_changed without writing it`.
+
+### `instance/write-instance-malformed`
+
+If a write names an `X-Marfa-Instance-Id` that is empty, repeated, or not one lowercase UUIDv7, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/instance-header.test.ts › refuses an empty, repeated, uppercase or malformed instance id 400 validation_error`, `› answers 401 before it judges the header, and judges it before the write's own refusals`.
+
+### `instance/write-instance-order`
+
+When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, an answer recorded under its `Idempotency-Key` among them.
+
+**Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
+
+**Tests:** `compliance/instance-header.test.ts › answers 401 before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+
+### `instance/write-instance-not-recorded`
+
+When the server answers a write that carries an `Idempotency-Key` `409 instance_changed`, the server MUST answer the same write sent again under that key, naming the instance's own id, as a first attempt.
+
+**Reason:** a client that meets the refusal rebuilds its copy from the instance now at the address and sends its queue again under the same keys.
+
+**Tests:** `compliance/instance-header.test.ts › keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+
+### `instance/write-instance-replay`
+
+When a write repeats an `Idempotency-Key` and its body, naming the instance's own id in `X-Marfa-Instance-Id` or naming none, the server MUST replay the first answer, whichever of the two the first attempt sent.
+
+**Tests:** `compliance/instance-header.test.ts › keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
+
+### `instance/write-instance-every-door`
+
+The server MUST judge `X-Marfa-Instance-Id` on every write.
+
+**Tests:** `compliance/instance-header.test.ts › refuses another instance on every write operation the document publishes outside /auth`, `› refuses another instance on POST /items/bulk-get and POST /items/lookup`.
+
+### `instance/write-instance-ignored`
+
+When a `GET`, a request to an operation under `/auth` or a delivery to an inbound webhook address names `X-Marfa-Instance-Id`, the server MUST answer it as it answers the same request without the header.
+
+**Reason:** a read of a copy is held to the instance by its read view (`read-views/conditional-certified`), and the sign-in operations and inbound senders hold no copy.
+
+**Tests:** `compliance/instance-header.test.ts › answers a GET, a request under /auth and an inbound delivery as it answers one without the header`.
+
 ## What it advertises
 
 ### `instance/root-no-credential`

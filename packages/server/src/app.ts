@@ -87,6 +87,7 @@ import { ITEM_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/items.js";
 import { TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./routes/types.js";
 import { BULK_ACTION_SCHEMAS_DESCRIBED_BY_REFERENCE } from "./bulk-actions/types.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
+import { instanceHeaderMiddleware } from "./middleware/instance-header.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import {
@@ -634,6 +635,10 @@ export function createApp(
       }),
     );
   }
+
+  // Ahead of the idempotency claim, so a write refused for naming another
+  // instance is never recorded under its key and replayed.
+  app.use("*", instanceHeaderMiddleware(instanceId));
 
   // `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`, so a client that
   // lost a response can ask what its first attempt did instead of asking
