@@ -3384,7 +3384,7 @@ While a body's link has a recorded item on a device and the edge to that item st
 
 ### `device/body-link-typed-afresh`
 
-When a write types a link whose spelling the body before the write did not carry, a device MUST NOT answer the link with an item that an earlier link of that spelling was recorded as naming.
+When a write types a link whose spelling the body before the write did not carry, a device MUST NOT resolve the link from the record of what an earlier link of that spelling named.
 
 **Reason:** a person who replaces a link with a new spelling chose it deliberately. A record left from a body that carried the spelling earlier, and since lost it, would otherwise send the new link to the old item and keep that item's edge.
 
