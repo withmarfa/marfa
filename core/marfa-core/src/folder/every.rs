@@ -1205,7 +1205,7 @@ mod tests {
         machine.opens("/a", vec![Ok(Goes::Lasts)]);
         let listing = listed(&["/a", "/held"]);
         supervised(&machine, &listing, |machine| {
-            count(machine, "watching /held") == 1
+            count(machine, "watching /held") == 1 && count(machine, "watching /a") == 1
         })
         .unwrap();
         let held: Vec<String> = machine
@@ -1241,7 +1241,8 @@ mod tests {
         machine.opens("/plain", vec![Ok(Goes::Lasts)]);
         let listing = listed(&["/synced", "/plain"]);
         supervised(&machine, &listing, |machine| {
-            count(machine, "watching /synced") == 2 && count(machine, "watching /plain") == 1
+            count(machine, "watching /plain") == 1
+                && count(machine, "storage /synced CloudService") == 3
         })
         .unwrap();
         let synced: Vec<String> = machine
@@ -1437,7 +1438,9 @@ mod tests {
         machine.opens("/b", vec![Ok(Goes::Panics), Ok(Goes::Lasts)]);
         let listing = listed(&["/a", "/b"]);
         supervised(&machine, &listing, |machine| {
-            count(machine, "unwatched /b watch") == 1 && count(machine, "watching /b") == 2
+            count(machine, "unwatched /b watch") == 1
+                && count(machine, "watching /b") == 2
+                && count(machine, "watching /a") == 1
         })
         .unwrap();
         assert_eq!(count(&machine, "watching /a"), 1);
@@ -1456,7 +1459,12 @@ mod tests {
             ],
         );
         let listing = listed(&["/a"]);
-        supervised(&machine, &listing, |machine| machine.opened("/a") == 4).unwrap();
+        supervised(&machine, &listing, |machine| {
+            machine.opened("/a") == 4
+                && lock(&machine.ended).len() == 3
+                && count(machine, "unwatched /a watch") == 1
+        })
+        .unwrap();
         assert_eq!(
             count(&machine, "unwatched /a watch"),
             1,
@@ -1664,6 +1672,8 @@ mod tests {
         let listing = listed(&["/a", "/asked"]);
         supervised(&machine, &listing, |machine| {
             count(machine, "taken back /asked") == 1
+                && count(machine, "watching /a") == 1
+                && count(machine, "/a reach") == 1
         })
         .unwrap();
         let asked: Vec<String> = machine
@@ -1729,7 +1739,10 @@ mod tests {
             vec![Ok(Goes::HandsOver), Ok(Goes::HandsOver), Ok(Goes::Lasts)],
         );
         let listing = listed(&["/asked"]);
-        supervised(&machine, &listing, |machine| machine.opened("/asked") == 3).unwrap();
+        supervised(&machine, &listing, |machine| {
+            count(machine, "taken back /asked") == 2
+        })
+        .unwrap();
         assert_eq!(
             machine.told(),
             vec![
