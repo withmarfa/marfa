@@ -457,8 +457,11 @@ export interface DeviceUnderTest {
    * withdraw takes.
    */
   withdraw(id: string): Promise<Outcome<boolean>>;
-  /** Clear the rows the server has answered, and say how many went. */
-  forget(): Promise<Outcome<number>>;
+  /**
+   * Clear the rows the server has answered, and say how many went. With
+   * `ids`, only those named, and none for an empty list.
+   */
+  forget(ids?: string[]): Promise<Outcome<number>>;
 
   /** Move an item to the bin locally and queue the delete. */
   deleteItem(id: string): Promise<Outcome<QueuedWrite>>;

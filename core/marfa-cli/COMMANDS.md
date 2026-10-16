@@ -2600,9 +2600,15 @@ Clear the writes the server has answered.
 
 A queue nobody empties makes every later write slower. Blocked and dead rows stay, because a caller may still release them, and so does a refused write that carried content, until it is discarded.
 
+With `--id`, only the writes named are cleared, under the same rules, and every other answered write stays. An id that names no write, or one not answered, is ignored.
+
 ```text
 marfa device forget [OPTIONS]
 ```
+
+| Option | Description |
+| --- | --- |
+| `--id <ID>` | A write to clear, by its queue id. Repeatable. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

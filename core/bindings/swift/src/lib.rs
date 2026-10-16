@@ -2141,6 +2141,14 @@ impl Core {
         Ok(self.inner.forget_answered()? as u64)
     }
 
+    /// Clears only the named writes, under the rules `forget_answered`
+    /// keeps, and says how many went. Every other answered write stays, so an
+    /// app clears just the answers it has read; an id that names no write, or
+    /// one not answered, is ignored.
+    pub fn forget_answered_ids(&self, ids: Vec<String>) -> Result<u64, MarfaError> {
+        Ok(self.inner.forget_answered_ids(&ids)? as u64)
+    }
+
     /// Takes a refused write out of the queue, with the content it carried.
     /// Answers whether the row was one a discard takes: refused, and with no
     /// write still waiting on it, or a create refused onto a row its natural

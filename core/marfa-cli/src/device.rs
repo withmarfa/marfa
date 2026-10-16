@@ -145,7 +145,15 @@ pub enum DeviceCommand {
     /// A queue nobody empties makes every later write slower. Blocked and
     /// dead rows stay, because a caller may still release them, and so does
     /// a refused write that carried content, until it is discarded.
-    Forget,
+    ///
+    /// With `--id`, only the writes named are cleared, under the same rules,
+    /// and every other answered write stays. An id that names no write, or
+    /// one not answered, is ignored.
+    Forget {
+        /// A write to clear, by its queue id. Repeatable.
+        #[arg(long = "id", value_name = "ID")]
+        ids: Vec<String>,
+    },
     /// Take a refused write out of the queue, with the content it carried.
     ///
     /// The one way a refused create, edit, metadata, extension or edge
@@ -1246,8 +1254,13 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let queue = core.queue()?;
             output::queued(&queue, &queue, &core.pending_landings()?, json)
         }
-        DeviceCommand::Forget => {
-            let cleared = store.open(None)?.forget_answered()?;
+        DeviceCommand::Forget { ids } => {
+            let core = store.open(None)?;
+            let cleared = if ids.is_empty() {
+                core.forget_answered()?
+            } else {
+                core.forget_answered_ids(&ids)?
+            };
             output::report(&cleared, json, || {
                 format!("cleared {cleared} answered write(s)")
             })

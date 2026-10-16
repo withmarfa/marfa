@@ -1804,6 +1804,60 @@ describe("what a drain sends and reports", () => {
 });
 
 describe("a refused write's content is kept", () => {
+  it("clears only the answered writes it is told to, and keeps every other answered write", async () => {
+    harness = await hydratedHarness("queue-forget-named", { rows: held() });
+    const first = await harness.device.addTag(HELD.id, "one");
+    const second = await harness.device.addTag(HELD.id, "two");
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) return;
+    scriptWrites(harness.server, {
+      read: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version }), [
+          "one",
+          "two",
+        ]),
+      ],
+      tags: [
+        writeAnswers.metadata(HELD.id, ["one"]),
+        writeAnswers.metadata(HELD.id, ["one", "two"]),
+      ],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.verdicts.map((verdict) => verdict.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    // Queued after the drain, so the server has not answered it.
+    const waiting = await harness.device.addTag(HELD.id, "three");
+    expect(waiting.ok).toBe(true);
+    if (!waiting.ok) return;
+
+    const cleared = await harness.device.forget([
+      first.value.id,
+      waiting.value.id,
+      "no-such-write",
+    ]);
+    expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
+    if (!cleared.ok) return;
+    expect(
+      cleared.value,
+      "forgetting named writes counted a write that was not answered or not held, or kept the named answered one",
+    ).toBe(1);
+    expect((await queueOf(harness.device)).map((row) => row.id)).toEqual([
+      second.value.id,
+      waiting.value.id,
+    ]);
+
+    // The witness: forgetting every answered write takes the one kept above.
+    const rest = await harness.device.forget();
+    expect(rest.ok && rest.value, JSON.stringify(rest)).toBe(1);
+    expect((await queueOf(harness.device)).map((row) => row.id)).toEqual([
+      waiting.value.id,
+    ]);
+  });
+
   it("keeps a refused write's body through a clearing, until it is discarded by id", async () => {
     harness = await hydratedHarness("queue-kept", { rows: held() });
     const edited = await harness.device.update(HELD.id, {

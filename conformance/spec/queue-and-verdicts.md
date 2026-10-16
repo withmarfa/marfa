@@ -1198,6 +1198,26 @@ When a caller clears the answered writes, a device MUST take out of the queue ea
 
 **Tests:** `device/classification.test.ts › clears with the answered rows those only a withdrawn write was keeping, but for one carrying content`.
 
+### `queue-and-verdicts/clear-named-only`
+
+When a caller clears named writes, a device MUST keep every write the caller did not name, whatever its verdict.
+
+**Reason:** an app reads answers from a drain report and clears what it read. A drain running at the same time can record another answer between the app's read and its clear; cleared with the named ones, that answer is lost unread.
+
+**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`, `device/classification.test.ts › clears a named write refused unsent behind a withdrawn write, and keeps the one carrying content even when named`.
+
+### `queue-and-verdicts/clear-named-rules`
+
+When a caller clears named writes, a device MUST take out of the queue only a named write that `queue-and-verdicts/clear-answered` or `queue-and-verdicts/clear-withdrawn-leftovers` takes out.
+
+**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`, `device/classification.test.ts › clears a named write refused unsent behind a withdrawn write, and keeps the one carrying content even when named`.
+
+### `queue-and-verdicts/clear-named-unknown`
+
+If a caller names an id that no write in the queue carries, then a device MUST ignore that id and clear the other writes named as it otherwise would.
+
+**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`.
+
 ### `queue-and-verdicts/queue-shows-body`
 
 A device MUST report in the queue the body each write carries, as it was or will be sent.

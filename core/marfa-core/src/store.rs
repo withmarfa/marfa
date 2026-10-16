@@ -255,7 +255,7 @@ fn refuse_misshapen(conn: &Connection, held: &Shape, reading: bool) -> Result<()
 fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
-        forget_answered_inner(conn, false)?;
+        forget_answered_inner(conn, None, false)?;
         Ok(conn.query_row(
             "SELECT COUNT(*) FROM temp.queue WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)",
             [
@@ -2991,17 +2991,40 @@ fn take_out(
 /// be released and is cleared; passes repeat until one clears nothing, since
 /// each can free what the last kept.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
-    forget_answered_inner(conn, true)
+    forget_answered_inner(conn, None, true)
 }
 
-fn forget_answered_inner(conn: &Connection, clean_effects: bool) -> Result<usize, CoreError> {
+/// `forget_answered`, restricted to the rows named: every other answered row
+/// stays, and an id that names no row, or one not answered, is ignored.
+pub fn forget_answered_ids(conn: &Connection, ids: &[String]) -> Result<usize, CoreError> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let only = serde_json::to_string(ids)
+        .map_err(|error| CoreError::Invalid(format!("the ids cannot be named: {error}")))?;
+    forget_answered_inner(conn, Some(&only), true)
+}
+
+/// `only` is a JSON array of the ids to clear, or `None` for any.
+fn forget_answered_inner(
+    conn: &Connection,
+    only: Option<&str>,
+    clean_effects: bool,
+) -> Result<usize, CoreError> {
     let mut cleared = 0;
     loop {
-        let pass = forget_answered_once(conn)?;
+        let pass = forget_answered_once(conn, only)?;
         if pass == 0 {
             if clean_effects {
                 for prefix in ["dead_effect/", "chosen_tier/"] {
-                    conn.execute("DELETE FROM main.meta WHERE key LIKE ?1 || '%' AND substr(key, length(?1) + 1) NOT IN (SELECT id FROM main.queue)", [prefix])?;
+                    conn.execute(
+                        "DELETE FROM main.meta
+                          WHERE key LIKE :prefix || '%'
+                            AND substr(key, length(:prefix) + 1) NOT IN (SELECT id FROM main.queue)
+                            AND (:only IS NULL
+                                 OR substr(key, length(:prefix) + 1) IN (SELECT value FROM json_each(:only)))",
+                        named_params! { ":prefix": prefix, ":only": only },
+                    )?;
                 }
             }
             return Ok(cleared);
@@ -3010,7 +3033,7 @@ fn forget_answered_inner(conn: &Connection, clean_effects: bool) -> Result<usize
     }
 }
 
-fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
+fn forget_answered_once(conn: &Connection, only: Option<&str>) -> Result<usize, CoreError> {
     let kept = content_kinds();
     // Kept while an unanswered or releasable row names it, which would
     // otherwise wait on a write no drain can find.
@@ -3018,7 +3041,8 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
         &format!(
             "DELETE FROM queue
           WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
-            AND verdict = ?1 AND sent = 0 AND kind NOT IN ({kept})
+            AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
+            AND verdict = :refused AND sent = 0 AND kind NOT IN ({kept})
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
                WHERE named.value NOT IN (SELECT id FROM queue)
@@ -3026,20 +3050,22 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
                WHERE named.value = queue.id
-                 AND (waiting.verdict IS NULL OR waiting.verdict IN (?2, ?3))
+                 AND (waiting.verdict IS NULL OR waiting.verdict IN (:blocked, :dead))
             )"
         ),
-        [
-            Verdict::Refused.as_str(),
-            Verdict::Blocked.as_str(),
-            Verdict::Dead.as_str(),
-        ],
+        named_params! {
+            ":only": only,
+            ":refused": Verdict::Refused.as_str(),
+            ":blocked": Verdict::Blocked.as_str(),
+            ":dead": Verdict::Dead.as_str(),
+        },
     )?;
     Ok(unreleasable
         + conn.execute(
             &format!(
                 "DELETE FROM queue
           WHERE NOT EXISTS (SELECT 1 FROM meta WHERE key = 'receipt_pending/' || queue.id)
+            AND (:only IS NULL OR queue.id IN (SELECT value FROM json_each(:only)))
             AND verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
             AND NOT (verdict = :refused AND kind IN ({kept}))
@@ -3052,6 +3078,7 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
             )"
             ),
             named_params! {
+                ":only": only,
                 ":accepted": Verdict::Accepted.as_str(),
                 ":merged": Verdict::Merged.as_str(),
                 ":conflicted": Verdict::Conflicted.as_str(),
@@ -4386,6 +4413,231 @@ mod tests {
             "nothing was cleared, so the queue grows without bound and every \
              later write reads a longer one"
         );
+    }
+
+    fn queue_row(
+        conn: &Connection,
+        id: &str,
+        kind: &str,
+        verdict: Option<&str>,
+        sent: i64,
+        depends: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, sent, depends_on, queued_at)
+             VALUES (?1, ?2, ?1, '{}', ?3, ?4, ?5, '2026-01-01T00:00:00Z')",
+            params![id, kind, verdict, sent, depends],
+        )
+        .unwrap();
+    }
+
+    fn queue_ids(conn: &Connection) -> Vec<String> {
+        conn.prepare("SELECT id FROM queue ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect()
+    }
+
+    fn named(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| id.to_string()).collect()
+    }
+
+    #[test]
+    fn forgetting_named_rows_takes_only_those_and_keeps_every_other_answered_row() {
+        let build = || {
+            let conn = conn();
+            queue_row(&conn, "read", "update_item", Some("accepted"), 1, "[]");
+            queue_row(&conn, "later", "update_item", Some("merged"), 1, "[]");
+            queue_row(&conn, "other", "update_item", Some("conflicted"), 1, "[]");
+            conn
+        };
+        // The witness: an unrestricted clearing takes all three, so the rows
+        // kept below were producible.
+        let all = build();
+        assert_eq!(forget_answered(&all).unwrap(), 3);
+
+        let conn = build();
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["read", "other"])).unwrap(),
+            2
+        );
+        assert_eq!(
+            queue_ids(&conn),
+            named(&["later"]),
+            "a clearing of named writes took one nobody named, which an app has not yet read"
+        );
+    }
+
+    #[test]
+    fn forgetting_named_rows_keeps_every_row_a_clearing_keeps() {
+        let conn = conn();
+        queue_row(&conn, "unanswered", "update_item", None, 0, "[]");
+        queue_row(&conn, "sent", "update_item", None, 1, "[]");
+        queue_row(&conn, "blocked", "update_item", Some("blocked"), 1, "[]");
+        queue_row(&conn, "dead", "update_item", Some("dead"), 1, "[]");
+        queue_row(&conn, "unsent", "delete_item", Some("refused"), 0, "[]");
+        queue_row(&conn, "content", "update_item", Some("refused"), 1, "[]");
+        let every = named(&["unanswered", "sent", "blocked", "dead", "unsent", "content"]);
+        let before = queue_ids(&conn);
+        assert_eq!(forget_answered_ids(&conn, &every).unwrap(), 0);
+        assert_eq!(queue_ids(&conn), before);
+
+        // The witness: the same kinds, answered and carrying nothing, go.
+        queue_row(&conn, "refused", "delete_item", Some("refused"), 1, "[]");
+        queue_row(&conn, "accepted", "update_item", Some("accepted"), 1, "[]");
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["refused", "accepted"])).unwrap(),
+            2
+        );
+        assert_eq!(queue_ids(&conn), before);
+    }
+
+    #[test]
+    fn forgetting_named_rows_ignores_an_id_the_queue_does_not_hold() {
+        let conn = conn();
+        queue_row(&conn, "read", "update_item", Some("accepted"), 1, "[]");
+        assert_eq!(forget_answered_ids(&conn, &[]).unwrap(), 0);
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["nowhere", "%", "rea"])).unwrap(),
+            0,
+            "an id that names nothing, or only part of one, took a row"
+        );
+        assert_eq!(queue_ids(&conn), named(&["read"]));
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["nowhere", "read", "read"])).unwrap(),
+            1
+        );
+        assert!(queue_ids(&conn).is_empty());
+    }
+
+    #[test]
+    fn forgetting_a_named_row_keeps_it_while_a_row_that_may_still_be_sent_depends_on_it() {
+        for waiting in [
+            (None, 0),
+            (Some("blocked"), 1),
+            (Some("dead"), 1),
+            (Some("refused"), 0),
+        ] {
+            let conn = conn();
+            queue_row(&conn, "named", "update_item", Some("accepted"), 1, "[]");
+            queue_row(
+                &conn,
+                "waiter",
+                "update_item",
+                waiting.0,
+                waiting.1,
+                "[\"named\"]",
+            );
+            assert_eq!(
+                forget_answered_ids(&conn, &named(&["named"])).unwrap(),
+                0,
+                "a named row went while {waiting:?} waits on it, which then waits for a write no drain can find"
+            );
+            assert_eq!(queue_ids(&conn), named(&["named", "waiter"]));
+        }
+        // The witness: once the waiting row is answered, the dependency goes.
+        let conn = conn();
+        queue_row(&conn, "named", "update_item", Some("accepted"), 1, "[]");
+        queue_row(
+            &conn,
+            "waiter",
+            "update_item",
+            Some("accepted"),
+            1,
+            "[\"named\"]",
+        );
+        assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
+        assert_eq!(queue_ids(&conn), named(&["waiter"]));
+    }
+
+    #[test]
+    fn forgetting_named_rows_repeats_its_passes_inside_the_names() {
+        let build = || {
+            let conn = conn();
+            queue_row(
+                &conn,
+                "dependency",
+                "update_item",
+                Some("accepted"),
+                1,
+                "[]",
+            );
+            // Refused unsent behind a write the queue no longer holds: it
+            // goes, and then the row it kept can go.
+            queue_row(
+                &conn,
+                "leftover",
+                "delete_item",
+                Some("refused"),
+                0,
+                "[\"dependency\", \"gone\"]",
+            );
+            conn
+        };
+        let all = build();
+        assert_eq!(forget_answered(&all).unwrap(), 2);
+
+        let conn = build();
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["dependency"])).unwrap(),
+            0,
+            "the dependency went while a leftover not named still depends on it"
+        );
+        assert_eq!(
+            forget_answered_ids(&conn, &named(&["leftover"])).unwrap(),
+            1
+        );
+        assert_eq!(queue_ids(&conn), named(&["dependency"]));
+
+        let both = build();
+        assert_eq!(
+            forget_answered_ids(&both, &named(&["dependency", "leftover"])).unwrap(),
+            2,
+            "a pass that freed a named row did not repeat"
+        );
+        assert!(queue_ids(&both).is_empty());
+    }
+
+    #[test]
+    fn forgetting_named_rows_keeps_a_row_whose_receipt_is_pending() {
+        let conn = conn();
+        queue_row(&conn, "landing", "create_item", Some("accepted"), 1, "[]");
+        meta_set(&conn, "receipt_pending/landing", "land:item").unwrap();
+        assert_eq!(forget_answered_ids(&conn, &named(&["landing"])).unwrap(), 0);
+        meta_delete(&conn, "receipt_pending/landing").unwrap();
+        assert_eq!(forget_answered_ids(&conn, &named(&["landing"])).unwrap(), 1);
+    }
+
+    #[test]
+    fn forgetting_named_rows_cleans_only_their_own_effect_slots() {
+        let conn = conn();
+        queue_row(&conn, "named", "update_item", Some("accepted"), 1, "[]");
+        queue_row(&conn, "kept", "update_item", Some("accepted"), 1, "[]");
+        for id in ["named", "kept", "orphan"] {
+            meta_set(&conn, &format!("dead_effect/{id}"), "x").unwrap();
+            meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
+        }
+        assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
+        for prefix in ["dead_effect/", "chosen_tier/"] {
+            assert!(
+                meta_get(&conn, &format!("{prefix}named"))
+                    .unwrap()
+                    .is_none(),
+                "{prefix} outlived the row it belongs to"
+            );
+            assert!(meta_get(&conn, &format!("{prefix}kept")).unwrap().is_some());
+            assert!(
+                meta_get(&conn, &format!("{prefix}orphan"))
+                    .unwrap()
+                    .is_some(),
+                "{prefix} of a row nobody named was cleaned"
+            );
+        }
+        // The witness: an unrestricted clearing cleans the orphan too.
+        forget_answered(&conn).unwrap();
+        assert!(meta_get(&conn, "dead_effect/orphan").unwrap().is_none());
     }
 
     #[test]
