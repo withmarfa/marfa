@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
+use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
@@ -568,14 +568,20 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
         Ok(envelope) => envelope.error.code,
         Err(_) => String::new(),
     };
-    Ok(Answer {
+    let answer = Answer {
         status: reply.status,
         code,
         body,
         retry_after_seconds: reply.retry_after_seconds,
         replayed: false,
         contract_named: reply.contract.is_some(),
-    })
+    };
+    if answer.instance_changed() {
+        return Err(CoreError::CopyExpired {
+            reason: INSTANCE_CHANGED.into(),
+        });
+    }
+    Ok(answer)
 }
 
 /// Whether a drain now has work: a write with no verdict, one blocked for a
@@ -639,8 +645,26 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 }
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+    crate::catch_up::refuse_if_stopped(stop)?;
+    // Queued writes and their natural-key lookups name the copy's instance
+    // so a replacement refuses them even after the pass confirmed the origin.
+    // Credential renewal uses the exempt authentication endpoints.
+    let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ViewChange::default();
-    let result = send_queue(core, stop, &mut pass);
+    let result = match send_queue(core, &http, generation, stop, &mut pass) {
+        // From a request that settled nothing, a lookup among them: a write
+        // the refusal answered expired the copy as it settled.
+        Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            if read_view::generation(&tx)? == generation {
+                crate::catch_up::expire_for_another_instance(&tx, generation)?;
+            }
+            tx.commit()?;
+            Err(CoreError::CopyExpired { reason })
+        }
+        result => result,
+    };
     // However the pass ended, a copy whose read view moved under it is
     // expired once, here. The pass's own error, if any, is the one told. So is
     // a report that has something to say a caller must act on (a wait, an
@@ -654,9 +678,13 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     }
 }
 
-fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<DrainReport> {
-    crate::catch_up::refuse_if_stopped(stop)?;
-    let http = core.http()?;
+fn send_queue(
+    core: &Core,
+    http: &Http,
+    generation: u64,
+    stop: &AtomicBool,
+    pass: &mut ViewChange,
+) -> Result<DrainReport> {
     let mut report = DrainReport {
         answered: 0,
         held: 0,
@@ -1001,6 +1029,18 @@ fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<D
         // Not read, so the write stays sent and unanswered; every later
         // answer would come from the same server.
         let answer = match answer {
+            // Ahead of the classification, which would refuse the write for
+            // good. The copy is built again from the instance now at the
+            // origin, which has seen no attempt of this write, so it is judged
+            // there afresh.
+            Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+                let mut conn = core.conn()?;
+                let tx = conn.transaction()?;
+                store::mark_unsent(&tx, &row.id)?;
+                let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
+                tx.commit()?;
+                return Err(error);
+            }
             Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
                 return Err(error);
             }
@@ -3683,6 +3723,126 @@ mod tests {
         assert!(
             server.seen("/edges/e2").is_empty(),
             "a write behind was sent after the view changed under a write that moved no source"
+        );
+        assert!(read_view::expired(&conn).unwrap());
+    }
+
+    fn instance_changed() -> CoreError {
+        CoreError::CopyExpired {
+            reason: INSTANCE_CHANGED.into(),
+        }
+    }
+
+    #[test]
+    fn another_instance_refusing_a_write_ends_the_drain_with_the_queue_kept_and_unsent() {
+        // The witness: the same status under another code is about the write,
+        // which the drain counts and goes on past.
+        for (code, counted) in [
+            ("idempotency_key_in_flight", true),
+            (INSTANCE_CHANGED, false),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+            let (first, second) = (rank_edit(&core, "e1"), rank_edit(&core, "e2"));
+            server.on("/edges/e1", vec![crate::scripted::refusal(409, code)]);
+            server.on(
+                "/edges/e2",
+                vec![
+                    edge_answered("e2", "p1", 2),
+                    crate::scripted::certified(edge_answered("e2", "p1", 2)),
+                ],
+            );
+            let drained = core.drain();
+            let conn = core.conn().unwrap();
+            let row = |id: &str| store::queued_write(&conn, id).unwrap().unwrap();
+            assert_eq!(
+                server.seen("/edges/e1")[0].instance.as_deref(),
+                Some(crate::scripted::INSTANCE),
+                "the write did not name the copy's instance"
+            );
+            if counted {
+                assert!(drained.is_ok(), "{drained:?}");
+                assert_eq!(row(&first.id).refusals, 1);
+                assert_eq!(server.seen("/edges/e2").len(), 2, "sent and read back");
+                assert!(!read_view::expired(&conn).unwrap());
+                continue;
+            }
+            assert_eq!(drained.unwrap_err(), instance_changed());
+            let kept = row(&first.id);
+            assert_eq!(
+                kept.verdict, None,
+                "the refusal was recorded as the write's verdict"
+            );
+            assert_eq!(kept.refusals, 0);
+            assert_eq!(kept.idempotency_key, first.idempotency_key);
+            assert!(
+                store::unsent(&conn, &first.id).unwrap(),
+                "the write stays marked sent though the refusal proves it was not applied"
+            );
+            assert_eq!(row(&second.id).verdict, None);
+            assert!(
+                server.seen("/edges/e2").is_empty(),
+                "a write was sent after another instance refused one"
+            );
+            assert!(read_view::expired(&conn).unwrap());
+        }
+    }
+
+    #[test]
+    fn another_instance_refusing_a_write_an_earlier_attempt_sent_marks_it_unsent() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1"]);
+        let first = rank_edit(&core, "e1");
+        store::mark_sent(&core.conn().unwrap(), &first.id).unwrap();
+        server.on(
+            "/edges/e1",
+            vec![crate::scripted::refusal(409, INSTANCE_CHANGED)],
+        );
+        assert_eq!(core.drain().unwrap_err(), instance_changed());
+        let conn = core.conn().unwrap();
+        // The copy is built again from the instance now at the address,
+        // which never saw an earlier attempt, so the write is judged afresh.
+        assert!(
+            store::unsent(&conn, &first.id).unwrap(),
+            "the write stays marked sent to an instance the copy no longer follows"
+        );
+        assert_eq!(
+            store::queued_write(&conn, &first.id)
+                .unwrap()
+                .unwrap()
+                .verdict,
+            None
+        );
+    }
+
+    #[test]
+    fn another_instance_after_an_accepted_source_move_ends_the_drain_at_once() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2", "e3"]);
+        let moved = moved_to_p2(&core, "e1");
+        let (refused, behind) = (rank_edit(&core, "e2"), rank_edit(&core, "e3"));
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![crate::scripted::refusal(409, INSTANCE_CHANGED)],
+        );
+        server.on("/edges/e3", vec![edge_answered("e3", "p1", 2)]);
+        assert_eq!(core.drain().unwrap_err(), instance_changed());
+        let conn = core.conn().unwrap();
+        let verdict = |id: &str| store::queued_write(&conn, id).unwrap().unwrap().verdict;
+        assert_eq!(verdict(&moved.id), Some(Verdict::Accepted));
+        assert_eq!(verdict(&refused.id), None);
+        assert!(store::unsent(&conn, &refused.id).unwrap());
+        assert_eq!(verdict(&behind.id), None);
+        assert!(
+            server.seen("/edges/e3").is_empty(),
+            "a write was sent after another instance refused one, though a source move had deferred the expiry"
         );
         assert!(read_view::expired(&conn).unwrap());
     }

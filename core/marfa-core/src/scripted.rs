@@ -71,6 +71,7 @@ pub struct Seen {
     pub last_event_id: Option<String>,
     pub authorization: Option<String>,
     pub idempotency_key: Option<String>,
+    pub instance: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -192,6 +193,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let mut read_view = None;
     let mut authorization = None;
     let mut idempotency_key = None;
+    let mut instance = None;
     let mut length = None;
     let mut chunked = false;
     loop {
@@ -212,6 +214,8 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 authorization = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("idempotency-key") {
                 idempotency_key = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("x-marfa-instance-id") {
+                instance = Some(value.trim().to_string());
             } else if name.eq_ignore_ascii_case("content-length") {
                 length = value.trim().parse::<usize>().ok();
             } else if name.eq_ignore_ascii_case("transfer-encoding") {
@@ -235,6 +239,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             last_event_id,
             authorization,
             idempotency_key,
+            instance,
             body,
         });
         match script.answers.get_mut(&path) {

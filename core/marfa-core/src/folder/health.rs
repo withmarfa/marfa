@@ -457,6 +457,12 @@ impl Folder {
     }
 
     fn health_send_inner(&self) -> Result<()> {
+        // An expired copy, whether another instance answered at its origin or
+        // its view changed, sends nothing until it is built again; the report
+        // waits for that.
+        if !store::hydrated(&*self.core.conn()?)? {
+            return Ok(());
+        }
         let current = State::load(&*self.core.conn()?)?;
         if current.retry_at > millis() {
             return Ok(());
@@ -482,23 +488,26 @@ impl Folder {
         let result = (|| {
             let body = serde_json::to_string(&sent)?;
             let http = self.core.http()?.for_reporting()?;
-            let reply = http.call(Call {
-                method: Method::Put,
-                segments: &["folders", &self.folder, "status"],
-                params: &[],
-                headers: &[],
-                body: CallBody::Json(&body),
-                credential: true,
-                stream: false,
+            let reply = crate::catch_up::write_naming_instance(&self.core, &http, |http| {
+                let reply = http.call(Call {
+                    method: Method::Put,
+                    segments: &["folders", &self.folder, "status"],
+                    params: &[],
+                    headers: &[],
+                    body: CallBody::Json(&body),
+                    credential: true,
+                    stream: false,
+                })?;
+                if !(200..300).contains(&reply.status) {
+                    return Err(http.refused(
+                        reply.status,
+                        reply.contract.is_some(),
+                        &reply.body,
+                        reply.retry_after_seconds,
+                    ));
+                }
+                Ok(reply)
             })?;
-            if !(200..300).contains(&reply.status) {
-                return Err(http.refused(
-                    reply.status,
-                    reply.contract.is_some(),
-                    &reply.body,
-                    reply.retry_after_seconds,
-                ));
-            }
             let ack: Ack = serde_json::from_str(&reply.body)?;
             {
                 let conn = self.core.conn()?;

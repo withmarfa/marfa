@@ -733,7 +733,16 @@ pub fn reopened(
     server: &marfa_core::Server,
     renew: Option<&Renewal>,
 ) -> Result<Folder, CliError> {
-    let folder = Folder::open(dir, Some(server.clone())).map_err(held(dir))?;
+    reopening(dir, server, renew).map_err(held(dir))
+}
+
+/// `reopened`, with the core's own error.
+pub fn reopening(
+    dir: &Path,
+    server: &marfa_core::Server,
+    renew: Option<&Renewal>,
+) -> Result<Folder, CoreError> {
+    let folder = Folder::open(dir, Some(server.clone()))?;
     if let Some(renew) = renew {
         let renew = std::sync::Arc::clone(renew);
         folder

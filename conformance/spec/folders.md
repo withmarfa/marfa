@@ -2706,7 +2706,7 @@ When a person renames a Markdown document's file and, in the same save, changes 
 
 ### `folders/rename-title-line`
 
-When a device sends a renamed Markdown document's new name as its title and the file, still holding the bytes the device read, has a title line, a device MUST rewrite that line to the new title and keep every other byte of the file.
+When a device sends a renamed Markdown document's new name as its title outside a send-only run and the file, still holding the bytes the device read, has a title line, a device MUST rewrite that line to the new title and keep every other byte of the file.
 
 **Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title, and rewrites only its title line`.
 
@@ -2812,11 +2812,11 @@ When a pull moves a bound file whose bytes are still the ones it is bound to, a 
 
 ### `folders/moved-save-taken`
 
-When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, and the run is not a send-only run, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
 
 **Reason:** it is an editor's save of the buffer it held before the move, and as a new item it would be a second note holding the person's edit.
 
-**Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`.
+**Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
 ### `folders/moved-save-held`
 
@@ -2824,7 +2824,7 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 **Reason:** the person decides which of the two to keep, however the item's file changes meanwhile.
 
-**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`.
+**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`, `› holds an old buffer through a send-only run while the moved file holds an edit of its own, and makes no new item in the push after`.
 
 ### `folders/moved-save-race`
 
@@ -4212,7 +4212,7 @@ When the record can be written again, a device MUST write it.
 
 ## Handing a folder to a command
 
-One process works a folder at a time. A command that works a folder, such as `folders confirm`, `folders restore`, `folders remove`, `folders push` or `folders unmatched --remove`, asks a running `folders watch` for the folder, and the watch lets it go and takes it back.
+One process works a folder at a time. A command that works a folder, such as `folders confirm`, `folders restore`, `folders remove`, `folders push` or `folders unmatched --remove`, asks a running `folders watch` for the folder, and the watch lets it go and takes it back. An app that works a folder through a binding asks in the same way, and a watch the app runs through a binding lets the folder go and takes it back.
 
 ### `folders/handover-asked`
 
@@ -4294,6 +4294,76 @@ While a running `folders watch` has let a folder go to a command, a device MUST 
 
 **Tests:** `device/folders-handover.test.ts › hands a folder the watch of every folder holds to folders confirm, keeps the other in step, and takes it back`, `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`.
 
+### `folders/handover-binding-asked`
+
+Where an app works a folder through a binding, when a call that adds, syncs, confirms, restores or removes the folder finds it held by a running watch, a device MUST work the folder once the watch lets it go.
+
+**Reason:** A watch that syncs every folder from login holds each of them, so a call that did not ask would be refused for as long as the watch runs.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-refused`
+
+If the process that holds a folder does not let it go within 10 seconds of a binding call asking for it, then a device MUST refuse the call with `reading_handle` before changing local or server state.
+
+**Reason:** A watch that is suspended or stuck never lets go, and a call must not wait on it without end. The refusal names the folder, so an app can say which one.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-lets-go`
+
+When a command or a binding call asks for a folder that an app's watch through a binding holds, a device MUST let the folder go once the step of the watch's pass under way ends.
+
+**Reason:** A write cut off mid-pass would be sent again, or its answer lost (`folders/handover-step-whole`).
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-let-go-told`
+
+When an app's watch through a binding lets a folder go, a device MUST tell the app's listener once that it did.
+
+**Reason:** An app that shows whether a folder is in step would show a folder it is not watching as watched. The Swift binding tells it as `HandedOver`.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-taken-back`
+
+When the command or call that an app's watch through a binding let a folder go to ends and the folder is still a folder on the registry, a device MUST keep the folder in step again without the app starting another watch.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-back-told`
+
+When an app's watch through a binding takes back a folder it let go, a device MUST tell the app's listener that it did.
+
+**Reason:** The Swift binding tells it as `TakenBack`, in place of a second `Watching`.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-gone-ends`
+
+When the command or call that an app's watch through a binding let a folder go to removes the folder, or takes it off the registry, a device MUST end the watch.
+
+**Reason:** There is no folder left to keep in step. The Swift binding tells `Removed` or `Unlisted` first, so an app can tell the end from its own stop.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-held-elsewhere`
+
+If a folder that an app's watch through a binding let go is held by another process, with no command or call asking for it, for longer than 10 seconds, then a device MUST tell the app's listener once that another process holds it.
+
+**Reason:** Another watch, or an app that takes the folder, keeps it until it ends, so a folder reported as let go to a call would hide why it is not synced. The Swift binding tells it as `HeldElsewhere`.
+
+**Tests:** waiting on #1890.
+
+### `folders/handover-binding-watch-refused`
+
+While a process holds a folder, a device MUST refuse an app's watch of the folder through a binding with `reading_handle`.
+
+**Reason:** A watch does not ask for a folder (`folders/one-watch-per-folder`).
+
+**Tests:** waiting on #1890.
+
 ### `folders/one-watch-per-folder`
 
 While a process holds a folder, the CLI MUST refuse `folders watch` of that folder with `reading_handle`.
@@ -4304,7 +4374,7 @@ While a process holds a folder, the CLI MUST refuse `folders watch` of that fold
 
 ## Folder syncing from login
 
-`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration, or under `.config` in the home directory. Where the environment names a directory as the autostart root, that directory stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
+`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration (`XDG_CONFIG_HOME`), or under `.config` in the home directory. Where `MARFA_AUTOSTART_ROOT` names a directory, that directory stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
 
 ### `folders/autostart-launchd-agent`
 
@@ -4336,7 +4406,7 @@ When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REG
 
 ### `folders/autostart-no-credential`
 
-The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or one that names a keychain file.
+The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or a variable that names a keychain file, such as `MARFA_KEYCHAIN`.
 
 **Reason:** Each folder uses the server its copy came from and the credential the keychain keeps for that server, as a watch of every folder does.
 
@@ -4860,13 +4930,13 @@ When `folders push` is given `--send-only`, the CLI MUST send the writes that a 
 
 When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory outside its `.marfa` state directory.
 
-**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
+**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`, `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
 ### `folders/send-only-removes-no-file`
 
 When `folders push` is given `--send-only`, the CLI MUST NOT remove a file from the folder's directory.
 
-**Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`.
+**Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`, `device/folders-placement.test.ts › leaves the temporary file a crashed pull left in a send-only run, and removes it in the push after`.
 
 ### `folders/send-only-report-sent`
 
@@ -4891,6 +4961,14 @@ When `folders push --send-only` finishes, the CLI MUST say in its text report th
 When a `folders push` without `--send-only` follows a send-only run, the CLI MUST write the files of the items that run left unpulled.
 
 **Tests:** `device/folders-send-only.test.ts › leaves what it did not pull for the next push`.
+
+### `folders/send-only-rename-line-follows`
+
+Where a renamed Markdown document's title line is as a send-only run left it and its file is not held, when a `folders push` without `--send-only` follows that run, which sent the document's new name as its title, the CLI MUST rewrite the title line to the item's title.
+
+**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files. Until then the line is no edit of the title, whatever title the item holds, and a title the person types in the line is theirs.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title through every save made after a send-only run that sent it, before a push writes the title line`, `› keeps a title changed elsewhere after a send-only run that sent the new name's, through a body edit`, `› keeps a title changed back to the old one after a send-only run that sent the new name's, through a body edit`, `› keeps a title another Mac set before this copy heard of it, through a body edit in a second send-only run`, `› sends a title typed in the line after a send-only run that sent the new name's, and keeps it`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
 
 ### `folders/send-only-hydrates`
 

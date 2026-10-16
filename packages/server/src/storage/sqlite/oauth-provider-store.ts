@@ -315,10 +315,9 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
 
   /**
    * Runs on every cross-origin request before the limiter, so it walks the
-   * few `system.connection` rows rather than every active item: `INDEXED BY`
-   * holds SQLite to the type index, which it would otherwise trade for the
-   * state index on an instance that never ran `ANALYZE`, and each grant
-   * reaches its client through the unique `client_id` index.
+   * few `system.connection` rows rather than every active item: the type and
+   * state index answers `type = ? AND state = ?`, and each grant reaches its
+   * client through the unique `client_id` index.
    * `live-grant-clients-plan.test.ts` pins the plan.
    */
   async listLiveGrantClients(): Promise<
@@ -331,7 +330,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     }>(sql`
       SELECT c.client_id AS clientId, c.application_type AS applicationType,
              c.redirect_uris AS redirectUris
-      FROM items AS i INDEXED BY idx_items_type
+      FROM items AS i
       JOIN auth_oauth_client AS c
         ON c.client_id = json_extract(i.properties, '$.client_id')
       WHERE i.type = 'system.connection'

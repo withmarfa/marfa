@@ -120,7 +120,7 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 ### `queue-and-verdicts/sent-write-unchanged`
 
-A device MUST NOT change the body, the version or the idempotency key of a write once it has sent the write, short of a release.
+A device MUST NOT change the body, the version or the idempotency key of a write once it has sent the write, short of a release or an answer of `409 instance_changed` to it (`queue-and-verdicts/instance-changed-afresh`).
 
 **Reason:** a server that answers the key from its record would refuse a changed body as the key reused, and a delete moved onto a later version after its first attempt could remove a row the person never saw.
 
@@ -1291,6 +1291,44 @@ While a drain cannot confirm which instance the server is, a device MUST send no
 **Reason:** a restart is when another instance appears at an address (`device/instance-drain-expires`).
 
 **Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› queues writes while the server is unreachable`.
+
+### `queue-and-verdicts/instance-named`
+
+Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each write a drain sends, an upload among them.
+
+**Reason:** a drain confirms the instance once, before it sends, and another instance can take the address while a long pass runs; named, each write is refused where it lands (`instance/write-names-other`).
+
+**Tests:** `device/queue.test.ts › names the copy's instance on each write a drain sends, an upload among them`.
+
+### `queue-and-verdicts/instance-changed-expires`
+
+If the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, then a device MUST end the drain `copy_expired` with the reason `instance_changed`, expiring the copy.
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
+### `queue-and-verdicts/instance-changed-sends-nothing`
+
+When the server answers a write a drain sends, or the lookup it asks for a create's natural key, `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source earlier in it.
+
+**Reason:** a write behind a move is judged as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
+### `queue-and-verdicts/instance-changed-keeps-write`
+
+When the server answers a write a drain sends `409 instance_changed`, a device MUST keep the write in the queue under its idempotency key, with no verdict and no refusal counted.
+
+**Reason:** the instance that refused it never held the rows it was made against and did not apply it, so it goes to the instance the copy is next hydrated from (`queue-and-verdicts/rehydration-keeps-queue`).
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `› expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
+### `queue-and-verdicts/instance-changed-afresh`
+
+When a drain sends a write the server last answered `409 instance_changed`, a device MUST decide its body as for a write it has never sent, its natural key's lookup and its tier included.
+
+**Reason:** the copy is built again from the instance now at the address, which has seen no attempt of the write, whatever an earlier attempt did on the instance that was there before.
+
+**Tests:** `device/queue.test.ts › judges afresh a keyed create another instance refused, though an earlier attempt went unanswered`.
 
 ## Writes laid over the copy
 

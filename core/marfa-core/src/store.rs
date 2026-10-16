@@ -2698,6 +2698,12 @@ pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Only on an answer that proves the attempt was not applied anywhere.
+pub fn mark_unsent(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute("UPDATE queue SET sent = 0 WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 pub fn record_verdict(
     conn: &Connection,
     id: &str,

@@ -11,7 +11,11 @@ import {
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { normalizeTimeBound } from "../interface.js";
-import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
+import {
+  filterToRawSql,
+  sourceFilterToRawSql,
+  subtreeBounds,
+} from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
@@ -294,8 +298,9 @@ export class SqliteSearchStore implements SearchStore {
             params.push(exact);
             return "i.type = ?";
           }
-          params.push(exact, descendantPattern);
-          return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+          const { from, before } = subtreeBounds(exact);
+          params.push(exact, from, before);
+          return "(i.type = ? OR (i.type >= ? AND i.type < ?))";
         };
         const typeClauses = typeFilterTerms(
           filters.allowed_types,

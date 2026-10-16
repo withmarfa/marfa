@@ -1,7 +1,8 @@
 /**
- * Read from the query plan, not reasoning. Without `ANALYZE`, SQLite prefers
- * the state index for `type = ? AND state = 'active'`, which walks every
- * active item, and this read runs on every cross-origin request.
+ * Read from the query plan, not reasoning. Without `ANALYZE`, SQLite would
+ * prefer the state index for `type = ? AND state = 'active'` if no index held
+ * both, which walks every active item, and this read runs on every
+ * cross-origin request.
  */
 import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
@@ -33,7 +34,9 @@ describe("the live grant clients query plan", () => {
       ).rows
         .map((row) => String((row as Record<string, unknown>).detail))
         .join("\n");
-      expect(plan).toMatch(/SEARCH i USING INDEX idx_items_type \(type=\?\)/);
+      expect(plan).toMatch(
+        /SEARCH i USING INDEX idx_items_type_state \(type=\? AND state=\?\)/,
+      );
       expect(plan).toMatch(
         /SEARCH c USING INDEX (idx_auth_oauth_client_client_id|sqlite_autoindex_auth_oauth_client_\d+) \(client_id=\?\)/,
       );

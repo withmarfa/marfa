@@ -27,16 +27,18 @@ mod settings_file;
 mod status;
 mod storage;
 mod sync;
+mod taking_back;
 mod transfer;
 mod watch;
 mod watch_record;
 pub use every::{Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, watch_every};
-pub use handover::HANDOVER_WAIT;
+pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;
 #[cfg(unix)]
 pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
+pub use taking_back::TakeBack;
 pub use unmatched::{Unmatched, UnmatchedRemoved};
 pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass};
 pub use watch_record::WatchRecord;
@@ -1423,6 +1425,13 @@ enum Arrival {
     Waits(String),
 }
 
+/// Whether a scan may change a file in the directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Files {
+    Write,
+    Keep,
+}
+
 enum Missing {
     Moved,
     Unsure(String),
@@ -1432,7 +1441,16 @@ enum Missing {
 
 impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true, None)
+        self.scan_as(true, None, Files::Write)
+    }
+
+    /// `scan`, but no file in the directory is written, moved or removed: a
+    /// rename is sent as the new title with its title line as it is, an old
+    /// buffer saved where a pull moved the file from stays there, and a
+    /// temporary file a crashed write left stays, all for a pass that writes
+    /// files.
+    fn scan_keeping_files(&self) -> Result<ScanReport> {
+        self.scan_as(true, None, Files::Keep)
     }
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
@@ -1441,10 +1459,10 @@ impl Folder {
     /// and changed within `settle`, which a copy or a download may still be
     /// writing.
     pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
-        self.scan_as(full, Some(settle))
+        self.scan_as(full, Some(settle), Files::Write)
     }
 
-    fn scan_as(&self, full: bool, settle: Option<Duration>) -> Result<ScanReport> {
+    fn scan_as(&self, full: bool, settle: Option<Duration>, mode: Files) -> Result<ScanReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(ScanReport {
                 root_gone: Some(gone),
@@ -1485,9 +1503,11 @@ impl Folder {
             .into_iter()
             .map(PathBuf::from)
             .filter(|name| landing::left_behind(name));
-        for (route, left) in &walked.left {
-            if let Ok(directory) = route.open() {
-                let _ = directory.unlink(left);
+        if mode == Files::Write {
+            for (route, left) in &walked.left {
+                if let Ok(directory) = route.open() {
+                    let _ = directory.unlink(left);
+                }
             }
         }
         for left in state_left {
@@ -1759,7 +1779,7 @@ impl Folder {
             report.root_gone = Some(gone);
             return Ok(report);
         }
-        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen)?;
+        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen, mode)?;
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().filter(|file| !file.deferred).any(|file| {
@@ -2033,6 +2053,7 @@ impl Folder {
                     }
                     let rewritten = retitle
                         .as_ref()
+                        .filter(|_| mode == Files::Write)
                         .and_then(|retitle| self.retitle_file(file, retitle));
                     // Where the title line was not rewritten, the title goes
                     // beside the file's bytes.
@@ -2180,17 +2201,20 @@ impl Folder {
     }
 
     /// An editor that did not follow a pull's move of a document saves its old
-    /// buffer where the file was. Such a save, naming the item and a version
-    /// line no newer than the item's when it moved, takes the place of the
-    /// item's file where that file holds nothing the device has not read and
-    /// sent, and the scan reads it as a save of an old buffer. Otherwise it waits, keyed
-    /// by path with why. Never a new item, and never a byte of the item's file
-    /// lost: that file is renamed aside, checked there, and only then removed.
+    /// buffer where the file was. In a scan that writes files, such a save,
+    /// naming the item and a version line no newer than the item's when it
+    /// moved, takes the place of the item's file where that file holds nothing
+    /// the device has not read and sent. Otherwise it waits, keyed by path
+    /// with why. A scan that keeps the files takes none and holds the saves
+    /// a scan that writes would hold. Never a new item, and never a byte of
+    /// the item's file lost: that file is renamed aside, checked there, and
+    /// only then removed.
     fn fold_stale_saves(
         &self,
         files: &mut Vec<Scanned>,
         snapshot: &[state::Bound],
         seen: &mut HashSet<String>,
+        mode: Files,
     ) -> Result<HashMap<String, String>> {
         let mut waiting = HashMap::new();
         let (moved, mut held) = {
@@ -2238,6 +2262,32 @@ impl Folder {
                 at += 1;
                 continue;
             };
+            // Moving files is writing them: a scan that keeps the files
+            // leaves the save where it is for a scan that writes. A save
+            // that scan would hold is held now, in the state alone, since
+            // reading the moved file below ends what makes it an old buffer.
+            if mode == Files::Keep {
+                let reason = match self.stale_save_refusal(bound) {
+                    Some(reason) => {
+                        state::set_stale_wait(
+                            &*self.core.conn()?,
+                            &file.key,
+                            &state::StaleWait {
+                                hash: file.hash.clone(),
+                                reason: reason.clone(),
+                            },
+                        )?;
+                        reason
+                    }
+                    None => format!(
+                        "it is an old copy of {}, which a push that writes files takes",
+                        bound.path
+                    ),
+                };
+                waiting.insert(file.key.clone(), reason);
+                at += 1;
+                continue;
+            }
             match self.take_stale_save(file, bound)? {
                 Err(reason) => {
                     state::set_stale_wait(
@@ -2266,6 +2316,25 @@ impl Folder {
             }
         }
         Ok(waiting)
+    }
+
+    /// Why a save of an old buffer of `bound`'s file is held and not taken, as
+    /// `take_stale_save` decides before it moves anything: the file holds a
+    /// change of its own, or bytes the device has not read. Moves nothing.
+    fn stale_save_refusal(&self, bound: &state::Bound) -> Option<String> {
+        let own = |reason: &str| Some(format!("it is an old copy of {}, {reason}", bound.path));
+        if bound.held.is_some() || !bound.writes.refused.is_empty() {
+            return own("which holds a change of its own; keep one of the two");
+        }
+        match self.read(self.root.join(&bound.path)) {
+            Ok(found) if state::hash(&found) != bound.content_hash => {
+                own("which holds an edit of its own; keep one of the two")
+            }
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                own(&format!("which could not be replaced: {error}"))
+            }
+            _ => None,
+        }
     }
 
     /// Moves `file` to `bound`'s path, every step a rename that replaces
@@ -3104,8 +3173,33 @@ impl Folder {
         } else {
             properties.insert(into.into(), body);
         }
+        // A title sent while the file's line was left as it was only keeps
+        // that line from being sent as a title: while the line shows what it
+        // did, it is no edit, whatever title the item holds now. A changed
+        // line, or a pull, ends it, and the save is an ordinary one.
+        let deferred = match retitle {
+            Some(retitle) => document
+                .front
+                .get(&retitle.field)
+                .filter(|shown| shown.as_str() != Some(retitle.title.as_str()))
+                .map(|shown| state::DeferredTitle {
+                    field: retitle.field.clone(),
+                    shown: shown.clone(),
+                }),
+            None => bound
+                .and_then(|bound| bound.writes.deferred_title.clone())
+                .filter(|deferred| document.front.get(&deferred.field) == Some(&deferred.shown)),
+        };
         if let Some(retitle) = retitle {
             properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
+        } else if let Some(deferred) = &deferred {
+            // Left out, so the line sends nothing: the item's own title would
+            // read as a change against the older version the file was read
+            // at. A save that replaces every property keeps the item's.
+            match held.properties.get(&deferred.field).filter(|_| whole) {
+                Some(held) => properties.insert(deferred.field.clone(), held.clone()),
+                None => properties.remove(&deferred.field),
+            };
         }
         if whole {
             // No file can carry these, so leaving them out is no clear.
@@ -3151,6 +3245,7 @@ impl Folder {
         if fresh {
             writes.save += 1;
         }
+        writes.deferred_title = deferred;
         let save = writes.save;
         let mut queued: Vec<(String, Option<i64>)> = Vec::new();
         if !in_step {
@@ -4637,6 +4732,21 @@ impl Folder {
             return Ok(PlacementWrite::Done);
         }
         if in_place {
+            if let Some(bound) = bound
+                .as_ref()
+                .filter(|bound| bound.writes.deferred_title.is_some())
+            {
+                state::bind(
+                    &*self.core.conn()?,
+                    &state::Bound {
+                        writes: state::Writes {
+                            deferred_title: None,
+                            ..bound.writes.clone()
+                        },
+                        ..bound.clone()
+                    },
+                )?;
+            }
             if bytes_of(item, catalog).is_some() {
                 self.keep_executable(item, &want, &rendering.context.borrow())?;
             }
@@ -4652,6 +4762,7 @@ impl Folder {
             .as_ref()
             .map(|bound| bound.writes.clone())
             .unwrap_or_default();
+        writes.deferred_title = None;
         let mut edit_line = bound.as_ref().and_then(|bound| bound.edit_line);
         if carries_frontmatter(Path::new(&want)) && !waiting.is_empty() {
             let mut lifted = false;

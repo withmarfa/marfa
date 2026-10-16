@@ -205,6 +205,34 @@ describe("a device confirms the instance before it sends a purge", () => {
   });
 });
 
+describe("a device names the copy's instance on a purge", () => {
+  it("names it, and expires the copy where another instance refuses the purge", async () => {
+    harness = await holding("purge-instance-changed");
+    harness.server.answer(
+      "POST",
+      `/items/${TRASHED}/purge`,
+      refusal(409, "instance_changed", "another instance at this address"),
+      accepted,
+    );
+    const refused = await harness.device.purgeItem(TRASHED);
+    expect(refused.ok, "another instance's refusal was taken as done").toBe(
+      false,
+    );
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("copy_expired");
+      expect(refused.refusal.raw).toContain("instance_changed");
+    }
+    const sent = harness.server.requests.filter((request) =>
+      request.pathname.endsWith("/purge"),
+    );
+    expect(
+      sent.map((request) => request.headers["x-marfa-instance-id"]),
+    ).toEqual([SCRIPTED_INSTANCE]);
+    const status = await harness.device.status();
+    expect(status.ok ? status.value.hydration : status).toBe("expired");
+  });
+});
+
 describe("a device reads the bin from the server alone", () => {
   it("refuses to read the bin while the server cannot be reached", async () => {
     harness = await holding("bin-offline");

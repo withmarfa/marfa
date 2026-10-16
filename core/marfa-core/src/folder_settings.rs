@@ -213,12 +213,14 @@ impl Core {
         let key = idempotency_key
             .map(str::to_string)
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-        let answer = http.send(&Outgoing {
-            method,
-            segments,
-            params: Vec::new(),
-            body: &body,
-            idempotency_key: &key,
+        let answer = crate::catch_up::write_naming_instance(self, http, |http| {
+            http.send(&Outgoing {
+                method,
+                segments,
+                params: Vec::new(),
+                body: &body,
+                idempotency_key: &key,
+            })
         })?;
         if !answer.is_success() {
             return Err(http.refused(

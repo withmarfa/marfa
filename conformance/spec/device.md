@@ -308,6 +308,28 @@ If the server's root answers a failure that clears on its own when a folder's se
 
 **Tests:** `device/folders.test.ts › sends no settings edit while the server cannot say which instance it is`.
 
+### `device/instance-named-one-write`
+
+Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each purge, change to a folder's settings and folder status report it sends.
+
+**Reason:** another instance can take the address after the copy is hydrated. Naming the instance lets the server refuse the write where it lands (`instance/write-names-other`).
+
+**Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`, `device/folder-health.test.ts › names the copy's instance on each status report`.
+
+### `device/instance-changed-one-write`
+
+If the server answers a purge or a change to a folder's settings `409 instance_changed`, then a device MUST end the call `copy_expired` with the reason `instance_changed`, expiring the copy.
+
+**Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`.
+
+### `device/instance-changed-holds-report`
+
+While a folder's copy is expired, a device MUST send no status report for the folder, sending the report it holds once the copy is hydrated again.
+
+**Reason:** an expired copy may follow an instance that is no longer at the address (`queue-and-verdicts/instance-changed-sends-nothing`).
+
+**Tests:** `device/folder-health.test.ts › sends no status report after another instance refuses a write, and sends it once the copy is built again`.
+
 ### `device/late-answer`
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.

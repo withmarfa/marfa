@@ -116,7 +116,7 @@ impl Folder {
     fn send_only_observed(&self) -> Result<SendReport> {
         let hydrated = self.resume()?;
         let settings = self.send_settings_edit()?;
-        let scan = self.scan()?;
+        let scan = self.scan_keeping_files()?;
         let drain = self.drain()?;
         Ok(SendReport {
             hydrated,

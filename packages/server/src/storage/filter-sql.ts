@@ -44,8 +44,18 @@ function patternClause(
     params.push(exact);
     return `${column} = ?`;
   }
-  params.push(exact, descendantPattern);
-  return `(${column} = ? OR ${column} LIKE ? ESCAPE '\\')`;
+  const { from, before } = subtreeBounds(exact);
+  params.push(exact, from, before);
+  return `(${column} = ? OR (${column} >= ? AND ${column} < ?))`;
+}
+
+/**
+ * `/` immediately follows `.` in binary order, so these bounds cover
+ * exactly the `<root>.` prefix. A range can use the BINARY type index;
+ * default case-insensitive LIKE cannot.
+ */
+export function subtreeBounds(root: string): { from: string; before: string } {
+  return { from: `${root}.`, before: `${root}/` };
 }
 
 /**
@@ -655,21 +665,21 @@ export interface SourceFilterSettings {
  */
 function decomposeCoveredTypes(types: string[]): {
   global: boolean;
-  pairs: { exact: string; descendantPattern: string }[];
+  pairs: { exact: string }[];
 } {
-  const pairs: { exact: string; descendantPattern: string }[] = [];
+  const pairs: { exact: string }[] = [];
   for (const configured of types) {
     const { global, exact, descendantPattern, extraTypes } =
       typeSubtreeToSql(configured);
     if (global) return { global: true, pairs: [] };
     if (exact !== null && descendantPattern !== null) {
-      pairs.push({ exact, descendantPattern });
+      pairs.push({ exact });
     }
-    // A declared descendant needs no LIKE of its own — its identifier is
-    // already exact — but it must be covered, or a lever narrowing a subtree
-    // would leave the member named outside that subtree's namespace unnarrowed.
+    // A declared descendant is covered as a root of its own, or a lever
+    // narrowing a subtree would leave the member named outside that
+    // subtree's namespace unnarrowed.
     for (const extra of extraTypes) {
-      pairs.push({ exact: extra, descendantPattern: `${extra}.%` });
+      pairs.push({ exact: extra });
     }
   }
   return { global: false, pairs };
@@ -734,7 +744,7 @@ export function sourceFilterToSql(
     : pairs
         .map(
           (p) =>
-            sql`(${typeCol} = ${p.exact} OR ${typeCol} LIKE ${p.descendantPattern} ESCAPE '\\')`,
+            sql`(${typeCol} = ${p.exact} OR (${typeCol} >= ${subtreeBounds(p.exact).from} AND ${typeCol} < ${subtreeBounds(p.exact).before}))`,
         )
         .reduce(
           (acc, clause, i) => (i === 0 ? clause : sql`${acc} OR ${clause}`),
@@ -778,9 +788,9 @@ export function sourceFilterToRawSql(
   } else {
     covered = pairs
       .map((p) => {
-        params.push(p.exact);
-        params.push(p.descendantPattern);
-        return `(${typeCol} = ? OR ${typeCol} LIKE ?${LIKE_ESCAPE_CLAUSE})`;
+        const { from, before } = subtreeBounds(p.exact);
+        params.push(p.exact, from, before);
+        return `(${typeCol} = ? OR (${typeCol} >= ? AND ${typeCol} < ?))`;
       })
       .join(" OR ");
   }
