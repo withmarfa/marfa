@@ -2865,13 +2865,7 @@ export interface components {
                 };
             };
         };
-        /** @description An edge type to register. */
-        EdgeTypeRegistrationRequest: components["schemas"]["EdgeTypeRequest"] & {
-            /** @description `true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition. */
-            evolve_constraints?: boolean;
-        };
-        /** @description An edge type to register. */
-        EdgeTypeRequest: {
+        EdgeTypeRegistrationRequest: {
             /** @description The identifier of the edge type, such as `acme.list-member`. */
             id: string;
             /** @description A name for people to read. */
@@ -2903,6 +2897,8 @@ export interface components {
              * @enum {string}
              */
             written_at?: "source" | "target";
+            /** @description `true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition. */
+            evolve_constraints?: boolean;
         };
         /** @description A page holding every edge type. */
         EdgeTypePage: {

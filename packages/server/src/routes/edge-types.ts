@@ -313,14 +313,17 @@ export function edgeTypeFromRequest(
 // Routes
 // ---------------------------------------------------------------------------
 
-const EdgeTypeRegistrationRequestSchema = EdgeTypeRequestSchema.extend({
-  evolve_constraints: z
-    .boolean()
-    .optional()
-    .describe(
-      "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition.",
-    ),
-}).openapi("EdgeTypeRegistrationRequest");
+const EdgeTypeRegistrationRequestSchema = z
+  .object({
+    ...EdgeTypeRequestSchema.shape,
+    evolve_constraints: z
+      .boolean()
+      .optional()
+      .describe(
+        "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition.",
+      ),
+  })
+  .openapi("EdgeTypeRegistrationRequest");
 
 const registerEdgeTypeRoute = createRoute({
   method: "post",

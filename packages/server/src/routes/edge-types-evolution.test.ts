@@ -382,3 +382,47 @@ it("rolls back the stored definition and registry publication if auditing fails"
   ).data.find((one) => one.id === definition.id);
   expect(served).toMatchObject(before ?? {});
 });
+
+it("publishes the complete registration body as one object for command discovery", async () => {
+  const response = await request(ctx.app, "GET", "/openapi.json");
+  expect(response.status).toBe(200);
+  const document = (await response.json()) as {
+    paths: Record<
+      string,
+      {
+        post: {
+          requestBody: {
+            content: Record<string, { schema: { $ref: string } }>;
+          };
+        };
+      }
+    >;
+    components: {
+      schemas: Record<
+        string,
+        {
+          type?: string;
+          required?: string[];
+          properties?: Record<string, unknown>;
+        }
+      >;
+    };
+  };
+  const ref =
+    document.paths["/edge-types"]?.post.requestBody.content["application/json"]
+      ?.schema.$ref;
+  if (ref === undefined) throw new Error("No registration request schema");
+  const schema = document.components.schemas[ref.split("/").at(-1) ?? ""];
+  expect(schema?.type).toBe("object");
+  expect(schema?.required).toEqual(
+    expect.arrayContaining(["id", "cardinality"]),
+  );
+  for (const field of [
+    "id",
+    "cardinality",
+    "source_type_constraints",
+    "target_type_constraints",
+    "evolve_constraints",
+  ])
+    expect(schema?.properties).toHaveProperty(field);
+});
