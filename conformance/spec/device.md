@@ -3152,13 +3152,27 @@ When a body carries a link by the id of an item the copy holds, a device MUST qu
 
 **Tests:** `device/body-edges-live.test.ts › reports a refused edge write against its link, and keeps the body`.
 
+### `device/body-link-id-first`
+
+When a body carries a link by the id of an item the copy holds, a device MUST answer the link with that item, whatever other items are titled.
+
+**Reason:** an id names one item. An item the body already references, titled with another item's id, must not take a link to that id, because apps link by id to avoid titles that name more than one item.
+
+**Tests:** `device/body-edges-live.test.ts › names the item with an id whatever a referenced item is titled`.
+
+### `device/body-link-id-asked`
+
+If a body's link is the id of an item the copy does not hold, then a device MUST ask the server for that id, whatever other items are titled.
+
+**Tests:** `device/body-edges-live.test.ts › asks the server for an id the copy does not hold, whatever a referenced item is titled`, `› names the item with an id whatever a referenced item is titled`.
+
 ### `device/body-link-by-title`
 
 If a body's link names no item by an id the copy holds and no item the item already has a `references` edge to, then a device MUST NOT queue its edge until the server's lookup has answered.
 
 **Reason:** a working copy holds a slice and its pins, so it cannot tell alone that a title names one item.
 
-**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`.
+**Tests:** `device/body-edges-live.test.ts › makes a references edge for a link to a held item, to one created earlier in the queue, and to one only the server holds`, `› makes an edge for a fresh link by a title another item took, once the server has answered`.
 
 ### `device/body-link-forms`
 
@@ -3358,13 +3372,21 @@ When an edit based on a version older than the one the copy holds changes an ite
 
 While the edge a body's link made stands, a device MUST answer the link with the item it named, even after that item is renamed.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`.
+
+### `device/body-link-kept`
+
+While the edge a body's link made stands, a device MUST keep answering the link with that item when another link is added to the body or taken out of it, whatever items are then titled the same as the link's name.
+
+**Reason:** a person did not edit the link, so it must not come to name another item because a later link makes a second item answer to its text. The edge is the record of what the link named, so it is read before any title.
+
+**Tests:** `device/body-edges-live.test.ts › answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`.
 
 ### `device/body-link-renamed-removed`
 
 When a write takes out of a body a link to an item renamed since its edge was made, a device MUST queue the delete of that edge.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`.
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`.
 
 ### `device/body-name-dropped`
 
