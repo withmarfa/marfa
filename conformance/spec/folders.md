@@ -4304,7 +4304,7 @@ While a process holds a folder, the CLI MUST refuse `folders watch` of that fold
 
 ## Folder syncing from login
 
-`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration, which `XDG_CONFIG_HOME` holds, or under `.config` in the home directory where it is unset or empty. Where `MARFA_AUTOSTART_ROOT` names a directory, that directory stands in for the home directory, `XDG_CONFIG_HOME` is not read, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
+`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration (`XDG_CONFIG_HOME`), or under `.config` in the home directory. Where `MARFA_AUTOSTART_ROOT` names a directory, that directory stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
 
 ### `folders/autostart-launchd-agent`
 
