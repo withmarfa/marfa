@@ -646,9 +646,9 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     crate::catch_up::refuse_if_stopped(stop)?;
-    // Every request but a read names the instance the copy was hydrated
-    // from, so one that reaches another instance after the pass confirmed
-    // this one is refused where it lands: a write, or a lookup made for one.
+    // Queued writes and their natural-key lookups name the copy's instance
+    // so a replacement refuses them even after the pass confirmed the origin.
+    // Credential renewal uses the exempt authentication endpoints.
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ViewChange::default();
     let result = match send_queue(core, &http, generation, stop, &mut pass) {

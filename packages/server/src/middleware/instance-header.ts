@@ -16,8 +16,8 @@ export const INSTANCE_HEADER = "X-Marfa-Instance-Id";
  * sends the same write again is answered by the instance now there. The
  * header is not part of the fingerprint for the same reason.
  *
- * A request with no credential on a door that requires one passes through,
- * so the credential gate answers `401` first.
+ * A request with no credential on a protected door passes through to the
+ * depth check and credential gate before the header is judged.
  */
 export function instanceHeaderMiddleware(instanceId: string) {
   return createMiddleware<AppEnv>(async (c, next) => {

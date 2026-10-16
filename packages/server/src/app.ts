@@ -414,7 +414,7 @@ export function createApp(
   );
   // A write naming an instance has its depth judged after the instance, so
   // another instance refuses it for that alone (`instance/write-instance-order`).
-  // Without a credential the depth still comes first, as for any write.
+  // On a protected door, depth still precedes a missing credential refusal.
   const namesInstance = (c: Context<AppEnv>) =>
     c.req.header(INSTANCE_HEADER) !== undefined &&
     !/^\/auth(?:\/|$)/.test(c.req.path);
