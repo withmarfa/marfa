@@ -2824,7 +2824,7 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 **Reason:** the person decides which of the two to keep, however the item's file changes meanwhile.
 
-**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`.
+**Tests:** `device/folders-placement.test.ts › holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item`, `› holds an old buffer saved at the old name while the moved file holds a refused edit, and keeps that edit`, `› holds an old buffer until the person changes that file, whatever the moved file does`, `› holds an old buffer through a send-only run while the moved file holds an edit of its own, and makes no new item in the push after`.
 
 ### `folders/moved-save-race`
 
@@ -4866,7 +4866,7 @@ When `folders push` is given `--send-only`, the CLI MUST NOT write a file into t
 
 When `folders push` is given `--send-only`, the CLI MUST NOT remove a file from the folder's directory.
 
-**Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`.
+**Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`, `device/folders-placement.test.ts › leaves the temporary file a crashed pull left in a send-only run, and removes it in the push after`.
 
 ### `folders/send-only-report-sent`
 
@@ -4894,11 +4894,11 @@ When a `folders push` without `--send-only` follows a send-only run, the CLI MUS
 
 ### `folders/send-only-rename-line-follows`
 
-When a `folders push` without `--send-only` follows a send-only run that sent a renamed Markdown document's new name as its title, the CLI MUST rewrite the document's title line to that title.
+Where a renamed Markdown document's title line is as a send-only run left it and its file is not held, when a `folders push` without `--send-only` follows that run, which sent the document's new name as its title, the CLI MUST rewrite the title line to the item's title.
 
-**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files.
+**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files. A title the person types in the line meanwhile is theirs, and the item keeps it.
 
-**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title through every save made after a send-only run that sent it, before a push writes the title line`, `› sends a title typed in the line after a send-only run that sent the new name's, and keeps it`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
 
 ### `folders/send-only-hydrates`
 
