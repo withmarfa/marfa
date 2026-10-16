@@ -40,6 +40,8 @@ A copy saves before it has reached a server. `device types declare` takes the ty
 
 Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
 
+A move of an edge's source changes the server's read view, so a drain that sends one ends `copy_expired`, but only after it has sent the writes queued behind it. Each is judged as it would have been, the reads their answers owe are left for the hydration, and any other change to the read view still ends the drain at once. One hydration then covers every move the drain sent.
+
 ## Folder directories
 
 Read [remote folder health](marfa-cli/FOLDER-HEALTH.md) with `marfa folders health FOLDER_ID` to inspect the last reports from each sign-in and local copy.
