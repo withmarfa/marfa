@@ -162,6 +162,12 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
         if (method === "PATCH")
           body = { version: edge.version, properties: { label: "Changed" } };
       }
+    } else if (door.includes("/tags") || door.includes("/metadata")) {
+      path = path.replace(":id", item.id).replace(":tag", "replayed");
+      if (method !== "DELETE") body = { tags: ["replayed"] };
+    } else if (door.includes("/extensions")) {
+      path = path.replace(":id", item.id).replace(":namespace", "replayed");
+      if (method === "PUT") body = { replayed: true };
     } else if (door.endsWith("bulk-actions"))
       body = {
         action: "update_tags",
@@ -201,11 +207,12 @@ it.each(IDEMPOTENT_WRITE_DOORS)(
     const first = await ask();
     expect(first.status, await first.clone().text()).toBeLessThan(300);
     const original = await first.text();
+    const mark = await ctx.storage.eventLog.getMaxId();
     const replay = await ask();
     expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
     expect(await replay.text()).toBe(original);
+    expect(await ctx.storage.eventLog.getMaxId()).toBe(mark);
     const stored = await receipt(key.id, headers["Idempotency-Key"]);
-    const mark = await ctx.storage.eventLog.getMaxId();
     await narrow(key.id, { "*": "read" });
     expect((await ask()).status).toBe(403);
     await narrow(key.id, { "*": "write" });

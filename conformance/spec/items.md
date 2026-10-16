@@ -660,9 +660,11 @@ When two writes to one item race, the server MUST judge each against the item an
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PATCH /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke` and `POST /items/bulk-actions`, and on no other operation.
 
-**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`.
+**Reason:** a client resends a write whose answer it lost. A tag, metadata or extension write checks no version, so one applied a second time would undo a change made between the two sends.
+
+**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`.
 
 ### `items/idempotency-replay`
 
@@ -752,7 +754,7 @@ If a kept answer discloses a conflict snapshot, an extension namespace, a hydrat
 
 When the server reauthorizes a replay about an item or edge that still exists, the server MUST judge it by the item's or edge's current type and source as well as those the first answer recorded.
 
-**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the row's current type after a retype`, `› judges an edge replay by the edge's current source`.
+**Tests:** `sync/idempotency-replay.test.ts › judges a replay by the row's current type after a retype`, `› judges a tag replay by the row's current type after a retype`, `› judges an edge replay by the edge's current source`.
 
 ### `items/replay-removed-subject`
 
