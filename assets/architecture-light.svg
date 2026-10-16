@@ -37,7 +37,7 @@
   <text x="576" y="68" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">Send each request straight to the API</text>
   <rect x="576" y="88" width="168.0" height="56" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
   <text x="660.0" y="112" font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">Connectors</text>
-  <text x="660.0" y="132" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">Todoist, RSS, GitHub</text>
+  <text x="660.0" y="132" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">bring in other services</text>
   <rect x="756.0" y="88" width="168.0" height="56" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
   <text x="840.0" y="112" font-size="15" font-weight="600" fill="#1f2328" text-anchor="middle">Scripts and apps</text>
   <text x="840.0" y="132" font-size="13" font-weight="400" fill="#59636e" text-anchor="middle">in TypeScript</text>
