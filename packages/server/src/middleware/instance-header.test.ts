@@ -20,7 +20,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function write(
+async function write(
   path: string,
   init: {
     method?: string;
@@ -30,7 +30,7 @@ function write(
   } = {},
 ): Promise<Response> {
   const key = init.key === undefined ? ctx.workingKey : init.key;
-  return ctx.app.request(path, {
+  return await ctx.app.request(path, {
     method: init.method ?? "POST",
     headers: {
       "Content-Type": "application/json",
