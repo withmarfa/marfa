@@ -2056,19 +2056,43 @@ While a drain goes on after a move of an edge's source changed the read view, a 
 
 ### `queue-and-verdicts/edge-source-move-one-expiry`
 
-When a drain sends more than one move of an edge's source, a device MUST end the drain `copy_expired` once, after the last write it sent.
+When a drain has sent a move of an edge's source that the server took, and ends with no wait, no unavailable server, no credential stop and no write left undelivered, a device MUST end the drain `copy_expired` once, after the last write it sent.
 
 **Reason:** one hydration then covers the batch (`device/view-changed`).
 
 **Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
 
+### `queue-and-verdicts/edge-source-move-report-kept`
+
+If a drain that expired the copy for a move of an edge's source ends with a wait, an unavailable server, a credential stop or a write left undelivered, then a device MUST return the drain's report, with the copy expired.
+
+**Reason:** the report holds what a caller must act on, the wait among it (`queue-and-verdicts/report-retry-after`), and the next call is refused `copy_expired`.
+
+**Tests:** `device/edge-move.test.ts › returns the report with the wait the server asked for, the copy expired`.
+
+### `queue-and-verdicts/edge-source-move-error-wins`
+
+If a drain that expired the copy for a move of an edge's source ends in an error of its own, a redirect or a stop among them, then a device MUST end the drain with that error, leaving the copy expired.
+
+**Reason:** a stop ends the call `canceled` (`device/stop-canceled`) whatever else the drain learned; the expiry then shows as the copy's state and as the refusal of the next call.
+
+**Tests:** `device/edge-move.test.ts › ends with the error of its own where a redirect meets the drain after the move`, `› ends canceled where a stop meets the drain after the move, the copy expired`.
+
+### `queue-and-verdicts/edge-source-move-refused-keeps-copy`
+
+If the server refuses every move of an edge's source a drain sends, then a device MUST NOT expire the copy.
+
+**Reason:** a refused move changes nothing on the server, so its read view stands (`read-views/view-moves-edge-source`).
+
+**Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`.
+
 ### `queue-and-verdicts/view-change-ends-drain`
 
-If a drain meets a changed read view anywhere but in the read after the answer to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
+If a drain meets a changed read view anywhere but in the read after the answer it has just had to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
 
-**Reason:** only a move of a source is known to have changed the view; a change from any other cause is news the drain had no part in, and the caller learns of it before more is sent.
+**Reason:** only a move of a source answered in the drain at hand is known to have changed the view; a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`, `› ends at once where a read owed from an earlier drain meets a changed read view`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 

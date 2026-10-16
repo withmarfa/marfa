@@ -53,6 +53,16 @@ pub struct DrainReport {
 }
 
 impl DrainReport {
+    /// Whether the pass sent what it could and has no wait, outage or
+    /// credential stop to tell.
+    fn has_nothing_left(&self) -> bool {
+        self.unavailable.is_none()
+            && self.stopped.is_none()
+            && self.retry_after_seconds.is_none()
+            && self.undelivered == 0
+            && self.unmade == 0
+    }
+
     /// Takes in a later pass of the same drain, so the two read as one: what
     /// was sent adds up, and what still waits is what the later pass left.
     pub(crate) fn absorb(&mut self, later: DrainReport) {
@@ -632,12 +642,15 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let mut pass = ViewChange::default();
     let result = send_queue(core, stop, &mut pass);
     // However the pass ended, a copy whose read view moved under it is
-    // expired once, here, and the pass's own error, if any, is the one told.
+    // expired once, here. The pass's own error, if any, is the one told. So is
+    // a report that has something to say a caller must act on (a wait, an
+    // unavailable server, a credential stopped, a write left undelivered), and
+    // the next call is refused `copy_expired`.
     let expiry = pass.expire(core);
     let report = result?;
     match expiry? {
-        Some(expired) => Err(expired),
-        None => Ok(report),
+        Some(expired) if report.has_nothing_left() => Err(expired),
+        _ => Ok(report),
     }
 }
 
@@ -1780,6 +1793,7 @@ fn settle_success(
     answer: &Answer,
     shape: Shape,
     pass: &mut ViewChange,
+    answered_now: bool,
 ) -> Result<Settled> {
     let item = if shape == Shape::Item {
         serde_json::from_str::<WireWriteAnswer>(&answer.body).ok()
@@ -1874,7 +1888,13 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
-    let read = match read_owed(core, &owed, Bin::Held, pass, moves_source(row)) {
+    let read = match read_owed(
+        core,
+        &owed,
+        Bin::Held,
+        pass,
+        answered_now && moves_source(row),
+    ) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
@@ -1959,6 +1979,7 @@ fn settle(
             answer.as_ref().expect("a success has a response"),
             shape,
             pass,
+            true,
         ),
         Classified::Environmental => Ok(Settled {
             retry_after_seconds: answer
@@ -2207,7 +2228,10 @@ fn reconcile(core: &Core, row: &QueuedWrite, pass: &mut ViewChange) -> Result<Op
         restore_settled_overlay(&tx, row, &read)?;
         move_edits_back(&tx, row)?;
         if matches!(read, ReadBack::Unread) {
-            // The refusal and the read both stay owed.
+            // The queue's side is done, so the receipt goes: only the read
+            // stays owed, and a pass that came back to the receipt would
+            // rebase the writes behind it a second time.
+            store::meta_delete(&tx, &receipt_key(&row.id))?;
             tx.commit()?;
             return Ok(());
         }
@@ -2305,7 +2329,7 @@ fn read_owed_backs(
                 "edge" => Shape::Edge,
                 _ => Shape::Plain,
             };
-            settle_success(core, &row, &answer, shape, pass)?
+            settle_success(core, &row, &answer, shape, pass, false)?
         };
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {
@@ -2418,7 +2442,9 @@ impl ViewChange {
 }
 
 /// Whether a write moves an edge's source, which the server answers by
-/// changing the read view (`read-views/view-moves-edge-source`).
+/// changing the read view (`read-views/view-moves-edge-source`). Only a move
+/// answered in the pass at hand is known to have changed it; a receipt a
+/// pass finds from an earlier one is not.
 fn moves_source(row: &QueuedWrite) -> bool {
     row.kind == WriteKind::UpdateEdge && row.body.get("source_id").is_some()
 }
@@ -3780,6 +3806,200 @@ mod tests {
                 Some(Verdict::Refused),
                 Some(Verdict::Accepted)
             ]
+        );
+    }
+
+    /// The copy as a hydration leaves it, as far as the drain can tell.
+    fn hydrated_again(core: &Core) {
+        let conn = core.conn().unwrap();
+        read_view::advance_generation(&conn).unwrap();
+        store::meta_set(&conn, store::META_EVENT_CURSOR, "20").unwrap();
+        store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+    }
+
+    #[test]
+    fn a_refusal_left_to_its_read_behind_a_source_move_does_not_rebase_the_writes_behind_it_again()
+    {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        moved_to_p2(&core, "e1");
+        let refused = rank_edit(&core, "e2");
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::certified(edge_answered("e1", "p2", 2)),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![
+                crate::scripted::refusal(404, "item_not_found"),
+                crate::scripted::certified(edge_answered("e2", "p1", 1)),
+            ],
+        );
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        {
+            let conn = core.conn().unwrap();
+            let settled = store::queued_write(&conn, &refused.id).unwrap().unwrap();
+            assert_eq!(settled.verdict, Some(Verdict::Refused));
+            assert!(
+                store::meta_get(&conn, &receipt_key(&refused.id))
+                    .unwrap()
+                    .is_none(),
+                "the refusal's queue work is done, yet its receipt stands to do it again"
+            );
+            assert!(
+                store::owed_read_backs(&conn)
+                    .unwrap()
+                    .iter()
+                    .any(|owed| owed.id == "e2"),
+                "the refusal's read is no longer owed"
+            );
+        }
+        hydrated_again(&core);
+        // A later edit of the same property, moved onto version 2 since.
+        let later = {
+            let conn = core.conn().unwrap();
+            store::enqueue(
+                &conn,
+                &store::NewWrite {
+                    kind: WriteKind::UpdateEdge,
+                    item_id: Some("p1"),
+                    target_id: Some("c-e2"),
+                    edge_id: Some("e2"),
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(2),
+                    payload: r#"{"properties":{"rank":2},"version":2}"#,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default()).unwrap();
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &later.id)
+                .unwrap()
+                .unwrap()
+                .base_version,
+            Some(2),
+            "recovering the refusal rebased a later edit a second time, back onto version 1"
+        );
+    }
+
+    #[test]
+    fn a_wait_the_server_asks_for_after_a_source_move_is_reported_with_the_expiry() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        let moves = [moved_to_p2(&core, "e1"), moved_to_p2(&core, "e2")];
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![crate::scripted::Answer::Json {
+                status: 429,
+                body: r#"{"error":{"code":"rate_limited","message":"slow down"}}"#.into(),
+                headers: vec![("Retry-After".into(), "120".into())],
+            }],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.retry_after_seconds, Some(120));
+        assert!(report.unavailable.is_some());
+        let conn = core.conn().unwrap();
+        assert!(
+            read_view::expired(&conn).unwrap(),
+            "the copy was left current"
+        );
+        let verdicts: Vec<_> = moves
+            .iter()
+            .map(|row| {
+                store::queued_write(&conn, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict
+            })
+            .collect();
+        assert_eq!(verdicts, vec![Some(Verdict::Accepted), None]);
+        drop(conn);
+        assert!(matches!(
+            core.drain().unwrap_err(),
+            CoreError::CopyExpired { .. }
+        ));
+    }
+
+    #[test]
+    fn a_read_owed_from_an_earlier_pass_ends_the_drain_at_once_where_the_view_has_changed() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        moved_to_p2(&core, "e1");
+        let behind = moved_to_p2(&core, "e2");
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::json(503, r#"{"error":{"code":"unavailable","message":"busy"}}"#),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on("/edges/e2", vec![edge_answered("e2", "p2", 2)]);
+        let first = core.drain().unwrap();
+        assert!(first.unavailable.is_some(), "the witness: the read failed");
+        assert!(server.seen("/edges/e2").is_empty());
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert!(
+            server.seen("/edges/e2").is_empty(),
+            "a write was sent after an earlier pass's read met a changed view"
+        );
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &behind.id)
+                .unwrap()
+                .unwrap()
+                .verdict,
+            None
+        );
+        assert!(read_view::expired(&conn).unwrap());
+    }
+
+    #[test]
+    fn moves_the_server_refuses_leave_the_copy_current() {
+        let server = crate::scripted::Scripted::start();
+        let names = ["e1", "e2"];
+        let (_dir, core) = holding_edges(&server, &names);
+        let moves: Vec<_> = names.iter().map(|name| moved_to_p2(&core, name)).collect();
+        for name in names {
+            server.on(
+                &format!("/edges/{name}"),
+                vec![
+                    crate::scripted::refusal(404, "item_not_found"),
+                    crate::scripted::certified(crate::scripted::refusal(404, "edge_not_found")),
+                ],
+            );
+        }
+        let report = core.drain().unwrap();
+        assert_eq!(report.answered, 2);
+        let conn = core.conn().unwrap();
+        for row in &moves {
+            assert_eq!(
+                store::queued_write(&conn, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict,
+                Some(Verdict::Refused)
+            );
+        }
+        assert!(
+            !read_view::expired(&conn).unwrap(),
+            "a refused move expired the copy"
         );
     }
 

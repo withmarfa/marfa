@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   answers,
   refusal,
@@ -674,6 +674,223 @@ describe("a drain that sends moves of an edge's source", () => {
       CHILD_EDGES.map((id) => edgeCalls(harness!, id).reads.length),
       "a read was made under a view already known to have changed",
     ).toEqual([1, 0, 0]);
+  });
+
+  it("leaves the copy current where the server refuses every move", async () => {
+    harness = await reparentable("edge-source-move-refused");
+    const { server, device } = harness;
+    for (const id of CHILD_EDGES.slice(0, 2)) {
+      server.answer(
+        "PATCH",
+        `/edges/${id}`,
+        refusal(404, "item_not_found", "no such item"),
+      );
+      server.copyAnswer(
+        "GET",
+        `/edges/${id}`,
+        refusal(404, "edge_not_found", "no such edge"),
+      );
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            source_id: PARENT_B,
+          }),
+        ),
+      );
+    }
+
+    const drained = value(await device.drain());
+    expect(drained.verdicts.map((row) => row.verdict)).toEqual([
+      "refused",
+      "refused",
+    ]);
+    expect(
+      value(await device.status()).hydration,
+      "a refused move expired the copy",
+    ).toBe("complete");
+  });
+
+  it("returns the report with the wait the server asked for, the copy expired", async () => {
+    harness = await reparentable("edge-source-move-wait");
+    const { server, device } = harness;
+    const [first, second] = CHILD_EDGES;
+    server.answer("PATCH", `/edges/${first}`, () =>
+      writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer("PATCH", `/edges/${second}`, {
+      kind: "json",
+      status: 429,
+      body: { error: { code: "rate_limited", message: "slow down" } },
+      headers: { "Retry-After": "120" },
+    });
+    for (const id of [first, second]) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            source_id: PARENT_B,
+          }),
+        ),
+      );
+    }
+
+    const report = value(await device.drain());
+    expect(
+      report.retry_after_seconds,
+      "the wait the server asked for was lost to the expiry",
+    ).toBe(120);
+    expect(report.unavailable).not.toBeNull();
+    expect(value(await device.queue()).map((row) => row.verdict)).toEqual([
+      "accepted",
+      null,
+    ]);
+    expect(value(await device.status()).hydration).toBe("expired");
+    const next = await device.drain();
+    expect(next.ok).toBe(false);
+    if (!next.ok) expect(next.refusal.code).toBe("copy_expired");
+  });
+
+  it("ends with the error of its own where a redirect meets the drain after the move", async () => {
+    harness = await reparentable("edge-source-move-redirect");
+    const { server, device } = harness;
+    const [first, second] = CHILD_EDGES;
+    server.answer("PATCH", `/edges/${first}`, () =>
+      writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer("PATCH", `/edges/${second}`, {
+      kind: "json",
+      status: 307,
+      body: {},
+      contract: "999999",
+      headers: { Location: "/next" },
+    });
+    for (const id of [first, second]) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            source_id: PARENT_B,
+          }),
+        ),
+      );
+    }
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("redirect");
+    expect(
+      value(await device.status()).hydration,
+      "the redirect left the copy current",
+    ).toBe("expired");
+  });
+
+  it("ends canceled where a stop meets the drain after the move, the copy expired", async () => {
+    harness = await reparentable("edge-source-move-stopped");
+    const { server, device } = harness;
+    const [first, second] = CHILD_EDGES;
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    server.answer("PATCH", `/edges/${first}`, () =>
+      writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer("PATCH", `/edges/${second}`, () => ({
+      kind: "gated",
+      until,
+      then: writeAnswers.edge(childEdge(1, PARENT_B, 2), 200),
+    }));
+    for (const id of [first, second]) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            source_id: PARENT_B,
+          }),
+        ),
+      );
+    }
+    const draining = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            edgeCalls(harness!, second).writes.length,
+            draining.stderr,
+          ).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      draining.interrupt();
+      await draining.exited();
+      expect(draining.exitCode(), draining.stderr).toBe(3);
+      expect(JSON.parse(draining.stderr).error.code).toBe("canceled");
+    } finally {
+      await draining.stop();
+      release();
+    }
+    expect(
+      value(await device.status()).hydration,
+      "the stop left the copy current",
+    ).toBe("expired");
+  });
+
+  it("ends at once where a read owed from an earlier drain meets a changed read view", async () => {
+    harness = await reparentable("edge-source-move-earlier");
+    const { server, device } = harness;
+    const [first, second] = CHILD_EDGES;
+    server.answer("PATCH", `/edges/${first}`, () =>
+      writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(503, "unavailable", "busy"),
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer("PATCH", `/edges/${second}`, () =>
+      writeAnswers.edge(childEdge(1, PARENT_B, 2), 200),
+    );
+    for (const id of [first, second]) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            source_id: PARENT_B,
+          }),
+        ),
+      );
+    }
+
+    // The witness: the first drain could not read the move back, and said so.
+    expect(value(await device.drain()).unavailable).not.toBeNull();
+    expect(edgeCalls(harness, second).writes).toHaveLength(0);
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      edgeCalls(harness, second).writes,
+      "a write was sent after a read owed from an earlier drain met a changed view",
+    ).toHaveLength(0);
   });
 
   it("ends at once where the read of a write that moves no source meets a changed read view", async () => {

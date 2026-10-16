@@ -40,7 +40,7 @@ A copy saves before it has reached a server. `device types declare` takes the ty
 
 Reading commands on an absent store, including `--reader` and `device changes`, report `no_store` and exit 2. Queue JSON retains dependency history; plain “waiting on” names only unresolved dependencies.
 
-A move of an edge's source changes the server's read view, so a drain that sends one ends `copy_expired`, but only after it has sent the writes queued behind it. Each is judged as it would have been, the reads their answers owe are left for the hydration, and any other change to the read view still ends the drain at once. One hydration then covers every move the drain sent.
+A move of an edge's source changes the server's read view, so a drain that sends one the server takes ends `copy_expired`, but only after it has sent the writes queued behind it. Each is judged as it would have been, the reads their answers owe are left for the hydration, and any other change to the read view, or one met by a read an earlier drain left owed, still ends the drain at once. One hydration then covers every move the drain sent. A drain that also meets a wait, an unavailable server, a credential stop or a write it cannot deliver returns its report with the copy expired, and the next call is refused `copy_expired`; an error of its own, such as a stop or a redirect, is the one it ends with.
 
 ## Folder directories
 
