@@ -87,6 +87,126 @@
       }
     },
     "schemas": {
+      "EdgeType": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the edge type."
+          },
+          "label": {
+            "type": "string",
+            "description": "A name for people to read."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the edge type is for."
+          },
+          "cardinality": {
+            "type": "string",
+            "enum": [
+              "one-to-one",
+              "one-to-many",
+              "many-to-one",
+              "many-to-many"
+            ],
+            "description": "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit."
+          },
+          "source_type_constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes."
+          },
+          "target_type_constraints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The types an edge's target item can have, in the same form as `source_type_constraints`."
+          },
+          "cascade_on_delete": {
+            "type": "string",
+            "enum": [
+              "cascade",
+              "orphan",
+              "block"
+            ],
+            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists."
+          },
+          "property_schema": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EdgePropertyDefinition"
+            },
+            "description": "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list."
+          },
+          "reverse_name": {
+            "type": "string",
+            "description": "The name the edge goes by when read from its target, such as `child-of` for `parent-of`."
+          },
+          "written_at": {
+            "type": "string",
+            "enum": [
+              "source",
+              "target"
+            ],
+            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name."
+          },
+          "shipped": {
+            "type": "boolean",
+            "description": "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`."
+          }
+        },
+        "required": [
+          "id",
+          "cardinality",
+          "source_type_constraints",
+          "target_type_constraints",
+          "cascade_on_delete",
+          "property_schema",
+          "written_at",
+          "shipped"
+        ],
+        "description": "An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join."
+      },
+      "EdgePropertyDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The property's type: one of the field types a type's `fields` take, except `thumbnail`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the property holds."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "`true` if every edge of the type must have the property."
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values an `enum` property takes."
+          },
+          "items_type": {
+            "type": "string",
+            "description": "The type of each element of an `array` property. It can't be `thumbnail`."
+          },
+          "format": {
+            "type": "string",
+            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`."
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "description": "One property an edge of an edge type can carry."
+      },
       "TypeLever": {
         "type": "object",
         "properties": {
@@ -2683,125 +2803,24 @@
         ],
         "description": "An error response."
       },
-      "EdgeType": {
+      "EdgeTypeRegistrationResponse": {
         "type": "object",
         "properties": {
-          "id": {
-            "type": "string",
-            "description": "Unique identifier for the edge type."
-          },
-          "label": {
-            "type": "string",
-            "description": "A name for people to read."
-          },
-          "description": {
-            "type": "string",
-            "description": "What the edge type is for."
-          },
-          "cardinality": {
-            "type": "string",
-            "enum": [
-              "one-to-one",
-              "one-to-many",
-              "many-to-one",
-              "many-to-many"
-            ],
-            "description": "How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit."
-          },
-          "source_type_constraints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes."
-          },
-          "target_type_constraints": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The types an edge's target item can have, in the same form as `source_type_constraints`."
-          },
-          "cascade_on_delete": {
-            "type": "string",
-            "enum": [
-              "cascade",
-              "orphan",
-              "block"
-            ],
-            "description": "What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists."
-          },
-          "property_schema": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/EdgePropertyDefinition"
-            },
-            "description": "The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list."
-          },
-          "reverse_name": {
-            "type": "string",
-            "description": "The name the edge goes by when read from its target, such as `child-of` for `parent-of`."
-          },
-          "written_at": {
-            "type": "string",
-            "enum": [
-              "source",
-              "target"
-            ],
-            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name."
-          },
-          "shipped": {
-            "type": "boolean",
-            "description": "`true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`."
+          "edge_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EdgeType"
+              },
+              {
+                "description": "The edge type."
+              }
+            ]
           }
         },
         "required": [
-          "id",
-          "cardinality",
-          "source_type_constraints",
-          "target_type_constraints",
-          "cascade_on_delete",
-          "property_schema",
-          "written_at",
-          "shipped"
+          "edge_type"
         ],
-        "description": "An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join."
-      },
-      "EdgePropertyDefinition": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "description": "The property's type: one of the field types a type's `fields` take, except `thumbnail`."
-          },
-          "description": {
-            "type": "string",
-            "description": "What the property holds."
-          },
-          "required": {
-            "type": "boolean",
-            "description": "`true` if every edge of the type must have the property."
-          },
-          "enum_values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The values an `enum` property takes."
-          },
-          "items_type": {
-            "type": "string",
-            "description": "The type of each element of an `array` property. It can't be `thumbnail`."
-          },
-          "format": {
-            "type": "string",
-            "description": "A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`."
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "description": "One property an edge of an edge type can carry."
+        "description": "One registered edge type."
       },
       "InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
@@ -3018,7 +3037,7 @@
           },
           "evolve_constraints": {
             "type": "boolean",
-            "description": "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition."
+            "description": "`true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition."
           }
         },
         "required": [
@@ -21282,15 +21301,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge_type": {
-                      "$ref": "#/components/schemas/EdgeType"
-                    }
-                  },
-                  "required": [
-                    "edge_type"
-                  ]
+                  "$ref": "#/components/schemas/EdgeTypeRegistrationResponse"
                 }
               }
             },
@@ -21317,15 +21328,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "edge_type": {
-                      "$ref": "#/components/schemas/EdgeType"
-                    }
-                  },
-                  "required": [
-                    "edge_type"
-                  ]
+                  "$ref": "#/components/schemas/EdgeTypeRegistrationResponse"
                 }
               }
             },

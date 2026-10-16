@@ -258,9 +258,10 @@
     }
   },
   "routes/edge-types.ts": {
-    "boundary": "Audited registry type create/delete; audit-atomicity.test.ts.",
+    "boundary": "Audited registry type create/replace/delete; audit-atomicity.test.ts and routes/edge-types-evolution.test.ts.",
     "calls": {
       "EdgeTypeStore.create": 1,
+      "EdgeTypeStore.replace": 1,
       "EdgeTypeStore.delete": 1,
       "runAuditedTransaction": 2
     }

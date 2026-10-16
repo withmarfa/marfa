@@ -51,7 +51,7 @@ const WRITES: Record<string, string> = {
     "set merge addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
   TypeStore: "create update delete seedPlatformTypes deletePlatformType",
-  EdgeTypeStore: "create delete",
+  EdgeTypeStore: "create replace delete",
   SearchStore: "index setTags remove",
   KeyStore:
     "create update revoke revokeLapsedHolders updateLastUsed deleteDeadKeysOlderThan",

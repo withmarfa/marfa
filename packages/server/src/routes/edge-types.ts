@@ -320,11 +320,16 @@ const EdgeTypeRegistrationRequestSchema = z
       .boolean()
       .optional()
       .describe(
-        "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition.",
+        "`true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition.",
       ),
   })
   .describe("An edge type to register.")
   .openapi("EdgeTypeRegistrationRequest");
+
+const EdgeTypeRegistrationResponseSchema = z
+  .object({ edge_type: EdgeTypeResponseSchema.describe("The edge type.") })
+  .describe("One registered edge type.")
+  .openapi("EdgeTypeRegistrationResponse");
 
 const registerEdgeTypeRoute = createRoute({
   method: "post",
@@ -347,7 +352,7 @@ const registerEdgeTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ edge_type: EdgeTypeResponseSchema }),
+          schema: EdgeTypeRegistrationResponseSchema,
         },
       },
       description:
@@ -356,7 +361,7 @@ const registerEdgeTypeRoute = createRoute({
     201: {
       content: {
         "application/json": {
-          schema: z.object({ edge_type: EdgeTypeResponseSchema }),
+          schema: EdgeTypeRegistrationResponseSchema,
         },
       },
       description: "Returns the new edge type.",
@@ -508,6 +513,9 @@ const deleteEdgeTypeRoute = createRoute({
 
 export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
+  // Register the base before a field supplies its own description, which
+  // would otherwise replace the component's description on its first use.
+  router.openAPIRegistry.register("EdgeType", EdgeTypeResponseSchema);
 
   router.openapi(registerEdgeTypeRoute, async (c) => {
     const body = c.req.valid("json");
