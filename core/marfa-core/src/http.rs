@@ -1630,16 +1630,16 @@ mod tests {
             (Method::Post, "edges"),
             (Method::Patch, "edges/e1"),
             (Method::Delete, "edges/e1"),
-        ] {
-            assert!(keyed(method, path), "{method:?} {path}");
-        }
-        for (method, path) in [
             (Method::Post, "items/n1/tags"),
             (Method::Delete, "items/n1/tags/x"),
             (Method::Put, "items/n1/metadata"),
             (Method::Patch, "items/n1/metadata"),
             (Method::Put, "items/n1/extensions/app.cursor"),
             (Method::Delete, "items/n1/extensions/app.cursor"),
+        ] {
+            assert!(keyed(method, path), "{method:?} {path}");
+        }
+        for (method, path) in [
             (Method::Post, "items/lookup"),
             (Method::Post, "blobs"),
             (Method::Put, "items/n1"),

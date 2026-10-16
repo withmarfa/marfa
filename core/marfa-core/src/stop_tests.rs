@@ -420,25 +420,35 @@ fn a_stopped_drain_leaves_its_write_in_flight_for_the_next_drain_to_send_again()
 type Queues = dyn Fn(&Core) -> crate::QueuedWrite;
 
 #[test]
-fn a_stopped_drain_waits_for_a_write_the_server_does_not_answer_by_key() {
-    let tag = |core: &Core| core.add_tag("a", "x").unwrap();
-    let metadata = |core: &Core| {
-        core.write_metadata(
-            "a",
-            &crate::MetadataWrite {
-                tags: vec!["y".into()],
-            },
-            false,
-        )
-        .unwrap()
+fn a_stopped_drain_leaves_a_tag_metadata_or_extension_write_in_flight_for_the_next_drain() {
+    let metadata = |replace: bool| {
+        move |core: &Core| {
+            core.write_metadata(
+                "a",
+                &crate::MetadataWrite {
+                    tags: vec!["y".into()],
+                },
+                replace,
+            )
+            .unwrap()
+        }
     };
-    let extension = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
-    let writes: [(&str, &Queues); 3] = [
-        ("/items/a/tags", &tag),
-        ("/items/a/metadata", &metadata),
-        ("/items/a/extensions/app.cursor", &extension),
+    let (replace, merge) = (metadata(true), metadata(false));
+    let add = |core: &Core| core.add_tag("a", "x").unwrap();
+    let remove = |core: &Core| core.remove_tag("a", "x").unwrap();
+    let write = |core: &Core| core.write_extension("a", "app.cursor", "{}").unwrap();
+    let delete = |core: &Core| core.delete_extension("a", "app.cursor").unwrap();
+    let tags = r#"{"metadata":{"item_id":"a","tags":["x"],"extensions":{}}}"#;
+    let extensions = r#"{"extensions":{"app.cursor":{}}}"#;
+    let writes: [(&str, &Queues, &str); 6] = [
+        ("/items/a/tags", &add, tags),
+        ("/items/a/tags/x", &remove, tags),
+        ("/items/a/metadata", &replace, tags),
+        ("/items/a/metadata", &merge, tags),
+        ("/items/a/extensions/app.cursor", &write, extensions),
+        ("/items/a/extensions/app.cursor", &delete, extensions),
     ];
-    for (path, queue) in writes {
+    for (path, queue, answer) in writes {
         let server = Scripted::start();
         let core = copy(&server);
         holding_a_catalog(&core);
@@ -453,37 +463,15 @@ fn a_stopped_drain_waits_for_a_write_the_server_does_not_answer_by_key() {
         let late = Arc::new(AtomicBool::new(false));
         server.on(
             path,
-            vec![Answer::WaitFor {
-                ready: late.clone(),
-                answer: Box::new(scripted::json(200, r#"{"ok":true}"#)),
-            }],
+            vec![
+                Answer::WaitFor {
+                    ready: late.clone(),
+                    answer: Box::new(scripted::json(200, answer)),
+                },
+                replayed(200, answer),
+            ],
         );
-        let stop = Arc::new(AtomicBool::new(false));
-        let (done, result) = mpsc::channel();
-        {
-            let (core, stop) = (core.clone(), stop.clone());
-            std::thread::spawn(move || {
-                let _ = done.send(core.drain_until(&stop));
-            });
-        }
-        server.wait_for(path, 1, WAIT);
-        stop.store(true, Ordering::Relaxed);
-        assert!(
-            result.recv_timeout(Duration::from_millis(600)).is_err(),
-            "{path}: a stop let go of a write the server would not answer by its key"
-        );
-        late.store(true, Ordering::Relaxed);
-        let ended = result
-            .recv_timeout(WAIT)
-            .expect("the drain did not end once its write was answered");
-        assert_eq!(ended.unwrap_err(), CoreError::Canceled, "{path}");
-        let answered = core.queue().unwrap();
-        let answered = answered.iter().find(|queued| queued.id == row).unwrap();
-        assert!(
-            answered.verdict.is_some(),
-            "{path}: the answer waited for was not recorded: {answered:?}"
-        );
-        assert_eq!(server.seen(path).len(), 1, "{path}");
+        left_in_flight_then_replayed(&server, core, path, &row, &late);
     }
 }
 
