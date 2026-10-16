@@ -282,6 +282,7 @@ test("reads a refusal into its parts, and keeps the refused body until it is dis
   ]);
   assert.equal(verdict.refusal.trashed, false);
 
+  assert.equal(core.forgetAnsweredIds([created.id, "no-such-write"]), 0);
   assert.equal(core.forgetAnswered(), 0);
   const kept = core.queue();
   assert.equal(kept.length, 1);

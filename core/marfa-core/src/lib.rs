@@ -2029,6 +2029,17 @@ impl Core {
         store::forget_answered(&conn)
     }
 
+    /// `forget_answered`, for the named writes alone, under the same rules:
+    /// every other answered write stays, so an app that has read only some
+    /// answers forgets only those. An id that names no write, or one not
+    /// answered, is ignored.
+    pub fn forget_answered_ids(&self, ids: &[String]) -> Result<usize> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        body::rule::after_answers(&mut conn)?;
+        store::forget_answered_ids(&conn, ids)
+    }
+
     /// Asks again about the names bodies written here carry and no edge says
     /// yet. Best effort: a failure leaves them for the next pass, but for a
     /// store that can no longer be written.
@@ -4517,6 +4528,55 @@ mod tests {
     }
 
     #[test]
+    fn forgetting_named_answered_writes_keeps_every_other_answer() {
+        let core = held_copy();
+        let first = core.add_tag("row", "b").unwrap();
+        let second = core.add_tag("row", "c").unwrap();
+        let unanswered = core.add_tag("row", "d").unwrap();
+        for write in [&first, &second] {
+            let mut conn = core.conn().unwrap();
+            store::mark_sent(&conn, &write.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &write.id,
+                &store::Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            body::rule::after_answers(&mut conn).unwrap();
+        }
+        let ids = |core: &Core| {
+            core.queue()
+                .unwrap()
+                .into_iter()
+                .map(|write| write.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            core.forget_answered_ids(&[
+                first.id.clone(),
+                unanswered.id.clone(),
+                "no-such-write".into()
+            ])
+            .unwrap(),
+            1,
+            "the named answered write was kept, or one not answered or not held was counted"
+        );
+        assert_eq!(
+            ids(&core),
+            vec![second.id.clone(), unanswered.id.clone()],
+            "an answer nobody named was forgotten with the one that was, so an app never reads it"
+        );
+        // The witness: an unrestricted clearing takes the answer kept above.
+        assert_eq!(core.forget_answered().unwrap(), 1);
+        assert_eq!(ids(&core), vec![unanswered.id.clone()]);
+    }
+
+    #[test]
     fn every_edge_of_one_type_is_read_at_once() {
         let core = Core::open_in_memory(None).unwrap();
         // A copy that has never reached a server answers from what it holds,
@@ -4997,6 +5057,10 @@ mod tests {
             // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             ("forget_answered", reader.forget_answered().unwrap_err()),
+            (
+                "forget_answered_ids",
+                reader.forget_answered_ids(&[]).unwrap_err(),
+            ),
             ("discard", reader.discard("refused").unwrap_err()),
             (
                 "put_blob",
@@ -5111,7 +5175,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            39,
+            40,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
