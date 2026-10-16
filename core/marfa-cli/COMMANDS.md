@@ -451,6 +451,10 @@ marfa items tag [OPTIONS] <ID> <TAGS>...
 | `<ID>` | The item id. |
 | `<TAGS>...` | One or more tags. |
 
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
+
 ### marfa items untag
 
 Take one tag off an item.
@@ -463,6 +467,10 @@ marfa items untag [OPTIONS] <ID> <TAG>
 | --- | --- |
 | `<ID>` | The item id. |
 | `<TAG>` | The tag to take off. |
+
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items edges
 
@@ -1148,6 +1156,7 @@ marfa metadata replace [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--tag <TAG>` | A tag, repeatable; none at all clears them. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa metadata update
 
@@ -1164,6 +1173,7 @@ marfa metadata update [OPTIONS] --tag <TAG> <ID>
 | Option | Description |
 | --- | --- |
 | `--tag <TAG>` | A tag, repeatable. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa metadata tags
 
@@ -1225,6 +1235,7 @@ marfa extensions write [OPTIONS] <ID> <NAMESPACE>
 | --- | --- |
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa extensions delete
 
@@ -1238,6 +1249,10 @@ marfa extensions delete [OPTIONS] <ID> <NAMESPACE>
 | --- | --- |
 | `<ID>` | The item id. |
 | `<NAMESPACE>` | The namespace, such as `app.cursor`. |
+
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ## blobs
 

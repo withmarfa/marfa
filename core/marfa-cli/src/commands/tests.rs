@@ -1280,6 +1280,108 @@ mod dispatch {
     }
 
     #[test]
+    fn a_tag_metadata_or_extension_write_carries_the_idempotency_key_it_was_given() {
+        let key = |value: &str| items::IdempotencyArgs {
+            idempotency_key: Some(value.into()),
+        };
+        let metadata = r#"{"metadata":{"item_id":"i","tags":[],"extensions":{}}}"#;
+        let door = Door::open(vec![
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", metadata),
+            Answer::json("200 OK", r#"{"extensions":{}}"#),
+            Answer::json("200 OK", r#"{"extensions":{}}"#),
+        ]);
+        let remote = remote_at(&door);
+        items::run(
+            items::ItemsCommand::Tag {
+                id: "i".into(),
+                tags: vec!["a".into()],
+                idempotency: key("tag"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        items::run(
+            items::ItemsCommand::Untag {
+                id: "i".into(),
+                tag: "a".into(),
+                idempotency: key("untag"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        metadata::run(
+            metadata::MetadataCommand::Replace {
+                id: "i".into(),
+                tags: vec!["a".into()],
+                idempotency: key("replace"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        metadata::run(
+            metadata::MetadataCommand::Update {
+                id: "i".into(),
+                tags: vec!["a".into()],
+                idempotency: key("update"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        extensions::run(
+            extensions::ExtensionsCommand::Write {
+                id: "i".into(),
+                namespace: "app.cursor".into(),
+                body: BodySource {
+                    file: None,
+                    body: Some(r#"{"at":3}"#.into()),
+                },
+                idempotency: key("write"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        extensions::run(
+            extensions::ExtensionsCommand::Delete {
+                id: "i".into(),
+                namespace: "app.cursor".into(),
+                idempotency: key("delete"),
+            },
+            &remote,
+            &QUIET,
+        )
+        .unwrap();
+        let sent: Vec<_> = door
+            .received()
+            .iter()
+            .map(|request| {
+                (
+                    request.method().to_string(),
+                    request.path().to_string(),
+                    request.header("idempotency-key").map(str::to_string),
+                )
+            })
+            .collect();
+        let expected = [
+            ("POST", "/items/i/tags", "tag"),
+            ("DELETE", "/items/i/tags/a", "untag"),
+            ("PUT", "/items/i/metadata", "replace"),
+            ("PATCH", "/items/i/metadata", "update"),
+            ("PUT", "/items/i/extensions/app.cursor", "write"),
+            ("DELETE", "/items/i/extensions/app.cursor", "delete"),
+        ]
+        .map(|(method, path, key)| (method.to_string(), path.to_string(), Some(key.to_string())));
+        assert_eq!(sent, expected);
+    }
+
+    #[test]
     fn attach_uploads_then_creates_the_file_item_then_the_edge_from_it() {
         let dir = std::env::temp_dir().join(format!("marfa-attach-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

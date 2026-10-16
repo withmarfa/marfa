@@ -1,6 +1,7 @@
 use clap::Subcommand;
 use serde_json::json;
 
+use super::items::IdempotencyArgs;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -20,6 +21,8 @@ pub enum MetadataCommand {
         /// A tag, repeatable; none at all clears them.
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Add the named tags, leaving the rest.
     Update {
@@ -28,6 +31,8 @@ pub enum MetadataCommand {
         /// A tag, repeatable.
         #[arg(long = "tag", value_name = "TAG", required = true)]
         tags: Vec<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Every distinct tag in use on the instance.
     Tags,
@@ -52,8 +57,16 @@ pub fn tags_request() -> Request {
 pub fn run(command: MetadataCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         MetadataCommand::Get { id } => get_request(id),
-        MetadataCommand::Replace { id, tags } => replace_request(id, tags),
-        MetadataCommand::Update { id, tags } => update_request(id, tags),
+        MetadataCommand::Replace {
+            id,
+            tags,
+            idempotency,
+        } => idempotency.apply(replace_request(id, tags)),
+        MetadataCommand::Update {
+            id,
+            tags,
+            idempotency,
+        } => idempotency.apply(update_request(id, tags)),
         MetadataCommand::Tags => tags_request(),
     };
     out.value(&remote.json(&request)?)
