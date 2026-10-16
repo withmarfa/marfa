@@ -1,8 +1,24 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { KEY, folderHarness, scriptFolderRow } from "./harness.js";
+import {
+  KEY,
+  folderHarness,
+  requireBinary,
+  scriptFolderRow,
+} from "./harness.js";
 import type { FolderHarness } from "./harness.js";
+import { CliFolder } from "../../device/cli-adapter.js";
 import type { HeldCommand, FolderSettings } from "../../device/cli-adapter.js";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import {
@@ -19,6 +35,7 @@ import {
 
 const made: FolderHarness[] = [];
 const held: HeldCommand[] = [];
+const cleanups: Array<() => void> = [];
 
 afterEach(async () => {
   for (const command of held.splice(0)) {
@@ -31,7 +48,63 @@ afterEach(async () => {
     await command.stop();
   }
   for (const harness of made.splice(0).reverse()) await harness.stop();
+  for (const cleanup of cleanups.splice(0)) cleanup();
 });
+
+/** Takes the folder at `dir` off its machine's registry, leaving its state,
+ *  as a removal that only takes a folder off the list does. */
+function unlist(harness: FolderHarness): void {
+  const listing = JSON.parse(readFileSync(harness.registry, "utf8")) as {
+    folders: Array<{ dir: string }>;
+  };
+  listing.folders = listing.folders.filter(
+    (entry) => entry.dir !== harness.dir,
+  );
+  writeFileSync(harness.registry, JSON.stringify(listing));
+}
+
+function listedDirs(harness: FolderHarness): string[] {
+  return (
+    JSON.parse(readFileSync(harness.registry, "utf8")) as {
+      folders: Array<{ dir: string }>;
+    }
+  ).folders.map((entry) => entry.dir);
+}
+
+/** A keychain file of the test's own, unlocked; an item in it lets any
+ *  application read it, so the binary reads it without a dialog. */
+function ownKeychain(): { path: string; lock: () => void } {
+  const folder = mkdtempSync(join(tmpdir(), "marfa-handover-keychain-"));
+  const path = join(folder, "credentials.keychain-db");
+  const password = randomUUID();
+  execFileSync("security", ["create-keychain", "-p", password, path]);
+  execFileSync("security", ["unlock-keychain", "-p", password, path]);
+  execFileSync("security", ["set-keychain-settings", path]);
+  cleanups.push(() => {
+    try {
+      execFileSync("security", ["delete-keychain", path]);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+  return {
+    path,
+    lock: () => execFileSync("security", ["lock-keychain", path]),
+  };
+}
+
+/** Starts a watch of the folder alone while the watch of every folder is
+ *  suspended, so the folder it let go is taken by another process. */
+async function takenByAnother(
+  harness: FolderHarness,
+  holder: HeldCommand,
+): Promise<HeldCommand> {
+  process.kill(holder.pid(), "SIGSTOP");
+  const another = hold(harness.folder.watch());
+  await vi.waitFor(() => expect(another.stderr).toContain("watching"), WAIT);
+  process.kill(holder.pid(), "SIGCONT");
+  return another;
+}
 
 const WAIT = { timeout: 30_000, interval: 100 };
 
@@ -425,5 +498,224 @@ describe("handing a folder to a command", () => {
     await vi.waitFor(() => {
       expect(handovers(watch)).toEqual(["let go", "taken back"]);
     }, WAIT);
+  });
+
+  it("keeps watching a folder named through a linked parent after letting it go", async () => {
+    const harness = await oneFolder("handover-linked");
+    const links = mkdtempSync(join(tmpdir(), "marfa-handover-link-"));
+    cleanups.push(() => rmSync(links, { recursive: true, force: true }));
+    const parent = join(links, "parent");
+    symlinkSync(dirname(harness.dir), parent);
+    const linked = new CliFolder(join(parent, "notes"), {
+      binary: requireBinary(),
+      url: harness.server.url,
+      key: KEY,
+      registry: harness.registry,
+    });
+    const watch = hold(linked.watch());
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(handovers(watch), watch.stdout).toEqual(["let go", "taken back"]);
+    }, WAIT);
+    expect(watch.running(), watch.stdout + watch.stderr).toBe(true);
+    put(harness, "Linked.md", note("Linked"));
+    await vi.waitFor(
+      () => expect(sentTitles(harness)).toContain("Linked"),
+      WAIT,
+    );
+  });
+
+  it("hands a folder a watch holds to folders add over it", async () => {
+    const harness = await oneFolder("handover-add");
+    const watch = hold(harness.folder.watch());
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    const added = await harness.folder.add(harness.settings.id);
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    await vi.waitFor(() => {
+      expect(handovers(watch), watch.stdout).toEqual(["let go", "taken back"]);
+    }, WAIT);
+  });
+
+  it("keeps a folder off the list that the command took off it, ending its watch", async () => {
+    // A command that takes a folder off the list and leaves its state, as a
+    // removal does where the state is not the one the registry lists. Every
+    // command lists its folder again as it works, so the list is changed
+    // once the command has ended, while the watch is suspended.
+    async function letGoAndUnlist(
+      harness: FolderHarness,
+      watch: HeldCommand,
+      dir?: string,
+    ): Promise<void> {
+      const working = withFault("hold-handed-folder=1500", () =>
+        harness.folder.confirm(),
+      );
+      await vi.waitFor(
+        () => expect(handovers(watch, dir)).toEqual(["let go"]),
+        WAIT,
+      );
+      process.kill(watch.pid(), "SIGSTOP");
+      expect((await working).ok).toBe(true);
+      // The witness: the folder is listed until it is taken off.
+      expect(listedDirs(harness)).toContain(harness.dir);
+      unlist(harness);
+      process.kill(watch.pid(), "SIGCONT");
+    }
+
+    const harness = await oneFolder("handover-unlisted");
+    const watch = hold(harness.folder.watch());
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    await letGoAndUnlist(harness, watch);
+    await watch.exited();
+    expect(watch.exitCode(), watch.stderr).toBe(0);
+    expect(lines(watch).at(-1)).toEqual({ watching: false, listed: false });
+    expect(
+      listedDirs(harness),
+      "the watch listed again a folder the command took off the list",
+    ).not.toContain(harness.dir);
+
+    // The watch of every folder drops it too.
+    const other = await oneFolder("handover-unlisted-every");
+    const every = hold(other.folder.watchEvery());
+    await vi.waitFor(() => {
+      expect(
+        lines(every, other.dir).some((line) => line.watching === true),
+      ).toBe(true);
+    }, WAIT);
+    await letGoAndUnlist(other, every, other.dir);
+    await vi.waitFor(() => {
+      expect(lines(every, other.dir).at(-1)).toEqual({
+        dir: other.dir,
+        watching: false,
+        listed: false,
+      });
+    }, WAIT);
+    await new Promise((resolve) => setTimeout(resolve, 2_500));
+    expect(listedDirs(other)).not.toContain(other.dir);
+  });
+
+  it("says a folder it let go is held by another process once that process keeps it", async () => {
+    const { a } = await twoFolders("handover-held-every");
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      expect(lines(watch, a.dir).some((line) => line.watching === true)).toBe(
+        true,
+      );
+    }, WAIT);
+    const scanning = withFault("hold-handed-folder=1500", () =>
+      a.folder.scan(),
+    );
+    await vi.waitFor(
+      () => expect(handovers(watch, a.dir)).toEqual(["let go"]),
+      WAIT,
+    );
+    expect((await scanning).ok).toBe(true);
+    const another = await takenByAnother(a, watch);
+    const heldLines = (): Array<Record<string, unknown>> =>
+      lines(watch, a.dir).filter(
+        (line) => line.watching === false && line.code === "reading_handle",
+      );
+    await vi.waitFor(
+      () => {
+        expect(heldLines(), watch.stdout).toHaveLength(1);
+        expect(recorded(a, watch.pid(), a.dir)).toEqual(
+          expect.objectContaining({
+            watching: false,
+            reason: "reading_handle",
+          }),
+        );
+      },
+      { timeout: 40_000, interval: 200 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect(heldLines(), "said again unchanged").toHaveLength(1);
+    // Once the other process lets go, the folder is watched again.
+    another.interrupt();
+    await another.exited();
+    await vi.waitFor(() => {
+      const said = lines(watch, a.dir);
+      const held = said.findIndex(
+        (line) => line.watching === false && line.code === "reading_handle",
+      );
+      expect(
+        said.slice(held + 1).some((line) => line.watching === true),
+        watch.stdout,
+      ).toBe(true);
+    }, WAIT);
+  }, 90_000);
+
+  it("says a folder its own watch let go is held by another process once that process keeps it", async () => {
+    const harness = await oneFolder("handover-held-one");
+    const watch = hold(harness.folder.watch());
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    const scanning = withFault("hold-handed-folder=1500", () =>
+      harness.folder.scan(),
+    );
+    await vi.waitFor(() => expect(handovers(watch)).toEqual(["let go"]), WAIT);
+    expect((await scanning).ok).toBe(true);
+    const another = await takenByAnother(harness, watch);
+    const heldLines = (): Array<Record<string, unknown>> =>
+      lines(watch).filter(
+        (line) => line.watching === false && line.code === "reading_handle",
+      );
+    await vi.waitFor(
+      () => {
+        expect(heldLines(), watch.stdout).toHaveLength(1);
+      },
+      { timeout: 40_000, interval: 200 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(heldLines()).toHaveLength(1);
+    another.interrupt();
+    await another.exited();
+    await vi.waitFor(() => {
+      expect(lines(watch).at(-1)).toEqual({ watching: true });
+    }, WAIT);
+    expect(watch.running(), watch.stderr).toBe(true);
+  }, 90_000);
+
+  it("takes a folder back with the credential it began with, though the keychain cannot be read meanwhile", async () => {
+    const harness = await oneFolder("handover-keychain");
+    const keychain = ownKeychain();
+    execFileSync("security", [
+      "add-generic-password",
+      "-A",
+      "-s",
+      "marfa",
+      "-a",
+      harness.server.url,
+      "-w",
+      JSON.stringify({ kind: "key", key: "device-fixture-key-kept" }),
+      keychain.path,
+    ]);
+    const kept = new CliFolder(harness.dir, {
+      binary: requireBinary(),
+      url: harness.server.url,
+      registry: harness.registry,
+    });
+    const watch = hold(
+      kept.hold(["folders", "watch", harness.dir], {
+        MARFA_KEYCHAIN: keychain.path,
+      }),
+    );
+    await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
+    const scanning = withFault("hold-handed-folder=2500", () =>
+      harness.folder.scan(),
+    );
+    await vi.waitFor(() => expect(handovers(watch)).toEqual(["let go"]), WAIT);
+    keychain.lock();
+    expect((await scanning).ok).toBe(true);
+    await vi.waitFor(() => {
+      expect(handovers(watch), watch.stdout + watch.stderr).toEqual([
+        "let go",
+        "taken back",
+      ]);
+    }, WAIT);
+    expect(watch.running(), watch.stderr).toBe(true);
+    put(harness, "Kept key.md", note("Kept key"));
+    await vi.waitFor(
+      () => expect(sentTitles(harness)).toContain("Kept key"),
+      WAIT,
+    );
   });
 });

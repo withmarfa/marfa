@@ -24,6 +24,8 @@ pub struct WriterLock {
     /// is not `Sync` and the bindings hand a `Core` across threads.
     _claim: Mutex<Option<Connection>>,
     handle: Handle,
+    /// Another lock held for as long as this one.
+    _with: Option<Box<WriterLock>>,
 }
 
 impl WriterLock {
@@ -33,6 +35,7 @@ impl WriterLock {
             return Ok(WriterLock {
                 _claim: Mutex::new(None),
                 handle: Handle::Writer,
+                _with: None,
             });
         };
         let path = lock_path(store);
@@ -72,10 +75,12 @@ impl WriterLock {
             Ok(()) => Ok(WriterLock {
                 _claim: Mutex::new(Some(claim)),
                 handle: Handle::Writer,
+                _with: None,
             }),
             Err(error) if is_busy(&error) => Ok(WriterLock {
                 _claim: Mutex::new(None),
                 handle: Handle::Reader,
+                _with: None,
             }),
             Err(error) => Err(error.into()),
         }
@@ -87,7 +92,14 @@ impl WriterLock {
         WriterLock {
             _claim: Mutex::new(None),
             handle: Handle::Reader,
+            _with: None,
         }
+    }
+
+    /// This lock, holding `other` until it is dropped.
+    pub(crate) fn holding(mut self, other: WriterLock) -> WriterLock {
+        self._with = Some(Box::new(other));
+        self
     }
 
     pub fn handle(&self) -> Handle {

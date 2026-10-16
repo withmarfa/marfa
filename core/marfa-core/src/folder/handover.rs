@@ -28,9 +28,18 @@ pub(crate) const LOOK: Duration = Duration::from_millis(200);
 
 /// The writer lock of the store in `state`. Where another process holds it,
 /// asks that process to let it go and waits up to `wait` for it; past that,
-/// refuses with `ReadingHandle`. Refuses with `Invalid` where the store at
-/// `root` goes while it waits, as it does when the holder removed the folder.
-pub(crate) fn claim_asking(state: &Directory, root: &Path, wait: Duration) -> Result<WriterLock> {
+/// refuses with `ReadingHandle`. The request is held with the lock, until it
+/// is dropped, so a watch the folder was let go to sees the command still
+/// working it. Without `create_lock`, refuses with `Invalid` where the lock's
+/// file goes while it waits, as it does when the holder removed the folder.
+/// A request that cannot be made leaves the command waiting all the same, for
+/// a holder that ends on its own, and refused past that with the reason.
+pub(crate) fn claim_asking(
+    state: &Directory,
+    root: &Path,
+    wait: Duration,
+    create_lock: bool,
+) -> Result<WriterLock> {
     let vfs = DirectoryVfs::new(state.file())?;
     let lock = WriterLock::claim_directory(&vfs)?;
     if lock.handle() == Handle::Writer {
@@ -38,25 +47,28 @@ pub(crate) fn claim_asking(state: &Directory, root: &Path, wait: Duration) -> Re
     }
     drop(lock);
     let deadline = Instant::now() + wait;
-    // Held from when it is claimed until the folder is: the asking is over
-    // once this process holds the folder, and a watch must not take it back
-    // in the moment between.
     let mut request: Option<WriterLock> = None;
+    let mut unmade: Option<CoreError> = None;
     loop {
         if request.is_none() {
-            let claimed = WriterLock::claim_named(&vfs, REQUEST_LOCK, true)?;
-            if claimed.handle() == Handle::Writer {
-                request = Some(claimed);
+            match WriterLock::claim_named(&vfs, REQUEST_LOCK, true) {
+                Ok(claimed) if claimed.handle() == Handle::Writer => {
+                    request = Some(claimed);
+                    unmade = None;
+                }
+                Ok(_) => {}
+                Err(error) => unmade = Some(error),
             }
         }
-        // Not created: a folder removed while this waited has no lock file,
-        // and making one would leave state in a directory that is no longer
-        // a folder.
-        match WriterLock::claim_named(&vfs, DIRECTORY_LOCK, false) {
+        // Not created by a command: a folder removed while this waited has
+        // no lock file, and making one would leave state in a directory that
+        // is no longer a folder.
+        match WriterLock::claim_named(&vfs, DIRECTORY_LOCK, create_lock) {
             Ok(lock) if lock.handle() == Handle::Writer => {
-                drop(request);
-                hold_if_asked();
-                return Ok(lock);
+                return Ok(match request {
+                    Some(request) => lock.holding(request),
+                    None => lock,
+                });
             }
             Ok(_) => {}
             Err(_) if state.entry_identity(Path::new(DIRECTORY_LOCK)).is_err() => {
@@ -65,15 +77,32 @@ pub(crate) fn claim_asking(state: &Directory, root: &Path, wait: Duration) -> Re
             Err(error) => return Err(error),
         }
         if Instant::now() >= deadline {
-            return Err(CoreError::ReadingHandle);
+            return Err(match unmade {
+                Some(error) => unasked(root, error),
+                None => CoreError::ReadingHandle,
+            });
         }
         std::thread::sleep(POLL);
     }
 }
 
-/// Holds a folder taken from its holder for the milliseconds the fault names,
-/// so a fixture can see what the holder does while it is let go.
-fn hold_if_asked() {
+/// Why a command that could not ask for a folder is refused, keeping the kind
+/// of the failure that kept it from asking.
+fn unasked(root: &Path, error: CoreError) -> CoreError {
+    let why = format!(
+        "{} is held by another process, which could not be asked to let it go, because the request file {} could not be made: {error}",
+        root.display(),
+        root.join(super::STATE_DIR).join(REQUEST_LOCK).display()
+    );
+    match error {
+        CoreError::StorageFull(_) => CoreError::StorageFull(why),
+        _ => CoreError::Store(why),
+    }
+}
+
+/// Holds a folder opened by asking for the milliseconds the fault names, so a
+/// fixture can see what the holder does while it is let go.
+pub(crate) fn hold_if_asked() {
     if let Some(millis) =
         crate::fault::named("hold-handed-folder").and_then(|millis| millis.parse::<u64>().ok())
     {
@@ -113,7 +142,8 @@ impl Requests {
     }
 }
 
-/// Whether a command waits for the folder whose state is in `state`.
+/// Whether a command asks for, or works, the folder whose state is in
+/// `state`.
 pub(crate) fn asked_at(state: &Directory) -> bool {
     Requests::of(state).asked()
 }
@@ -140,7 +170,7 @@ mod tests {
     #[test]
     fn a_free_folder_is_claimed_at_once_and_no_request_is_made() {
         let (temp, state) = state();
-        let lock = claim_asking(&state, temp.path(), Duration::ZERO).unwrap();
+        let lock = claim_asking(&state, temp.path(), Duration::ZERO, false).unwrap();
         assert_eq!(lock.handle(), Handle::Writer);
         assert!(!temp.path().join(REQUEST_LOCK).exists());
     }
@@ -153,7 +183,8 @@ mod tests {
         // The witness: no request before one is made.
         assert!(!requests.asked());
         std::thread::scope(|scope| {
-            let asking = scope.spawn(|| claim_asking(&state, temp.path(), Duration::from_secs(10)));
+            let asking =
+                scope.spawn(|| claim_asking(&state, temp.path(), Duration::from_secs(10), false));
             let bound = Instant::now() + Duration::from_secs(5);
             while !requests.asked() {
                 assert!(Instant::now() < bound, "the request was never seen");
@@ -162,8 +193,10 @@ mod tests {
             drop(held);
             let lock = asking.join().unwrap().unwrap();
             assert_eq!(lock.handle(), Handle::Writer);
-            // Once it holds the folder, it asks no longer.
-            assert!(!requests.asked(), "the request outlived the asking");
+            // While it works the folder, the watch sees it there.
+            assert!(requests.asked(), "the request ended before the work");
+            drop(lock);
+            assert!(!requests.asked(), "the request outlived the command");
         });
     }
 
@@ -172,12 +205,40 @@ mod tests {
         let (temp, state) = state();
         let _held = holder(&state);
         let started = Instant::now();
-        let refused = claim_asking(&state, temp.path(), Duration::from_millis(300));
+        let refused = claim_asking(&state, temp.path(), Duration::from_millis(300), false);
         assert_eq!(refused.err(), Some(CoreError::ReadingHandle));
         assert!(started.elapsed() >= Duration::from_millis(300));
         assert!(
             !Requests::of(&state).asked(),
             "a command that gave up left its request standing"
+        );
+    }
+
+    #[test]
+    fn a_request_that_cannot_be_made_refuses_after_the_wait_naming_why() {
+        use std::os::unix::fs::PermissionsExt;
+        let (temp, state) = state();
+        let held = holder(&state);
+        let readable = |mode| {
+            std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        readable(0o555);
+        let refused = claim_asking(&state, temp.path(), Duration::from_millis(300), false);
+        readable(0o755);
+        drop(held);
+        let Err(CoreError::Store(message)) = &refused else {
+            panic!("{:?}", refused.err());
+        };
+        assert!(
+            message.contains("could not be asked to let it go"),
+            "{message}"
+        );
+        assert!(message.contains(REQUEST_LOCK), "{message}");
+        // The witness: with the request made, the same holder is asked.
+        let _held = holder(&state);
+        assert_eq!(
+            claim_asking(&state, temp.path(), Duration::from_millis(300), false).err(),
+            Some(CoreError::ReadingHandle)
         );
     }
 
@@ -213,7 +274,7 @@ mod tests {
                 let root = temp.path();
                 asking.push(scope.spawn(move || {
                     start.wait();
-                    let lock = claim_asking(state, root, Duration::from_secs(10))?;
+                    let lock = claim_asking(state, root, Duration::from_secs(10), false)?;
                     if holding.fetch_add(1, Ordering::SeqCst) > 0 {
                         both.store(true, Ordering::SeqCst);
                     }
@@ -245,7 +306,8 @@ mod tests {
         let (temp, state) = state();
         let held = holder(&state);
         std::thread::scope(|scope| {
-            let asking = scope.spawn(|| claim_asking(&state, temp.path(), Duration::from_secs(10)));
+            let asking =
+                scope.spawn(|| claim_asking(&state, temp.path(), Duration::from_secs(10), false));
             let mut requests = Requests::of(&state);
             while !requests.asked() {
                 std::thread::sleep(Duration::from_millis(5));

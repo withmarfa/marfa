@@ -249,7 +249,7 @@ impl WatchRecord {
 
     /// The folder is not watched, for the error `reason` names, or for none
     /// where its watch is about to start again.
-    pub(super) fn unwatched(&self, dir: &Path, reason: Option<&str>) {
+    pub fn unwatched(&self, dir: &Path, reason: Option<&str>) {
         self.change(dir, |held| {
             held.watching = false;
             held.reason = reason.map(str::to_string);

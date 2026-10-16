@@ -253,6 +253,9 @@ struct Timing {
     unopened: Duration,
     ended: Duration,
     handed: Duration,
+    /// How long a folder let go may be held by a process with no request
+    /// standing before it is said to be held by another process.
+    held: Duration,
     recovered: Duration,
 }
 
@@ -264,6 +267,7 @@ impl Default for Timing {
             unopened: RETRY_UNOPENED,
             ended: RETRY_ENDED,
             handed: RETRY_HANDED,
+            held: handover::HANDOVER_WAIT,
             recovered: RECOVERED,
         }
     }
@@ -371,6 +375,8 @@ struct Entry<'scope, E> {
     leaving: bool,
     /// Let go to a command, and taken back once that command lets it go.
     parked: bool,
+    /// When a command was last seen asking for or working the folder.
+    asked_at: Option<Instant>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -497,14 +503,20 @@ fn reap<S: Supervised>(
             every.tell(Every::Left { dir: &dir })?;
             continue;
         }
-        let handed = match &ended {
+        let asked = match &ended {
             Outcome::HandedOver => true,
-            Outcome::Unopened(reason) => {
-                reason.code == HANDED_OVER
-                    || (entry.parked && reason.code == CoreError::ReadingHandle.code())
-            }
+            Outcome::Unopened(reason) => reason.code == HANDED_OVER,
             _ => false,
         };
+        if asked {
+            entry.asked_at = Some(now);
+        }
+        // Held with no command asking for longer than a command waits, it is
+        // another process's, and said to be.
+        let handed = asked
+            || matches!(&ended, Outcome::Unopened(reason) if entry.parked
+                && reason.code == CoreError::ReadingHandle.code()
+                && entry.asked_at.is_some_and(|at| now.duration_since(at) < timing.held));
         if handed {
             let first = !entry.parked;
             entry.parked = true;
@@ -601,6 +613,7 @@ fn reconcile<S: Supervised>(
                 told: None,
                 leaving: false,
                 parked: false,
+                asked_at: None,
             });
     }
     let unlisted: Vec<PathBuf> = entries
@@ -917,6 +930,7 @@ mod tests {
             unopened: Duration::from_millis(20),
             ended: Duration::from_millis(40),
             handed: Duration::from_millis(15),
+            held: Duration::from_millis(120),
             recovered: Duration::from_millis(150),
         }
     }
@@ -1495,6 +1509,41 @@ mod tests {
         assert!(
             lock(&machine.ended).is_empty(),
             "a handover was taken for an end"
+        );
+    }
+
+    #[test]
+    fn a_folder_another_process_keeps_after_the_command_is_said_to_be_held_once() {
+        let machine = Machine::default();
+        machine.opens(
+            "/asked",
+            vec![
+                Ok(Goes::HandsOver),
+                // The command works it, then another process takes it.
+                Err(Unwatched::handed_over()),
+                Err(Unwatched::handed_over()),
+                Err(reason("reading_handle")),
+            ],
+        );
+        let listing = listed(&["/asked"]);
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        supervised_with(&machine, &listing, &record, |machine| {
+            count(machine, "unwatched /asked reading_handle") == 1 && machine.opened("/asked") > 12
+        })
+        .unwrap();
+        assert_eq!(
+            machine.told(),
+            vec![
+                "watching /asked",
+                "handed /asked",
+                "unwatched /asked reading_handle"
+            ],
+            "a folder another process keeps was said to be let go to a command for ever"
+        );
+        assert_eq!(
+            record.state_of(Path::new("/asked")),
+            Some((false, Some("reading_handle".to_string())))
         );
     }
 

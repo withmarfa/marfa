@@ -163,7 +163,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
-                .map_err(held(&dir))?;
+                .map_err(asked(&dir))?;
             storage::warn(&folder);
             // Told what the first sync will do before it can, unless the
             // person said to go ahead.
@@ -690,6 +690,33 @@ pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> 
     let (server, renew) = Session::split(session);
     let folder = Folder::open(dir, server).map_err(held(dir))?;
     renewing(folder.core(), renew);
+    Ok(folder)
+}
+
+/// A session's renewal, shared by every open of one folder a watch makes.
+pub type Renewal = std::sync::Arc<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
+
+/// The server and renewal of `session`, kept for a watch to open its folder
+/// again with, rather than reading the credential each time.
+pub fn kept_session(session: Session) -> (marfa_core::Server, Option<Renewal>) {
+    let Session { server, renew } = session;
+    (server, renew.map(Renewal::from))
+}
+
+/// The folder, for a watch, opened with a kept server and renewal: refused
+/// at once where another process holds it.
+pub fn reopened(
+    dir: &Path,
+    server: &marfa_core::Server,
+    renew: Option<&Renewal>,
+) -> Result<Folder, CliError> {
+    let folder = Folder::open(dir, Some(server.clone())).map_err(held(dir))?;
+    if let Some(renew) = renew {
+        let renew = std::sync::Arc::clone(renew);
+        folder
+            .core()
+            .renew_credential_with(Box::new(move |refused| renew(refused)));
+    }
     Ok(folder)
 }
 

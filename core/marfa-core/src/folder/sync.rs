@@ -192,6 +192,14 @@ impl Folder {
         held(dir.as_ref())
     }
 
+    /// Whether a command asks for, or works, the folder at `dir`, read
+    /// without opening its store.
+    pub fn asked_at(dir: impl AsRef<Path>) -> bool {
+        Directory::open(dir.as_ref())
+            .and_then(|root| root.child(Path::new(STATE_DIR), false))
+            .is_ok_and(|state| super::handover::asked_at(&state))
+    }
+
     fn remove_waiting(dir: &Path, wait: Option<Duration>) -> Result<Removal> {
         let spelled = registry::absolute(dir);
         let listed = registry::listing();

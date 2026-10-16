@@ -238,6 +238,8 @@ impl Folder {
     /// but for anything it put in a `.marfa` that already held a store, and
     /// leaves everything that was there before it. A refusal after the
     /// settings file is written leaves the one found there rewritten.
+    /// Where another process holds the folder, asks it to let the folder go
+    /// and waits up to `HANDOVER_WAIT`, as `open_asking` does.
     pub fn add(
         root: impl AsRef<Path>,
         folder: &str,
@@ -277,7 +279,14 @@ impl Folder {
         let lock_there = state_dir
             .entry_kind(Path::new(crate::lock::DIRECTORY_LOCK))
             .is_ok();
-        let lock = Arc::new(Core::claim_directory(&state_dir)?);
+        // An add over a folder a watch holds asks for it, as a command that
+        // works a folder does.
+        let lock = Arc::new(handover::claim_asking(
+            &state_dir,
+            &root,
+            handover::HANDOVER_WAIT,
+            true,
+        )?);
         made.lock = Some(Arc::clone(&lock));
         made.holding(&state_dir, lock_there);
         let core = working(Core::open_claimed(
@@ -385,6 +394,9 @@ impl Folder {
         {
             let _ = opened.register();
         }
+        if wait.is_some() {
+            handover::hold_if_asked();
+        }
         Ok(opened)
     }
 
@@ -412,7 +424,7 @@ impl Folder {
                 server,
             )?)?,
             Some(wait) => {
-                let lock = handover::claim_asking(&state_dir, &root, wait)?;
+                let lock = handover::claim_asking(&state_dir, &root, wait, false)?;
                 // The holder may have removed the folder, or put another
                 // store in its place, while this waited.
                 if state_dir.entry_identity(Path::new("core.sqlite")).ok() != Some(store) {

@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
 use marfa_core::folder::{
-    Every, EveryFolder, RETRY_HANDED, RETRY_MOST, Registry, Unwatched, WatchRecord,
+    Every, EveryFolder, HANDOVER_WAIT, RETRY_HANDED, RETRY_MOST, Registry, Unwatched, WatchRecord,
 };
-use marfa_core::{CoreError, Folder, WatchEnd, WatchError, WatchEvent, WatchPass};
+use marfa_core::{CoreError, Folder, Server, WatchEnd, WatchError, WatchEvent, WatchPass};
 use serde_json::Value;
 
 use crate::error::CliError;
@@ -30,9 +30,8 @@ pub fn watch(
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
-    let session = named.session()?;
-    let server = session.server.url.clone();
-    let folder = folders::opened(dir, Some(session))?;
+    let (server, renew) = folders::kept_session(named.session()?);
+    let folder = folders::reopened(dir, &server, renew.as_ref())?;
     // Once the folder is open, so that an interrupt before then ends the
     // command as it always did.
     interrupt::stop_on_interrupt();
@@ -45,13 +44,11 @@ pub fn watch(
     }
     let (done, ended) = mpsc::channel();
     let kept = record.clone();
-    let (dir, named) = (dir.to_path_buf(), named.clone());
     std::thread::spawn(move || {
         let _ = done.send(keep_in_step(
             folder,
-            &dir,
-            &named,
             &server,
+            renew.as_ref(),
             stop_after,
             json,
             kept.as_deref(),
@@ -378,19 +375,21 @@ fn await_end(
 /// for it and taking it back once that command ends.
 fn keep_in_step(
     mut folder: Folder,
-    dir: &Path,
-    named: &Named,
-    server: &str,
+    server: &Server,
+    renew: Option<&folders::Renewal>,
     stop_after: Option<Duration>,
     json: bool,
     record: Option<&WatchRecord>,
 ) -> Result<(), CliError> {
     let stop = interrupt::stop();
     let say = Say { json, dir: None };
+    let url = server.url.as_str();
     let mut conflicts = folders::Conflicts::default();
     let mut timed = false;
     // Whether the last thing said of the folder is that it was let go.
     let mut let_go = false;
+    // What to say once the folder is watched again.
+    let mut back: Option<Back> = None;
     loop {
         let end = {
             let tell_event = |event: WatchEvent| {
@@ -403,61 +402,149 @@ fn keep_in_step(
                             stop.store(true, Ordering::SeqCst);
                         });
                     }
-                    if let_go {
+                    if let Some(back) = back.take() {
                         let_go = false;
-                        return say.line(taken_back(), || TAKEN_BACK_LINE.into());
+                        return match back {
+                            Back::TakenBack => say.line(taken_back(), || TAKEN_BACK_LINE.into()),
+                            Back::Watching => say
+                                .line(serde_json::json!({ "watching": true }), || {
+                                    "watched again".into()
+                                }),
+                        };
                     }
                 }
-                tell(server, say, &folder, &mut conflicts, event)
+                tell(url, say, &folder, &mut conflicts, event)
             };
             match record {
                 Some(record) => record.watch_folder(&folder, stop, tell_event),
                 None => folder.watch_handing_over(stop, tell_event),
             }
         }
-        .map_err(|error| ended(server, error))?;
+        .map_err(|error| ended(url, error))?;
         if end == WatchEnd::Stopped {
             return Ok(());
         }
+        // The path it was opened by, which reaches it however it was named.
+        let root = folder.root().to_path_buf();
+        let listed = listed(&root);
         drop(folder);
         if !let_go {
             let_go = true;
             say.line(handed_over(), || HANDED_OVER_LINE.into())?;
         }
-        folder = match take_back(dir, named, stop)? {
-            Some(folder) => folder,
-            None if stop.load(Ordering::SeqCst) => return Ok(()),
-            None => {
+        folder = match take_back(&root, listed, server, renew, stop, say, record)? {
+            TakeBack::Folder { folder, held } => {
+                back = Some(if held {
+                    Back::Watching
+                } else {
+                    Back::TakenBack
+                });
+                *folder
+            }
+            TakeBack::Stopped => return Ok(()),
+            TakeBack::Removed => {
                 return say.line(
                     serde_json::json!({ "watching": false, "listed": false }),
                     || "no longer a folder, so no longer watched".into(),
+                );
+            }
+            TakeBack::Unlisted => {
+                return say.line(
+                    serde_json::json!({ "watching": false, "listed": false }),
+                    || "no longer listed, so no longer watched".into(),
                 );
             }
         };
     }
 }
 
-/// The folder let go to a command, once that command lets it go: `None`
-/// where the stop is raised first, or where the command removed it.
+enum Back {
+    TakenBack,
+    Watching,
+}
+
+enum TakeBack {
+    Folder {
+        folder: Box<Folder>,
+        held: bool,
+    },
+    Stopped,
+    /// The command removed the folder's state.
+    Removed,
+    /// The command took the folder off the registry and left its state.
+    Unlisted,
+}
+
+/// Whether the machine's registry lists the folder at `root`; `None` where
+/// there is no registry or it cannot be read.
+fn listed(root: &Path) -> Option<bool> {
+    let registry = Registry::located()?;
+    let entries = registry.read().ok()??;
+    Some(entries.iter().any(|entry| entry.dir == root))
+}
+
+const HELD_LINE: &str = "held by another process, not the command it was let go to; watched again once that process lets it go";
+
+/// The folder let go to a command, once that command lets it go, opened
+/// with the server and renewal the watch began with. A folder held with no
+/// command asking for it for longer than a command waits is another
+/// process's, and is said to be, once.
 fn take_back(
-    dir: &Path,
-    named: &Named,
+    root: &Path,
+    listed_before: Option<bool>,
+    server: &Server,
+    renew: Option<&folders::Renewal>,
     stop: &std::sync::atomic::AtomicBool,
-) -> Result<Option<Folder>, CliError> {
+    say: Say<'_>,
+    record: Option<&WatchRecord>,
+) -> Result<TakeBack, CliError> {
+    let mut asked_at = Instant::now();
+    let mut held = false;
     loop {
         let until = Instant::now() + RETRY_HANDED;
         while Instant::now() < until {
             if stop.load(Ordering::SeqCst) {
-                return Ok(None);
+                return Ok(TakeBack::Stopped);
             }
             std::thread::sleep(POLL);
         }
-        if !Folder::is_at(dir) {
-            return Ok(None);
+        if !Folder::is_at(root) {
+            return Ok(TakeBack::Removed);
         }
-        match folders::opened(dir, Some(named.session()?)) {
-            Ok(folder) => return Ok(Some(folder)),
-            Err(CliError::FolderHeld(_)) => {}
+        // Opened, it would be listed again.
+        if listed_before == Some(true) && listed(root) == Some(false) {
+            return Ok(TakeBack::Unlisted);
+        }
+        if Folder::asked_at(root) {
+            asked_at = Instant::now();
+            continue;
+        }
+        match folders::reopened(root, server, renew) {
+            Ok(folder) => {
+                return Ok(TakeBack::Folder {
+                    folder: Box::new(folder),
+                    held,
+                });
+            }
+            Err(CliError::FolderHeld(_)) => {
+                if !held && asked_at.elapsed() >= HANDOVER_WAIT {
+                    held = true;
+                    if let Some(record) = record {
+                        record.unwatched(root, Some(CoreError::ReadingHandle.code()));
+                    }
+                    say.line(
+                        serde_json::json!({
+                            "watching": false,
+                            "code": CoreError::ReadingHandle.code(),
+                            "reason": HELD_LINE,
+                        }),
+                        || HELD_LINE.into(),
+                    )?;
+                }
+            }
+            // A failure of the machine for a moment, which the next try may
+            // not meet.
+            Err(error) if error.exit() == crate::error::Exit::Environment => {}
             Err(error) => return Err(error),
         }
     }
