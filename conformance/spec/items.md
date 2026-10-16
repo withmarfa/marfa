@@ -1780,7 +1780,7 @@ If a change or a revoke names a revoked folder, then the server MUST answer `400
 
 ### `items/folder-setting-checked`
 
-If a folder setting is malformed, then the server MUST answer `400`, naming the setting in `details.errors[0].path`, before it writes anything.
+If a folder setting is malformed, other than by a key it does not declare, then the server MUST answer `400`, naming the setting in `details.errors[0].path`, before it writes anything.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
 
@@ -1792,9 +1792,17 @@ If `search.types`, `defaults.type` or a `first_placement` key names a well-forme
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute, carries a backslash or NUL or climbs out of the folder, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, a `search.state` other than `active` or `archived`, or a key a setting does not declare, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute, carries a backslash or NUL or climbs out of the folder, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, or a `search.state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`, `› refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change`.
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
+
+### `items/folder-setting-undeclared`
+
+If a request to `POST /folders` or `PATCH /folders/{id}` carries a key that its body or one of its settings does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` by its path from the body, such as `owner` or `search.tags`.
+
+**Reason:** a setting key that was dropped would leave the folder searching and placing files by a rule its author did not write.
+
+**Tests:** `compliance/folders.test.ts › refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change`.
 
 ### `items/folder-placement-inside`
 

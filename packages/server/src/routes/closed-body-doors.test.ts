@@ -62,6 +62,59 @@ interface Operation {
   requestBody?: { content?: Record<string, { schema?: Schema }> };
 }
 
+/** Every write operation the published document carries. */
+function documentedWrites(): Set<string> {
+  const document = finalizeOpenAPISpec(
+    ctx.app.getOpenAPI31Document({
+      openapi: "3.1.0",
+      info: OPENAPI_DOCUMENT_INFO,
+    }),
+  ) as unknown as { paths: Record<string, Record<string, unknown>> };
+  const out = new Set<string>();
+  for (const [path, item] of Object.entries(document.paths)) {
+    for (const method of Object.keys(item)) {
+      if (["post", "put", "patch"].includes(method)) {
+        out.add(`${method.toUpperCase()} ${path}`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Write routes the app serves that the document does not carry, each with
+ * how its body is read. The census finds them from the route table, so a
+ * handler added without a place in the document has to be classified here
+ * before this file goes green.
+ */
+const UNPUBLISHED_WRITES: Record<string, string> = {
+  "POST /setup/exchange":
+    "JSON, closed: refused here by the handler (tested below)",
+  "POST /setup/claim":
+    "JSON is closed: refused here by the handler (tested below); a form submission is read by field name and is not a JSON body",
+  "POST /auth/owner/password": "a same-origin form post, not a JSON body",
+  "POST /inbound/{token}":
+    "a sender's delivery, whatever bytes it sent, recorded as it arrived",
+  "POST /auth/sign-in": "a form post, not a JSON body",
+  "POST /auth/authorize/decision": "a form post, not a JSON body",
+  "POST /auth/device": "a form post, not a JSON body",
+  "POST /auth/device/consent": "a form post, not a JSON body",
+  "POST /auth/{wildcard}":
+    "the sign-in library's own protocol endpoints, which answer in their own shapes",
+};
+
+function servedWrites(): Set<string> {
+  const out = new Set<string>();
+  for (const route of ctx.app.routes) {
+    if (!["POST", "PUT", "PATCH"].includes(route.method)) continue;
+    const path = route.path
+      .replace(/\/\*$/, "/{wildcard}")
+      .replace(/:([A-Za-z_]+)/g, "{$1}");
+    out.add(`${route.method} ${path}`);
+  }
+  return out;
+}
+
 function jsonBodies(): Map<string, Schema> {
   const document = finalizeOpenAPISpec(
     ctx.app.getOpenAPI31Document({
@@ -120,6 +173,92 @@ describe("the JSON write bodies", () => {
       const schema = bodies.get(door);
       expect(schema, `stale: ${door} is not a JSON door`).toBeDefined();
       expect(closed(schema!), `${door} is closed`).toBe(false);
+    }
+  });
+});
+
+describe("the write routes the app serves", () => {
+  it("are the document's, or are classified here with how their body is read", () => {
+    const documented = documentedWrites();
+    // The witness: the route table holds both kinds, so a door missing from
+    // the document would be seen.
+    expect(servedWrites()).toContain("POST /items");
+    expect(servedWrites()).toContain("POST /setup/claim");
+    const unclassified = [...servedWrites()].filter(
+      (door) => !documented.has(door) && !(door in UNPUBLISHED_WRITES),
+    );
+    expect(unclassified).toEqual([]);
+  });
+
+  it("name no classification that is stale", () => {
+    const served = servedWrites();
+    const documented = documentedWrites();
+    for (const door of Object.keys(UNPUBLISHED_WRITES)) {
+      expect(served.has(door), `stale: ${door} is not served`).toBe(true);
+      expect(documented.has(door), `${door} is in the document`).toBe(false);
+    }
+  });
+});
+
+describe("the setup doors", () => {
+  const origin = "http://localhost:8600";
+  const post = (
+    app: { request: (path: string, init: RequestInit) => unknown },
+    path: string,
+    body: unknown,
+  ) =>
+    app.request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", origin },
+      body: JSON.stringify(body),
+    }) as Promise<Response>;
+
+  it("POST /setup/exchange refuses a key it does not declare and keeps the setup code unspent", async () => {
+    const fresh = await createClaimTestApp(origin);
+    try {
+      const { code } = await issueSetupCode(fresh.storage);
+      for (const key of ["bogus", "_trace"]) {
+        const refused = await post(fresh.app, "/setup/exchange", {
+          code,
+          [key]: 1,
+        });
+        const text = await refused.text();
+        expect(refused.status, text).toBe(400);
+        const refusal = JSON.parse(text) as Refusal;
+        expect(refusal.error.code).toBe("validation_error");
+        expect(refusal.error.details?.unknown_body_fields).toEqual([key]);
+        expect(refused.headers.get("set-cookie")).toBeNull();
+      }
+      const exchanged = await post(fresh.app, "/setup/exchange", { code });
+      expect(exchanged.status, await exchanged.clone().text()).toBe(200);
+    } finally {
+      await fresh.cleanup();
+    }
+  });
+
+  it("POST /setup/claim refuses a key it does not declare in a JSON body and claims nothing", async () => {
+    const fresh = await createClaimTestApp(origin);
+    try {
+      const { code } = await issueSetupCode(fresh.storage);
+      const body = {
+        email: "someone@example.test",
+        password: "a password for the owner",
+        code,
+      };
+      for (const key of ["bogus", "_trace"]) {
+        const refused = await post(fresh.app, "/setup/claim", {
+          ...body,
+          [key]: 1,
+        });
+        const text = await refused.text();
+        expect(refused.status, text).toBe(400);
+        const refusal = JSON.parse(text) as Refusal;
+        expect(refusal.error.details?.unknown_body_fields).toEqual([key]);
+      }
+      const claimed = await post(fresh.app, "/setup/claim", body);
+      expect(claimed.status, await claimed.clone().text()).toBe(201);
+    } finally {
+      await fresh.cleanup();
     }
   });
 });

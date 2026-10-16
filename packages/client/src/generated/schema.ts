@@ -18452,7 +18452,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it.
+             * @description - `validation_error`: a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it. A key the body or a setting doesn't declare is named in `details.unknown_body_fields`.
              *     - `missing_required_field`: `title` is missing.
              *     - `unknown_type`: a setting names a type that isn't registered.
              */
@@ -18666,7 +18666,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed (`details.errors[0].path` names it), the body names no setting, or the query has a parameter such as `conflict`, which this endpoint doesn't take.
+             * @description - `validation_error`: a setting is malformed (`details.errors[0].path` names it), a key is undeclared (`details.unknown_body_fields` names it), the body names no setting, or the query has `conflict`.
              *     - `missing_required_field`: `version` is missing.
              *     - `unknown_type`: a setting names a type that isn't registered.
              *     - `invalid_id`: the ID is malformed.

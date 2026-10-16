@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { z } from "@hono/zod-openapi";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { MarfaAuth } from "../auth/instance.js";
@@ -20,8 +21,23 @@ import { escapeHtml } from "./auth-html.js";
 import { ownerWire } from "./owner-wire.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import { setNoStore } from "./no-store.js";
+import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
 
 export const SETUP_COOKIE = "marfa.setup";
+
+/**
+ * The fields the two setup doors read from a JSON body. The doors are not in
+ * the published document, so these are the only declaration of them, and
+ * they are what an undeclared key is judged against.
+ */
+const ExchangeBody = z.object({ ticket: z.string(), code: z.string() });
+const ClaimBody = z.object({
+  email: z.string(),
+  password: z.string(),
+  name: z.string(),
+  code: z.string(),
+});
+
 export function setupRoutes(storage: Storage, auth: MarfaAuth) {
   const router = new Hono<AppEnv>();
   router.use("*", async (c, next) => {
@@ -77,6 +93,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
   router.post("/exchange", async (c) => {
     requireOwnerOrigin(auth, c.req.raw.headers);
     const body = await c.req.json<{ ticket?: unknown; code?: unknown }>();
+    refuseUnknownBodyKeys(body, ExchangeBody);
     const session =
       typeof body.ticket === "string"
         ? await exchangeSetupTicket(storage, body.ticket)
@@ -104,9 +121,11 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
   // The HTML form fallback shares the claim operation with the JSON owner API.
   router.post("/claim", async (c) => {
     requireOwnerOrigin(auth, c.req.raw.headers, { allowNonBrowser: true });
-    const body = c.req.header("content-type")?.includes("application/json")
+    const isJson = c.req.header("content-type")?.includes("application/json");
+    const body = isJson
       ? await c.req.json<Record<string, string>>()
       : await c.req.parseBody<Record<string, string>>();
+    if (isJson) refuseUnknownBodyKeys(body, ClaimBody);
     const token = getCookie(c, SETUP_COOKIE);
     const owner = await claimOwner(storage, auth, {
       email: body.email ?? "",

@@ -210,6 +210,28 @@ describe("POST /folders", () => {
     }
   });
 
+  it("says in the API description where each kind of refusal is named", async () => {
+    const res = await request(ctx.app, "GET", "/openapi.json", {});
+    const document = (await res.json()) as {
+      paths: Record<
+        string,
+        Record<string, { responses: Record<string, { description: string }> }>
+      >;
+    };
+    for (const [path, method] of [
+      ["/folders", "post"],
+      ["/folders/{id}", "patch"],
+    ] as const) {
+      const refusal = document.paths[path]![method]!.responses["400"]!;
+      expect(refusal.description, `${method} ${path}`).toContain(
+        "details.errors[0].path",
+      );
+      expect(refusal.description, `${method} ${path}`).toContain(
+        "details.unknown_body_fields",
+      );
+    }
+  });
+
   it("caps defaults.edges at 100 edge types and 100 targets each, on a create and on a change", async () => {
     const target = "01920000-0000-7000-8000-000000000000";
     const folder = await createFolder({ title: "Capped" });
