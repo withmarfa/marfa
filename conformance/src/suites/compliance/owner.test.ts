@@ -299,13 +299,12 @@ describe("claiming the one owner", () => {
 
   it("refuses a key the setup doors do not declare in a JSON body without consuming valid setup proof", async () => {
     const origin = new URL(server.url).origin;
-    for (const path of ["/setup/exchange", "/setup/claim"]) {
+    for (const [path, body] of [
+      ["/setup/exchange", { code }],
+      ["/setup/claim", { ...OWNER, code }],
+    ] as const) {
       for (const key of ["bogus", "_trace"]) {
-        const refused = await post(
-          path,
-          { ...OWNER, code, [key]: 1 },
-          { origin },
-        );
+        const refused = await post(path, { ...body, [key]: 1 }, { origin });
         expect(refused.status, `${path} ${key}`).toBe(400);
         const { error } = await refused.json();
         expect(error.code).toBe("validation_error");
