@@ -655,6 +655,55 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     }
 }
 
+/// `http` naming the copy's instance on what it writes, where the copy names
+/// one, and the generation of the copy that was read from.
+pub(crate) fn naming_instance(core: &Core, http: &Http) -> Result<(Http, u64)> {
+    let conn = core.conn()?;
+    let generation = read_view::generation(&conn)?;
+    let named = match store::meta_get(&conn, store::META_INSTANCE_ID)? {
+        Some(instance) if !instance.is_empty() => http.naming(&instance),
+        _ => http.clone(),
+    };
+    Ok((named, generation))
+}
+
+/// Expires the copy whose instance another instance's refusal of a write
+/// said is no longer at the origin, and answers the error that tells it. A
+/// copy hydrated again since `generation` is left as it is.
+pub(crate) fn expire_for_another_instance(
+    tx: &rusqlite::Transaction<'_>,
+    generation: u64,
+) -> Result<CoreError> {
+    if read_view::generation(tx)? != generation {
+        return Ok(Context::changed());
+    }
+    read_view::expire(tx)?;
+    Ok(CoreError::CopyExpired {
+        reason: crate::http::INSTANCE_CHANGED.into(),
+    })
+}
+
+/// Sends one write naming the copy's instance. Where another instance at the
+/// origin refuses it, the copy is expired and the call ends `copy_expired`
+/// with the reason `instance_changed`.
+pub(crate) fn write_naming_instance<T>(
+    core: &Core,
+    http: &Http,
+    write: impl FnOnce(&Http) -> Result<T>,
+) -> Result<T> {
+    let (named, generation) = naming_instance(core, http)?;
+    match write(&named) {
+        Err(CoreError::CopyExpired { reason }) if reason == crate::http::INSTANCE_CHANGED => {
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            let error = expire_for_another_instance(&tx, generation)?;
+            tx.commit()?;
+            Err(error)
+        }
+        other => other,
+    }
+}
+
 fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;

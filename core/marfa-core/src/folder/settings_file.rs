@@ -361,13 +361,16 @@ impl Folder {
             Err(error) => return Err(error),
         }
         let context = crate::read_view::Context::capture(&*self.core.conn()?)?;
-        let answer = self.core.http()?.send(&Outgoing {
-            method: Method::Patch,
-            segments: vec!["folders".into(), self.folder.clone()],
-            params: Vec::new(),
-            body: &body,
-            idempotency_key: &key,
-        });
+        let answer =
+            crate::catch_up::write_naming_instance(&self.core, self.core.http()?, |http| {
+                http.send(&Outgoing {
+                    method: Method::Patch,
+                    segments: vec!["folders".into(), self.folder.clone()],
+                    params: Vec::new(),
+                    body: &body,
+                    idempotency_key: &key,
+                })
+            });
         let answer = match answer {
             Ok(answer) => answer,
             Err(error) if error.is_environmental() => {

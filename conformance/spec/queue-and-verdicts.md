@@ -1292,6 +1292,36 @@ While a drain cannot confirm which instance the server is, a device MUST send no
 
 **Tests:** `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› queues writes while the server is unreachable`.
 
+### `queue-and-verdicts/instance-named`
+
+Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each write a drain sends, an upload among them.
+
+**Reason:** a drain confirms the instance once, before it sends, and another instance can take the address while a long pass runs; named, each write is refused where it lands (`instance/write-names-other`).
+
+**Tests:** `device/queue.test.ts › names the copy's instance on each write a drain sends, an upload among them`.
+
+### `queue-and-verdicts/instance-changed-expires`
+
+If the server answers a write a drain sends `409 instance_changed`, then a device MUST end the drain `copy_expired` with the reason `instance_changed`, expiring the copy.
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
+### `queue-and-verdicts/instance-changed-sends-nothing`
+
+When the server answers a write a drain sends `409 instance_changed`, a device MUST send no further write in that drain, whether or not the server took a move of an edge's source earlier in it.
+
+**Reason:** a write behind a move is judged as it would have been had the copy not expired (`queue-and-verdicts/edge-source-move-carries-on`), and this refusal is about the server at the address, not about the write.
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
+### `queue-and-verdicts/instance-changed-keeps-write`
+
+When the server answers a write a drain sends `409 instance_changed`, a device MUST keep the write in the queue under its idempotency key, with no verdict and no refusal counted.
+
+**Reason:** the instance that refused it never held the rows it was made against and did not apply it, so it goes to the instance the copy is next hydrated from (`queue-and-verdicts/rehydration-keeps-queue`).
+
+**Tests:** `device/queue.test.ts › ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue`, `device/edge-move.test.ts › ends at once where another instance refuses a write behind a source move the server took`.
+
 ## Writes laid over the copy
 
 A write waits until it is answered, and a `blocked` or `dead` write remains available for release. The local projection retains unresolved effects; a later accepted write can supersede effects of a dead attempt without removing its recoverable body.

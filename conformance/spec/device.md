@@ -308,6 +308,20 @@ If the server's root answers a failure that clears on its own when a folder's se
 
 **Tests:** `device/folders.test.ts › sends no settings edit while the server cannot say which instance it is`.
 
+### `device/instance-named-one-write`
+
+Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each purge, change to a folder's settings and folder status report it sends.
+
+**Reason:** the root is asked before such a write, and another instance can take the address between the two; named, the write is refused where it lands (`instance/write-names-other`).
+
+**Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`, `device/folder-health.test.ts › names the copy's instance on each status report`.
+
+### `device/instance-changed-one-write`
+
+If the server answers a purge or a change to a folder's settings `409 instance_changed`, then a device MUST end the call `copy_expired` with the reason `instance_changed`, expiring the copy.
+
+**Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`.
+
 ### `device/late-answer`
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.

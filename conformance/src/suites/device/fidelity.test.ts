@@ -11,6 +11,7 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
+  refusal,
   bulkGetOf,
   certifiedRead,
   copyLiveReplay,
@@ -2637,6 +2638,30 @@ describe("the scripted answers match the server's", () => {
       "a key answered for a different request",
       { status: reused.status, body: reused.error },
       answers.keyReused(),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+  });
+
+  it("matches the refusal of a write that names another instance", async () => {
+    // Well formed, and the id of no instance (`instance/id-per-instance`).
+    const elsewhere = "019537a0-7b80-7000-8000-0000000000ff";
+    const refused = await client.rawRequest("/items", {
+      method: "POST",
+      headers: { "X-Marfa-Instance-Id": elsewhere },
+      body: {
+        type: "core.note",
+        properties: { title: "elsewhere", body: "elsewhere" },
+      },
+    });
+    expect(
+      refused.status,
+      "a write naming another instance was not refused, so the refusal this compares against was never produced",
+    ).toBe(409);
+
+    expectFidelity(
+      "a write naming another instance",
+      { status: refused.status, body: refused.error },
+      refusal(409, "instance_changed", "another instance at this address"),
       { same: ["error.code"], shape: ["error.message"] },
     );
   });

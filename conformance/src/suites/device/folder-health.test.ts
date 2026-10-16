@@ -8,7 +8,7 @@ import {
 import { afterEach, expect, it } from "vitest";
 import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
 
-import { writeAnswers } from "../../device/marfa-answers.js";
+import { SCRIPTED_INSTANCE, writeAnswers } from "../../device/marfa-answers.js";
 import type { DoorRow } from "../../device/folder-door.js";
 import { scriptFolderWrites } from "./folders.shared.js";
 
@@ -67,6 +67,22 @@ it("reports a confirmed complete sync using the registry's opaque copy identity"
       "problems",
     ].sort(),
   );
+});
+
+it("names the copy's instance on each status report", async () => {
+  harness = await folderHarness("health-names-instance");
+  scriptWrites(harness.server);
+  expect((await harness.folder.push()).ok).toBe(true);
+  const { settings } = harness;
+  const sent = harness.server.requests.filter(
+    (request) =>
+      request.method === "PUT" &&
+      request.pathname === `/folders/${settings.id}/status`,
+  );
+  // The positive control: a push reports at least once.
+  expect(sent.length).toBeGreaterThan(0);
+  for (const request of sent)
+    expect(request.headers["x-marfa-instance-id"]).toBe(SCRIPTED_INSTANCE);
 });
 
 it("reports first-sync waiting without claiming a successful content pass", async () => {

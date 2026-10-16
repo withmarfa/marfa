@@ -1234,7 +1234,7 @@ impl Core {
         };
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;
-        http.purge_item(id, version)?;
+        catch_up::write_naming_instance(self, http, |http| http.purge_item(id, version))?;
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         store::purge_item(&tx, id)?;

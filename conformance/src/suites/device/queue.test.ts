@@ -2429,6 +2429,122 @@ describe("offline, reconnect and re-hydration", () => {
     expect(creates(harness)).toEqual([queued.value.item_id]);
   });
 
+  it("names the copy's instance on each write a drain sends, an upload among them", async () => {
+    harness = await hydratedHarness("queue-names-instance", { rows: held() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "named", body: "named" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const upload = await device.putBlob(fileOf("named.txt", "named bytes\n"));
+    expect(upload.ok, JSON.stringify(upload)).toBe(true);
+    scriptWrites(server, {
+      read: [answers.updated(wireItem({ id: created.value.item_id ?? "a" }))],
+      create: [answers.created(wireItem({ id: created.value.item_id ?? "a" }))],
+    });
+    acceptUploads(server);
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+
+    const sent = server.requests.filter(isWrite);
+    expect(
+      sent.map((request) => `${request.method} ${request.pathname}`).sort(),
+    ).toEqual(["POST /blobs", "POST /items"]);
+    for (const request of sent) {
+      expect(
+        request.headers["x-marfa-instance-id"],
+        `${request.method} ${request.pathname} did not name the copy's instance`,
+      ).toBe(SCRIPTED_INSTANCE);
+    }
+  });
+
+  it("ends the drain copy_expired where another instance refuses a write, sending nothing more and keeping the queue", async () => {
+    harness = await hydratedHarness("queue-instance-changed", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const first = await device.create({
+      type: "core.note",
+      properties: { title: "first", body: "first" },
+    });
+    const second = await device.create({
+      type: "core.note",
+      properties: { title: "second", body: "second" },
+    });
+    expect(first.ok && second.ok, JSON.stringify([first, second])).toBe(true);
+    if (!first.ok || !second.ok) return;
+    const before = await queueOf(device);
+    // Another instance took the address after the drain confirmed this one,
+    // so the root still names it and the write is what meets the other.
+    let elsewhere = true;
+    let made = 0;
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          if (elsewhere)
+            return refusal(
+              409,
+              "instance_changed",
+              "another instance at this address",
+            );
+          made += 1;
+          return answers.created(
+            wireItem({ id: (JSON.parse(request.body) as { id: string }).id }),
+          );
+        },
+      ],
+      read: [
+        (request) =>
+          answers.updated(wireItem({ id: request.pathname.split("/")[2] })),
+      ],
+    });
+
+    const refused = await device.drain();
+    expect(
+      refused.ok,
+      "a drain went on past a write another instance refused",
+    ).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("copy_expired");
+      expect(refused.refusal.raw).toContain("instance_changed");
+    }
+    expect(
+      creates(harness),
+      "a write was sent after another instance refused one",
+    ).toEqual([first.value.item_id]);
+    const after = await queueOf(device);
+    expect(
+      after.map((row) => [
+        row.id,
+        row.idempotency_key,
+        row.verdict,
+        row.refusals,
+      ]),
+      "the refusal was taken as the write's own, or the queue was not kept",
+    ).toEqual(before.map((row) => [row.id, row.idempotency_key, null, 0]));
+    const status = await device.status();
+    expect(status.ok ? status.value.hydration : status).toBe("expired");
+
+    // The witness: hydrated again, the same writes go out under their keys.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    elsewhere = false;
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(made).toBe(2);
+    const keys = server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => request.headers["idempotency-key"]);
+    expect(keys).toEqual([
+      before[0]?.idempotency_key,
+      before[0]?.idempotency_key,
+      before[1]?.idempotency_key,
+    ]);
+  });
+
   it("sends nothing while the server cannot say which instance it is", async () => {
     harness = await startHarness("queue-instance-unknown");
     const { server, device } = harness;

@@ -482,23 +482,26 @@ impl Folder {
         let result = (|| {
             let body = serde_json::to_string(&sent)?;
             let http = self.core.http()?.for_reporting()?;
-            let reply = http.call(Call {
-                method: Method::Put,
-                segments: &["folders", &self.folder, "status"],
-                params: &[],
-                headers: &[],
-                body: CallBody::Json(&body),
-                credential: true,
-                stream: false,
+            let reply = crate::catch_up::write_naming_instance(&self.core, &http, |http| {
+                let reply = http.call(Call {
+                    method: Method::Put,
+                    segments: &["folders", &self.folder, "status"],
+                    params: &[],
+                    headers: &[],
+                    body: CallBody::Json(&body),
+                    credential: true,
+                    stream: false,
+                })?;
+                if !(200..300).contains(&reply.status) {
+                    return Err(http.refused(
+                        reply.status,
+                        reply.contract.is_some(),
+                        &reply.body,
+                        reply.retry_after_seconds,
+                    ));
+                }
+                Ok(reply)
             })?;
-            if !(200..300).contains(&reply.status) {
-                return Err(http.refused(
-                    reply.status,
-                    reply.contract.is_some(),
-                    &reply.body,
-                    reply.retry_after_seconds,
-                ));
-            }
             let ack: Ack = serde_json::from_str(&reply.body)?;
             {
                 let conn = self.core.conn()?;
