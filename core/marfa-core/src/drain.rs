@@ -938,19 +938,15 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
             // Left behind at a stop where sending it again cannot write twice,
             // so a server that never answers, as one taking an upload can,
             // does not hold the drain: the row stays sent under its key, and
-            // the next drain sends it again. Any other write is waited for:
-            // sent again, it could overwrite a newer change made elsewhere.
+            // the next drain sends it again.
             let sent = match sendable {
-                Sendable::Json(outgoing, shape)
-                    if crate::http::answered_by_key(outgoing.method, &outgoing.segments) =>
-                {
+                Sendable::Json(outgoing, shape) => {
                     let owned = Owned::of(&outgoing);
                     let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
                         http.send(&owned.outgoing())
                     });
                     (answer, shape)
                 }
-                Sendable::Json(outgoing, shape) => (http.send(&outgoing), shape),
                 Sendable::Upload { bytes, mime_type } => {
                     let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
                         upload(http, bytes, &mime_type)

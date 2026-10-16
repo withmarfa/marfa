@@ -23,7 +23,7 @@ describe("the contract the core is built for", () => {
     expect(Number(stated?.[1])).toBe(contractVersionOf(document.info.version));
   });
 
-  it("lets go at a stop only of the writes the document says take a key", () => {
+  it("lists the writes the document says take a key", () => {
     const document = JSON.parse(
       readFileSync(new URL("../openapi.json", import.meta.url), "utf8"),
     ) as Parameters<typeof keyedWrites>[0];
