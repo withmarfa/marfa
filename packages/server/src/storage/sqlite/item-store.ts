@@ -515,9 +515,8 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
       filters.type,
     );
     if (!global && exact && descendantPattern) {
-      // The subtree is a range, not `LIKE`: SQLite answers `LIKE` from an
-      // index only on a `NOCASE` column, so a `LIKE` here kept the whole
-      // term out of every index. `.` is followed by `/`, so the range holds
+      // Default case-insensitive LIKE cannot use the BINARY type index.
+      // In binary order, `/` immediately follows `.`, so this range holds
       // exactly the identifiers that start with `<exact>.`.
       typeClause = or(
         eq(items.type, exact),
@@ -527,14 +526,8 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     }
   }
 
-  // **Naming a type takes `state` out of the index choice.** With no
-  // statistics SQLite takes an equality on `state` to narrow as much as one
-  // on `type`, and breaks the tie for `idx_items_state`, which holds every
-  // row but the few that were put away. A listing that names a type reads
-  // the whole store that way. The unary plus makes the term a filter the
-  // planner cannot search by, so the type index answers and `state` is
-  // checked on the rows it finds. It cannot be left to statistics, since an
-  // instance that has never been analyzed has none.
+  // Without statistics, SQLite can prefer the state index even when nearly
+  // every row is active. Unary plus prevents that choice for typed listings.
   const stateIs = (value: string): SQL =>
     typeClause ? sql`+${items.state} = ${value}` : eq(items.state, value);
 
