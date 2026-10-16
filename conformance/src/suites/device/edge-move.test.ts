@@ -712,6 +712,41 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toBe("complete");
   });
 
+  it("expires the copy where another client changed the read view during a drain whose moves were all refused", async () => {
+    harness = await reparentable("edge-source-move-refused-elsewhere");
+    const { server, device } = harness;
+    const [first] = CHILD_EDGES;
+    server.answer(
+      "PATCH",
+      `/edges/${first}`,
+      refusal(404, "item_not_found", "no such item"),
+    );
+    // The refusal changed nothing; the read after it meets a view that
+    // another client changed.
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    value(
+      queuedEdit(
+        await device.updateEdge(first, {
+          properties: {},
+          version: 1,
+          source_id: PARENT_B,
+        }),
+      ),
+    );
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(value(await device.queue()).map((row) => row.verdict)).toEqual([
+      "refused",
+    ]);
+    expect(value(await device.status()).hydration).toBe("expired");
+  });
+
   it("returns the report with the wait the server asked for, the copy expired", async () => {
     harness = await reparentable("edge-source-move-wait");
     const { server, device } = harness;

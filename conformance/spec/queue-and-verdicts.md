@@ -2080,9 +2080,9 @@ If a drain that expired the copy for a move of an edge's source ends in an error
 
 ### `queue-and-verdicts/edge-source-move-refused-keeps-copy`
 
-If the server refuses every move of an edge's source a drain sends, then a device MUST NOT expire the copy.
+If the server refuses every move of an edge's source a drain sends, then a device MUST NOT expire the copy on account of those moves.
 
-**Reason:** a refused move changes nothing on the server, so its read view stands (`read-views/view-moves-edge-source`).
+**Reason:** a refused move changes nothing on the server, so its read view stands (`read-views/view-moves-edge-source`). A change made by another client is met by the rule that ends the drain (`queue-and-verdicts/view-change-ends-drain`).
 
 **Tests:** `device/edge-move.test.ts › leaves the copy current where the server refuses every move`.
 
@@ -2092,7 +2092,7 @@ If a drain meets a changed read view anywhere but in the read after the answer i
 
 **Reason:** only a move of a source answered in the drain at hand is known to have changed the view; a change from any other cause, or met by a read an earlier drain left owed, is news the drain had no part in, and the caller learns of it before more is sent.
 
-**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`, `› ends at once where a read owed from an earlier drain meets a changed read view`.
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`, `› ends at once where a read owed from an earlier drain meets a changed read view`, `› expires the copy where another client changed the read view during a drain whose moves were all refused`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 
