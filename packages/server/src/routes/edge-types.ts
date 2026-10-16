@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+import { assertConstraintEvolution } from "./_edge-type-evolution.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { wholeListOf } from "./_schemas.js";
@@ -7,7 +9,6 @@ import {
   isCoreEdgeType,
   isValidEdgeTypeIdentifier,
   edgeNameHolder,
-  getEdgeTypeSchema,
   isRoleConstraint,
   roleFromConstraint,
   TYPE_ROLES,
@@ -312,6 +313,24 @@ export function edgeTypeFromRequest(
 // Routes
 // ---------------------------------------------------------------------------
 
+const EdgeTypeRegistrationRequestSchema = z
+  .object({
+    ...EdgeTypeRequestSchema.shape,
+    evolve_constraints: z
+      .boolean()
+      .optional()
+      .describe(
+        "`true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition.",
+      ),
+  })
+  .describe("An edge type to register.")
+  .openapi("EdgeTypeRegistrationRequest");
+
+const EdgeTypeRegistrationResponseSchema = z
+  .object({ edge_type: EdgeTypeResponseSchema.describe("The edge type.") })
+  .describe("One registered edge type.")
+  .openapi("EdgeTypeRegistrationResponse");
+
 const registerEdgeTypeRoute = createRoute({
   method: "post",
   path: "/",
@@ -319,21 +338,30 @@ const registerEdgeTypeRoute = createRoute({
   tags: ["Edge types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type and returns it. An edge type can't extend another.",
+    "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.",
   security: [{ bearerAuth: [] }],
   middleware: registersEdgeType,
   request: {
     body: {
       content: {
-        "application/json": { schema: EdgeTypeRequestSchema },
+        "application/json": { schema: EdgeTypeRegistrationRequestSchema },
       },
     },
   },
   responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: EdgeTypeRegistrationResponseSchema,
+        },
+      },
+      description:
+        "Returns the widened edge type, or its unchanged definition for a repeated request.",
+    },
     201: {
       content: {
         "application/json": {
-          schema: z.object({ edge_type: EdgeTypeResponseSchema }),
+          schema: EdgeTypeRegistrationResponseSchema,
         },
       },
       description: "Returns the new edge type.",
@@ -363,6 +391,15 @@ const registerEdgeTypeRoute = createRoute({
       description:
         "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.",
     },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_type_not_found"]),
+        },
+      },
+      description:
+        "`edge_type_not_found`: constraint evolution names no registered edge type.",
+    },
     409: {
       content: {
         "application/json": {
@@ -370,7 +407,7 @@ const registerEdgeTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`.",
+        "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member.",
     },
   },
 });
@@ -476,6 +513,9 @@ const deleteEdgeTypeRoute = createRoute({
 
 export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
+  // Register the base before a field supplies its own description, which
+  // would otherwise replace the component's description on its first use.
+  router.openAPIRegistry.register("EdgeType", EdgeTypeResponseSchema);
 
   router.openapi(registerEdgeTypeRoute, async (c) => {
     const body = c.req.valid("json");
@@ -511,14 +551,35 @@ export function edgeTypeRoutes(storage: Storage) {
         "A registered edge type does not support `extends`",
       );
     }
-    refuseUnreadEdgeTypeKeys(rawBody);
+    const definitionBody = { ...rawBody };
+    Reflect.deleteProperty(definitionBody, "evolve_constraints");
+    refuseUnreadEdgeTypeKeys(definitionBody);
 
     // Names are checked under the writer lock so concurrent registrations
     // cannot both take the same forward or reverse name.
-    const schema = await runAuditedTransaction(
+    const result = await runAuditedTransaction(
       storage,
       async () => {
-        if (getEdgeTypeSchema(body.id)) {
+        const existing = await storage.edgeTypes.get(body.id);
+        requireEdgeTypeSchemaWrite(c, "register", [
+          body.id,
+          body.reverse_name,
+          existing?.reverse_name,
+        ]);
+        if (body.evolve_constraints === true) {
+          if (existing === undefined)
+            throw new MarfaError(
+              ErrorCode.EDGE_TYPE_NOT_FOUND,
+              `Edge type ${body.id} not found`,
+            );
+          const built = edgeTypeFromRequest(body);
+          assertConstraintEvolution(existing, built);
+          if (isDeepStrictEqual(existing, built))
+            return { schema: existing, evolved: true, changed: false };
+          await storage.edgeTypes.replace(built);
+          return { schema: built, evolved: true, changed: true };
+        }
+        if (existing !== undefined) {
           throw new MarfaError(
             ErrorCode.CONFLICT,
             `Edge type ${body.id} already exists`,
@@ -526,18 +587,23 @@ export function edgeTypeRoutes(storage: Storage) {
         }
         const built = edgeTypeFromRequest(body);
         await storage.edgeTypes.create(built);
-        return built;
+        return { schema: built, evolved: false, changed: true };
       },
-      (schema) => ({
-        client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
-        action: "edge_type.register",
-        resource_type: "edge_type",
-        resource_id: schema.id,
-      }),
+      ({ schema, evolved, changed }) =>
+        changed
+          ? {
+              client_ip: c.get("clientIp") ?? null,
+              key_id: c.get("apiKey")?.id,
+              action: evolved ? "edge_type.update" : "edge_type.register",
+              resource_type: "edge_type",
+              resource_id: schema.id,
+            }
+          : null,
     );
 
-    return c.json({ edge_type: edgeTypeResponse(schema) }, 201);
+    return result.evolved
+      ? c.json({ edge_type: edgeTypeResponse(result.schema) }, 200)
+      : c.json({ edge_type: edgeTypeResponse(result.schema) }, 201);
   });
 
   router.openapi(listEdgeTypesRoute, async (c) => {

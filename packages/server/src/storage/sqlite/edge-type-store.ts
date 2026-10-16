@@ -57,6 +57,27 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
     });
   }
 
+  async replace(schema: EdgeTypeSchema): Promise<EdgeTypeSchema> {
+    return this.db.transaction(async (tx) => {
+      const changed = await tx
+        .update(edgeTypes)
+        .set({
+          schema: JSON.stringify(schema),
+          updated_at: new Date().toISOString(),
+        })
+        .where(eq(edgeTypes.id, schema.id))
+        .returning({ id: edgeTypes.id });
+      if (changed.length === 0)
+        throw new MarfaError(
+          ErrorCode.EDGE_TYPE_NOT_FOUND,
+          `Edge type ${schema.id} not found`,
+        );
+      markStructuralReadChange();
+      registerEdgeTypeSchema(schema);
+      return schema;
+    });
+  }
+
   async delete(id: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       const deleted = await tx

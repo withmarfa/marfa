@@ -559,7 +559,7 @@ export interface paths {
         put?: never;
         /**
          * Register an edge type
-         * @description Registers an edge type and returns it. An edge type can't extend another.
+         * @description Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.
          */
         post: operations["registerEdgeType"];
         delete?: never;
@@ -1713,6 +1713,57 @@ export interface webhooks {
 }
 export interface components {
     schemas: {
+        /** @description An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join. */
+        EdgeType: {
+            /** @description Unique identifier for the edge type. */
+            id: string;
+            /** @description A name for people to read. */
+            label?: string;
+            /** @description What the edge type is for. */
+            description?: string;
+            /**
+             * @description How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.
+             * @enum {string}
+             */
+            cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
+            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
+            source_type_constraints: string[];
+            /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
+            target_type_constraints: string[];
+            /**
+             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.
+             * @enum {string}
+             */
+            cascade_on_delete: "cascade" | "orphan" | "block";
+            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
+            property_schema: {
+                [key: string]: components["schemas"]["EdgePropertyDefinition"];
+            };
+            /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. */
+            reverse_name?: string;
+            /**
+             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.
+             * @enum {string}
+             */
+            written_at: "source" | "target";
+            /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
+            shipped: boolean;
+        };
+        /** @description One property an edge of an edge type can carry. */
+        EdgePropertyDefinition: {
+            /** @description The property's type: one of the field types a type's `fields` take, except `thumbnail`. */
+            type: string;
+            /** @description What the property holds. */
+            description?: string;
+            /** @description `true` if every edge of the type must have the property. */
+            required?: boolean;
+            /** @description The values an `enum` property takes. */
+            enum_values?: string[];
+            /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
+            items_type?: string;
+            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
+            format?: string;
+        };
         /** @description A lever that applies to the types it names. */
         TypeLever: {
             /** @description The types the lever applies to. */
@@ -2746,56 +2797,9 @@ export interface components {
                 };
             };
         };
-        /** @description An edge type says how edges of that type behave: its cardinality, what a delete does to the items they join, and which item types they can join. */
-        EdgeType: {
-            /** @description Unique identifier for the edge type. */
-            id: string;
-            /** @description A name for people to read. */
-            label?: string;
-            /** @description What the edge type is for. */
-            description?: string;
-            /**
-             * @description How many edges of the type an item can hold. `one-to-one`: each source and each target holds one. `one-to-many`: each target holds one. `many-to-one`: each source holds one. `many-to-many`: no limit.
-             * @enum {string}
-             */
-            cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
-            /** @description The types an edge's source item can have: `*`, a type identifier or `role:<name>`. A type matches its subtypes. */
-            source_type_constraints: string[];
-            /** @description The types an edge's target item can have, in the same form as `source_type_constraints`. */
-            target_type_constraints: string[];
-            /**
-             * @description What happens when an item an edge joins is deleted. `cascade`: deleting the source trashes the target. `orphan`: the other item stays. `block`: the delete fails while the edge exists.
-             * @enum {string}
-             */
-            cascade_on_delete: "cascade" | "orphan" | "block";
-            /** @description The properties an edge of the type can carry, by name. Marfa checks an edge's properties against it each time the edge is written, and accepts a property it doesn't list. */
-            property_schema: {
-                [key: string]: components["schemas"]["EdgePropertyDefinition"];
-            };
-            /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. */
-            reverse_name?: string;
-            /**
-             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.
-             * @enum {string}
-             */
-            written_at: "source" | "target";
-            /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
-            shipped: boolean;
-        };
-        /** @description One property an edge of an edge type can carry. */
-        EdgePropertyDefinition: {
-            /** @description The property's type: one of the field types a type's `fields` take, except `thumbnail`. */
-            type: string;
-            /** @description What the property holds. */
-            description?: string;
-            /** @description `true` if every edge of the type must have the property. */
-            required?: boolean;
-            /** @description The values an `enum` property takes. */
-            enum_values?: string[];
-            /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
-            items_type?: string;
-            /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
-            format?: string;
+        /** @description One registered edge type. */
+        EdgeTypeRegistrationResponse: {
+            edge_type: components["schemas"]["EdgeType"] & unknown;
         };
         /** @description An error response. */
         InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal: {
@@ -2832,6 +2836,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        EdgeTypeNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_type_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         ConflictRefusal: {
             /** @description What went wrong. */
             error: {
@@ -2849,7 +2870,7 @@ export interface components {
             };
         };
         /** @description An edge type to register. */
-        EdgeTypeRequest: {
+        EdgeTypeRegistrationRequest: {
             /** @description The identifier of the edge type, such as `acme.list-member`. */
             id: string;
             /** @description A name for people to read. */
@@ -2881,6 +2902,8 @@ export interface components {
              * @enum {string}
              */
             written_at?: "source" | "target";
+            /** @description `true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition. */
+            evolve_constraints?: boolean;
         };
         /** @description A page holding every edge type. */
         EdgeTypePage: {
@@ -2888,23 +2911,6 @@ export interface components {
             data: components["schemas"]["EdgeType"][];
             /** @description Always `null`: Marfa returns every edge type in one page. */
             next_cursor: string | null;
-        };
-        /** @description An error response. */
-        EdgeTypeNotFoundRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "edge_type_not_found";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description An error response. */
         EdgeTypeInUseRefusal: {
@@ -11446,10 +11452,24 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EdgeTypeRequest"];
+                "application/json": components["schemas"]["EdgeTypeRegistrationRequest"];
             };
         };
         responses: {
+            /** @description Returns the widened edge type, or its unchanged definition for a repeated request. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeTypeRegistrationResponse"];
+                };
+            };
             /** @description Returns the new edge type. */
             201: {
                 headers: {
@@ -11461,9 +11481,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        edge_type: components["schemas"]["EdgeType"];
-                    };
+                    "application/json": components["schemas"]["EdgeTypeRegistrationResponse"];
                 };
             };
             /**
@@ -11518,7 +11536,22 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
-            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`. */
+            /** @description `edge_type_not_found`: constraint evolution names no registered edge type. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeTypeNotFoundRefusal"];
+                };
+            };
+            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

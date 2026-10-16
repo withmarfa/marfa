@@ -1161,6 +1161,7 @@ export interface EdgeTypeStore {
   list(): Promise<EdgeTypeSchema[]>;
   get(id: string): Promise<EdgeTypeSchema | undefined>;
   create(schema: EdgeTypeSchema): Promise<EdgeTypeSchema>;
+  replace(schema: EdgeTypeSchema): Promise<EdgeTypeSchema>;
   delete(id: string): Promise<void>;
 }
 
