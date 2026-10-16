@@ -24,18 +24,11 @@ pub enum CliError {
     #[error("{0} is not in the local copy")]
     NotHeld(String),
     /// The core's `ReadingHandle`, said of the folder rather than its store.
-    #[error(
-        "{} is being worked by another process, such as a running `folders watch`; one process works a folder at a time, so stop it and run this again",
-        .0.display()
-    )]
+    #[error("{}", marfa_core::folder::held_by_another(.0))]
     FolderHeld(std::path::PathBuf),
     /// `FolderHeld`, for a command that asked the process holding the folder
     /// to let it go and waited.
-    #[error(
-        "{} is held by another process, which did not let it go within {} seconds of being asked; a `folders watch` lets a folder go when asked, unless it is stopped or a step of its pass takes longer than that, and any other command holds a folder until it ends, so run this again once it does",
-        .0.display(),
-        marfa_core::folder::HANDOVER_WAIT.as_secs()
-    )]
+    #[error("{}", marfa_core::folder::not_handed_over(.0))]
     FolderNotHandedOver(std::path::PathBuf),
     #[error("{0}")]
     Watch(String),
