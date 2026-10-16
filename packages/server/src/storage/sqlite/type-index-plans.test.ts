@@ -88,6 +88,16 @@ async function seed(): Promise<void> {
     [GRANTS, NOW, NOW, NOW],
   );
   await storage.__sqliteRun(
+    `INSERT INTO items (id, type, state, tier, properties, created_at, updated_at, occurred_at, version)
+     VALUES ('note-archived', 'core.note', 'archived', 'library', jsonb('{}'), ?, ?, ?, 1)`,
+    [NOW, NOW, NOW],
+  );
+  await storage.__sqliteRun(
+    `INSERT INTO metadata (item_id, tags, extensions)
+     SELECT id, '["tagged"]', '{}' FROM items`,
+    [],
+  );
+  await storage.__sqliteRun(
     `INSERT INTO auth_oauth_device_code (id, device_code, user_code, user_id, expires_at, status, client_id)
      VALUES ('code-1', 'digest-1', 'user-code-1', 'user-1', 4102444800, 'approved', 'client-1')`,
     [],
@@ -227,5 +237,74 @@ describe("a lookup of active items of one type", () => {
       state: "archived",
     });
     expect(archived.data.map((item) => item.id)).toEqual(["probe-archived"]);
+  });
+
+  it("lists a typed subset through a type index under a permission map too", async () => {
+    for (const plan of await planOf(() =>
+      storage.items.list({ allowed_types: ["system.connection.*"] }),
+    )) {
+      expect(plan).toMatch(/USING INDEX idx_items_type/);
+      expect(plan).not.toMatch(/idx_items_state/);
+    }
+    const page = await storage.items.list({
+      allowed_types: ["system.connection.*"],
+    });
+    expect(page.data).toHaveLength(GRANTS);
+  });
+
+  it("counts tags of a permitted subset through a type index", async () => {
+    const call = () =>
+      storage.metadata.listTags({ allowedTypes: ["system.connection.*"] });
+    for (const plan of await planOf(call)) {
+      expect(plan).toMatch(/USING INDEX idx_items_type/);
+      expect(plan).not.toMatch(/idx_items_state/);
+    }
+    expect(await call()).toEqual([{ tag: "tagged", count: GRANTS }]);
+  });
+
+  it("counts a typed subset through a type index", async () => {
+    for (const plan of await planOf(() =>
+      storage.items.stats({ type: "system.connection" }),
+    )) {
+      expect(plan).toMatch(/USING (COVERING )?INDEX idx_items_type/);
+      expect(plan).not.toMatch(/idx_items_state/);
+    }
+  });
+
+  describe("when the state is the rare one", () => {
+    // Nearly every item is active, so the state index cannot narrow a lookup
+    // of the active state. It narrows a lookup of any other state to a few
+    // rows, whatever the type, and that plan must stay.
+    it.each([
+      [
+        "items.list",
+        () => storage.items.list({ type: "core.note", state: "archived" }),
+      ],
+      [
+        "items.stats",
+        () => storage.items.stats({ type: "core.note", state: "archived" }),
+      ],
+      [
+        "items.list under a permission map",
+        () =>
+          storage.items.list({
+            allowed_types: ["core.note.*"],
+            state: "archived",
+          }),
+      ],
+    ])("%s searches the state index", async (_name, call) => {
+      for (const plan of await planOf(call)) {
+        expect(plan).toMatch(/SEARCH \w+ USING INDEX idx_items_state/);
+        expect(plan).not.toMatch(/SCAN/);
+      }
+    });
+
+    it("finds the archived note", async () => {
+      const page = await storage.items.list({
+        type: "core.note",
+        state: "archived",
+      });
+      expect(page.data.map((item) => item.id)).toEqual(["note-archived"]);
+    });
   });
 });

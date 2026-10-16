@@ -49,6 +49,19 @@ function patternClause(
 }
 
 /**
+ * The bounds of the identifiers under `root`: `type >= from AND type < before`
+ * holds exactly those that start with `<root>.`, since `/` follows `.` in
+ * binary order.
+ *
+ * Written as a range because SQLite answers `LIKE` from an index only on a
+ * `NOCASE` column, and the type index is not one, so a `LIKE` here keeps the
+ * whole term out of every index. Case-sensitive, as a type is.
+ */
+export function subtreeBounds(root: string): { from: string; before: string } {
+  return { from: `${root}.`, before: `${root}/` };
+}
+
+/**
  * The clause a `backref` term adds so it counts only edges whose source the
  * caller may read, as every door that serves an edge does; `null` for none.
  */

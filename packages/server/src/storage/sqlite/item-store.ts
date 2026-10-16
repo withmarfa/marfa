@@ -38,6 +38,7 @@ import {
   typePatternToSql,
   typeFilterTerms,
   typeSubtreeToSql,
+  GLOBAL_TYPE_WILDCARD,
 } from "@withmarfa/shared";
 import { resolveMergePolicy, resolveTypeSchema } from "../policy.js";
 import {
@@ -45,7 +46,11 @@ import {
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../merge-properties.js";
-import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
+import {
+  filterToSqlConditions,
+  sourceFilterToSql,
+  subtreeBounds,
+} from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
@@ -201,7 +206,8 @@ function typePatternClause(pattern: string): SQL {
   // withholds nothing.
   if (!exact) return sql`1=0`;
   if (!descendantPattern) return sql`${items.type} = ${exact}`;
-  return sql`(${items.type} = ${exact} OR ${items.type} LIKE ${descendantPattern} ESCAPE '\\')`;
+  const { from, before } = subtreeBounds(exact);
+  return sql`(${items.type} = ${exact} OR (${items.type} >= ${from} AND ${items.type} < ${before}))`;
 }
 
 export function allowedTypesCondition(
@@ -515,21 +521,32 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
       filters.type,
     );
     if (!global && exact && descendantPattern) {
-      // Default case-insensitive LIKE cannot use the BINARY type index.
-      // In binary order, `/` immediately follows `.`, so this range holds
-      // exactly the identifiers that start with `<exact>.`.
+      const { from, before } = subtreeBounds(exact);
       typeClause = or(
         eq(items.type, exact),
-        sql`(${items.type} >= ${`${exact}.`} AND ${items.type} < ${`${exact}/`})`,
+        sql`(${items.type} >= ${from} AND ${items.type} < ${before})`,
         ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
       );
     }
   }
 
-  // Without statistics, SQLite can prefer the state index even when nearly
-  // every row is active. Unary plus prevents that choice for typed listings.
+  // **The active state is the one that cannot narrow a read.** Nearly every
+  // row is active, and with no statistics SQLite takes `state = 'active'` to
+  // narrow as much as a type does, so it searches `idx_items_state` and
+  // reads the whole store to find a few rows of one type. The unary plus
+  // makes the term a filter the planner cannot search by, so the type index
+  // answers. Any other state is rare and stays a plain equality: the state
+  // index finds those few rows whatever the type, and the plus would send a
+  // read of them through every row of the type.
+  const narrowsByType =
+    typeClause !== undefined ||
+    (filters.allowed_types !== undefined &&
+      filters.allowed_types.length > 0 &&
+      !filters.allowed_types.includes(GLOBAL_TYPE_WILDCARD));
   const stateIs = (value: string): SQL =>
-    typeClause ? sql`+${items.state} = ${value}` : eq(items.state, value);
+    narrowsByType && value === "active"
+      ? sql`+${items.state} = ${value}`
+      : eq(items.state, value);
 
   if (filters.state) {
     conditions.push(stateIs(filters.state));

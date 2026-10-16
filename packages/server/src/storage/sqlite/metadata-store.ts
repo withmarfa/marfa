@@ -17,7 +17,7 @@ import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
-import { sourceFilterToRawSql } from "../filter-sql.js";
+import { sourceFilterToRawSql, subtreeBounds } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncExtensionBlobReferences } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM, distinctTags } from "../../tag-limits.js";
@@ -43,7 +43,15 @@ export class SqliteMetadataStore implements MetadataStore {
     excludedTypes?: string[];
     source_filter?: SourceFilterSettings;
   }): Promise<{ tag: string; count: number }[]> {
-    const conditions: string[] = ["i.state = 'active'"];
+    // The active state cannot narrow a read, so a map that names types keeps
+    // the planner from searching by it (`item-store.ts` says why).
+    const namesTypes =
+      filters.allowedTypes !== undefined &&
+      filters.allowedTypes.length > 0 &&
+      !filters.allowedTypes.includes(GLOBAL_TYPE_WILDCARD);
+    const conditions: string[] = [
+      namesTypes ? "+i.state = 'active'" : "i.state = 'active'",
+    ];
     const params: unknown[] = [];
     const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
@@ -66,8 +74,9 @@ export class SqliteMetadataStore implements MetadataStore {
           params.push(exact);
           return "i.type = ?";
         }
-        params.push(exact, descendantPattern);
-        return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+        const { from, before } = subtreeBounds(exact);
+        params.push(exact, from, before);
+        return "(i.type = ? OR (i.type >= ? AND i.type < ?))";
       };
       const typeClauses = typeFilterTerms(
         filters.allowedTypes,
