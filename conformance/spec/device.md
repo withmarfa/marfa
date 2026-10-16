@@ -312,7 +312,7 @@ If the server's root answers a failure that clears on its own when a folder's se
 
 Where a copy names the instance it was hydrated from, a device MUST name that instance in `X-Marfa-Instance-Id` on each purge, change to a folder's settings and folder status report it sends.
 
-**Reason:** the root is asked before such a write, and another instance can take the address between the two; named, the write is refused where it lands (`instance/write-names-other`).
+**Reason:** another instance can take the address after the copy is hydrated. Naming the instance lets the server refuse the write where it lands (`instance/write-names-other`).
 
 **Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`, `device/folder-health.test.ts › names the copy's instance on each status report`.
 
