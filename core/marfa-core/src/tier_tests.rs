@@ -236,6 +236,38 @@ fn a_lookup_refused_for_good_sends_the_create_with_no_tier() {
 }
 
 #[test]
+fn a_lookup_another_instance_refuses_expires_the_copy_and_sends_nothing() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    let queued = core.create_item(&keyed("article-1", None)).unwrap();
+    server.on(
+        "/items/lookup",
+        vec![scripted::refusal(409, crate::http::INSTANCE_CHANGED)],
+    );
+    assert_eq!(
+        core.drain().unwrap_err(),
+        crate::CoreError::CopyExpired {
+            reason: crate::http::INSTANCE_CHANGED.into()
+        }
+    );
+    assert_eq!(
+        server.seen("/items/lookup")[0].instance.as_deref(),
+        Some(scripted::INSTANCE)
+    );
+    assert!(bodies(&server, "/items").is_empty(), "the create was sent");
+    let conn = core.conn().unwrap();
+    assert!(
+        crate::read_view::expired(&conn).unwrap(),
+        "the drain told of another instance and left the copy current"
+    );
+    let row = crate::store::queued_write(&conn, &queued.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!((row.verdict, row.refusals), (None, 0));
+}
+
+#[test]
 fn a_lookup_refused_for_several_keys_asks_again_in_halves_down_to_one() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();

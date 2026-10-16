@@ -645,8 +645,26 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 }
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+    crate::catch_up::refuse_if_stopped(stop)?;
+    // Every request but a read names the instance the copy was hydrated
+    // from, so one that reaches another instance after the pass confirmed
+    // this one is refused where it lands: a write, or a lookup made for one.
+    let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ViewChange::default();
-    let result = send_queue(core, stop, &mut pass);
+    let result = match send_queue(core, &http, generation, stop, &mut pass) {
+        // From a request that settled nothing, a lookup among them: a write
+        // the refusal answered expired the copy as it settled.
+        Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            if read_view::generation(&tx)? == generation {
+                crate::catch_up::expire_for_another_instance(&tx, generation)?;
+            }
+            tx.commit()?;
+            Err(CoreError::CopyExpired { reason })
+        }
+        result => result,
+    };
     // However the pass ended, a copy whose read view moved under it is
     // expired once, here. The pass's own error, if any, is the one told. So is
     // a report that has something to say a caller must act on (a wait, an
@@ -660,13 +678,13 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     }
 }
 
-fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<DrainReport> {
-    crate::catch_up::refuse_if_stopped(stop)?;
-    // Every write names the instance the copy was hydrated from, so one that
-    // reaches another instance after the pass confirmed this one is refused
-    // where it lands.
-    let (named, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
-    let http = &named;
+fn send_queue(
+    core: &Core,
+    http: &Http,
+    generation: u64,
+    stop: &AtomicBool,
+    pass: &mut ViewChange,
+) -> Result<DrainReport> {
     let mut report = DrainReport {
         answered: 0,
         held: 0,
@@ -884,13 +902,6 @@ fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<D
 
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(payload) => payload,
-            Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
-                let mut conn = core.conn()?;
-                let tx = conn.transaction()?;
-                let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
-                tx.commit()?;
-                return Err(error);
-            }
             Err(CoreError::Unauthorized { .. }) => {
                 let conn = core.conn()?;
                 let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
@@ -969,14 +980,12 @@ fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<D
         // The connection is not held across the send, or `queue`, read while
         // a drain runs, would wait on the network.
         crate::catch_up::refuse_if_stopped(stop)?;
-        let sent_before = {
+        {
             // Before the send: one whose answer never arrives has still
             // reached the server, and treating it as unsent would write twice.
             let conn = core.conn()?;
-            let sent_before = !store::unsent(&conn, &row.id)?;
             store::mark_sent(&conn, &row.id)?;
-            sent_before
-        };
+        }
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);
             telemetry::record!(write, kind = row.kind.as_str());
@@ -1021,16 +1030,13 @@ fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<D
         // answer would come from the same server.
         let answer = match answer {
             // Ahead of the classification, which would refuse the write for
-            // good: the queue is kept for a hydration from the instance now
-            // at the origin. The refusal proves this attempt was not applied,
-            // so a write first sent now is unsent again; one an earlier
-            // attempt sent stays sent, since that attempt may have landed.
+            // good. The copy is built again from the instance now at the
+            // origin, which has seen no attempt of this write, so it is judged
+            // there afresh.
             Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                if !sent_before {
-                    store::mark_unsent(&tx, &row.id)?;
-                }
+                store::mark_unsent(&tx, &row.id)?;
                 let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
                 tx.commit()?;
                 return Err(error);
@@ -3783,7 +3789,7 @@ mod tests {
     }
 
     #[test]
-    fn another_instance_refusing_a_write_an_earlier_attempt_sent_leaves_it_sent() {
+    fn another_instance_refusing_a_write_an_earlier_attempt_sent_marks_it_unsent() {
         let server = crate::scripted::Scripted::start();
         let (_dir, core) = holding_edges(&server, &["e1"]);
         let first = rank_edit(&core, "e1");
@@ -3794,9 +3800,11 @@ mod tests {
         );
         assert_eq!(core.drain().unwrap_err(), instance_changed());
         let conn = core.conn().unwrap();
+        // The copy is built again from the instance now at the address,
+        // which never saw an earlier attempt, so the write is judged afresh.
         assert!(
-            !store::unsent(&conn, &first.id).unwrap(),
-            "an earlier attempt that may have landed was marked unsent"
+            store::unsent(&conn, &first.id).unwrap(),
+            "the write stays marked sent to an instance the copy no longer follows"
         );
         assert_eq!(
             store::queued_write(&conn, &first.id)
