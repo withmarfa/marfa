@@ -4304,7 +4304,7 @@ While a process holds a folder, the CLI MUST refuse `folders watch` of that fold
 
 ## Folder syncing from login
 
-`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under `XDG_CONFIG_HOME`, or under `.config` in the home directory. Where `MARFA_AUTOSTART_ROOT` names a directory, it stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
+`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration, or under `.config` in the home directory. Where the environment names a directory as the autostart root, that directory stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
 
 ### `folders/autostart-launchd-agent`
 
@@ -4336,7 +4336,7 @@ When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REG
 
 ### `folders/autostart-no-credential`
 
-The CLI MUST NOT write into the agent a credential, a server address, `MARFA_API_KEY`, `MARFA_API_URL` or `MARFA_KEYCHAIN`.
+The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or one that names a keychain file.
 
 **Reason:** Each folder uses the server its copy came from and the credential the keychain keeps for that server, as a watch of every folder does.
 
