@@ -673,7 +673,10 @@ describe("handing a folder to a command", () => {
     }, WAIT);
     expect(watch.running(), watch.stderr).toBe(true);
   }, 90_000);
+});
 
+/** Where there are keychain files to give the binary a credential of its own. */
+describe.runIf(process.platform === "darwin")("a watch's credential", () => {
   it("takes a folder back with the credential it began with, though the keychain cannot be read meanwhile", async () => {
     const harness = await oneFolder("handover-keychain");
     const keychain = ownKeychain();
