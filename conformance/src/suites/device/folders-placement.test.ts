@@ -2567,6 +2567,32 @@ describe("where a file sits", () => {
       ).toBe("Newer title");
     });
 
+    it("keeps a title another Mac set before this copy heard of it, through a body edit in a second send-only run", async () => {
+      const { held } = await notePlaced("title-rename-send-only-unheard");
+      second = await anotherMac(harness!, "title-rename-send-only-unheard-2");
+      expect((await second.folder.pull()).ok).toBe(true);
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      expect((await harness!.folder.pushSendOnly()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+
+      await retitle(second, "Newer title");
+      expect((await second.folder.device().drain()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Newer title");
+
+      // This copy has not heard of it.
+      appendFileSync(join(harness!.dir, "Roadmap.md"), "second\n");
+      const sent = await harness!.folder.pushSendOnly();
+      expect(sent.ok, JSON.stringify(sent)).toBe(true);
+      expect(
+        titleOf(held),
+        "a body edit made before this copy heard of the newer title set the rename's title back",
+      ).toBe("Newer title");
+      expect(held.get(NOTE)?.properties.body).toBe("Plan\nsecond\n");
+    });
+
     it("keeps a title changed back to the old one after a send-only run that sent the new name's, through a body edit", async () => {
       const { held } = await notePlaced("title-rename-send-only-back");
       renameSync(

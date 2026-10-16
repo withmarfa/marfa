@@ -3191,8 +3191,10 @@ impl Folder {
         if let Some(retitle) = retitle {
             properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
         } else if let Some(deferred) = &deferred {
-            // The title the item holds, so the line sends nothing.
-            match held.properties.get(&deferred.field) {
+            // Left out, so the line sends nothing: the item's own title would
+            // read as a change against the older version the file was read
+            // at. A save that replaces every property keeps the item's.
+            match held.properties.get(&deferred.field).filter(|_| whole) {
                 Some(held) => properties.insert(deferred.field.clone(), held.clone()),
                 None => properties.remove(&deferred.field),
             };
