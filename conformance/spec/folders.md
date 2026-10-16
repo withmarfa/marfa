@@ -2706,7 +2706,7 @@ When a person renames a Markdown document's file and, in the same save, changes 
 
 ### `folders/rename-title-line`
 
-When a device sends a renamed Markdown document's new name as its title and the file, still holding the bytes the device read, has a title line, a device MUST rewrite that line to the new title and keep every other byte of the file.
+When a device sends a renamed Markdown document's new name as its title outside a send-only run and the file, still holding the bytes the device read, has a title line, a device MUST rewrite that line to the new title and keep every other byte of the file.
 
 **Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title, and rewrites only its title line`.
 
@@ -2812,11 +2812,11 @@ When a pull moves a bound file whose bytes are still the ones it is bound to, a 
 
 ### `folders/moved-save-taken`
 
-When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
+When a file appears at the path a pull last moved an item's file away from, carrying that item's ID and a version line no newer than the item's version when the pull moved it, while the item's file holds no change the device has not read and is neither held nor refused, and the run is not a send-only run, a device MUST put the file in the item's file's place, replacing nothing, and send it as a save of an old copy of that file.
 
 **Reason:** it is an editor's save of the buffer it held before the move, and as a new item it would be a second note holding the person's edit.
 
-**Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`.
+**Tests:** `device/folders-placement.test.ts › takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item`, `device/folders-placement.test.ts › takes an old buffer saved at the name a retitle moved its file from as a stale save of its note`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
 ### `folders/moved-save-held`
 
@@ -4860,7 +4860,7 @@ When `folders push` is given `--send-only`, the CLI MUST send the writes that a 
 
 When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory outside its `.marfa` state directory.
 
-**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
+**Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`, `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
 ### `folders/send-only-removes-no-file`
 
@@ -4891,6 +4891,14 @@ When `folders push --send-only` finishes, the CLI MUST say in its text report th
 When a `folders push` without `--send-only` follows a send-only run, the CLI MUST write the files of the items that run left unpulled.
 
 **Tests:** `device/folders-send-only.test.ts › leaves what it did not pull for the next push`.
+
+### `folders/send-only-rename-line-follows`
+
+When a `folders push` without `--send-only` follows a send-only run that sent a renamed Markdown document's new name as its title, the CLI MUST rewrite the document's title line to that title.
+
+**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
 
 ### `folders/send-only-hydrates`
 

@@ -2440,6 +2440,70 @@ describe("where a file sits", () => {
       await settled(harness!);
     });
 
+    it("sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line", async () => {
+      const { edges, held } = await notePlaced("title-rename-send-only");
+      const before = read(harness!, "Plan.md");
+      expect(before).toContain("title: Plan\n");
+
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      const sent = await harness!.folder.pushSendOnly();
+      expect(sent.ok, JSON.stringify(sent)).toBe(true);
+      expect(
+        titleOf(held),
+        "a send-only run did not send the renamed note's new name as its title",
+      ).toBe("Roadmap");
+      expect(edges.placements(harness!.settings.id).get(NOTE)).toBe(
+        "Roadmap.md",
+      );
+      expect(
+        read(harness!, "Roadmap.md"),
+        "a send-only run wrote into the renamed note's file",
+      ).toBe(before);
+      expect(names(harness!)).toEqual(["Roadmap.md"]);
+
+      // The witness: the same file, left to a push that pulls, is rewritten.
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        read(harness!, "Roadmap.md"),
+        "the push after a send-only run did not bring the title line into step with the name",
+      ).toBe(
+        before
+          .replace("title: Plan\n", "title: Roadmap\n")
+          .replace("marfa_version: 1\n", "marfa_version: 2\n"),
+      );
+      expect(titleOf(held), "the push sent the old title line back").toBe(
+        "Roadmap",
+      );
+      await settled(harness!);
+    });
+
+    it("keeps the new name's title where the body is edited after a send-only run that sent it", async () => {
+      const { held } = await notePlaced("title-rename-send-only-edit");
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      expect((await harness!.folder.pushSendOnly()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+
+      appendFileSync(join(harness!.dir, "Roadmap.md"), "a second thought\n");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        titleOf(held),
+        "the old title line, still in the file, took the title back",
+      ).toBe("Roadmap");
+      expect(held.get(NOTE)?.properties.body).toBe("Plan\na second thought\n");
+      const text = read(harness!, "Roadmap.md");
+      expect(text).toContain("title: Roadmap\n");
+      expect(text.endsWith("Plan\na second thought\n")).toBe(true);
+      await settled(harness!);
+    });
+
     it("sends a rename and an edit of the body made in one pass together", async () => {
       const { held } = await notePlaced("title-rename-edit");
       appendFileSync(join(harness!.dir, "Plan.md"), "a second thought\n");
@@ -2639,6 +2703,45 @@ describe("where a file sits", () => {
       expect(existsSync(join(harness!.dir, "Plan.md"))).toBe(false);
       expect(read(harness!, "Archive/Plan.md")).toContain("Plan, saved late\n");
       await settled(harness!);
+    });
+
+    it("leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after", async () => {
+      const { held } = await notePlaced("placement-move-old-buffer-send-only");
+      second = await anotherMac(
+        harness!,
+        "placement-move-old-buffer-send-only-second",
+      );
+      expect((await second.folder.pull()).ok).toBe(true);
+      const buffer = read(harness!, "Plan.md");
+      mkdirSync(join(second.dir, "Archive"));
+      renameSync(
+        join(second.dir, "Plan.md"),
+        join(second.dir, "Archive", "Plan.md"),
+      );
+      expect((await second.folder.push()).ok).toBe(true);
+      expect((await harness!.folder.push()).ok).toBe(true);
+      const moved = read(harness!, "Archive/Plan.md");
+      const saved = buffer.replace(/\nPlan\n$/, "\nPlan, saved late\n");
+      put(harness!, "Plan.md", saved);
+
+      const sent = await harness!.folder.pushSendOnly();
+      expect(sent.ok, JSON.stringify(sent)).toBe(true);
+      expect(
+        read(harness!, "Plan.md"),
+        "a send-only run moved the old buffer out of the place it was saved",
+      ).toBe(saved);
+      expect(
+        read(harness!, "Archive/Plan.md"),
+        "a send-only run replaced the moved file with the old buffer",
+      ).toBe(moved);
+      expect(sentCreates(harness!)).toEqual([]);
+
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(sentCreates(harness!)).toEqual([]);
+      expect(held.get(NOTE)?.properties.body).toBe("Plan, saved late\n");
+      expect(existsSync(join(harness!.dir, "Plan.md"))).toBe(false);
+      expect(read(harness!, "Archive/Plan.md")).toContain("Plan, saved late\n");
     });
 
     it("holds an old buffer saved at the old name while the moved file holds an edit of its own, and makes no new item", async () => {

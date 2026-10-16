@@ -1423,6 +1423,13 @@ enum Arrival {
     Waits(String),
 }
 
+/// Whether a scan may change a file in the directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Files {
+    Write,
+    Keep,
+}
+
 enum Missing {
     Moved,
     Unsure(String),
@@ -1432,7 +1439,15 @@ enum Missing {
 
 impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true, None)
+        self.scan_as(true, None, Files::Write)
+    }
+
+    /// `scan`, but no file in the directory is written or moved: a rename is
+    /// sent as the new title with its title line as it is, and an old buffer
+    /// saved where a pull moved the file from stays there, both for a pass
+    /// that writes files.
+    fn scan_keeping_files(&self) -> Result<ScanReport> {
+        self.scan_as(true, None, Files::Keep)
     }
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
@@ -1441,10 +1456,10 @@ impl Folder {
     /// and changed within `settle`, which a copy or a download may still be
     /// writing.
     pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
-        self.scan_as(full, Some(settle))
+        self.scan_as(full, Some(settle), Files::Write)
     }
 
-    fn scan_as(&self, full: bool, settle: Option<Duration>) -> Result<ScanReport> {
+    fn scan_as(&self, full: bool, settle: Option<Duration>, mode: Files) -> Result<ScanReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(ScanReport {
                 root_gone: Some(gone),
@@ -1759,7 +1774,7 @@ impl Folder {
             report.root_gone = Some(gone);
             return Ok(report);
         }
-        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen)?;
+        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen, mode)?;
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().filter(|file| !file.deferred).any(|file| {
@@ -2033,6 +2048,7 @@ impl Folder {
                     }
                     let rewritten = retitle
                         .as_ref()
+                        .filter(|_| mode == Files::Write)
                         .and_then(|retitle| self.retitle_file(file, retitle));
                     // Where the title line was not rewritten, the title goes
                     // beside the file's bytes.
@@ -2191,6 +2207,7 @@ impl Folder {
         files: &mut Vec<Scanned>,
         snapshot: &[state::Bound],
         seen: &mut HashSet<String>,
+        mode: Files,
     ) -> Result<HashMap<String, String>> {
         let mut waiting = HashMap::new();
         let (moved, mut held) = {
@@ -2238,6 +2255,19 @@ impl Folder {
                 at += 1;
                 continue;
             };
+            // Moving files is writing them: a scan that keeps the files
+            // leaves the save where it is, unrecorded, for a scan that writes.
+            if mode == Files::Keep {
+                waiting.insert(
+                    file.key.clone(),
+                    format!(
+                        "it is an old copy of {}, which a push that writes files takes",
+                        bound.path
+                    ),
+                );
+                at += 1;
+                continue;
+            }
             match self.take_stale_save(file, bound)? {
                 Err(reason) => {
                     state::set_stale_wait(
