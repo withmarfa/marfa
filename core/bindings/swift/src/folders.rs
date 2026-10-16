@@ -308,6 +308,24 @@ pub enum FolderEvent {
     Waiting { reason: String },
     /// A pass that did something, or whose standing conditions changed.
     Passed { pass: FolderPass },
+    /// A command or another call asked for the folder, and the watch let it
+    /// go at the end of the step of its pass under way. The watch waits, and
+    /// takes the folder back once the folder is free: `TakenBack` says so.
+    HandedOver,
+    /// The folder was let go, and another process keeps it past the time a
+    /// caller waits, with no command or call asking for it. Told once; the
+    /// watch takes the folder back once that process lets it go.
+    HeldElsewhere,
+    /// The watch took the folder back and keeps it in step again. It follows
+    /// `HandedOver` or `HeldElsewhere`, and stands in for a second `Watching`.
+    TakenBack,
+    /// The call the folder was let go to removed the folder from this
+    /// machine, so there is nothing to watch. The watch ends.
+    Removed,
+    /// The call the folder was let go to took the folder off the machine's
+    /// registry and left its state, so the watch ends and the folder stays
+    /// off the registry.
+    Unlisted,
 }
 
 /// What an app hands `watch`: told of each event on a thread of the core's,
@@ -350,9 +368,12 @@ impl Folders {
     /// `confirm_first_sync` lets it go. The answer says why the directory is
     /// in cloud-synced or network storage, where it is; the folder is added
     /// all the same. Reads the file system, so it can wait on a mount that
-    /// does not answer.
+    /// does not answer. Over a folder a watch holds, asks the watch to let it
+    /// go and waits up to 10 seconds, as every call that works a folder does:
+    /// past that, it is refused with `ReadingHandle`, naming the folder.
     pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
-        let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)?;
+        let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)
+            .map_err(asked(&dir))?;
         Ok(AddedFolder {
             dir: added.root().display().to_string(),
             folder: added.folder_id().to_string(),
@@ -410,9 +431,10 @@ impl Folders {
     /// Everything a folder does, once: sends what changed on disk, catches
     /// up with the server and writes out what its search matches. A folder
     /// whose first sync waits to be confirmed is only read, and `Waiting`
-    /// says what the sync will do.
+    /// says what the sync will do. Asks a watch that holds the folder to let
+    /// it go, as `add` does.
     pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
-        let synced = match marfa_core::Folder::open(&dir, self.server.clone())?.sync()? {
+        let synced = match working(&dir, self.server.clone())?.sync()? {
             marfa_core::Synced::Done(synced) => *synced,
             marfa_core::Synced::Waiting(plan) => {
                 return Ok(FolderSyncOutcome::Waiting { plan: plan.into() });
@@ -434,16 +456,18 @@ impl Folders {
     }
 
     /// Lets a folder's first sync go, at the next sync or watch. Answers
-    /// whether it was waiting. A paused removal is not touched.
+    /// whether it was waiting. A paused removal is not touched. Asks a watch
+    /// that holds the folder to let it go, as `add` does.
     pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
-        Ok(marfa_core::Folder::open(&dir, None)?.confirm_first_sync()?)
+        Ok(working(&dir, None)?.confirm_first_sync()?)
     }
 
     /// Lets a paused large removal go: its deletes are queued, and files
     /// whose items left elsewhere are taken away. Refused while the first
-    /// sync waits.
+    /// sync waits. Asks a watch that holds the folder to let it go, as `add`
+    /// does.
     pub fn confirm(&self, dir: String) -> Result<ConfirmedRemoval, MarfaError> {
-        let confirmed = marfa_core::Folder::open(&dir, None)?.confirm()?;
+        let confirmed = working(&dir, None)?.confirm()?;
         Ok(ConfirmedRemoval {
             deleted: confirmed.deleted as u64,
             moved: confirmed.moved as u64,
@@ -460,9 +484,10 @@ impl Folders {
     }
 
     /// Cancels a paused large removal: files gone from the disk are written
-    /// back, and items that left elsewhere are restored.
+    /// back, and items that left elsewhere are restored. Asks a watch that
+    /// holds the folder to let it go, as `add` does.
     pub fn restore(&self, dir: String) -> Result<RestoredRemoval, MarfaError> {
-        let restored = marfa_core::Folder::open(&dir, self.server.clone())?.restore()?;
+        let restored = working(&dir, self.server.clone())?.restore()?;
         Ok(RestoredRemoval {
             put_back: restored.put_back as u64,
             restored: restored.restored as u64,
@@ -477,40 +502,46 @@ impl Folders {
     /// registry lists. Where that path is
     /// gone, passes through a link, or holds state the registry does not
     /// show to be the folder's own, the folder is only taken off the
-    /// registry.
+    /// registry. Asks a watch that holds the folder to let it go, as `add`
+    /// does; that watch then ends with `Removed` or `Unlisted`.
     pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
-        marfa_core::Folder::remove_at(&dir)?;
+        marfa_core::Folder::remove_at_asking(&dir).map_err(asked(&dir))?;
         Ok(())
     }
 
     /// Keeps the folder in step on a thread of its own, as the command
     /// line's watch does, until the subscription is stopped or let go. The
-    /// folder is held while it runs, so another process cannot work it. A
-    /// pass under way when it is stopped finishes before `ended` is called.
+    /// folder is held while it runs, so another process cannot work it
+    /// unasked; a watch does not ask for a folder another process holds, and
+    /// is refused at once with `ReadingHandle`.
+    ///
+    /// A call of `Folders`, or a command, that works the folder asks for it.
+    /// The watch lets it go at the end of the step of its pass under way and
+    /// tells `HandedOver`, then takes the folder back once the call ends and
+    /// tells `TakenBack`. A folder removed or taken off the registry meanwhile
+    /// ends the watch, after `Removed` or `Unlisted`. A pass under way when
+    /// it is stopped finishes before `ended` is called.
     pub fn watch(
         &self,
         dir: String,
         listener: Arc<dyn FolderListener>,
     ) -> Result<Arc<Subscription>, MarfaError> {
-        let folder = marfa_core::Folder::open(&dir, self.server.clone())?;
+        let folder = marfa_core::Folder::open(&dir, self.server.clone()).map_err(held(&dir))?;
         // Refused here rather than ended later, so the caller is told at once.
         if folder.awaiting_confirmation()? {
             return Err(marfa_core::CoreError::FirstSyncWaiting.into());
         }
-        let origin = self.server.as_ref().map(|server| server.url.clone());
+        let server = self.server.clone();
+        let origin = server.as_ref().map(|server| server.url.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
             // Caught, so a listener waiting to be told the watch ended is told.
             let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                folder.watch(&flag, |event| {
-                    listener.told(event_of(event)?);
-                    Ok::<(), MarfaError>(())
-                })
+                keep_in_step(folder, server, &flag, &*listener)
             }));
-            // Let go of the folder before saying so: a listener that works it
-            // again on being told must find it free.
-            drop(folder);
+            // The folder is let go by now, before the listener is told: one
+            // that works it again on being told must find it free.
             listener.ended(match watched {
                 Ok(watched) => watched.err().map(|error| ended(error, origin.as_deref())),
                 Err(fault) => Some(MarfaError::Invalid {
@@ -519,6 +550,92 @@ impl Folders {
             });
         });
         Ok(Arc::new(Subscription { stop }))
+    }
+}
+
+/// The folder, for a call that works it: a watch holding it is asked to let
+/// it go, and takes it back once the call ends.
+fn working(
+    dir: &str,
+    server: Option<marfa_core::Server>,
+) -> Result<marfa_core::Folder, MarfaError> {
+    marfa_core::Folder::open_asking(dir, server).map_err(asked(dir))
+}
+
+/// A refusal after asking for the folder, naming the folder.
+fn asked(dir: &str) -> impl FnOnce(marfa_core::CoreError) -> MarfaError + '_ {
+    move |error| match error {
+        marfa_core::CoreError::ReadingHandle => MarfaError::ReadingHandle {
+            message: marfa_core::folder::not_handed_over(std::path::Path::new(dir)),
+        },
+        other => other.into(),
+    }
+}
+
+/// A refusal of a call that does not ask for the folder, naming the folder.
+fn held(dir: &str) -> impl FnOnce(marfa_core::CoreError) -> MarfaError + '_ {
+    move |error| match error {
+        marfa_core::CoreError::ReadingHandle => MarfaError::ReadingHandle {
+            message: marfa_core::folder::held_by_another(std::path::Path::new(dir)),
+        },
+        other => other.into(),
+    }
+}
+
+/// Watches `folder` until the stop, letting it go to a call that asks for it
+/// and taking it back once that call ends. The folder is let go when this
+/// returns.
+fn keep_in_step(
+    mut folder: marfa_core::Folder,
+    server: Option<marfa_core::Server>,
+    stop: &AtomicBool,
+    listener: &dyn FolderListener,
+) -> Result<(), marfa_core::WatchError<MarfaError>> {
+    use marfa_core::folder::TakeBack;
+    // The watch has taken the folder back, and its first `Watching` says so.
+    let mut back = false;
+    loop {
+        let end = folder.watch_handing_over(stop, |event| {
+            if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
+                back = false;
+                listener.told(FolderEvent::TakenBack);
+                return Ok(());
+            }
+            listener.told(event_of(event)?);
+            Ok::<(), MarfaError>(())
+        })?;
+        if end == marfa_core::WatchEnd::Stopped {
+            return Ok(());
+        }
+        let root = folder.root().to_path_buf();
+        let listed = marfa_core::Folder::listed_at(&root);
+        drop(folder);
+        listener.told(FolderEvent::HandedOver);
+        let taken = marfa_core::Folder::take_back(
+            &root,
+            listed,
+            stop,
+            || marfa_core::Folder::open(&root, server.clone()),
+            || {
+                listener.told(FolderEvent::HeldElsewhere);
+                Ok::<(), MarfaError>(())
+            },
+        )?;
+        folder = match taken {
+            TakeBack::Folder { folder, .. } => {
+                back = true;
+                *folder
+            }
+            TakeBack::Stopped => return Ok(()),
+            TakeBack::Removed => {
+                listener.told(FolderEvent::Removed);
+                return Ok(());
+            }
+            TakeBack::Unlisted => {
+                listener.told(FolderEvent::Unlisted);
+                return Ok(());
+            }
+        };
     }
 }
 
@@ -692,6 +809,35 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_held_by_another_process_is_refused_naming_the_folder() {
+        use marfa_core::CoreError;
+        let refused = |error: MarfaError, said: &str| match error {
+            MarfaError::ReadingHandle { message } => {
+                assert!(message.contains("/notes"), "{message}");
+                assert!(message.contains(said), "{message}");
+            }
+            other => panic!("{other:?}"),
+        };
+        refused(
+            held("/notes")(CoreError::ReadingHandle),
+            "worked by another",
+        );
+        refused(
+            asked("/notes")(CoreError::ReadingHandle),
+            "did not let it go within 10 seconds",
+        );
+        // The witness: any other failure keeps its own kind.
+        assert!(matches!(
+            asked("/notes")(CoreError::NoServer),
+            MarfaError::NoServer { .. }
+        ));
+        assert!(matches!(
+            held("/notes")(CoreError::NoServer),
+            MarfaError::NoServer { .. }
+        ));
+    }
+
+    #[test]
     fn a_url_without_a_key_is_refused() {
         assert!(Folders::new(Some("http://127.0.0.1:9".into()), None).is_err());
         assert!(Folders::new(None, None).is_ok());
@@ -770,9 +916,64 @@ mod tests {
         }
     }
 
-    #[test]
-    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
-    fn a_watch_whose_listener_panics_ends_with_an_error_and_lets_the_folder_go() {
+    /// Tells what the watch tells, in order, and when it ends.
+    struct Recording {
+        told: std::sync::Mutex<std::sync::mpsc::Sender<FolderEvent>>,
+        ended: std::sync::Mutex<std::sync::mpsc::Sender<Option<MarfaError>>>,
+    }
+
+    impl FolderListener for Recording {
+        fn told(&self, event: FolderEvent) {
+            let _ = self.told.lock().unwrap().send(event);
+        }
+
+        fn ended(&self, error: Option<MarfaError>) {
+            let _ = self.ended.lock().unwrap().send(error);
+        }
+    }
+
+    struct Watched {
+        events: std::sync::mpsc::Receiver<FolderEvent>,
+        ended: std::sync::mpsc::Receiver<Option<MarfaError>>,
+        subscription: Arc<Subscription>,
+    }
+
+    impl Watched {
+        /// The events after the last one waited for, up to the first that
+        /// `wanted` takes. Fails with every event seen if none comes in time.
+        fn until(&self, wanted: impl Fn(&FolderEvent) -> bool, within: Duration) -> Vec<String> {
+            let bound = Instant::now() + within;
+            let mut seen = Vec::new();
+            loop {
+                let left = bound.saturating_duration_since(Instant::now());
+                match self.events.recv_timeout(left) {
+                    Ok(event) => {
+                        let wanted_now = wanted(&event);
+                        seen.push(format!("{event:?}").chars().take(40).collect());
+                        if wanted_now {
+                            return seen;
+                        }
+                    }
+                    Err(_) => panic!("the event never came; saw {seen:?}"),
+                }
+            }
+        }
+
+        fn stop(self) {
+            self.subscription.stop();
+            let ended = self
+                .ended
+                .recv_timeout(Duration::from_secs(30))
+                .expect("a stopped watch never said it ended");
+            assert!(ended.is_none(), "{ended:?}");
+        }
+    }
+
+    use std::time::{Duration, Instant};
+
+    /// A folder on the booted server whose first sync is done, and the watch
+    /// of it when `watching` is set, told as it begins.
+    fn fixture(tag: &str, watching: bool) -> (Arc<Folders>, String, Option<Watched>) {
         registry();
         let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
         let key = std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key");
@@ -780,8 +981,10 @@ mod tests {
         let made = std::process::Command::new(seed)
             .args([
                 "folder",
-                "binding watch",
-                r#"{"search":{"types":["core.note"],"filter":"tags contains \"binding-watch\""}}"#,
+                tag,
+                &format!(
+                    r#"{{"search":{{"types":["core.note"],"filter":"tags contains \"{tag}\""}}}}"#
+                ),
             ])
             .output()
             .unwrap();
@@ -791,13 +994,228 @@ mod tests {
             String::from_utf8_lossy(&made.stderr)
         );
         let id = String::from_utf8(made.stdout).unwrap().trim().to_string();
-        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let path = dir.path().display().to_string();
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+            .unwrap()
+            .keep();
+        let path = dir.display().to_string();
         let folders = Folders::new(Some(url), Some(key)).unwrap();
         folders.add(path.clone(), id).unwrap();
         folders.confirm_first_sync(path.clone()).unwrap();
         folders.sync(path.clone()).unwrap();
+        let watched = watching.then(|| {
+            let (told, events) = std::sync::mpsc::channel();
+            let (ended, ended_in) = std::sync::mpsc::channel();
+            let subscription = folders
+                .watch(
+                    path.clone(),
+                    Arc::new(Recording {
+                        told: std::sync::Mutex::new(told),
+                        ended: std::sync::Mutex::new(ended),
+                    }),
+                )
+                .unwrap();
+            let watched = Watched {
+                events,
+                ended: ended_in,
+                subscription,
+            };
+            watched.until(
+                |event| matches!(event, FolderEvent::Watching { .. }),
+                Duration::from_secs(30),
+            );
+            watched
+        });
+        (folders, path, watched)
+    }
 
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn each_call_that_works_a_folder_a_watch_holds_gets_it_and_the_watch_takes_it_back() {
+        let (folders, path, watched) = fixture("binding handover calls", true);
+        let watched = watched.unwrap();
+        type Call = Box<dyn Fn() -> Result<(), MarfaError>>;
+        let calls: Vec<(&str, Call)> = vec![
+            ("confirm_first_sync", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.confirm_first_sync(path.clone()).map(drop))
+            }),
+            ("confirm", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.confirm(path.clone()).map(drop))
+            }),
+            ("restore", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.restore(path.clone()).map(drop))
+            }),
+            ("sync", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.sync(path.clone()).map(drop))
+            }),
+        ];
+        for (name, call) in calls {
+            let started = Instant::now();
+            call().unwrap_or_else(|error| panic!("{name} was refused: {error:?}"));
+            assert!(started.elapsed() < Duration::from_secs(10), "{name}");
+            let seen = watched.until(
+                |event| matches!(event, FolderEvent::TakenBack),
+                Duration::from_secs(30),
+            );
+            assert!(
+                seen.iter().any(|event| event.starts_with("HandedOver")),
+                "{name} worked the folder and the watch never said it let go: {seen:?}"
+            );
+        }
+
+        // A second watch does not ask, so it is refused at once.
+        let second = std::sync::mpsc::channel();
+        let ended = std::sync::mpsc::channel();
+        let started = Instant::now();
+        let refused = folders.watch(
+            path.clone(),
+            Arc::new(Recording {
+                told: std::sync::Mutex::new(second.0),
+                ended: std::sync::Mutex::new(ended.0),
+            }),
+        );
+        assert!(
+            matches!(&refused, Err(MarfaError::ReadingHandle { message }) if message.contains("another process")),
+            "{:?}",
+            refused.err()
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+
+        watched.stop();
+        folders
+            .sync(path)
+            .expect("the stopped watch let the folder go");
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_call_is_refused_naming_the_folder_when_its_holder_does_not_let_go_in_ten_seconds() {
+        let (folders, path, _) = fixture("binding handover refused", false);
+        let holder = marfa_core::Folder::open(&path, None).unwrap();
+        type Call = Box<dyn Fn() -> Result<(), MarfaError>>;
+        let calls: [(&str, Call); 2] = [
+            ("confirm", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.confirm(path.clone()).map(drop))
+            }),
+            ("remove", {
+                let (folders, path) = (folders.clone(), path.clone());
+                Box::new(move || folders.remove(path.clone()))
+            }),
+        ];
+        for (name, call) in calls {
+            let started = Instant::now();
+            let refused = call();
+            let waited = started.elapsed();
+            assert!(
+                matches!(&refused, Err(MarfaError::ReadingHandle { message })
+                    if message.contains(&path) && message.contains("did not let it go within 10 seconds")),
+                "{name}: {refused:?}"
+            );
+            assert!(
+                waited >= Duration::from_secs(10) && waited < Duration::from_secs(20),
+                "{name} waited {waited:?}"
+            );
+        }
+        // The witness: the same calls, with nothing holding the folder, do not wait.
+        drop(holder);
+        let started = Instant::now();
+        folders.confirm(path.clone()).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(5));
+        // Refused before anything changed: the folder is still one.
+        assert!(folders.status(path).is_ok());
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_watch_ends_once_the_call_it_let_the_folder_go_to_removes_the_folder() {
+        let (folders, path, watched) = fixture("binding handover removed", true);
+        let watched = watched.unwrap();
+        folders.remove(path.clone()).unwrap();
+        watched.until(
+            |event| matches!(event, FolderEvent::Removed),
+            Duration::from_secs(30),
+        );
+        let ended = watched
+            .ended
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the watch of a removed folder never ended");
+        assert!(ended.is_none(), "{ended:?}");
+        assert!(
+            folders.status(path).is_err(),
+            "the folder is still a folder"
+        );
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_folder_another_process_keeps_after_it_was_let_go_is_said_to_be_held_once() {
+        let (folders, path, watched) = fixture("binding handover held", true);
+        let watched = watched.unwrap();
+        // Another process takes the folder in the thread of the call the
+        // watch let it go to, as that call ends, so nothing the test thread
+        // does can delay it past the watch's next try. A watch that took the
+        // folder first, in the moment between, is waited for and the call made
+        // again.
+        let mut keeper = None;
+        for _ in 0..5 {
+            let taking = {
+                let (folders, path) = (folders.clone(), path.clone());
+                std::thread::spawn(move || {
+                    folders.confirm(path.clone()).unwrap();
+                    let bound = Instant::now() + Duration::from_millis(500);
+                    loop {
+                        match marfa_core::Folder::open(&path, None) {
+                            Ok(keeper) => return Some(keeper),
+                            Err(_) if Instant::now() < bound => {
+                                std::thread::sleep(Duration::from_millis(1))
+                            }
+                            Err(_) => return None,
+                        }
+                    }
+                })
+            };
+            watched.until(
+                |event| matches!(event, FolderEvent::HandedOver),
+                Duration::from_secs(30),
+            );
+            let taken = taking.join().unwrap();
+            if taken.is_some() {
+                keeper = taken;
+                break;
+            }
+            watched.until(
+                |event| matches!(event, FolderEvent::TakenBack),
+                Duration::from_secs(30),
+            );
+        }
+        let keeper = keeper.expect("the watch took the folder first five times over");
+        let seen = watched.until(
+            |event| matches!(event, FolderEvent::HeldElsewhere),
+            Duration::from_secs(30),
+        );
+        assert!(!seen.iter().any(|event| event.starts_with("TakenBack")));
+        // Said once, however long it is kept.
+        std::thread::sleep(Duration::from_secs(3));
+        drop(keeper);
+        let seen = watched.until(
+            |event| matches!(event, FolderEvent::TakenBack),
+            Duration::from_secs(30),
+        );
+        assert!(
+            !seen.iter().any(|event| event.starts_with("HeldElsewhere")),
+            "said again: {seen:?}"
+        );
+        watched.stop();
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_watch_whose_listener_panics_ends_with_an_error_and_lets_the_folder_go() {
+        let (folders, path, _) = fixture("binding watch", false);
         let (sender, ended) = std::sync::mpsc::channel();
         let _watch = folders
             .watch(

@@ -86,6 +86,25 @@ pub(crate) fn claim_asking(
     }
 }
 
+/// What a caller that did not ask for a folder is told when another process
+/// holds it. The command line and a binding both say it.
+pub fn held_by_another(root: &Path) -> String {
+    format!(
+        "{} is being worked by another process, such as a running watch; one process works a folder at a time, so stop it and try again",
+        root.display()
+    )
+}
+
+/// What a caller that asked for a folder is told when the process holding it
+/// did not let it go within [`HANDOVER_WAIT`].
+pub fn not_handed_over(root: &Path) -> String {
+    format!(
+        "{} is held by another process, which did not let it go within {} seconds of being asked; a watch lets a folder go when asked, unless it is stopped or a step of its pass takes longer than that, and any other process holds a folder until it ends, so try again once it does",
+        root.display(),
+        HANDOVER_WAIT.as_secs()
+    )
+}
+
 /// Why a command that could not ask for a folder is refused, keeping the kind
 /// of the failure that kept it from asking.
 fn unasked(root: &Path, error: CoreError) -> CoreError {
