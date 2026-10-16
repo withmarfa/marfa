@@ -333,6 +333,51 @@ describe("per-edge-type permissions", () => {
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("edge_permission_denied");
   });
+
+  it("an edge type granted write is readable without a read entry", async () => {
+    const source = await scopedItem(client, "wr-src");
+    const target = await scopedItem(client, "wr-tgt");
+    const edge = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const writer = await makeKey("write-edge-reader", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { about: "write" },
+    });
+    const writerClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: writer.key,
+    });
+    const fetched = await writerClient.getEdge(edge.data.edge.id);
+    expect(fetched.ok).toBe(true);
+    const list = await writerClient.listItemEdges(source, {
+      edge_type: "about",
+    });
+    expect(list.ok).toBe(true);
+    expect(list.data.data.some((e) => e.id === edge.data.edge.id)).toBe(true);
+
+    // The witness: a map naming another edge type leaves the same edge out.
+    const other = await makeKey("write-other-edge", {
+      type_permissions: { "*": "read" },
+      edge_permissions: { "parent-of": "write" },
+    });
+    const otherClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: other.key,
+    });
+    const hidden = await otherClient.listItemEdges(source, {
+      edge_type: "about",
+    });
+    expect(hidden.ok).toBe(true);
+    expect(hidden.data.data.some((e) => e.id === edge.data.edge.id)).toBe(
+      false,
+    );
+  });
 });
 
 /**
