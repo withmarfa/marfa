@@ -3171,9 +3171,10 @@ impl Folder {
         } else {
             properties.insert(into.into(), body);
         }
-        // A title sent while the file's line was left as it was goes on
-        // standing for the line, however often the file is saved, until the
-        // line changes or a pull writes it.
+        // A title sent while the file's line was left as it was only keeps
+        // that line from being sent as a title: while the line shows what it
+        // did, it is no edit, whatever title the item holds now. A changed
+        // line, or a pull, ends it, and the save is an ordinary one.
         let deferred = match retitle {
             Some(retitle) => document
                 .front
@@ -3182,7 +3183,6 @@ impl Folder {
                 .map(|shown| state::DeferredTitle {
                     field: retitle.field.clone(),
                     shown: shown.clone(),
-                    title: retitle.title.clone(),
                 }),
             None => bound
                 .and_then(|bound| bound.writes.deferred_title.clone())
@@ -3191,10 +3191,11 @@ impl Folder {
         if let Some(retitle) = retitle {
             properties.insert(retitle.field.clone(), Value::String(retitle.title.clone()));
         } else if let Some(deferred) = &deferred {
-            properties.insert(
-                deferred.field.clone(),
-                Value::String(deferred.title.clone()),
-            );
+            // The title the item holds, so the line sends nothing.
+            match held.properties.get(&deferred.field) {
+                Some(held) => properties.insert(deferred.field.clone(), held.clone()),
+                None => properties.remove(&deferred.field),
+            };
         }
         if whole {
             // No file can carry these, so leaving them out is no clear.
@@ -4727,6 +4728,21 @@ impl Folder {
             return Ok(PlacementWrite::Done);
         }
         if in_place {
+            if let Some(bound) = bound
+                .as_ref()
+                .filter(|bound| bound.writes.deferred_title.is_some())
+            {
+                state::bind(
+                    &*self.core.conn()?,
+                    &state::Bound {
+                        writes: state::Writes {
+                            deferred_title: None,
+                            ..bound.writes.clone()
+                        },
+                        ..bound.clone()
+                    },
+                )?;
+            }
             if bytes_of(item, catalog).is_some() {
                 self.keep_executable(item, &want, &rendering.context.borrow())?;
             }

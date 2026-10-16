@@ -4896,9 +4896,9 @@ When a `folders push` without `--send-only` follows a send-only run, the CLI MUS
 
 Where a renamed Markdown document's title line is as a send-only run left it and its file is not held, when a `folders push` without `--send-only` follows that run, which sent the document's new name as its title, the CLI MUST rewrite the title line to the item's title.
 
-**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files. A title the person types in the line meanwhile is theirs, and the item keeps it.
+**Reason:** a send-only run leaves every byte of the file, so the line still shows the old title until a run that writes files. Until then the line is no edit of the title, whatever title the item holds, and a title the person types in the line is theirs.
 
-**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title through every save made after a send-only run that sent it, before a push writes the title line`, `› sends a title typed in the line after a send-only run that sent the new name's, and keeps it`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
+**Tests:** `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `› keeps the new name's title through every save made after a send-only run that sent it, before a push writes the title line`, `› keeps a title changed elsewhere after a send-only run that sent the new name's, through a body edit`, `› keeps a title changed back to the old one after a send-only run that sent the new name's, through a body edit`, `› sends a title typed in the line after a send-only run that sent the new name's, and keeps it`, `› keeps the new name's title where the body is edited after a send-only run that sent it`.
 
 ### `folders/send-only-hydrates`
 

@@ -50,17 +50,16 @@ pub struct Writes {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub landing: Option<Landing>,
     /// A title sent beside the file's bytes while its title line was left as
-    /// it was, which a pull that writes the file ends.
+    /// it was: the line is no edit while it shows that. Any pull ends it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deferred_title: Option<DeferredTitle>,
 }
 
-/// The title the item holds while the file's title line still shows `shown`.
+/// The title line a file went on showing, which is no edit of the title.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeferredTitle {
     pub field: String,
     pub shown: serde_json::Value,
-    pub title: String,
 }
 
 /// A write bound before its bytes land: what the path was bound as before,

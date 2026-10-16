@@ -2539,6 +2539,57 @@ describe("where a file sits", () => {
       await settled(harness!);
     });
 
+    it("keeps a title changed elsewhere after a send-only run that sent the new name's, through a body edit", async () => {
+      const { held } = await notePlaced("title-rename-send-only-newer");
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      appendFileSync(join(harness!.dir, "Roadmap.md"), "first\n");
+      expect((await harness!.folder.pushSendOnly()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+
+      await retitle(harness!, "Newer title");
+      expect((await harness!.folder.device().drain()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Newer title");
+
+      appendFileSync(join(harness!.dir, "Roadmap.md"), "second\n");
+      const pushed = await harness!.folder.pushSendOnly();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        titleOf(held),
+        "a send-only save set back the title the new name's had replaced",
+      ).toBe("Newer title");
+      expect((await harness!.folder.push()).ok).toBe(true);
+      expect(
+        titleOf(held),
+        "a push set back the title the new name's had replaced",
+      ).toBe("Newer title");
+    });
+
+    it("keeps a title changed back to the old one after a send-only run that sent the new name's, through a body edit", async () => {
+      const { held } = await notePlaced("title-rename-send-only-back");
+      renameSync(
+        join(harness!.dir, "Plan.md"),
+        join(harness!.dir, "Roadmap.md"),
+      );
+      expect((await harness!.folder.pushSendOnly()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Roadmap");
+
+      await retitle(harness!, "Plan");
+      expect((await harness!.folder.device().drain()).ok).toBe(true);
+      expect(titleOf(held)).toBe("Plan");
+      expect((await harness!.folder.push()).ok).toBe(true);
+
+      appendFileSync(join(harness!.dir, "Roadmap.md"), "second\n");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        titleOf(held),
+        "a body edit set back the title the new name's had replaced",
+      ).toBe("Plan");
+    });
+
     it("sends a title typed in the line after a send-only run that sent the new name's, and keeps it", async () => {
       const { held } = await notePlaced("title-rename-send-only-typed");
       renameSync(
