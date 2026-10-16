@@ -49,13 +49,9 @@ function patternClause(
 }
 
 /**
- * The bounds of the identifiers under `root`: `type >= from AND type < before`
- * holds exactly those that start with `<root>.`, since `/` follows `.` in
- * binary order.
- *
- * Written as a range because SQLite answers `LIKE` from an index only on a
- * `NOCASE` column, and the type index is not one, so a `LIKE` here keeps the
- * whole term out of every index. Case-sensitive, as a type is.
+ * `/` immediately follows `.` in binary order, so these bounds cover
+ * exactly the `<root>.` prefix. A range can use the BINARY type index;
+ * default case-insensitive LIKE cannot.
  */
 export function subtreeBounds(root: string): { from: string; before: string } {
   return { from: `${root}.`, before: `${root}/` };

@@ -43,8 +43,8 @@ export class SqliteMetadataStore implements MetadataStore {
     excludedTypes?: string[];
     source_filter?: SourceFilterSettings;
   }): Promise<{ tag: string; count: number }[]> {
-    // The active state cannot narrow a read, so a map that names types keeps
-    // the planner from searching by it (`item-store.ts` says why).
+    // When most rows are active, state alone does not narrow this read much.
+    // Use the same planner hint as typed active reads in item-store.ts.
     const namesTypes =
       filters.allowedTypes !== undefined &&
       filters.allowedTypes.length > 0 &&

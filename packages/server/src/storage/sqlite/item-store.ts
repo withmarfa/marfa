@@ -530,14 +530,9 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     }
   }
 
-  // **The active state is the one that cannot narrow a read.** Nearly every
-  // row is active, and with no statistics SQLite takes `state = 'active'` to
-  // narrow as much as a type does, so it searches `idx_items_state` and
-  // reads the whole store to find a few rows of one type. The unary plus
-  // makes the term a filter the planner cannot search by, so the type index
-  // answers. Any other state is rare and stays a plain equality: the state
-  // index finds those few rows whatever the type, and the plus would send a
-  // read of them through every row of the type.
+  // Without statistics, SQLite can choose the state index even when most
+  // rows are active. Steer typed active reads to the type index, but leave
+  // other states eligible for the state index so selective reads stay cheap.
   const narrowsByType =
     typeClause !== undefined ||
     (filters.allowed_types !== undefined &&
