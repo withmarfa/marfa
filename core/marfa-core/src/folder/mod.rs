@@ -30,7 +30,7 @@ mod sync;
 mod transfer;
 mod watch;
 mod watch_record;
-pub use every::{Every, EveryFolder, HANDED_OVER, RETRY_HANDED, Unwatched, watch_every};
+pub use every::{Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, watch_every};
 pub use handover::HANDOVER_WAIT;
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
 pub use storage::StorageCause;

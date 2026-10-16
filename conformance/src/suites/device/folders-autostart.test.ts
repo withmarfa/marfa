@@ -8,6 +8,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
   appendFileSync,
 } from "node:fs";
@@ -60,6 +61,10 @@ afterEach(async () => {
  * process: `HOME`, `PATH`, `TMPDIR`, and the run's keychain file in place of
  * the person's keychain. CommonJS, which every Node runs from a file with no
  * extension.
+ *
+ * A file named `broken` in the stand-in home makes every call fail, as with
+ * no user bus; one named `fail-once` makes the next call of the verb it
+ * holds fail, once.
  */
 const FAKE_MANAGER = String.raw`#!/usr/bin/env node
 const { readFileSync, writeFileSync, existsSync } = require("node:fs");
@@ -81,6 +86,14 @@ const alive = (pid) => {
 };
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const fail = (code, message) => { save(); process.stderr.write(message + "\n"); process.exit(code); };
+if (existsSync(join(root, "broken"))) fail(1, "Failed to connect to bus: No medium found");
+const failOnce = (verb) => {
+  const knob = join(root, "fail-once");
+  if (existsSync(knob) && readFileSync(knob, "utf8").trim() === verb) {
+    require("node:fs").rmSync(knob);
+    fail(1, verb + " failed, as the fixture asked");
+  }
+};
 const start = (argv, env) => {
   const session = { HOME: root, PATH: process.env.PATH, TMPDIR: process.env.TMPDIR ?? "/tmp" };
   if (process.env.MARFA_KEYCHAIN) session.MARFA_KEYCHAIN = process.env.MARFA_KEYCHAIN;
@@ -104,6 +117,7 @@ const stop = () => {
 
 if (tool === "launchctl") {
   const [verb, target, path] = args;
+  failOnce(verb);
   if (verb === "print") {
     if (!state.loaded) fail(113, 'Could not find service "' + target + '" in domain for user gui');
     const running = alive(state.pid);
@@ -147,8 +161,9 @@ if (tool === "launchctl") {
     }
     return out;
   };
+  // systemd runs the unit as it read it at the last daemon-reload.
   const definition = () => {
-    const text = readFileSync(unitPath, "utf8");
+    const text = state.unit ?? readFileSync(unitPath, "utf8");
     const exec = words(text.match(/^ExecStart=(.*)$/m)[1]);
     const env = Object.fromEntries(
       words(text.match(/^Environment=(.*)$/m)[1]).map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]),
@@ -158,8 +173,10 @@ if (tool === "launchctl") {
   const startUnit = () => { const unit = definition(); start(unit.exec, unit.env); };
   const now = args.includes("--now");
   const [verb] = args.filter((arg) => arg !== "--now");
+  failOnce(verb);
   if (verb === "daemon-reload") {
     state.loaded = existsSync(unitPath);
+    state.unit = state.loaded ? readFileSync(unitPath, "utf8") : null;
   } else if (verb === "enable") {
     if (!existsSync(unitPath)) fail(1, "Failed to enable unit: Unit file ${UNIT} does not exist.");
     state.enabled = true;
@@ -182,6 +199,7 @@ if (tool === "launchctl") {
       "SubState=" + (running ? "running" : "dead") + "\n" +
       "MainPID=" + (running ? state.pid : 0) + "\n" +
       "ExecMainStatus=0\n" +
+      "NeedDaemonReload=" + (existsSync(unitPath) && state.unit != null && state.unit !== readFileSync(unitPath, "utf8") ? "yes" : "no") + "\n" +
       "UnitFileState=" + (state.enabled ? "enabled" : "disabled") + "\n");
   } else {
     fail(64, "the fake systemctl does not answer " + args.join(" "));
@@ -584,6 +602,60 @@ describe("folder syncing from login", () => {
     });
   });
 
+  it("starts the agent it wrote after a swap that failed, rather than saying it is unchanged", async () => {
+    const root = standIn("swap");
+    const registry = registryOf(root);
+    const other = join(root, "elsewhere", "marfa");
+    mkdirSync(dirname(other));
+    copyFileSync(requireBinary(), other);
+    chmodSync(other, 0o755);
+    parsed<Switched>(autostart(root, "on", { registry, binary: other }));
+    expect(managerState(root).started?.[0]).toBe(other);
+    // The old agent cannot be let go of, so the new one is not loaded.
+    writeFileSync(join(root, "fail-once"), macOS ? "bootout" : "daemon-reload");
+    const failed = autostart(root, "on", { registry });
+    expect(failed.status, failed.stdout).not.toBe(0);
+    expect(managerState(root).started?.[0]).toBe(other);
+
+    const again = parsed<Switched>(autostart(root, "on", { registry }));
+    expect(again.changed).toBe(true);
+    expect(managerState(root).started?.[0]).toBe(requireBinary());
+    expect(alive(managerState(root).pid!)).toBe(true);
+  });
+
+  it("records the binary by the path it was run as, through a link", () => {
+    const root = standIn("link");
+    const registry = registryOf(root);
+    const link = join(root, "links", "marfa");
+    mkdirSync(dirname(link));
+    symlinkSync(requireBinary(), link);
+    const on = parsed<Switched>(
+      autostart(root, "on", { registry, binary: link }),
+    );
+    expect(on.binary).toBe(link);
+    expect(agentRuns(root).argv[0]).toBe(link);
+    // The witness: the link leads to the binary, which status takes as this one.
+    const status = parsed<Status>(autostart(root, "status", { registry }));
+    expect(status.binary).toEqual({
+      path: link,
+      exists: true,
+      this_binary: true,
+    });
+  });
+
+  it("removes the agent it wrote though the service manager cannot be asked, and says what it could not do", () => {
+    const root = standIn("broken");
+    const registry = registryOf(root);
+    parsed<Switched>(autostart(root, "on", { registry }));
+    expect(existsSync(agentFile(root))).toBe(true);
+    writeFileSync(join(root, "broken"), "");
+    const off = autostart(root, "off", { registry, json: false });
+    expect(off.status).toBe(3);
+    expect(off.stderr).toContain(`removed ${agentFile(root)}`);
+    expect(off.stderr).toContain("could not stop");
+    expect(existsSync(agentFile(root))).toBe(false);
+  });
+
   it("says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own", async () => {
     const harness = await folderHarness("autostart-status");
     made.push(harness);
@@ -592,6 +664,13 @@ describe("folder syncing from login", () => {
     // The login session's keychain is one the watch cannot read: a file that
     // is not there, in a directory the credential locks beside it can use.
     const NO_KEYCHAIN = join(root, "none.keychain-db");
+    // Folders deleted long ago, still listed.
+    const gone = [1, 2, 3].map((n) => join(root, `run-${n}`, "notes"));
+    const listing = JSON.parse(readFileSync(registry, "utf8")) as {
+      folders: Array<Record<string, unknown>>;
+    };
+    listing.folders.push(...gone.map((dir) => ({ dir, folder: randomUUID() })));
+    writeFileSync(registry, JSON.stringify(listing));
     const on = parsed<Switched>(
       autostart(root, "on", { registry, env: { MARFA_KEYCHAIN: NO_KEYCHAIN } }),
     );
@@ -649,6 +728,20 @@ describe("folder syncing from login", () => {
     expect(text.stdout).toContain(
       `${harness.dir}: not watched (${reason}): the watch has no credential it can use for this folder's server`,
     );
+    // The folders that cannot be found are said in one line, with what to do.
+    for (const dir of gone) {
+      expect(
+        status!.record?.folders.find((folder) => folder.dir === dir)?.reason,
+      ).toBe("missing");
+      expect(text.stdout).not.toContain(`${dir}: not watched`);
+    }
+    expect(
+      text.stdout
+        .split("\n")
+        .filter((line) => line.includes("cannot be found")),
+    ).toEqual([
+      "3 listed folder(s) cannot be found, so they are not watched; `marfa folders list` shows them, and `marfa folders remove DIR` takes one off the list",
+    ]);
     // The log says the same as the record.
     expect(
       readFileSync(join(dirname(registry), "folder-watch.log"), "utf8"),
@@ -727,6 +820,26 @@ describe("the watch run by a service manager", () => {
     expect(watch.exitCode(), watch.stderr).toBe(0);
     expect(entry()?.ended_at).not.toBeNull();
     expect(entry()?.folders.every((folder) => !folder.watching)).toBe(true);
+  });
+
+  it("ends on SIGTERM with exit status 0 while it sends telemetry, too", async () => {
+    const harness = await folderHarness("autostart-term-telemetry");
+    made.push(harness);
+    // A collector nothing answers at: the trace is tried and given up.
+    const watch = harness.folder.watchEvery({
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+    });
+    held.push(watch);
+    await vi.waitFor(
+      () => expect(watch.stderr).toContain("watching every folder"),
+      WAIT,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    const sent = Date.now();
+    process.kill(watch.pid(), "SIGTERM");
+    await watch.exited();
+    expect(Date.now() - sent).toBeLessThan(5_000);
+    expect(watch.exitCode(), watch.stderr).toBe(0);
   });
 
   it("moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one", async () => {

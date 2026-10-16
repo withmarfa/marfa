@@ -9,7 +9,7 @@ use std::process::Command;
 use std::time::{Duration, Instant, SystemTime};
 
 use clap::Subcommand;
-use marfa_core::folder::{Registry, WatchRecord};
+use marfa_core::folder::{MISSING, Registry, WatchRecord};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CliError;
@@ -120,7 +120,12 @@ impl Agent {
     /// folders `folders list` lists from this shell, whatever environment the
     /// service manager gives it.
     fn for_this_binary() -> Result<Agent, CliError> {
-        let binary = std::path::absolute(std::env::current_exe()?)?;
+        let binary = invoked(
+            std::env::args_os().next().as_deref(),
+            std::env::var_os("PATH").as_deref(),
+            &std::env::current_dir()?,
+            &std::env::current_exe()?,
+        );
         let registry = Registry::located().ok_or_else(|| {
             CliError::Invalid(
                 "there is no folder registry for the watch to read: HOME is not set, and MARFA_FOLDER_REGISTRY names none".into(),
@@ -259,6 +264,32 @@ WantedBy=default.target
             }
             _ => None,
         }
+    }
+}
+
+/// The path the binary was run by, where it leads to the binary running:
+/// Linux gives `current_exe` with links resolved, and a link such as a
+/// package manager's survives an upgrade that replaces what it leads to.
+fn invoked(
+    argv0: Option<&std::ffi::OsStr>,
+    path: Option<&std::ffi::OsStr>,
+    cwd: &Path,
+    exe: &Path,
+) -> PathBuf {
+    let found = argv0.and_then(|argv0| {
+        if Path::new(argv0).components().count() > 1 {
+            return Some(cwd.join(argv0));
+        }
+        std::env::split_paths(path?)
+            .map(|dir| cwd.join(dir).join(argv0))
+            .find(|candidate| candidate.is_file())
+    });
+    let leads_here = |candidate: &PathBuf| {
+        std::fs::canonicalize(candidate).ok() == std::fs::canonicalize(exe).ok()
+    };
+    match found.filter(leads_here) {
+        Some(found) => std::path::absolute(&found).unwrap_or(found),
+        None => exe.to_path_buf(),
     }
 }
 
@@ -495,7 +526,7 @@ impl Place {
                 let arguments = [
                     "show",
                     UNIT,
-                    "--property=LoadState,ActiveState,SubState,MainPID,ExecMainStatus,UnitFileState",
+                    "--property=LoadState,ActiveState,SubState,MainPID,ExecMainStatus,UnitFileState,NeedDaemonReload",
                 ];
                 let ran = self.ran(&arguments).map_err(|error| error.to_string())?;
                 if !ran.status.success() {
@@ -549,6 +580,9 @@ struct State {
     /// Whether it starts at login: systemd says; launchd loads every agent in
     /// the person's `LaunchAgents` at login.
     enabled: Option<bool>,
+    /// Whether systemd runs the unit as it was before its file last changed.
+    #[serde(skip)]
+    reload: Option<bool>,
 }
 
 /// From `launchctl print`, whose first `state`, `pid` and `last exit code`
@@ -573,6 +607,7 @@ fn launchd_state(printed: &str) -> State {
         last_exit: value("last exit code")
             .and_then(|code| code.split(':').next()?.trim().parse().ok()),
         enabled: None,
+        reload: None,
     }
 }
 
@@ -592,6 +627,7 @@ fn systemd_state(shown: &str) -> State {
             .filter(|pid| *pid > 0 && running),
         last_exit: value("ExecMainStatus").and_then(|code| code.parse().ok()),
         enabled: value("UnitFileState").map(|state| state == "enabled"),
+        reload: value("NeedDaemonReload").map(|reload| reload == "yes"),
     }
 }
 
@@ -661,17 +697,19 @@ fn on(place: &Place, json: bool) -> Result<(), CliError> {
     let agent = Agent::for_this_binary()?;
     let wanted = agent.render(place.manager)?;
     let changed = read_file(&place.file)?.as_deref() != Some(wanted.as_str());
+    let state = place
+        .state()
+        .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?;
     let started = match place.manager {
         Manager::Launchd => {
-            let loaded = place
-                .state()
-                .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?
-                .loaded;
+            let loaded = state.loaded;
+            // Let go of the old agent before the file changes, so a failure
+            // leaves the file differing and the next `on` tries again.
             if changed {
-                write_file(&place.file, &wanted)?;
                 if loaded {
                     place.bootout()?;
                 }
+                write_file(&place.file, &wanted)?;
             }
             if changed || !loaded {
                 // An agent the person disabled is not loaded until enabled.
@@ -681,6 +719,8 @@ fn on(place: &Place, json: bool) -> Result<(), CliError> {
             changed || !loaded
         }
         Manager::Systemd => {
+            // A file written by an `on` that failed before systemd read it.
+            let changed = changed || state.reload == Some(true);
             if changed {
                 write_file(&place.file, &wanted)?;
                 place.must(&["daemon-reload"])?;
@@ -743,30 +783,44 @@ fn on(place: &Place, json: bool) -> Result<(), CliError> {
 
 fn off(place: &Place, json: bool) -> Result<(), CliError> {
     let existed = place.file.exists();
-    let state = place
-        .state()
-        .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?;
-    let stopped = match place.manager {
-        Manager::Launchd => {
-            if state.loaded {
-                place.bootout()?;
-            }
-            if existed {
-                remove(&place.file)?;
-            }
-            state.loaded
+    // The file goes whatever came of stopping the watch, so that the watch
+    // never starts at login again, even where the manager cannot be asked.
+    let stopping = match (place.state(), place.manager) {
+        (Err(reason), _) => Err(CliError::Io(std::io::Error::other(reason))),
+        (Ok(state), Manager::Launchd) if state.loaded => place.bootout().map(|()| true),
+        (Ok(state), Manager::Systemd) if existed => place
+            .must(&["disable", "--now", UNIT])
+            .map(|()| state.running),
+        (Ok(state), Manager::Systemd) if state.running => {
+            place.must(&["stop", UNIT]).map(|()| true)
         }
-        Manager::Systemd => {
-            if existed {
-                place.must(&["disable", "--now", UNIT])?;
-                remove(&place.file)?;
-                place.must(&["daemon-reload"])?;
-            } else if state.running {
-                place.must(&["stop", UNIT])?;
-            }
-            state.running
-        }
+        (Ok(_), _) => Ok(false),
     };
+    if existed {
+        remove(&place.file)?;
+        if place.manager == Manager::Systemd {
+            match &stopping {
+                Ok(_) => place.must(&["daemon-reload"])?,
+                Err(_) => {
+                    let _ = place.ran(&["daemon-reload"]);
+                }
+            }
+        }
+    }
+    let stopped = stopping.map_err(|error| {
+        CliError::Io(std::io::Error::other(format!(
+            "{}could not stop {}: {error}; the watch may run until it ends or you sign out",
+            if existed {
+                format!(
+                    "removed {}, so folders no longer sync from login, but ",
+                    place.file.display()
+                )
+            } else {
+                String::new()
+            },
+            place.manager.name()
+        )))
+    })?;
     let report = Switched {
         autostart: "off",
         changed: existed || stopped,
@@ -1025,7 +1079,21 @@ fn describe_status(place: &Place, report: &Status) -> String {
                 "the record of folder watches is current: {} folder(s), {watched} watched",
                 record.folders.len()
             ));
-            for folder in record.folders.iter().filter(|folder| !folder.watching) {
+            let missing = record
+                .folders
+                .iter()
+                .filter(|folder| !folder.watching && folder.reason.as_deref() == Some(MISSING))
+                .count();
+            if missing > 0 {
+                lines.push(format!(
+                    "{missing} listed folder(s) cannot be found, so they are not watched; `marfa folders list` shows them, and `marfa folders remove DIR` takes one off the list"
+                ));
+            }
+            for folder in record
+                .folders
+                .iter()
+                .filter(|folder| !folder.watching && folder.reason.as_deref() != Some(MISSING))
+            {
                 let reason = folder.reason.as_deref().unwrap_or("not tried yet");
                 lines.push(if report.credential.contains(&folder.dir) {
                     format!(
@@ -1056,6 +1124,35 @@ mod tests {
             log: "/data/marfa/folder-watch.log".into(),
             registry: "/data/marfa/folders.json".into(),
         }
+    }
+
+    #[test]
+    fn the_binary_is_recorded_by_the_path_it_was_run_by_where_that_leads_to_it() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("marfa-cli-invoked-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("real")).unwrap();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let real = root.join("real").join("marfa");
+        let other = root.join("real").join("other");
+        std::fs::write(&real, "").unwrap();
+        std::fs::write(&other, "").unwrap();
+        let link = root.join("bin").join("marfa");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let path = std::env::join_paths([root.join("nothing"), root.join("bin")]).unwrap();
+        let run = |argv0: Option<&str>| {
+            invoked(argv0.map(std::ffi::OsStr::new), Some(&path), &root, &real)
+        };
+        assert_eq!(run(Some(link.to_str().unwrap())), link);
+        assert_eq!(run(Some("marfa")), link);
+        assert_eq!(run(Some("bin/marfa")), link);
+        // Witnesses: a name that leads elsewhere, or none, gives the binary.
+        assert_eq!(run(Some(other.to_str().unwrap())), real);
+        assert_eq!(run(Some("absent")), real);
+        assert_eq!(run(None), real);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -1154,6 +1251,7 @@ mod tests {
                 pid: Some(4821),
                 last_exit: Some(2),
                 enabled: None,
+                reload: None,
             }
         );
         let waiting = "gui/501/so.marfa.folder-watch = {\n\tstate = not running\n\tlast exit code = 78: EX_CONFIG\n}\n";
@@ -1165,13 +1263,14 @@ mod tests {
                 pid: None,
                 last_exit: Some(78),
                 enabled: None,
+                reload: None,
             }
         );
     }
 
     #[test]
     fn systemctl_show_says_whether_the_watch_runs() {
-        let shown = "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=4821\nExecMainStatus=0\nUnitFileState=enabled\n";
+        let shown = "LoadState=loaded\nActiveState=active\nSubState=running\nMainPID=4821\nExecMainStatus=0\nUnitFileState=enabled\nNeedDaemonReload=yes\n";
         assert_eq!(
             systemd_state(shown),
             State {
@@ -1180,6 +1279,7 @@ mod tests {
                 pid: Some(4821),
                 last_exit: Some(0),
                 enabled: Some(true),
+                reload: Some(true),
             }
         );
         let failed = "LoadState=loaded\nActiveState=activating\nSubState=auto-restart\nMainPID=0\nExecMainStatus=3\nUnitFileState=enabled\n";

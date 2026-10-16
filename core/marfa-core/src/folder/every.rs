@@ -43,11 +43,16 @@ const POLL: Duration = Duration::from_millis(100);
 /// The code of a folder let go to a command that asked for it.
 pub const HANDED_OVER: &str = "handed_over";
 
+/// The reason the record of folder watches gives a listed folder whose
+/// directory cannot be found. It is no error code: nothing failed.
+pub const MISSING: &str = "missing";
+
 /// Why a listed folder is not watched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unwatched {
     /// The error code, such as `first_sync_waiting`, `reading_handle` or
-    /// `unauthorized`, or `watch` where the watch itself failed.
+    /// `unauthorized`, `watch` where the watch itself failed, or [`MISSING`]
+    /// where its directory cannot be found.
     pub code: String,
     pub message: String,
 }
@@ -622,10 +627,13 @@ fn reap<S: Supervised>(
                 .map_or(timing.unopened, |wait| (wait * 2).min(timing.missing_most));
             entry.missing = Some(wait);
             entry.run = Run::Waiting { until: now + wait };
-            let reason = Unwatched::of(&CoreError::Io(format!(
-                "{} cannot be found; it is watched once it is back",
-                dir.display()
-            )));
+            let reason = Unwatched {
+                code: MISSING.into(),
+                message: format!(
+                    "{} cannot be found; it is watched once it is back",
+                    dir.display()
+                ),
+            };
             record.unwatched(&dir, Some(&reason.code));
             // Told with the others that cannot be found, by the supervisor.
             entry.told = Some(reason);
@@ -1149,6 +1157,7 @@ mod tests {
         assert!((2..=12).contains(&looks), "looked at {looks} times");
         let entry = std::fs::read_to_string(record.path()).unwrap();
         assert!(entry.contains("\"dir\": \"/gone0\""), "{entry}");
+        assert!(entry.contains("\"reason\": \"missing\""), "{entry}");
 
         // The witness: one that is back is watched, and the rest are told
         // together still.

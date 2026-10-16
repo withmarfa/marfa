@@ -347,7 +347,7 @@ describe("a watch of every folder", () => {
     )!.folders;
     expect(entries.find((entry) => entry.dir === gone[0])).toMatchObject({
       watching: false,
-      reason: "io",
+      reason: "missing",
     });
     expect(watch.running(), watch.stderr).toBe(true);
   });

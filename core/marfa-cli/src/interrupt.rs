@@ -74,12 +74,16 @@ pub fn status(exit: u8) -> u8 {
 }
 
 fn interrupt_set() -> libc::sigset_t {
+    signal_set(ON_TERMINATE.load(Ordering::Relaxed))
+}
+
+fn signal_set(terminate: bool) -> libc::sigset_t {
     // SAFETY: the set is initialized before it is used.
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGINT);
-        if ON_TERMINATE.load(Ordering::Relaxed) {
+        if terminate {
             libc::sigaddset(&mut set, libc::SIGTERM);
         }
         set
@@ -94,15 +98,17 @@ fn block_in_this_thread() {
     }
 }
 
-/// Starts a thread that Ctrl-C is never delivered to, for work that runs
-/// beside a command that handles the signal itself. The signal is blocked
-/// around the start, so it cannot reach the thread before the thread has it
-/// blocked.
+/// Starts a thread that neither Ctrl-C nor `SIGTERM` is ever delivered to,
+/// for work that runs beside a command that handles them itself. Both are
+/// blocked around the start, so neither can reach the thread before the
+/// thread has them blocked. `SIGTERM` is blocked whether or not the command
+/// takes it, since such a thread, as telemetry's, starts before the command
+/// says; a thread that does not block it still ends the process on it.
 pub fn spawn_apart(
     name: &str,
     work: impl FnOnce() + Send + 'static,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
-    let set = interrupt_set();
+    let set = signal_set(true);
     // SAFETY: the sets are initialized, and the caller's mask is put back.
     unsafe {
         let mut before: libc::sigset_t = std::mem::zeroed();
