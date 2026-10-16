@@ -3376,11 +3376,19 @@ While the edge a body's link made stands, a device MUST answer the link with the
 
 ### `device/body-link-kept`
 
-While the edge a body's link made stands, a device MUST keep answering the link with that item when another link is added to the body or taken out of it, whatever items are then titled the same as the link's name.
+While a body's link has a recorded item on a device and the edge to that item stands, a device MUST keep answering the link with that item when another link is added to the body or taken out of it, whatever items are then titled the same as the link's name.
 
 **Reason:** a person did not edit the link, so it must not come to name another item because a later link makes a second item answer to its text. The edge is the record of what the link named, so it is read before any title.
 
 **Tests:** `device/body-edges-live.test.ts › answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`.
+
+### `device/body-link-typed-afresh`
+
+When a write types a link whose spelling the body before the write did not carry, a device MUST NOT answer the link with an item that an earlier link of that spelling was recorded as naming.
+
+**Reason:** a person who replaces a link with a new spelling chose it deliberately. A record left from a body that carried the spelling earlier, and since lost it, would otherwise send the new link to the old item and keep that item's edge.
+
+**Tests:** `device/body-edges-live.test.ts › answers a link typed afresh by the titles, not by an earlier link of that spelling another device took out`.
 
 ### `device/body-link-renamed-removed`
 

@@ -608,6 +608,50 @@ describe("links", () => {
     }
   });
 
+  it("answers a link typed afresh by the titles, not by an earlier link of that spelling another device took out", async () => {
+    const title = named("Typed afresh");
+    const plan = await note(device, title);
+    const host = await note(device, named("Typed afresh host"), `[[${title}]]`);
+    await drained(device);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: `${title} v2` },
+      }),
+    );
+    const taker = await note(device, title);
+    await drained(device);
+    await setBody(device, host.id, `[[${title}]] [[${taker.id}]]`);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([plan.id, taker.id].sort());
+
+    const stored = await client.getItem(host.id);
+    expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+    const changed = await client.updateItem(host.id, {
+      version: stored.data.item.version,
+      properties: { body: `[[${plan.id}]] [[${taker.id}]]` },
+    });
+    expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+    value(await device.catchUp());
+
+    await setBody(device, host.id, `[[${title}]] [[${taker.id}]]`);
+    expect(
+      targets(value(await device.bodyLinks(host.id)).links),
+      "a spelling typed afresh was answered by a record of the old one",
+    ).toEqual([
+      { state: "item", id: taker.id },
+      { state: "item", id: taker.id },
+    ]);
+    expect(
+      (await unsent(device))
+        .filter((write) => write.kind === "delete_edge")
+        .map((write) => write.target_id),
+    ).toEqual([plan.id]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([taker.id]);
+  });
+
   it("makes an edge for a fresh link by a title another item took, once the server has answered", async () => {
     const title = named("Fresh retitled");
     const plan = await note(device, title);
