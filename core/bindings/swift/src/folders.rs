@@ -312,9 +312,9 @@ pub enum FolderEvent {
     /// go at the end of the step of its pass under way. The watch waits, and
     /// takes the folder back once the folder is free: `TakenBack` says so.
     HandedOver,
-    /// The folder was let go, and a process that no command or call asked
-    /// for it keeps it past the time a caller waits. Told once; the watch
-    /// takes the folder back once that process lets it go.
+    /// The folder was let go, and another process keeps it past the time a
+    /// caller waits, with no command or call asking for it. Told once; the
+    /// watch takes the folder back once that process lets it go.
     HeldElsewhere,
     /// The watch took the folder back and keeps it in step again. It follows
     /// `HandedOver` or `HeldElsewhere`, and stands in for a second `Watching`.
@@ -1155,26 +1155,44 @@ mod tests {
     fn a_folder_another_process_keeps_after_it_was_let_go_is_said_to_be_held_once() {
         let (folders, path, watched) = fixture("binding handover held", true);
         let watched = watched.unwrap();
-        let confirming = {
-            let (folders, path) = (folders.clone(), path.clone());
-            std::thread::spawn(move || folders.confirm(path))
-        };
-        watched.until(
-            |event| matches!(event, FolderEvent::HandedOver),
-            Duration::from_secs(30),
-        );
-        confirming.join().unwrap().unwrap();
-        // Another process takes the folder before the watch tries it again.
-        let bound = Instant::now() + Duration::from_secs(10);
-        let keeper = loop {
-            match marfa_core::Folder::open(&path, None) {
-                Ok(keeper) => break keeper,
-                Err(error) => {
-                    assert!(Instant::now() < bound, "never free: {error}");
-                    std::thread::sleep(Duration::from_millis(5));
-                }
+        // Another process takes the folder in the thread of the call the
+        // watch let it go to, as that call ends, so nothing the test thread
+        // does can delay it past the watch's next try. A watch that took the
+        // folder first, in the moment between, is waited for and the call made
+        // again.
+        let mut keeper = None;
+        for _ in 0..5 {
+            let taking = {
+                let (folders, path) = (folders.clone(), path.clone());
+                std::thread::spawn(move || {
+                    folders.confirm(path.clone()).unwrap();
+                    let bound = Instant::now() + Duration::from_millis(500);
+                    loop {
+                        match marfa_core::Folder::open(&path, None) {
+                            Ok(keeper) => return Some(keeper),
+                            Err(_) if Instant::now() < bound => {
+                                std::thread::sleep(Duration::from_millis(1))
+                            }
+                            Err(_) => return None,
+                        }
+                    }
+                })
+            };
+            watched.until(
+                |event| matches!(event, FolderEvent::HandedOver),
+                Duration::from_secs(30),
+            );
+            let taken = taking.join().unwrap();
+            if taken.is_some() {
+                keeper = taken;
+                break;
             }
-        };
+            watched.until(
+                |event| matches!(event, FolderEvent::TakenBack),
+                Duration::from_secs(30),
+            );
+        }
+        let keeper = keeper.expect("the watch took the folder first five times over");
         let seen = watched.until(
             |event| matches!(event, FolderEvent::HeldElsewhere),
             Duration::from_secs(30),
