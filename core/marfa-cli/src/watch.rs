@@ -64,8 +64,8 @@ pub fn watch(
     result
 }
 
-/// Watches every folder the machine's registry lists, until Ctrl-C or
-/// `stop_after` seconds.
+/// Watches every folder the machine's registry lists, until Ctrl-C,
+/// `SIGTERM` or `stop_after` seconds.
 pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result<(), CliError> {
     let registry = Registry::located().ok_or_else(|| {
         CliError::Watch(

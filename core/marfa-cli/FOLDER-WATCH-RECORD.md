@@ -56,7 +56,7 @@ A running watch rewrites its entry at least once every `heartbeat_interval_secon
 
 An entry that is not current describes a watch that has ended, or one that cannot write the record because another process keeps its lock:
 
-- A watch that stops with Ctrl-C, at the end of `--for` or because its watch failed sets `ended_at` and marks each of its folders `watching: false`. If another process holds the record's lock at that moment, the watch waits at most half a second for it, then ends and leaves `ended_at` unset, and the heartbeat rule shows it as ended.
+- A watch that stops with Ctrl-C or `SIGTERM`, at the end of `--for` or because its watch failed sets `ended_at` and marks each of its folders `watching: false`. If another process holds the record's lock at that moment, the watch waits at most half a second for it, then ends and leaves `ended_at` unset, and the heartbeat rule shows it as ended.
 - A watch that was killed, or whose machine lost power, cannot write. Its entry stays as it was, with `watching: true` and `ended_at: null`, and its `heartbeat_at` ages until it passes three intervals. Trust `watching` only for a current entry.
 
 To be sure at once, check that `pid` still names a running process. The check can be wrong when the system reuses a process ID, so the heartbeat decides.

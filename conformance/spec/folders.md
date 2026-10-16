@@ -4320,7 +4320,7 @@ When `folders autostart on` writes the agent, the CLI MUST make it run `folders 
 
 When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REGISTRY` in the agent’s environment to the absolute path of the folder registry the command resolved.
 
-**Reason:** The watch lists the folders that `folders add` lists from the person’s shell, whatever environment the service manager gives it.
+**Reason:** The watch lists the folders that `folders list` lists from the person’s shell, whatever environment the service manager gives it.
 
 **Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
 

@@ -117,7 +117,7 @@ struct Agent {
 
 impl Agent {
     /// The registry is the one this command resolves, so the watch lists the
-    /// folders `folders add` lists from this shell, whatever environment the
+    /// folders `folders list` lists from this shell, whatever environment the
     /// service manager gives it.
     fn for_this_binary() -> Result<Agent, CliError> {
         let binary = std::path::absolute(std::env::current_exe()?)?;
