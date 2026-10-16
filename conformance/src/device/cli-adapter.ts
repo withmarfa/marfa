@@ -399,8 +399,11 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<boolean>(["withdraw", id, ...this.server()]);
   }
 
-  async forget(): Promise<Outcome<number>> {
-    return this.json<number>(["forget"]);
+  async forget(ids?: string[]): Promise<Outcome<number>> {
+    return this.json<number>([
+      "forget",
+      ...(ids ?? []).flatMap((id) => ["--id", id]),
+    ]);
   }
 
   async discard(id: string): Promise<Outcome<boolean>> {
