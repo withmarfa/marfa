@@ -271,40 +271,75 @@ impl<'c> Embeds<'c> {
     }
 }
 
-/// What a link names, from the copy alone: an edge the item already has to
-/// an item it answers to, or a held id. A name that already names an edge's
-/// item keeps naming it, so its alias or heading is held only to the other
-/// edges; anything else waits for the server, which alone can say a name
-/// names one item.
-fn link_offline(conn: &Connection, typed: &Typed, references: &Others) -> Result<Resolved> {
-    let existing = |text: &str| references.named(conn, text);
+/// Which body a link is read as part of, which decides how far the row
+/// recorded for its exact text counts.
+#[derive(Clone, Copy)]
+enum Reading<'a> {
+    /// The body the rows were recorded for, read to learn which edges its
+    /// links stand for: a row names the link's item before anything else.
+    Previous,
+    /// A body written since, whose links the rows may still describe. A row
+    /// answers only a link the body it was recorded for also carried, and an
+    /// id only when the row names that id. `None` is a body the rows were
+    /// recorded for, which carries every one of them.
+    Written(Option<&'a [String]>),
+}
+
+/// What a link names, from the copy alone. A body already written reads in
+/// this order: an id the copy holds; the item the link's edge was made to,
+/// while that edge stands, for a link that body kept; an item the host already
+/// references, by its title or path; else it waits for the server, which alone
+/// can say a name names one item. A name that already names a referenced item
+/// keeps naming it, so its alias or heading is held only to the other
+/// references.
+fn link_offline(
+    conn: &Connection,
+    host: &str,
+    typed: &Typed,
+    references: &Others,
+    recorded: &Recorded,
+    reading: Reading,
+) -> Result<Resolved> {
     if typed.name.is_empty() {
         return Ok(Resolved::Unmatched);
     }
-    if let Some(found) = existing(&typed.name)? {
-        let Resolved::Found { id, .. } = &found else {
-            return Ok(found);
-        };
-        if typed.raw != typed.name {
-            match existing(&typed.raw)? {
-                Some(Resolved::Found { id: whole, .. }) if whole != *id => {
-                    return Ok(Resolved::Ambiguous);
-                }
-                Some(Resolved::Ambiguous) => return Ok(Resolved::Ambiguous),
-                _ => {}
-            }
-        }
-        return Ok(found);
-    }
-    if is_id(&typed.name)
-        && let Some(item) = store::item_by_id(conn, &typed.name)?
+    let found = |id| Resolved::Found { id, r#type: None };
+    let by_id = is_id(&typed.name);
+    let made = || made_to(conn, recorded, Kind::Link, host, &typed.raw);
+    if matches!(reading, Reading::Previous)
+        && let Some(id) = made()?
     {
+        return Ok(found(id));
+    }
+    if by_id && let Some(item) = store::item_by_id(conn, &typed.name)? {
         return Ok(Resolved::Found {
             id: item.id,
             r#type: Some(item.r#type),
         });
     }
-    Ok(Resolved::Waiting)
+    if let Reading::Written(kept) = reading
+        && kept.is_none_or(|kept| kept.contains(&typed.raw))
+        && let Some(id) = made()?
+        && (!by_id || id == typed.name)
+    {
+        return Ok(found(id));
+    }
+    let Some(named) = references.named(conn, &typed.name)? else {
+        return Ok(Resolved::Waiting);
+    };
+    let Resolved::Found { id, .. } = &named else {
+        return Ok(named);
+    };
+    if typed.raw != typed.name && !by_id {
+        match references.named(conn, &typed.raw)? {
+            Some(Resolved::Found { id: whole, .. }) if whole != *id => {
+                return Ok(Resolved::Ambiguous);
+            }
+            Some(Resolved::Ambiguous) => return Ok(Resolved::Ambiguous),
+            _ => {}
+        }
+    }
+    Ok(named)
 }
 
 fn references_of(conn: &Connection, host: &str) -> Result<Vec<String>> {
@@ -473,6 +508,24 @@ fn made_to(
     Ok((!held_edges(conn, kind, host, &other)?.is_empty()).then_some(other))
 }
 
+/// `resolved`, or the item the name was made to where it is not found.
+fn or_made_to(
+    conn: &Connection,
+    recorded: &Recorded,
+    kind: Kind,
+    host: &str,
+    text: &str,
+    resolved: Resolved,
+) -> Result<Resolved> {
+    if matches!(resolved, Resolved::Found { .. }) {
+        return Ok(resolved);
+    }
+    Ok(match made_to(conn, recorded, kind, host, text)? {
+        Some(id) => Resolved::Found { id, r#type: None },
+        None => resolved,
+    })
+}
+
 /// A body's links and embeds as the copy alone reads them: each resolved
 /// one with its item, and each it cannot resolve.
 #[derive(Default)]
@@ -499,6 +552,7 @@ fn read_offline(
     host: &str,
     body: &str,
     recorded: &Recorded,
+    reading: Reading,
 ) -> Result<Read> {
     let mut read = Read::default();
     if body.is_empty() {
@@ -506,15 +560,19 @@ fn read_offline(
     }
     let references = Others::load(conn, catalog, &Placements, &references_of(conn, host)?)?;
     for raw in text::links(body) {
-        let resolved = match link_offline(conn, &Typed::new(&raw), &references)? {
+        let resolved = match link_offline(
+            conn,
+            host,
+            &Typed::new(&raw),
+            &references,
+            recorded,
+            reading,
+        )? {
             Resolved::Found { id, .. } => Some(id),
-            other => match made_to(conn, recorded, Kind::Link, host, &raw)? {
-                Some(id) => Some(id),
-                None => {
-                    read.unresolved.push((Kind::Link, raw.clone(), other));
-                    None
-                }
-            },
+            other => {
+                read.unresolved.push((Kind::Link, raw.clone(), other));
+                None
+            }
         };
         if let Some(id) = resolved.filter(|id| id != host) {
             read.found.push((Kind::Link, raw, id));
@@ -527,11 +585,12 @@ fn read_offline(
             let raw = embed.raw().to_string();
             match reader.offline(embed)? {
                 None => {}
-                Some((_, Resolved::Found { id, .. })) => read.found.push((Kind::Embed, raw, id)),
-                Some((_, other)) => match made_to(conn, recorded, Kind::Embed, host, &raw)? {
-                    Some(id) => read.found.push((Kind::Embed, raw, id)),
-                    None => read.unresolved.push((Kind::Embed, raw, other)),
-                },
+                Some((_, resolved)) => {
+                    match or_made_to(conn, recorded, Kind::Embed, host, &raw, resolved)? {
+                        Resolved::Found { id, .. } => read.found.push((Kind::Embed, raw, id)),
+                        other => read.unresolved.push((Kind::Embed, raw, other)),
+                    }
+                }
             }
         }
     }
@@ -570,8 +629,16 @@ pub(crate) fn derive(
     }
     let host = after.id.as_str();
     let recorded = recorded(conn, host)?;
-    let had = read_offline(conn, catalog, host, old, &recorded)?;
-    let now = read_offline(conn, catalog, host, new, &recorded)?;
+    let kept = text::links(old);
+    let had = read_offline(conn, catalog, host, old, &recorded, Reading::Previous)?;
+    let now = read_offline(
+        conn,
+        catalog,
+        host,
+        new,
+        &recorded,
+        Reading::Written(Some(&kept)),
+    )?;
     let waits: Vec<String> = unanswered(conn, Some(write))?.into_iter().collect();
     for kind in [Kind::Link, Kind::Embed] {
         let (had, now) = (had.targets(kind), now.targets(kind));
@@ -820,14 +887,13 @@ fn link_online(
         Others::load(&conn, catalog, &Placements, &references_of(&conn, host)?)?
     };
     let resolved = resolve_reference(&typed, |text| {
-        let existing = {
+        if !is_id(text) {
             let conn = core.conn()?;
-            references.named(&conn, text)?
-        };
-        match existing {
-            Some(resolved) => Ok(resolved),
-            None => resolver.resolve(text),
+            if let Some(resolved) = references.named(&conn, text)? {
+                return Ok(resolved);
+            }
         }
+        resolver.resolve(text)
     })?;
     Ok(Some((resolved, held)))
 }
@@ -1171,35 +1237,39 @@ pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
         return Ok(links);
     }
     let recorded = recorded(conn, id)?;
-    let target = |kind: Kind, text: &str, resolved: Resolved| -> Result<BodyTarget> {
+    let target = |kind: Kind, text: &str, resolved: Resolved| -> BodyTarget {
         let row = recorded.get(&(kind.as_str(), text.to_string()));
         // An edge the server refused leaves the copy as it was, so only the
         // record says the name names nothing yet.
         if let Some(row) = row.filter(|row| row.state == "refused") {
-            return Ok(target_of(&row.state, row.reason.clone()));
+            return target_of(&row.state, row.reason.clone());
         }
         if let Resolved::Found { id, .. } = resolved {
-            return Ok(BodyTarget::Item { id });
+            return BodyTarget::Item { id };
         }
-        if let Some(other) = made_to(conn, &recorded, kind, &item.id, text)? {
-            return Ok(BodyTarget::Item { id: other });
-        }
-        Ok(match row {
+        match row {
             Some(row) => target_of(&row.state, row.reason.clone()),
             None => match resolved {
                 Resolved::Ambiguous => BodyTarget::Ambiguous,
                 Resolved::Unmatched => BodyTarget::Missing,
                 _ => BodyTarget::Pending,
             },
-        })
+        }
     };
     let references = Others::load(conn, &catalog, &Placements, &references_of(conn, id)?)?;
     for raw in text::links(body) {
         let typed = Typed::new(&raw);
-        let resolved = link_offline(conn, &typed, &references)?;
+        let resolved = link_offline(
+            conn,
+            id,
+            &typed,
+            &references,
+            &recorded,
+            Reading::Written(None),
+        )?;
         links.links.push(BodyName {
             text: text::render_link(&raw),
-            target: target(Kind::Link, &raw, resolved)?,
+            target: target(Kind::Link, &raw, resolved),
             name: typed.name,
         });
     }
@@ -1208,9 +1278,10 @@ pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
         let Some((name, resolved)) = reader.offline(&embed)? else {
             continue;
         };
+        let resolved = or_made_to(conn, &recorded, Kind::Embed, id, embed.raw(), resolved)?;
         links.embeds.push(BodyName {
             text: embed.raw().to_string(),
-            target: target(Kind::Embed, embed.raw(), resolved)?,
+            target: target(Kind::Embed, embed.raw(), resolved),
             name,
         });
     }
@@ -1585,6 +1656,267 @@ mod tests {
             Some((WriteKind::DeleteEdge, host, plan)),
             "taking out a link to a renamed item left its edge"
         );
+    }
+
+    /// A host whose body carries `link` to a note called "Plan", which is then
+    /// renamed, and a second note now called "Plan".
+    fn plan_renamed_and_taken(core: &Core, link: &str) -> (String, String, String) {
+        let plan = note(core, "Plan", "");
+        let host = note(core, "Host", "");
+        core.create_edge(&EdgeDraft {
+            source_id: host.clone(),
+            target_id: plan.clone(),
+            edge_type: LINK_EDGE.into(),
+            ..Default::default()
+        })
+        .unwrap();
+        edit(
+            core,
+            &host,
+            serde_json::json!({ "body": format!("see [[{link}]]") }),
+        );
+        edit(core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        let taker = note(core, "Plan", "");
+        (host, plan, taker)
+    }
+
+    fn deletes(core: &Core) -> Vec<(String, String)> {
+        edge_writes(core)
+            .into_iter()
+            .filter(|(kind, ..)| *kind == WriteKind::DeleteEdge)
+            .map(|(_, source, target)| (source, target))
+            .collect()
+    }
+
+    #[test]
+    fn a_link_keeps_its_item_when_a_new_link_names_another_that_takes_its_old_title() {
+        for link in ["Plan", "Plan#Heading", "Plan|alias"] {
+            for added in ["{taker}", "{taker}|Plan"] {
+                let dir = tempfile::tempdir().unwrap();
+                let core = copy(&dir);
+                let (host, plan, taker) = plan_renamed_and_taken(&core, link);
+                let added = added.replace("{taker}", &taker);
+                edit(
+                    &core,
+                    &host,
+                    serde_json::json!({ "body": format!("[[{link}]] [[{added}]]") }),
+                );
+                assert_eq!(
+                    targets(&core.body_links(&host).unwrap().links),
+                    vec![
+                        BodyTarget::Item { id: plan.clone() },
+                        BodyTarget::Item { id: taker.clone() },
+                    ],
+                    "[[{link}]] with [[{added}]] answered the old link with the new item"
+                );
+                let other = note(&core, "Other", "");
+                edit(
+                    &core,
+                    &host,
+                    serde_json::json!({ "body": format!("[[{link}]] [[{added}]] [[{other}]]") }),
+                );
+                assert_eq!(deletes(&core), vec![], "[[{link}]] with [[{added}]]");
+                assert_eq!(
+                    targets(&core.body_links(&host).unwrap().links),
+                    vec![
+                        BodyTarget::Item { id: plan },
+                        BodyTarget::Item { id: taker },
+                        BodyTarget::Item { id: other },
+                    ]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn taking_out_a_link_beside_one_to_a_renamed_item_deletes_that_link_s_edge() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan, taker) = plan_renamed_and_taken(&core, "Plan");
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[Plan]] [[{taker}]]") }),
+        );
+        edit(&core, &host, serde_json::json!({ "body": "[[Plan]]" }));
+        assert_eq!(
+            deletes(&core),
+            vec![(host.clone(), taker.clone())],
+            "taking out the link to the new item kept its edge"
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan.clone() }]
+        );
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[{taker}]]") }),
+        );
+        assert_eq!(
+            deletes(&core).pop(),
+            Some((host, plan)),
+            "taking out the link to the renamed item kept its edge"
+        );
+    }
+
+    #[test]
+    fn a_name_nothing_recorded_waits_for_the_server_however_items_are_titled() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (_, _, _) = plan_renamed_and_taken(&core, "Plan");
+        let fresh = note(&core, "Fresh", "[[Plan]]");
+        assert_eq!(
+            targets(&core.body_links(&fresh).unwrap().links),
+            vec![BodyTarget::Pending]
+        );
+        assert!(
+            edge_writes(&core)
+                .iter()
+                .all(|(kind, source, _)| *kind != WriteKind::CreateEdge || *source != fresh)
+        );
+    }
+
+    #[test]
+    fn a_link_by_id_names_that_item_whatever_a_referenced_item_is_titled() {
+        for added in ["{id}", "{id}|title"] {
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy(&dir);
+            let target = note(&core, "Target", "");
+            let titled = note(&core, &target, "");
+            let host = note(&core, "Host", &format!("[[{titled}]]"));
+            let added = added.replace("{id}", &target);
+            edit(
+                &core,
+                &host,
+                serde_json::json!({ "body": format!("[[{titled}]] [[{added}]]") }),
+            );
+            assert_eq!(
+                targets(&core.body_links(&host).unwrap().links),
+                vec![
+                    BodyTarget::Item { id: titled.clone() },
+                    BodyTarget::Item { id: target.clone() },
+                ],
+                "[[{added}]] named the item titled with the id"
+            );
+            let created: Vec<String> = edge_writes(&core)
+                .into_iter()
+                .filter(|(kind, source, _)| *kind == WriteKind::CreateEdge && *source == host)
+                .map(|(.., target)| target)
+                .collect();
+            assert_eq!(created, vec![titled, target]);
+        }
+    }
+
+    #[test]
+    fn an_id_the_copy_does_not_hold_waits_for_the_server_whatever_a_referenced_item_is_titled() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let absent = uuid::Uuid::now_v7().to_string();
+        let titled = note(&core, &absent, "");
+        let host = note(&core, "Host", &format!("[[{titled}]]"));
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[{titled}]] [[{absent}]]") }),
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: titled.clone() }, BodyTarget::Pending]
+        );
+        assert_eq!(
+            edge_writes(&core)
+                .into_iter()
+                .filter(|(kind, source, _)| *kind == WriteKind::CreateEdge && *source == host)
+                .map(|(.., target)| target)
+                .collect::<Vec<_>>(),
+            vec![titled]
+        );
+    }
+
+    /// Lands `body` on the item as the server's row, as another device's
+    /// write does: no link of it is read or recorded here.
+    fn land_remote_body(core: &Core, host: &str, body: &str) {
+        let conn = core.conn().unwrap();
+        let mut item = store::item_by_id(&conn, host).unwrap().unwrap();
+        item.properties
+            .insert("body".into(), Value::String(body.into()));
+        item.version += 1;
+        let wire: crate::wire::WireItem =
+            serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
+        store::put_server_item(&conn, &wire, None, &crate::catalog::Indexing::default()).unwrap();
+    }
+
+    #[test]
+    fn a_spelling_the_previous_body_did_not_carry_never_uses_a_recorded_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan, taker) = plan_renamed_and_taken(&core, "Plan");
+        core.create_edge(&draft(Kind::Link, &host, &taker)).unwrap();
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+        land_remote_body(&core, &host, &format!("[[{plan}]] [[{taker}]]"));
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[Plan]] [[{taker}]]") }),
+        );
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![
+                BodyTarget::Item { id: taker.clone() },
+                BodyTarget::Item { id: taker }
+            ],
+            "a typed spelling was answered by a row from a body that no longer carries it"
+        );
+        assert_eq!(deletes(&core), vec![(host, plan)]);
+    }
+
+    #[test]
+    fn taking_out_a_link_deletes_the_edge_its_recorded_row_names_whatever_an_id_now_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let absent = uuid::Uuid::now_v7().to_string();
+        let titled = note(&core, &absent, "");
+        let host = note(&core, "Host", "");
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[{absent}]]") }),
+        );
+        core.create_edge(&draft(Kind::Link, &host, &titled))
+            .unwrap();
+        put_row(
+            &core.conn().unwrap(),
+            &Row {
+                item_id: host.clone(),
+                kind: Kind::Link,
+                text: absent.clone(),
+                state: "resolved".into(),
+                other_id: Some(titled.clone()),
+                reason: None,
+                held: None,
+                write_id: None,
+            },
+        )
+        .unwrap();
+        core.create_item(&Draft {
+            id: Some(absent.clone()),
+            r#type: "core.note".into(),
+            properties: props(serde_json::json!({ "title": "Target", "body": "" })),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: absent }],
+            "a row naming another item answered an id the copy holds"
+        );
+        edit(&core, &host, serde_json::json!({ "body": "" }));
+        assert_eq!(deletes(&core), vec![(host, titled)]);
     }
 
     #[test]

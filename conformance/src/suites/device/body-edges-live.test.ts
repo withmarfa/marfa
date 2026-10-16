@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, CliFolder, newStore } from "../../device/cli-adapter.js";
@@ -534,6 +535,222 @@ describe("links", () => {
     ]);
     await drained(device);
     expect(await referencesFrom(host.id)).toEqual([]);
+  });
+
+  it("answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out", async () => {
+    for (const [label, spelling] of [
+      ["plain", ""],
+      ["heading", "#Heading"],
+      ["alias", "|alias"],
+    ] as const) {
+      const title = named(`Retitled ${label}`);
+      const plan = await note(device, title);
+      const host = await note(
+        device,
+        named(`Retitled host ${label}`),
+        `see [[${title}${spelling}]]`,
+      );
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([plan.id]);
+      const held = value(await device.get(plan.id));
+      value(
+        await device.update(plan.id, {
+          version: held.version,
+          properties: { title: `${title} v2` },
+        }),
+      );
+      const taker = await note(device, title);
+      await drained(device);
+      const original = `[[${title}${spelling}]]`;
+      const links = async () => value(await device.bodyLinks(host.id)).links;
+      const edges = async (kind: string) =>
+        (await unsent(device))
+          .filter((write) => write.kind === kind && write.item_id === host.id)
+          .map((write) => write.target_id);
+
+      for (const added of [taker.id, `${taker.id}|${title}`]) {
+        await setBody(device, host.id, `${original} [[${added}]]`);
+        expect(
+          targets(await links()),
+          `${original} with [[${added}]] answered the old link with the new item`,
+        ).toEqual([
+          { state: "item", id: plan.id },
+          { state: "item", id: taker.id },
+        ]);
+        expect(await edges("create_edge")).toEqual([taker.id]);
+        expect(await edges("delete_edge")).toEqual([]);
+        await drained(device);
+        expect(await referencesFrom(host.id)).toEqual(
+          [plan.id, taker.id].sort(),
+        );
+
+        await setBody(device, host.id, original);
+        expect(
+          await edges("delete_edge"),
+          `taking out [[${added}]] kept its edge`,
+        ).toEqual([taker.id]);
+        expect(targets(await links())).toEqual([
+          { state: "item", id: plan.id },
+        ]);
+        await drained(device);
+        expect(await referencesFrom(host.id)).toEqual([plan.id]);
+      }
+
+      await setBody(device, host.id, `${original} [[${taker.id}]]`);
+      await drained(device);
+      await setBody(device, host.id, `[[${taker.id}]]`);
+      expect(
+        await edges("delete_edge"),
+        `taking out ${original} left the renamed item's edge`,
+      ).toEqual([plan.id]);
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([taker.id]);
+    }
+  });
+
+  it("answers a link typed afresh by the titles, not by an earlier link of that spelling another device took out", async () => {
+    const title = named("Typed afresh");
+    const plan = await note(device, title);
+    const host = await note(device, named("Typed afresh host"), `[[${title}]]`);
+    await drained(device);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: `${title} v2` },
+      }),
+    );
+    const taker = await note(device, title);
+    await drained(device);
+    await setBody(device, host.id, `[[${title}]] [[${taker.id}]]`);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([plan.id, taker.id].sort());
+
+    const stored = await client.getItem(host.id);
+    expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+    const changed = await client.updateItem(host.id, {
+      version: stored.data.item.version,
+      properties: { body: `[[${plan.id}]] [[${taker.id}]]` },
+    });
+    expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+    value(await device.catchUp());
+
+    await setBody(device, host.id, `[[${title}]] [[${taker.id}]]`);
+    expect(
+      targets(value(await device.bodyLinks(host.id)).links),
+      "a spelling typed afresh was answered by a record of the old one",
+    ).toEqual([
+      { state: "item", id: taker.id },
+      { state: "item", id: taker.id },
+    ]);
+    expect(
+      (await unsent(device))
+        .filter((write) => write.kind === "delete_edge")
+        .map((write) => write.target_id),
+    ).toEqual([plan.id]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([taker.id]);
+  });
+
+  it("makes an edge for a fresh link by a title another item took, once the server has answered", async () => {
+    const title = named("Fresh retitled");
+    const plan = await note(device, title);
+    const host = await note(
+      device,
+      named("Fresh retitled host"),
+      `[[${title}]]`,
+    );
+    await drained(device);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: `${title} v2` },
+      }),
+    );
+    const taker = await note(device, title);
+    await drained(device);
+    const fresh = await note(
+      device,
+      named("Fresh retitled reader"),
+      `[[${title}]]`,
+    );
+    expect(
+      (await unsent(device)).filter(
+        (write) => write.kind === "create_edge" && write.item_id === fresh.id,
+      ),
+      "a title was taken as naming one item before the server was asked",
+    ).toEqual([]);
+    expect(targets(value(await device.bodyLinks(fresh.id)).links)).toEqual([
+      { state: "pending" },
+    ]);
+    await drained(device);
+    expect(await referencesFrom(fresh.id)).toEqual([taker.id]);
+    expect(await referencesFrom(host.id)).toEqual([plan.id]);
+  });
+
+  it("names the item with an id whatever a referenced item is titled", async () => {
+    for (const [label, held, shown] of [
+      ["held", true, false],
+      ["held alias", true, true],
+      ["only the server's", false, false],
+      ["only the server's alias", false, true],
+    ] as const) {
+      const target = await remoteNote(named(`Id target ${label}`));
+      const titled = await note(device, target);
+      const host = await note(
+        device,
+        named(`Id host ${label}`),
+        `[[${titled.id}]]`,
+      );
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([titled.id]);
+      if (held) value(await device.catchUp());
+      await setBody(
+        device,
+        host.id,
+        `[[${titled.id}]] [[${target}${shown ? "|shown" : ""}]]`,
+      );
+      const queued = (await unsent(device)).filter(
+        (write) => write.kind === "create_edge" && write.item_id === host.id,
+      );
+      expect(
+        queued.map((write) => write.target_id),
+        `the id of an item the copy ${held ? "holds" : "does not hold"} was taken for the item titled with it`,
+      ).toEqual(held ? [target] : []);
+      expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+        { state: "item", id: titled.id },
+        held ? { state: "item", id: target } : { state: "pending" },
+      ]);
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([titled.id, target].sort());
+      expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+        { state: "item", id: titled.id },
+        { state: "item", id: target },
+      ]);
+    }
+  });
+
+  it("asks the server for an id the copy does not hold, whatever a referenced item is titled", async () => {
+    const absent = uuidv7();
+    const titled = await note(device, absent);
+    const host = await note(
+      device,
+      named("Absent id host"),
+      `[[${titled.id}]]`,
+    );
+    await drained(device);
+    await setBody(device, host.id, `[[${titled.id}]] [[${absent}]]`);
+    expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+      { state: "item", id: titled.id },
+      { state: "pending" },
+    ]);
+    await drained(device);
+    expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+      { state: "item", id: titled.id },
+      { state: "missing" },
+    ]);
+    expect(await referencesFrom(host.id)).toEqual([titled.id]);
   });
 
   it("stops waiting on a name once another writer takes it out of the body", async () => {

@@ -308,7 +308,7 @@ pub(crate) fn is_id(text: &str) -> bool {
 }
 
 /// Whether `text` names the item `id` in this copy: by its id, its title, or
-/// the path of its file.
+/// the path of its file. An id names its item alone, whatever items are titled.
 pub(crate) fn answers_to(
     conn: &Connection,
     catalog: &Catalog,
@@ -319,6 +319,9 @@ pub(crate) fn answers_to(
     let text = text.trim();
     if text == id {
         return Ok(true);
+    }
+    if is_id(text) {
+        return Ok(false);
     }
     store::refuse_unless_usable(conn)?;
     let wanted = folded(text);
@@ -374,14 +377,16 @@ impl Others {
         Ok(Others { named })
     }
 
-    /// The one `text` names, or more than one.
+    /// The one `text` names, or more than one. An id names its item alone,
+    /// whatever items are titled.
     pub fn named(&self, conn: &Connection, text: &str) -> Result<Option<Resolved>> {
         let text = text.trim();
         let wanted = folded(text);
+        let by_id = is_id(text);
         let found: Vec<&String> = self
             .named
             .iter()
-            .filter(|(id, names)| text == id || names.contains(&wanted))
+            .filter(|(id, names)| text == id || !by_id && names.contains(&wanted))
             .map(|(id, _)| id)
             .collect();
         Ok(match found.as_slice() {
@@ -509,5 +514,39 @@ mod tests {
             .unwrap();
             assert!(matches!(actual, Resolved::Found { id, .. } if id == "note"));
         }
+    }
+
+    #[test]
+    fn an_id_answers_to_its_item_alone_whatever_another_is_titled() {
+        use crate::model::Draft;
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("copy.db"), None).unwrap();
+        let note = |title: &str| {
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": title, "body": "" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let target = note("Target");
+        let titled = note(&target);
+        let conn = core.conn().unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let answers = |text: &str, id: &str| {
+            answers_to(&conn, &catalog, &crate::body::rule::Placements, text, id).unwrap()
+        };
+        assert!(answers(&target, &target));
+        assert!(
+            !answers(&target, &titled),
+            "an id answered to an item titled with it"
+        );
+        assert!(answers("Target", &target));
+        assert!(answers(&format!(" {} ", titled), &titled));
     }
 }
