@@ -457,6 +457,12 @@ impl Folder {
     }
 
     fn health_send_inner(&self) -> Result<()> {
+        // An expired copy, whether another instance answered at its origin or
+        // its view changed, sends nothing until it is built again; the report
+        // waits for that.
+        if !store::hydrated(&*self.core.conn()?)? {
+            return Ok(());
+        }
         let current = State::load(&*self.core.conn()?)?;
         if current.retry_at > millis() {
             return Ok(());

@@ -2545,6 +2545,136 @@ describe("offline, reconnect and re-hydration", () => {
     ]);
   });
 
+  it("expires the copy where another instance refuses the lookup a keyed create asks, sending the create nowhere", async () => {
+    harness = await hydratedHarness("queue-lookup-instance-changed", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "keyed", body: "keyed" },
+      source: SERVED_SOURCE,
+      sourceId: "keyed-1",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    scriptWrites(server, {
+      create: [answers.created(wireItem({ id: queued.value.item_id ?? "a" }))],
+      lookup: [
+        refusal(409, "instance_changed", "another instance at this address"),
+      ],
+    });
+
+    const refused = await device.drain();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("copy_expired");
+      expect(refused.refusal.raw).toContain("instance_changed");
+    }
+    const lookups = server.requests.filter(
+      (request) => request.pathname === "/items/lookup",
+    );
+    // The witness: the lookup was asked, naming the copy's instance.
+    expect(
+      lookups.map((request) => request.headers["x-marfa-instance-id"]),
+    ).toEqual([SCRIPTED_INSTANCE]);
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+      "the create was sent",
+    ).toEqual([]);
+    expect(
+      (await queueOf(device)).map((row) => [row.id, row.verdict, row.refusals]),
+    ).toEqual([[queued.value.id, null, 0]]);
+    const status = await device.status();
+    expect(
+      status.ok ? status.value.hydration : status,
+      "the drain told of another instance and left the copy current",
+    ).toBe("expired");
+  });
+
+  it("judges afresh a keyed create another instance refused, though an earlier attempt went unanswered", async () => {
+    harness = await hydratedHarness("queue-instance-changed-afresh", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "keyed", body: "keyed" },
+      source: SERVED_SOURCE,
+      sourceId: "keyed-afresh",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    const holder = "01a00000-0000-7000-8000-0000000000fe";
+    let phase: "unanswered" | "elsewhere" | "here" = "unanswered";
+    scriptWrites(server, {
+      create: [
+        (request) =>
+          phase === "unanswered"
+            ? refusal(503, "unavailable", "the server is busy")
+            : phase === "elsewhere"
+              ? refusal(
+                  409,
+                  "instance_changed",
+                  "another instance at this address",
+                )
+              : answers.created(
+                  wireItem({
+                    id:
+                      (JSON.parse(request.body) as { id?: string }).id ??
+                      holder,
+                  }),
+                ),
+      ],
+      // No row holds the key where the copy was hydrated; one does on the
+      // instance that is there now.
+      lookup: [
+        (_request) =>
+          phase !== "here"
+            ? answers.lookup([])
+            : answers.lookup([
+                wireItem({
+                  id: holder,
+                  source: SERVED_SOURCE,
+                  source_id: "keyed-afresh",
+                }),
+              ]),
+      ],
+      read: [
+        (request) =>
+          answers.updated(wireItem({ id: request.pathname.split("/")[2] })),
+      ],
+    });
+    // Sent to the instance the copy came from, which could not say what it
+    // did with it.
+    await device.drain();
+    phase = "elsewhere";
+    const refused = await device.drain();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.refusal.raw).toContain("instance_changed");
+
+    phase = "here";
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await device.drain();
+    const sent = server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      )
+      .map((request) => JSON.parse(request.body) as { tier?: string });
+    expect(sent).toHaveLength(3);
+    // The witness: the attempts before carried the tier their lookup chose.
+    expect(sent.slice(0, 2).map((body) => body.tier)).toEqual([
+      "library",
+      "library",
+    ]);
+    expect(
+      sent[2]?.tier,
+      "the body another instance refused was sent unchanged, not judged on the instance now there",
+    ).toBeUndefined();
+  });
+
   it("sends nothing while the server cannot say which instance it is", async () => {
     harness = await startHarness("queue-instance-unknown");
     const { server, device } = harness;

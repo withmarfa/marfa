@@ -322,6 +322,14 @@ If the server answers a purge or a change to a folder's settings `409 instance_c
 
 **Tests:** `device/purge.test.ts › names it, and expires the copy where another instance refuses the purge`, `device/folder-settings.test.ts › names it, and expires the copy where another instance refuses the change`.
 
+### `device/instance-changed-holds-report`
+
+While a folder's copy is expired, a device MUST send no status report for the folder, sending the report it holds once the copy is hydrated again.
+
+**Reason:** an expired copy may follow an instance that is no longer at the address (`queue-and-verdicts/instance-changed-sends-nothing`).
+
+**Tests:** `device/folder-health.test.ts › sends no status report after another instance refuses a write, and sends it once the copy is built again`.
+
 ### `device/late-answer`
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
