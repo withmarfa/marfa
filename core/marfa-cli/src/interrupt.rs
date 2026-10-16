@@ -12,6 +12,13 @@ static SIGNALED: AtomicBool = AtomicBool::new(false);
 /// stopped it.
 static ENDED: AtomicBool = AtomicBool::new(false);
 
+/// Set before the stop is armed by a command that a service manager stops,
+/// so that `SIGTERM` raises the stop as Ctrl-C does.
+static ON_TERMINATE: AtomicBool = AtomicBool::new(false);
+
+/// Set once `SIGTERM` has arrived, for a command that takes it.
+static TERMINATED: AtomicBool = AtomicBool::new(false);
+
 /// The status a shell gives a process that died of Ctrl-C.
 pub const INTERRUPTED: u8 = crate::error::Exit::Interrupted as u8;
 
@@ -34,6 +41,20 @@ pub fn signaled() -> bool {
     SIGNALED.load(Ordering::Relaxed)
 }
 
+/// For a command that a service manager runs and stops: `SIGTERM` raises
+/// the stop as Ctrl-C does, and the command ends as one that completed. A
+/// second `SIGTERM` changes nothing, since a manager that will not wait
+/// sends `SIGKILL`. Call before any thread is made, as for
+/// `stop_on_interrupt`.
+pub fn stop_on_terminate_too() {
+    ON_TERMINATE.store(true, Ordering::Relaxed);
+}
+
+/// Whether Ctrl-C or, for a command that takes it, `SIGTERM` has arrived.
+pub fn asked_to_stop() -> bool {
+    signaled() || TERMINATED.load(Ordering::Relaxed)
+}
+
 /// For a command that runs until the person stops it: call when it returns.
 /// The process then leaves with the status the interrupt gave it before this
 /// command handled the signal itself.
@@ -53,11 +74,18 @@ pub fn status(exit: u8) -> u8 {
 }
 
 fn interrupt_set() -> libc::sigset_t {
+    signal_set(ON_TERMINATE.load(Ordering::Relaxed))
+}
+
+fn signal_set(terminate: bool) -> libc::sigset_t {
     // SAFETY: the set is initialized before it is used.
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGINT);
+        if terminate {
+            libc::sigaddset(&mut set, libc::SIGTERM);
+        }
         set
     }
 }
@@ -70,15 +98,17 @@ fn block_in_this_thread() {
     }
 }
 
-/// Starts a thread that Ctrl-C is never delivered to, for work that runs
-/// beside a command that handles the signal itself. The signal is blocked
-/// around the start, so it cannot reach the thread before the thread has it
-/// blocked.
+/// Starts a thread that neither Ctrl-C nor `SIGTERM` is ever delivered to,
+/// for work that runs beside a command that handles them itself. Both are
+/// blocked around the start, so neither can reach the thread before the
+/// thread has them blocked. `SIGTERM` is blocked whether or not the command
+/// takes it, since such a thread, as telemetry's, starts before the command
+/// says; a thread that does not block it still ends the process on it.
 pub fn spawn_apart(
     name: &str,
     work: impl FnOnce() + Send + 'static,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
-    let set = interrupt_set();
+    let set = signal_set(true);
     // SAFETY: the sets are initialized, and the caller's mask is put back.
     unsafe {
         let mut before: libc::sigset_t = std::mem::zeroed();
@@ -110,19 +140,22 @@ pub fn stop_on_interrupt() {
             let mut signal = 0;
             // SAFETY: the set is initialized and `signal` outlives the call.
             match unsafe { libc::sigwait(&set, &mut signal) } {
-                0 => return true,
+                0 => return Some(signal),
                 libc::EINTR => continue,
-                _ => return false,
+                _ => return None,
             }
         };
-        if !wait() {
-            return;
+        match wait() {
+            Some(libc::SIGTERM) => TERMINATED.store(true, Ordering::Relaxed),
+            Some(_) => SIGNALED.store(true, Ordering::Relaxed),
+            None => return,
         }
-        SIGNALED.store(true, Ordering::Relaxed);
         STOP.store(true, Ordering::Relaxed);
-        if wait() {
-            // SAFETY: ends the process without running anything else.
-            unsafe { libc::_exit(i32::from(INTERRUPTED)) };
+        while let Some(signal) = wait() {
+            if signal == libc::SIGINT {
+                // SAFETY: ends the process without running anything else.
+                unsafe { libc::_exit(i32::from(INTERRUPTED)) };
+            }
         }
     });
 }

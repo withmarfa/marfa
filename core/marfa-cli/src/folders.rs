@@ -7,9 +7,12 @@ use marfa_core::Confirmed;
 use marfa_core::folder::Registry;
 use marfa_core::{CoreError, FirstSync, Folder, Removal, SendReport, SyncReport, Synced};
 
+use crate::autostart::{self, AutostartCommand};
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
+use crate::interrupt;
+use crate::logfile;
 use crate::output::{self, Printer};
 use crate::remote::{Named, Remote, Session, renewing};
 use crate::storage;
@@ -138,7 +141,8 @@ pub enum FoldersCommand {
     /// Watch a folder and keep it in step, or every folder on this machine.
     /// Warns on standard error, once per folder, and goes on, if a folder's
     /// directory is in iCloud Drive, a cloud service's synced location or a
-    /// network file system.
+    /// network file system. `SIGTERM` stops it as Ctrl-C does, and it then
+    /// exits 0, so a service manager that stopped it does not start it again.
     /// A command that works a folder the watch holds, such as `folders
     /// confirm`, asks for it: the watch lets it go at the end of the step of
     /// its pass under way, and takes it back once the command ends.
@@ -155,6 +159,19 @@ pub enum FoldersCommand {
         /// Stop after this long. Unset, it runs until interrupted.
         #[arg(long, value_name = "SECONDS")]
         r#for: Option<u64>,
+        /// Write what the watch prints, and its errors, to this file in place
+        /// of the terminal. A file of 1 MiB or more is moved to the same name
+        /// with `.1` added, replacing the one there, when the watch starts and
+        /// as it runs. `folders autostart` runs the watch with it.
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
+    },
+    /// Sync every folder from login, in your own account: a launchd agent on
+    /// macOS or a systemd user unit on Linux runs `folders watch` with no
+    /// directory. Supported on macOS and Linux.
+    Autostart {
+        #[command(subcommand)]
+        command: AutostartCommand,
     },
 }
 
@@ -452,11 +469,17 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
-        FoldersCommand::Watch {
-            dir: Some(dir),
-            r#for,
-        } => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
-        FoldersCommand::Watch { dir: None, r#for } => watch::watch_every(named, r#for, json),
+        FoldersCommand::Watch { dir, r#for, log } => {
+            interrupt::stop_on_terminate_too();
+            if let Some(log) = &log {
+                logfile::redirect(log)?;
+            }
+            match dir {
+                Some(dir) => watch::watch(&dir, named, r#for.map(Duration::from_secs), json),
+                None => watch::watch_every(named, r#for, json),
+            }
+        }
+        FoldersCommand::Autostart { command } => autostart::run(command, named, json),
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
         FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
         FoldersCommand::Revoke { id, idempotency } => send(

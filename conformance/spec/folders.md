@@ -3818,7 +3818,9 @@ When a registry read finds a readable directory whose folder state was removed, 
 
 When a registry read finds a listed folder missing or unreadable, a device MUST retain its entry.
 
-**Tests:** `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, until it lists itself again`, `device/folders-one-mac.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`.
+**Reason:** A directory on a volume that is away cannot be found, as a deleted one cannot, and the entry is what lets another folder hold a delete for a file that may have moved into it.
+
+**Tests:** `device/folders-one-mac.test.ts › holds a delete while a listed folder is missing, until it lists itself again`, `device/folders-one-mac.test.ts › keeps a folder it cannot read listed, and holds a delete meanwhile`, `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`.
 
 ### `folders/registry-unreadable-deletes-held`
 
@@ -3980,7 +3982,7 @@ When a watch of every folder opens a folder whose working copy records a server 
 
 ### `folders/watch-every-unwatchable-said`
 
-If a folder that the machine’s folder registry lists cannot be watched, then the CLI MUST report the folder’s directory and why once for as long as the reason stays the same.
+If a folder that the machine’s folder registry lists cannot be watched for a reason other than that its directory cannot be found, then the CLI MUST report the folder’s directory and why once for as long as the reason stays the same.
 
 **Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
 
@@ -3989,6 +3991,14 @@ If a folder that the machine’s folder registry lists cannot be watched, then t
 If a watch of every folder cannot watch one listed folder, or that folder’s watch ends, then a device MUST keep the other listed folders in step.
 
 **Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`, `device/folders-watch-every.test.ts › ends only the watch of a folder whose credential the server refuses`, `device/folders-watch-every.test.ts › keeps each folder with its own server and credential, and one server down stops only its folder`.
+
+### `folders/watch-every-missing-said`
+
+When a watch of every folder finds that the directories of one or more listed folders cannot be found, the CLI MUST report those directories together in one line, once for as long as no other listed folder’s directory joins them.
+
+**Reason:** A machine’s registry can list many folders whose directories were deleted long ago, and a watch started at every login would otherwise report each of them at every start. The folders stay listed under `folders/registry-missing-kept`, so a person removes one with `folders remove`.
+
+**Tests:** `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
 
 ### `folders/watch-every-tried-again`
 
@@ -4078,11 +4088,19 @@ While a folder is said to be watched, a device MUST set `watching` to `true` for
 
 ### `folders/watch-record-unwatched`
 
-While a folder that a watch of every folder lists is not said to be watched, a device MUST list it in the record with `watching` set to `false` and `reason` set to the code of the error that keeps it out.
+While a folder that a watch of every folder lists is not said to be watched, and its directory can be found, a device MUST list it in the record with `watching` set to `false` and `reason` set to the code of the error that keeps it out.
 
 **Reason:** A program showing folder syncing tells a folder that is failing from one that is not listed. The code is the one `folders watch` reports, and the record holds no message, which may name a path.
 
 **Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`, `device/folders-handover.test.ts › says a folder it let go is held by another process once that process keeps it`.
+
+### `folders/watch-record-missing`
+
+While the directory of a folder that a watch of every folder lists cannot be found, a device MUST list it in the record with `watching` set to `false` and `reason` set to `missing`.
+
+**Reason:** A program showing folder syncing tells a folder whose directory is gone, or on a volume that is away, from one that fails, and can say all of them in one line.
+
+**Tests:** `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`, `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
 
 ### `folders/watch-record-health`
 
@@ -4118,9 +4136,9 @@ While a watch process runs and no other process holds the lock on `folder-watch.
 
 ### `folders/watch-record-stopped`
 
-When a watch is stopped by an interrupt, a device MUST set `ended_at` in the process’s entry to the time it stopped and `watching` to `false` for each of the entry’s folders.
+When a watch is stopped by an interrupt or by `SIGTERM`, a device MUST set `ended_at` in the process’s entry to the time it stopped and `watching` to `false` for each of the entry’s folders.
 
-**Tests:** `device/folder-watch-record.test.ts › refreshes a running watch's heartbeat, and marks its folders not watched when it is stopped`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
+**Tests:** `device/folders-autostart.test.ts › ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched`, `device/folder-watch-record.test.ts › refreshes a running watch's heartbeat, and marks its folders not watched when it is stopped`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
 
 ### `folders/watch-record-killed`
 
@@ -4283,6 +4301,220 @@ While a process holds a folder, the CLI MUST refuse `folders watch` of that fold
 **Reason:** A watch does not ask for a folder; two watches that asked would take one folder from each other in turn.
 
 **Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+
+## Folder syncing from login
+
+`folders autostart on`, `off` and `status` turn on, turn off and report syncing from login. On macOS the agent is a launchd property list named `so.marfa.folder-watch.plist` in `Library/LaunchAgents` under the home directory; on Linux it is a systemd user unit named `marfa-folder-watch.service` in `systemd/user` under the directory the XDG Base Directory Specification names for user configuration, or under `.config` in the home directory. Where the environment names a directory as the autostart root, that directory stands in for the home directory, and the CLI runs the `launchctl` or `systemctl` in its `bin` directory, so a fixture never reaches the person’s own service manager.
+
+### `folders/autostart-launchd-agent`
+
+Where the platform is macOS, when `folders autostart on` runs, the CLI MUST write the agent’s property list in `Library/LaunchAgents` under the home directory and load it into the person’s `gui/<uid>` launchd domain.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-systemd-unit`
+
+Where the platform is Linux, when `folders autostart on` runs, the CLI MUST write the agent’s unit in the person’s systemd user unit directory and enable and start it with `systemctl --user`.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-runs-watch`
+
+When `folders autostart on` writes the agent, the CLI MUST make it run `folders watch` with no directory and with `--log` naming `folder-watch.log` beside the folder registry, by the absolute path the command was run by where that path leads to the `marfa` binary running it.
+
+**Reason:** A path through a symbolic link, such as a package manager's, still leads to the binary after an upgrade replaces what the link leads to.
+
+**Tests:** `device/folders-autostart.test.ts › records the binary by the path it was run as, through a link`, `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`, `device/folders-autostart.test.ts › says when the binary the agent runs is not this one or is gone, and on replaces the agent with this binary`.
+
+### `folders/autostart-registry`
+
+When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REGISTRY` in the agent’s environment to the absolute path of the folder registry the command resolved.
+
+**Reason:** The watch lists the folders that `folders list` lists from the person’s shell, whatever environment the service manager gives it.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-no-credential`
+
+The CLI MUST NOT write into the agent a credential, a server address, a variable that names either, such as `MARFA_API_KEY` or `MARFA_API_URL`, or one that names a keychain file.
+
+**Reason:** Each folder uses the server its copy came from and the credential the keychain keeps for that server, as a watch of every folder does.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-file-mode`
+
+When `folders autostart on` writes the agent, the CLI MUST leave the file writable by its owner alone.
+
+**Reason:** launchd refuses an agent that others can write.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-restart-policy`
+
+When `folders autostart on` writes the agent, the CLI MUST set it to start the watch again only after the watch ends with a failure, and no sooner than 30 seconds after the watch last started.
+
+**Reason:** A watch that fails at once, as with a binary that is gone, is not started again in a tight loop, and a watch a service manager stopped, which exits 0, stays stopped.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-at-login`
+
+Where folder syncing from login is on, when the person signs in, a device MUST keep every listed folder in step with no terminal open.
+
+**Tests:** waiting on #2032.
+
+### `folders/autostart-own-credential`
+
+While the agent’s watch runs, a device MUST keep each folder in step with the credential the keychain keeps for that folder’s server.
+
+**Tests:** `device/folders-autostart.test.ts › keeps a folder in step from the agent, with the credential the keychain keeps for the folder's server`.
+
+### `folders/autostart-on-said`
+
+When `folders autostart on` completes, the CLI MUST report the agent’s file, the binary the agent runs, its log and the folder registry it reads.
+
+**Tests:** `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/autostart-on-unchanged`
+
+When `folders autostart on` runs while the agent it would write is installed and loaded, the CLI MUST leave the file unchanged and load nothing again.
+
+**Tests:** `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`.
+
+### `folders/autostart-on-replaces`
+
+When `folders autostart on` runs while the installed agent differs from the one it would write, the CLI MUST replace the agent and start the watch again from it.
+
+**Tests:** `device/folders-autostart.test.ts › says when the binary the agent runs is not this one or is gone, and on replaces the agent with this binary`.
+
+### `folders/autostart-on-after-failure`
+
+When `folders autostart on` runs after an earlier `folders autostart on` failed before the service manager took the agent it wrote, the CLI MUST load that agent and start the watch from it.
+
+**Reason:** The file on disk alone does not say which agent the service manager runs.
+
+**Tests:** `device/folders-autostart.test.ts › starts the agent it wrote after a swap that failed, rather than saying it is unchanged`.
+
+### `folders/autostart-off`
+
+When `folders autostart off` runs, the CLI MUST stop the agent’s watch and remove the agent’s file.
+
+**Tests:** `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`.
+
+### `folders/autostart-off-unchanged`
+
+When `folders autostart off` runs while no agent is installed or loaded, the CLI MUST change nothing and succeed.
+
+**Tests:** `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`.
+
+### `folders/autostart-off-unreachable-removes`
+
+If the service manager cannot be asked, or cannot stop the watch, when `folders autostart off` runs, then the CLI MUST still remove the agent’s file.
+
+**Reason:** The watch then does not start at the next login.
+
+**Tests:** `device/folders-autostart.test.ts › removes the agent it wrote though the service manager cannot be asked, and says what it could not do`.
+
+### `folders/autostart-off-unreachable-said`
+
+If the service manager cannot be asked, or cannot stop the watch, when `folders autostart off` runs, then the CLI MUST exit with status 3 and say that it removed the agent’s file and could not stop the watch.
+
+**Tests:** `device/folders-autostart.test.ts › removes the agent it wrote though the service manager cannot be asked, and says what it could not do`.
+
+### `folders/autostart-flags-refused`
+
+If `folders autostart` is given `--url` or `--key`, then the CLI MUST refuse it with `usage` and write nothing.
+
+**Tests:** `device/folders-autostart.test.ts › refuses --url and --key, and writes nothing`.
+
+### `folders/autostart-status`
+
+When `folders autostart status` runs, the CLI MUST report whether the agent is installed, whether the service manager runs its watch and as which process, the binary the agent runs, and where the watch logs.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`, `device/folders-autostart.test.ts › changes nothing when turned on again, and off removes the agent and stops its watch, twice over`.
+
+### `folders/autostart-status-offline`
+
+The CLI MUST answer `folders autostart status` with no server named and no credential it can read.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folders/autostart-status-binary-other`
+
+When `folders autostart status` runs while the agent runs a binary other than the one running the command, the CLI MUST say so.
+
+**Tests:** `device/folders-autostart.test.ts › says when the binary the agent runs is not this one or is gone, and on replaces the agent with this binary`.
+
+### `folders/autostart-status-binary-gone`
+
+When `folders autostart status` runs while the binary the agent runs no longer exists, the CLI MUST say so.
+
+**Tests:** `device/folders-autostart.test.ts › says when the binary the agent runs is not this one or is gone, and on replaces the agent with this binary`.
+
+### `folders/autostart-status-record`
+
+When `folders autostart status` runs while the agent’s watch runs, the CLI MUST report whether the record of folder watches holds a current entry for that watch’s process, and each folder of that entry with its `watching` and `reason`.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folders/autostart-status-missing`
+
+When `folders autostart status` finds folders in the current entry whose `reason` is `missing`, the CLI MUST report them in one line with their count.
+
+**Reason:** A machine’s registry can list many folders whose directories were deleted long ago, and `folders remove` takes each off the list.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folders/autostart-status-credential`
+
+When `folders autostart status` finds a folder in the current entry not watched for `no_credential`, `no_keychain`, `unauthorized` or `signed_out`, the CLI MUST say that the watch has no credential it can use for that folder’s server.
+
+**Reason:** On Linux the watch reads its keys from the Secret Service keychain, which must be unlocked at login for a watch started then.
+
+**Tests:** `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
+
+### `folders/watch-terminate`
+
+When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds with exit status 0.
+
+**Reason:** A service manager stops a watch with `SIGTERM`, and a watch that ends with a failure would be started again.
+
+**Tests:** `device/folders-autostart.test.ts › ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched`.
+
+### `folders/watch-terminate-telemetry`
+
+Where telemetry is on, when `folders watch` receives `SIGTERM`, the CLI MUST end with exit status 0.
+
+**Reason:** The thread that sends telemetry starts before the watch, and `SIGTERM` reaching it would end the process at once, which a service manager reads as a failure.
+
+**Tests:** `device/folders-autostart.test.ts › ends on SIGTERM with exit status 0 while it sends telemetry, too`.
+
+### `folders/watch-log`
+
+Where `folders watch` is given `--log` with a file, the CLI MUST write the watch’s standard output and standard error to that file in place of its own.
+
+**Tests:** `device/folders-autostart.test.ts › moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one`, `device/folders-autostart.test.ts › writes an agent in the person's account that runs the watch of every folder by this binary's path, holding no credential, and starts it`.
+
+### `folders/watch-log-private`
+
+Where `folders watch` is given `--log` with a file it makes, the CLI MUST make that file readable and writable by its owner alone.
+
+**Reason:** The log names folders’ directories.
+
+**Tests:** `device/folders-autostart.test.ts › moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one`.
+
+### `folders/watch-log-start-full`
+
+When `folders watch` starts with `--log` naming a file that holds 1 MiB or more, the CLI MUST move that file to the same name with `.1` added, replacing any file there, before it writes.
+
+**Tests:** `device/folders-autostart.test.ts › moves a log of 1 MiB or more aside as the watch starts, and writes to a fresh one`.
+
+### `folders/watch-log-running-full`
+
+While `folders watch` runs with `--log`, when its file reaches 1 MiB, the CLI MUST move that file to the same name with `.1` added within 30 seconds and go on writing to a new file of the first name.
+
+**Tests:** `device/folders-autostart.test.ts › moves the log aside once it reaches 1 MiB while the watch runs`.
 
 ## Taking in another folder’s file
 

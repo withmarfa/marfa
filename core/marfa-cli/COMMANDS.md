@@ -3260,7 +3260,7 @@ marfa folders revoke [OPTIONS] <ID>
 
 ### marfa folders watch
 
-Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system. A command that works a folder the watch holds, such as `folders confirm`, asks for it: the watch lets it go at the end of the step of its pass under way, and takes it back once the command ends.
+Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system. `SIGTERM` stops it as Ctrl-C does, and it then exits 0, so a service manager that stopped it does not start it again. A command that works a folder the watch holds, such as `folders confirm`, asks for it: the watch lets it go at the end of the step of its pass under way, and takes it back once the command ends.
 
 ```text
 marfa folders watch [OPTIONS] [DIR]
@@ -3273,6 +3273,39 @@ marfa folders watch [OPTIONS] [DIR]
 | Option | Description |
 | --- | --- |
 | `--for <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
+| `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. |
+
+### marfa folders autostart
+
+Sync every folder from login, in your own account: a launchd agent on macOS or a systemd user unit on Linux runs `folders watch` with no directory. Supported on macOS and Linux.
+
+```text
+marfa folders autostart [OPTIONS] <COMMAND>
+```
+
+### marfa folders autostart on
+
+Sync every folder from login, and start now: writes a launchd agent on macOS or a systemd user unit on Linux, in your own account, that runs `folders watch` with no directory by this binary's path. It holds no credential and no server: each folder uses the server its copy came from and the credential the keychain keeps for it. Run again, it changes nothing unless the agent would differ.
+
+```text
+marfa folders autostart on [OPTIONS]
+```
+
+### marfa folders autostart off
+
+Stop syncing folders from login: stops the watch and removes the agent. Run again, it changes nothing.
+
+```text
+marfa folders autostart off [OPTIONS]
+```
+
+### marfa folders autostart status
+
+Say whether folders sync from login: whether the agent is installed and running, the binary it runs, where it logs, and what the watch's record says of each folder. Asks no server and needs no credential.
+
+```text
+marfa folders autostart status [OPTIONS]
+```
 
 ## docs
 

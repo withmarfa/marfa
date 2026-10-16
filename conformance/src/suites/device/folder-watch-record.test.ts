@@ -283,7 +283,11 @@ describe("the record of folder watches", () => {
     expect(file?.processes.map((process) => process.pid).sort()).toEqual(
       [alone.pid(), every.pid()].sort(),
     );
-    expect(entryOf(a, alone.pid(), b.dir)?.watching).toBe(true);
+    // The watch of one folder writes its entry before it holds the folder,
+    // and writes again no sooner than a quarter second after a change.
+    await vi.waitFor(() => {
+      expect(entryOf(a, alone.pid(), b.dir)?.watching).toBe(true);
+    }, WAIT);
     expect(entryOf(a, every.pid(), b.dir)?.watching).toBe(false);
   });
 
