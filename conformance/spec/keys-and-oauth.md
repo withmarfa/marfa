@@ -41,6 +41,22 @@ When direct owner or local authority mints a key from a body naming no permissio
 
 **Tests:** `compliance/key-management.test.ts › the direct owner issues an ordinary key without a caller ceiling`.
 
+### `keys-and-oauth/type-write-includes-read`
+
+While a credential's type map grants `write` on a type, the server MUST let the credential read items of that type wherever a `read` entry on it would.
+
+**Reason:** A map entry names the most a credential may do with a type, and `write` is the level above `read`, so a credential that writes a type can read back what it writes.
+
+**Tests:** `compliance/type-scoped-access.test.ts › note-write key can create and read notes but not bookmarks`, `› mixed permissions: read notes, read+write bookmarks`.
+
+### `keys-and-oauth/edge-write-includes-read`
+
+While a credential's edge map grants `write` on an edge type, the server MUST let the credential read edges of that type wherever a `read` entry on it would.
+
+**Reason:** An edge map entry names the most a credential may do with an edge type, and `write` is the level above `read`.
+
+**Tests:** `compliance/edge-permissions.test.ts › an edge type granted write is readable without a read entry`.
+
 ## An item the key cannot read
 
 ### `keys-and-oauth/unreadable-as-missing`

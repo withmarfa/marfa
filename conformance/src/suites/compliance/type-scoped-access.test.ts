@@ -99,6 +99,15 @@ describe("type-scoped access control (type_permissions)", () => {
 
     const readBookmark = await scoped.getItem(bookmark.data.item.id);
     expect(readBookmark.ok).toBe(true);
+
+    const listed = await scoped.listItems({
+      type: "core.bookmark",
+      limit: 100,
+    });
+    expect(listed.ok).toBe(true);
+    expect(listed.data.data.map((item) => item.id)).toContain(
+      bookmark.data.item.id,
+    );
   });
 
   it("wildcard write grants full access to all types", async () => {
