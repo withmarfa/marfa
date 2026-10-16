@@ -928,6 +928,73 @@ describe("a drain that sends moves of an edge's source", () => {
     ).toHaveLength(0);
   });
 
+  it("ends at once where another instance refuses a write behind a source move the server took", async () => {
+    harness = await reparentable("edge-source-move-instance");
+    const { server, device } = harness;
+    const [moved, refused, behind] = CHILD_EDGES;
+    server.answer("PATCH", `/edges/${moved}`, () =>
+      writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+    );
+    server.answer(
+      "GET",
+      `/edges/${moved}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer(
+      "PATCH",
+      `/edges/${refused}`,
+      refusal(409, "instance_changed", "another instance at this address"),
+    );
+    server.answer("PATCH", `/edges/${behind}`, () =>
+      writeAnswers.edge(
+        { ...childEdge(2, PARENT_A, 2), properties: { rank: 3 } },
+        200,
+      ),
+    );
+    value(
+      queuedEdit(
+        await device.updateEdge(moved, {
+          properties: {},
+          version: 1,
+          source_id: PARENT_B,
+        }),
+      ),
+    );
+    for (const [id, rank] of [
+      [refused, 2],
+      [behind, 3],
+    ] as const) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, { properties: { rank }, version: 1 }),
+        ),
+      );
+    }
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) {
+      expect(drained.refusal.code).toBe("copy_expired");
+      expect(
+        drained.refusal.raw,
+        "the drain ended for the source move, not for the other instance",
+      ).toContain("instance_changed");
+    }
+    expect(
+      value(await device.queue()).map((row) => [row.verdict, row.refusals]),
+      "a write was sent, or judged, after another instance refused one",
+    ).toEqual([
+      ["accepted", 0],
+      [null, 0],
+      [null, 0],
+    ]);
+    // The witness: the move deferred the expiry and the drain carried on to
+    // the write the other instance refused.
+    expect(edgeCalls(harness, refused).writes).toHaveLength(1);
+    expect(edgeCalls(harness, behind).writes).toHaveLength(0);
+    expect(value(await device.status()).hydration).toBe("expired");
+  });
+
   it("ends at once where the read of a write that moves no source meets a changed read view", async () => {
     harness = await reparentable("edge-source-move-other");
     const { server, device } = harness;

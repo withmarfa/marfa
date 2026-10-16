@@ -80,6 +80,9 @@ pub struct Http {
     let_go: Arc<AtomicBool>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     view: Option<String>,
+    /// The instance a write names (`X-Marfa-Instance-Id`), so another
+    /// instance at the address refuses it rather than writing it.
+    instance: Option<String>,
     call_budget: Option<Duration>,
 }
 
@@ -234,6 +237,12 @@ impl Answer {
         !self.is_success()
             && (!self.contract_named || matches!(self.status, 408 | 425 | 429 | 500..=599))
     }
+
+    /// Another instance at the address refused the write without applying
+    /// it, so the copy it was queued against is no longer the server's.
+    pub fn instance_changed(&self) -> bool {
+        self.contract_named && self.status == 409 && self.code == INSTANCE_CHANGED
+    }
 }
 
 /// A blob upload streams from a `Reader` rather than buffering the file, so
@@ -281,6 +290,9 @@ pub enum Registration {
 }
 
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
+pub const INSTANCE_HEADER: &str = "X-Marfa-Instance-Id";
+/// The code, and the expiry reason, of a write another instance refused.
+pub const INSTANCE_CHANGED: &str = "instance_changed";
 
 /// A refusal naming no contract is readable: a proxy in front of the server
 /// answers without one, and its status is still the truth.
@@ -361,6 +373,7 @@ impl Http {
             let_go: Arc::new(AtomicBool::new(false)),
             relocation: Arc::new(OnceLock::new()),
             view: None,
+            instance: None,
             call_budget: None,
         })
     }
@@ -410,6 +423,15 @@ impl Http {
     pub(crate) fn for_view(&self, fence: &str) -> Self {
         Self {
             view: Some(fence.into()),
+            ..self.clone()
+        }
+    }
+
+    /// This transport for writes that name `instance`: every request but a
+    /// `GET` carries it.
+    pub(crate) fn naming(&self, instance: &str) -> Self {
+        Self {
+            instance: Some(instance.into()),
             ..self.clone()
         }
     }
@@ -967,9 +989,10 @@ impl Http {
             .collect())
     }
 
-    /// Redirects, contract mismatches and transport or renewal failures are
-    /// errors. Other responses retain their status and code together for the
-    /// drain to classify; `refusal()` drops the status.
+    /// Redirects, contract mismatches, transport or renewal failures and a
+    /// refusal from another instance than the one named are errors. Other
+    /// responses retain their status and code together for the drain to
+    /// classify; `refusal()` drops the status.
     pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing
@@ -982,17 +1005,19 @@ impl Http {
         // on whether a method carries a body, which would mean one header
         // list per method.
         let response = self.authorized(|authorization| {
-            let request = ureq::http::Request::builder()
+            let mut request = ureq::http::Request::builder()
                 .method(outgoing.method.as_str())
                 .uri(url.as_str())
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .header("Idempotency-Key", outgoing.idempotency_key)
-                .header("Authorization", authorization)
-                .body(outgoing.body)
-                .map_err(|error| {
-                    CoreError::Invalid(format!("this write cannot be sent: {error}"))
-                })?;
+                .header("Authorization", authorization);
+            if let Some(instance) = &self.instance {
+                request = request.header(INSTANCE_HEADER, instance);
+            }
+            let request = request.body(outgoing.body).map_err(|error| {
+                CoreError::Invalid(format!("this write cannot be sent: {error}"))
+            })?;
             self.agent
                 .run(request)
                 .map_err(|error| CoreError::Network(error.to_string()))
@@ -1012,14 +1037,22 @@ impl Http {
             Ok(envelope) => envelope.error.code,
             Err(_) => String::new(),
         };
-        Ok(Answer {
+        let answer = Answer {
             status,
             code,
             body,
             retry_after_seconds,
             replayed,
             contract_named,
-        })
+        };
+        // Not the write's answer: the instance that gave it never had the
+        // rows the write was made against.
+        if answer.instance_changed() {
+            return Err(CoreError::CopyExpired {
+                reason: INSTANCE_CHANGED.into(),
+            });
+        }
+        Ok(answer)
     }
 
     /// Registers a type the app declared, as `POST /types` takes one. A type
@@ -1165,6 +1198,13 @@ impl Http {
             }
             if json {
                 builder = builder.header("Content-Type", "application/json");
+            }
+            if let Some(instance) = self
+                .instance
+                .as_deref()
+                .filter(|_| call.credential && call.method != Method::Get)
+            {
+                builder = builder.header(INSTANCE_HEADER, instance);
             }
             for (name, value) in call.headers {
                 builder = builder.header(*name, *value);
@@ -1394,6 +1434,9 @@ impl Http {
                     if let Some(view) = conditional {
                         request = request.header("X-Marfa-Read-View", view);
                     }
+                    if let Some(instance) = &self.instance {
+                        request = request.header(INSTANCE_HEADER, instance);
+                    }
                     request.send(body)
                 }
             };
@@ -1575,6 +1618,9 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
     match status {
         409 if code == "read_view_changed" => CoreError::CopyExpired {
             reason: "read_view_changed".into(),
+        },
+        409 if code == INSTANCE_CHANGED => CoreError::CopyExpired {
+            reason: INSTANCE_CHANGED.into(),
         },
         400 if code == "unknown_type" => CoreError::UnknownType { message },
         400 | 422 => CoreError::Validation { code, message },

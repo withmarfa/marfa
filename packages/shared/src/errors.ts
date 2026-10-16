@@ -22,6 +22,7 @@ export enum ErrorCode {
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
   READ_VIEW_CHANGED = "read_view_changed",
+  INSTANCE_CHANGED = "instance_changed",
   /**
    * The write was based on a version with no snapshot it may be merged
    * against: none is held (never issued, or thinned away), or the one held
@@ -388,6 +389,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 409,
     summary:
       "A conditional copy read or copy stream carries a proof for a read view that has since changed. Rebuild the working copy.",
+  },
+  [ErrorCode.INSTANCE_CHANGED]: {
+    status: 409,
+    summary:
+      "A request names another instance in `X-Marfa-Instance-Id`. Nothing is written. Rebuild the working copy from the instance at this address.",
   },
   [ErrorCode.ANCESTOR_UNAVAILABLE]: {
     status: 409,

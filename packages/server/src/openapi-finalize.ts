@@ -434,6 +434,53 @@ function floorRefusal(
   }
 }
 
+/**
+ * The instance a write names. Every operation outside `/auth` that is not a
+ * read takes it: a door served ahead of the credential is either `/auth` or
+ * one the document does not publish.
+ */
+const INSTANCE_PARAMETER = {
+  name: "X-Marfa-Instance-Id",
+  in: "header",
+  required: false,
+  schema: {
+    type: "string",
+    pattern:
+      "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+  },
+  description:
+    "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers.",
+};
+const INSTANCE_REFUSALS: {
+  status: string;
+  refusal: ChainRefusal;
+  merge: "floor" | "branch";
+}[] = [
+  {
+    status: "400",
+    merge: "floor",
+    refusal: chainRefusal(
+      ["validation_error"],
+      "`X-Marfa-Instance-Id` isn't one lowercase UUIDv7.",
+    ),
+  },
+  {
+    status: "409",
+    merge: "branch",
+    refusal: chainRefusal(
+      ["instance_changed"],
+      "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+    ),
+  },
+];
+
+function namesInstance(method: string, pathKey: string): boolean {
+  return (
+    ["post", "put", "patch", "delete"].includes(method) &&
+    !/^\/auth(?:\/|$)/.test(pathKey)
+  );
+}
+
 function declaresSecurity(operation: Record<string, unknown>): boolean {
   const security = operation.security;
   return Array.isArray(security) && security.length > 0;
@@ -1031,6 +1078,19 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       // own is not this server's envelope.
       if (pathKey !== "/auth/oauth2/register") {
         floorRefusal(responses, "500", CHAIN_REFUSALS.internalError);
+      }
+      if (namesInstance(method, pathKey)) {
+        operation.parameters = [
+          ...((operation.parameters as unknown[] | undefined) ?? []),
+          INSTANCE_PARAMETER,
+        ];
+        for (const { status, refusal, merge } of INSTANCE_REFUSALS) {
+          if (responses[status] === undefined) {
+            responses[status] = refusal.response;
+          } else if (merge === "branch") {
+            responses[status] = withExtraBranch(responses[status], refusal);
+          }
+        }
       }
       if (IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`)) {
         for (const { status, refusal, merge } of IDEMPOTENCY_REFUSALS) {

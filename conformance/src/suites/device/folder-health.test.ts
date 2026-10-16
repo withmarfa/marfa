@@ -8,7 +8,12 @@ import {
 import { afterEach, expect, it } from "vitest";
 import { folderHarness, scriptWrites, type FolderHarness } from "./harness.js";
 
-import { writeAnswers } from "../../device/marfa-answers.js";
+import { join } from "node:path";
+import {
+  SCRIPTED_INSTANCE,
+  refusal,
+  writeAnswers,
+} from "../../device/marfa-answers.js";
 import type { DoorRow } from "../../device/folder-door.js";
 import { scriptFolderWrites } from "./folders.shared.js";
 
@@ -67,6 +72,49 @@ it("reports a confirmed complete sync using the registry's opaque copy identity"
       "problems",
     ].sort(),
   );
+});
+
+it("names the copy's instance on each status report", async () => {
+  harness = await folderHarness("health-names-instance");
+  scriptWrites(harness.server);
+  expect((await harness.folder.push()).ok).toBe(true);
+  const { settings } = harness;
+  const sent = harness.server.requests.filter(
+    (request) =>
+      request.method === "PUT" &&
+      request.pathname === `/folders/${settings.id}/status`,
+  );
+  // The positive control: a push reports at least once.
+  expect(sent.length).toBeGreaterThan(0);
+  for (const request of sent)
+    expect(request.headers["x-marfa-instance-id"]).toBe(SCRIPTED_INSTANCE);
+});
+
+it("sends no status report after another instance refuses a write, and sends it once the copy is built again", async () => {
+  harness = await folderHarness("health-instance-changed");
+  let elsewhere = true;
+  scriptFolderWrites(harness, {
+    creating: (answer) =>
+      elsewhere
+        ? refusal(409, "instance_changed", "another instance at this address")
+        : answer,
+  });
+  const before = reports(harness).length;
+  writeFileSync(join(harness.dir, "elsewhere.md"), "# Elsewhere\n");
+  const pushed = await harness.folder.push();
+  expect(pushed.ok, "the push went on past another instance").toBe(false);
+  if (!pushed.ok) expect(pushed.refusal.raw).toContain("instance_changed");
+  expect(
+    reports(harness).length,
+    "a status report was sent after another instance refused a write",
+  ).toBe(before);
+
+  // The witness: built again from the instance now there, the report held
+  // back goes out.
+  elsewhere = false;
+  expect((await harness.folder.hydrate()).ok).toBe(true);
+  await harness.folder.push();
+  expect(reports(harness).length).toBeGreaterThan(before);
 });
 
 it("reports first-sync waiting without claiming a successful content pass", async () => {
