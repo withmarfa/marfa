@@ -117,6 +117,12 @@ export const items = sqliteTable(
     writerWhole("items_writer_whole", table),
     index("idx_items_type").on(table.type),
     index("idx_items_state").on(table.state),
+    // Serves a lookup of the active items of one type, such as an owner's
+    // connected apps. With no statistics SQLite takes `state = ?` to narrow
+    // as much as `type = ?` and walks `idx_items_state`, which holds nearly
+    // every item. One index holding both columns beats either alone without
+    // any statistics, so the lookup stays fast on a store nobody analyzed.
+    index("idx_items_type_state").on(table.type, table.state),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_occurred_at").on(table.occurred_at),
     // Serves the catch-up read: "what changed after T", walked in

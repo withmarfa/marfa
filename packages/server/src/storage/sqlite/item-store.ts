@@ -506,8 +506,40 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
 
   const conditions: SQL[] = [];
 
+  // `core.entity` and `core.entity.*` mean the same thing: the type and
+  // everything under it. A bare identifier has always included its
+  // subtypes here, so the explicit wildcard must too.
+  let typeClause: SQL | undefined;
+  if (filters.type) {
+    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+      filters.type,
+    );
+    if (!global && exact && descendantPattern) {
+      // The subtree is a range, not `LIKE`: SQLite answers `LIKE` from an
+      // index only on a `NOCASE` column, so a `LIKE` here kept the whole
+      // term out of every index. `.` is followed by `/`, so the range holds
+      // exactly the identifiers that start with `<exact>.`.
+      typeClause = or(
+        eq(items.type, exact),
+        sql`(${items.type} >= ${`${exact}.`} AND ${items.type} < ${`${exact}/`})`,
+        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
+      );
+    }
+  }
+
+  // **Naming a type takes `state` out of the index choice.** With no
+  // statistics SQLite takes an equality on `state` to narrow as much as one
+  // on `type`, and breaks the tie for `idx_items_state`, which holds every
+  // row but the few that were put away. A listing that names a type reads
+  // the whole store that way. The unary plus makes the term a filter the
+  // planner cannot search by, so the type index answers and `state` is
+  // checked on the rows it finds. It cannot be left to statistics, since an
+  // instance that has never been analyzed has none.
+  const stateIs = (value: string): SQL =>
+    typeClause ? sql`+${items.state} = ${value}` : eq(items.state, value);
+
   if (filters.state) {
-    conditions.push(eq(items.state, filters.state));
+    conditions.push(stateIs(filters.state));
   } else if (!filters.all_states) {
     // The default is the active state. A listing answers what the reader
     // is working with, and archived, trashed and revoked are all rows
@@ -525,26 +557,11 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     if (excluded && excluded.length > 0) {
       conditions.push(notInArray(items.state, [...excluded]));
     } else {
-      conditions.push(eq(items.state, "active"));
+      conditions.push(stateIs("active"));
     }
   }
 
-  if (filters.type) {
-    // `core.entity` and `core.entity.*` mean the same thing: the type and
-    // everything under it. A bare identifier has always included its
-    // subtypes here, so the explicit wildcard must too.
-    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-      filters.type,
-    );
-    if (!global && exact && descendantPattern) {
-      const typeClause = or(
-        eq(items.type, exact),
-        sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
-      );
-      if (typeClause) conditions.push(typeClause);
-    }
-  }
+  if (typeClause) conditions.push(typeClause);
 
   if (filters.source) conditions.push(eq(items.source, filters.source));
 
