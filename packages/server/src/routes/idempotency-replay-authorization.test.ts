@@ -1186,3 +1186,54 @@ it("ordinary retained edge envelopes remain readable without target read", async
   expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
   expect(await replay.text()).toBe(original);
 });
+
+it.each([
+  ["POST", "/items/:id/tags", { tags: ["binned"] }],
+  ["DELETE", "/items/:id/tags/binned", undefined],
+  ["PUT", "/items/:id/metadata", { tags: ["binned"] }],
+  ["PATCH", "/items/:id/metadata", { tags: ["binned"] }],
+  ["PUT", "/items/:id/extensions/binned", { binned: true }],
+  ["DELETE", "/items/:id/extensions/binned", undefined],
+  ["PATCH", "/items/:id", { version: 1, properties: { title: "Binned" } }],
+  ["DELETE", "/items/:id", undefined],
+] as const)(
+  "withholds a kept bin refusal from %s %s once the key cannot read the row",
+  async (method, template, body) => {
+    const key = await actor();
+    const item = await note();
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${item.id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const path = template.replace(":id", item.id);
+    const headers = { "Idempotency-Key": `binned-${String(sequence++)}` };
+    const ask = (withKey: boolean) =>
+      request(ctx.app, method, path, {
+        key: key.key,
+        ...(body === undefined ? {} : { body }),
+        ...(withKey ? { headers } : {}),
+      });
+    const first = await ask(true);
+    expect(first.status).toBe(404);
+    const original = await first.text();
+    expect(JSON.parse(original).error.details?.trashed).toBe(true);
+
+    await narrow(key.id, { "core.task": "write" });
+    const fresh = await ask(false);
+    expect(fresh.status).toBe(404);
+    expect(await fresh.text()).not.toContain("trashed");
+    const denied = await ask(true);
+    expect(denied.status).toBe(404);
+    expect(denied.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(await denied.text()).not.toContain("trashed");
+
+    // The witness: the kept answer still replays to a key that reads the row.
+    await narrow(key.id, { "*": "write" });
+    const restored = await ask(true);
+    expect(restored.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(await restored.text()).toBe(original);
+  },
+);
