@@ -59,6 +59,12 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
   MARFA_DOCS_URL: "the docs site `marfa docs` reads, read by the CLI",
   MARFA_ALLOW_HTTP:
     "states that a credential may go over plain http, read by the CLI",
+  MARFA_KEYCHAIN:
+    "the file keychain the CLI uses on macOS for unattended runs, read by the CLI",
+  MARFA_AUTOSTART_ROOT:
+    "the directory that stands in for the home directory when the CLI writes a login agent, read by the CLI",
+  XDG_CONFIG_HOME:
+    "the directory the CLI writes a systemd user unit under on Linux, read by the CLI",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:
