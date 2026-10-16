@@ -2032,11 +2032,43 @@ When the server refuses a move of an edge, a device MUST hold the edge where the
 
 ### `queue-and-verdicts/edge-source-move-expires`
 
-When the server takes a move of an edge's source, a device MUST expire the copy once the move's verdict is recorded.
+When the server takes a move of an edge's source, a device MUST expire the copy, whatever rows the copy holds.
 
-**Reason:** a move of a source changes the server's read view (`read-views/view-moves-edge-source`), so the next hydration holds the edge where the server does.
+**Reason:** a move of a source changes the read view (`read-views/view-moves-edge-source`) on the move alone, and nothing the server answers tells a device whether the move touched a row its copy holds, so the next hydration holds the edge where the server does.
 
-**Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the row the create landed on`.
+**Tests:** `device/edge-move-live.test.ts › re-parents a note offline in one write a real server takes, never leaving it without a parent`, `› holds a move onto its own unanswered create, and sends it naming the row the create landed on`, `› re-parents several notes in one drain a real server takes, and one hydration covers them`, `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`.
+
+### `queue-and-verdicts/edge-source-move-carries-on`
+
+When a device expires the copy for a move of an edge's source, a device MUST send the writes queued behind the move in the same drain, each judged as it would have been had the copy not expired.
+
+**Reason:** only the copy is stale; the writes are the person's, and each is judged by the server on the version it names, so stopping at the move would cost a hydration for every move a batch holds.
+
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
+
+### `queue-and-verdicts/edge-source-move-reads-owed`
+
+While a drain goes on after a move of an edge's source changed the read view, a device MUST leave the read after each answer owed, asking the server for none.
+
+**Reason:** the server refuses each such read under the view the move changed, and the hydration that follows reads every row again.
+
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `› judges each write behind the move as it would have been`.
+
+### `queue-and-verdicts/edge-source-move-one-expiry`
+
+When a drain sends more than one move of an edge's source, a device MUST end the drain `copy_expired` once, after the last write it sent.
+
+**Reason:** one hydration then covers the batch (`device/view-changed`).
+
+**Tests:** `device/edge-move.test.ts › sends every move queued and expires the copy once, at the end`, `device/edge-move-live.test.ts › re-parents several notes in one drain a real server takes, and one hydration covers them`.
+
+### `queue-and-verdicts/view-change-ends-drain`
+
+If a drain meets a changed read view anywhere but in the read after the answer to a move of an edge's source, then a device MUST end the drain `copy_expired` at once, sending no further write.
+
+**Reason:** only a move of a source is known to have changed the view; a change from any other cause is news the drain had no part in, and the caller learns of it before more is sent.
+
+**Tests:** `device/edge-move.test.ts › ends at once where the read of a write that moves no source meets a changed read view`.
 
 ### `queue-and-verdicts/edge-move-waits-new-end`
 

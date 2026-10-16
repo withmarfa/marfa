@@ -458,3 +458,267 @@ describe("an edit that moves an edge's end", () => {
     expect(await drawnTo(device, OLDEST)).toEqual([SUCCESSION]);
   });
 });
+
+const PARENT_A = "01a00000-0000-7000-8000-0000000000d1";
+const PARENT_B = "01a00000-0000-7000-8000-0000000000d2";
+const CHILDREN = [
+  "01a00000-0000-7000-8000-0000000000c1",
+  "01a00000-0000-7000-8000-0000000000c2",
+  "01a00000-0000-7000-8000-0000000000c3",
+] as const;
+const CHILD_EDGES = [
+  "01a00000-0000-7000-8000-0000000000b1",
+  "01a00000-0000-7000-8000-0000000000b2",
+  "01a00000-0000-7000-8000-0000000000b3",
+] as const;
+
+function childEdge(at: number, source: string, version = 1): WireEdgeOptions {
+  return {
+    id: CHILD_EDGES[at]!,
+    source_id: source,
+    target_id: CHILDREN[at]!,
+    edge_type: "parent-of",
+    version,
+  };
+}
+
+/** A copy holding a parent with a child under it for each of `CHILDREN`, and a second parent to move them to. */
+async function reparentable(label: string): Promise<Harness> {
+  const started = await startHarness(label);
+  scriptHydration(started.server, {
+    head: "10",
+    rows: {
+      "core.note": [
+        {
+          item: {
+            id: PARENT_A,
+            edges: {
+              "parent-of": {
+                data: CHILDREN.map((_, at) =>
+                  wireEdge(childEdge(at, PARENT_A)),
+                ),
+                next_cursor: null,
+              },
+            },
+          },
+        },
+        { item: { id: PARENT_B } },
+        ...CHILDREN.map((id) => ({ item: { id } })),
+      ],
+    },
+  });
+  const done = await started.device.hydrate(["core.note"], "library");
+  expect(done.ok, JSON.stringify(done)).toBe(true);
+  return started;
+}
+
+/** How many times the device asked for a copy stream to hydrate from. */
+function hydrations(started: Harness): number {
+  return started.server.requests.filter(
+    (request) =>
+      request.method === "GET" &&
+      request.pathname === "/events" &&
+      request.query.get("copy") === "1" &&
+      request.headers["last-event-id"] === undefined,
+  ).length;
+}
+
+/** The writes sent to an edge's door, and the reads of it made under the copy's read view. */
+function edgeCalls(started: Harness, edge: string) {
+  const asked = started.server.requests.filter(
+    (request) => request.pathname === `/edges/${edge}`,
+  );
+  return {
+    writes: asked.filter((request) => request.method === "PATCH"),
+    reads: asked.filter(
+      (request) =>
+        request.method === "GET" &&
+        request.headers["x-marfa-read-view"] !== undefined,
+    ),
+  };
+}
+
+describe("a drain that sends moves of an edge's source", () => {
+  it("sends every move queued and expires the copy once, at the end", async () => {
+    harness = await reparentable("edge-source-move-batch");
+    const { server, device } = harness;
+    CHILD_EDGES.forEach((id, at) => {
+      server.answer("PATCH", `/edges/${id}`, () =>
+        writeAnswers.edge(childEdge(at, PARENT_B, 2), 200),
+      );
+      // The read of the edge a move was answered with is made under the view
+      // the move changed (`read-views/view-moves-edge-source`), and refused.
+      server.answer(
+        "GET",
+        `/edges/${id}`,
+        refusal(409, "read_view_changed", "the read view has changed"),
+      );
+    });
+    const moves: QueuedWrite[] = [];
+    for (const id of CHILD_EDGES) {
+      moves.push(
+        value(
+          queuedEdit(
+            await device.updateEdge(id, {
+              properties: {},
+              version: 1,
+              source_id: PARENT_B,
+            }),
+          ),
+        ),
+      );
+    }
+
+    const drained = await device.drain();
+    expect(drained.ok, "the drain did not end with the copy expired").toBe(
+      false,
+    );
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      value(await device.queue()).map((row) => [row.id, row.verdict]),
+      "a move queued behind the one that changed the view was not judged",
+    ).toEqual(moves.map((row) => [row.id, "accepted"]));
+    for (const [at, id] of CHILD_EDGES.entries()) {
+      const calls = edgeCalls(harness, id);
+      expect(calls.writes, `the move of child ${String(at)}`).toHaveLength(1);
+      // The witness is the first: the move that changed the view was read
+      // back under it, and the server refused. The reads after it were left
+      // unmade, since the server would refuse each the same way.
+      expect(calls.reads, `the read of child ${String(at)}`).toHaveLength(
+        at === 0 ? 1 : 0,
+      );
+    }
+    expect(value(await device.status()).hydration).toBe("expired");
+    expect(hydrations(harness)).toBe(1);
+
+    value(await device.hydrate(["core.note"], "library"));
+    expect(hydrations(harness), "one hydration covers the batch").toBe(2);
+    const after = value(await device.drain());
+    expect(
+      [after.answered, after.verdicts],
+      "a hydration left the answered moves to be sent again",
+    ).toEqual([0, []]);
+    expect(
+      CHILD_EDGES.map((id) => edgeCalls(harness!, id).writes.length),
+      "an answered move was sent again",
+    ).toEqual([1, 1, 1]);
+    expect(
+      hydrations(harness),
+      "a drain after the hydration expired it again",
+    ).toBe(2);
+  });
+
+  it("judges each write behind the move as it would have been", async () => {
+    harness = await reparentable("edge-source-move-behind");
+    const { server, device } = harness;
+    const [first, second, third] = CHILD_EDGES;
+    server.answer(
+      "PATCH",
+      `/edges/${first}`,
+      () => writeAnswers.edge(childEdge(0, PARENT_B, 2), 200),
+      () =>
+        writeAnswers.edge(
+          { ...childEdge(0, PARENT_B, 3), properties: { rank: 1 } },
+          200,
+        ),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer(
+      "PATCH",
+      `/edges/${second}`,
+      refusal(404, "item_not_found", "no such item"),
+    );
+    server.answer("PATCH", `/edges/${third}`, () =>
+      writeAnswers.edge(childEdge(2, PARENT_B, 2), 200),
+    );
+    for (const [id, edit] of [
+      [first, { source_id: PARENT_B }],
+      [first, { properties: { rank: 1 } }],
+      [second, { source_id: PARENT_B }],
+      [third, { source_id: PARENT_B }],
+    ] as const) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, {
+            properties: {},
+            version: 1,
+            ...edit,
+          }),
+        ),
+      );
+    }
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      value(await device.queue()).map((row) => [row.verdict, row.reason]),
+      "a write behind the move was not judged as the server answered it",
+    ).toEqual([
+      ["accepted", null],
+      ["accepted", null],
+      ["refused", "item_not_found"],
+      ["accepted", null],
+    ]);
+    expect(
+      edgeCalls(harness, first).writes.map(
+        (request) => (JSON.parse(request.body) as { version: number }).version,
+      ),
+      "the edit behind the move did not go on the version the move made",
+    ).toEqual([1, 2]);
+    expect(
+      CHILD_EDGES.map((id) => edgeCalls(harness!, id).reads.length),
+      "a read was made under a view already known to have changed",
+    ).toEqual([1, 0, 0]);
+  });
+
+  it("ends at once where the read of a write that moves no source meets a changed read view", async () => {
+    harness = await reparentable("edge-source-move-other");
+    const { server, device } = harness;
+    const [first, second] = CHILD_EDGES;
+    server.answer("PATCH", `/edges/${first}`, () =>
+      writeAnswers.edge(
+        { ...childEdge(0, PARENT_A, 2), properties: { rank: 1 } },
+        200,
+      ),
+    );
+    server.answer(
+      "GET",
+      `/edges/${first}`,
+      refusal(409, "read_view_changed", "the read view has changed"),
+    );
+    server.answer("PATCH", `/edges/${second}`, () =>
+      writeAnswers.edge(
+        { ...childEdge(1, PARENT_A, 2), properties: { rank: 2 } },
+        200,
+      ),
+    );
+    for (const [id, rank] of [
+      [first, 1],
+      [second, 2],
+    ] as const) {
+      value(
+        queuedEdit(
+          await device.updateEdge(id, { properties: { rank }, version: 1 }),
+        ),
+      );
+    }
+
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      value(await device.queue()).map((row) => row.verdict),
+      "a write was sent behind one whose answer showed the view changed under no source move",
+    ).toEqual(["accepted", null]);
+    expect(edgeCalls(harness, second).writes).toHaveLength(0);
+    // The witness: the read was made and refused, so it is the refusal that
+    // ended the drain, and the same refusal to the read of a move of a
+    // source does not (the first test).
+    expect(edgeCalls(harness, first).reads).toHaveLength(1);
+  });
+});
