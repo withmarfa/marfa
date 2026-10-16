@@ -1307,10 +1307,23 @@ struct Renaming<'a> {
 
 /// The title a rename gives an item, and what the item held under it.
 struct Retitle {
+    r#type: String,
     field: String,
     title: String,
     held: Option<Value>,
     version: i64,
+}
+
+impl Retitle {
+    /// Why the copy would refuse `title` as the item's, where it would.
+    fn refusal(&self, title: &str, catalog: &Catalog) -> Option<CoreError> {
+        let mut properties = Map::new();
+        properties.insert(self.field.clone(), Value::String(title.into()));
+        catalog
+            .validate_properties(&self.r#type, &properties, false)
+            .err()
+            .filter(local_admission_refusal)
+    }
 }
 
 impl Scanned {
@@ -1756,6 +1769,7 @@ impl Folder {
                             .and_then(|agreed| line_of(agreed.front()));
                         if let Some(retitle) =
                             self.renamed_title(&bound.item_id, &bound, file, None, &catalog)?
+                            && retitle.refusal(&retitle.title, &catalog).is_none()
                             && let Some(id) =
                                 self.queue_title(&bound.item_id, &retitle, &retitle.title, shown)?
                         {
@@ -1939,10 +1953,28 @@ impl Folder {
                         self.renamed_title(&item_id, &bound, file, Some(&document), &catalog)?;
                     // A title typed in the line in the same pass goes first,
                     // so the item's history holds it as well as the name's.
+                    let typed = retitle
+                        .as_ref()
+                        .and_then(|retitle| typed_title(&bound, &document, retitle));
+                    // A title the copy would refuse leaves the file as the
+                    // person wrote it, held, and only its placement moves.
+                    if let Some(error) = retitle.as_ref().and_then(|retitle| {
+                        typed
+                            .iter()
+                            .chain([&retitle.title])
+                            .find_map(|title| retitle.refusal(title, &catalog))
+                    }) {
+                        let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
+                        report.flagged.push(Flagged::of(&file.key, &held_for));
+                        self.bind_held(file, &item_id, Some(&bound), held_for, None)?;
+                        self.place(&item_id, &file.key, &withheld)?;
+                        report.renamed += 1;
+                        continue;
+                    }
                     let mut bound = bound;
                     if let Some(retitle) = &retitle
-                        && let Some(typed) = typed_title(&bound, &document, retitle)
-                        && let Some(id) = self.queue_title(&item_id, retitle, &typed, file.line)?
+                        && let Some(typed) = &typed
+                        && let Some(id) = self.queue_title(&item_id, retitle, typed, file.line)?
                     {
                         bound.writes.queued.push(state::Queued {
                             id,
@@ -3276,6 +3308,7 @@ impl Folder {
             return Ok(None);
         }
         Ok(Some(Retitle {
+            r#type: held.r#type.clone(),
             field: field.to_string(),
             title: title_of(&file.key),
             held: held.properties.get(field).cloned(),
