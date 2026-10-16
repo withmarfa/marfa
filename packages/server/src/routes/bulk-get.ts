@@ -52,7 +52,7 @@ const INCLUDE_TOKENS = ["edges", "metadata", "extensions", "system"] as const;
 // Schemas
 // ---------------------------------------------------------------------------
 
-const BulkGetRequestSchema = z.object({
+const BulkGetRequestSchema = z.strictObject({
   ids: z
     .array(z.string())
     .describe("The IDs of the items to read, at most 100."),
@@ -130,7 +130,7 @@ const bulkGetRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list, or has more than 100 IDs.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
+        "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
     },
     401: {
       content: {

@@ -73,12 +73,11 @@ async function keyClient(
   return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
 }
 
-function messages(details: unknown): string {
+function named(details: unknown): string[] {
   return (
-    (details as { errors?: { message: string }[] } | undefined)?.errors ?? []
-  )
-    .map((e) => e.message)
-    .join(" ");
+    (details as { unknown_body_fields?: string[] } | undefined)
+      ?.unknown_body_fields ?? []
+  );
 }
 
 describe("POST /edges refusals", () => {
@@ -100,8 +99,8 @@ describe("POST /edges refusals", () => {
       "a create naming fields the operation does not declare was answered as success",
     ).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(messages(refused.error?.error.details)).toContain('"weight"');
-    expect(messages(refused.error?.error.details)).toContain('"data"');
+    expect(named(refused.error?.error.details)).toContain("weight");
+    expect(named(refused.error?.error.details)).toContain("data");
     const none = await client.listItemEdges(a, { edge_type: "about" });
     expect(none.ok).toBe(true);
     expect(none.data.data, "the refused create stored an edge anyway").toEqual(
@@ -274,8 +273,8 @@ describe("PATCH /edges/{id} versions and grants", () => {
       "an update naming fields the operation does not declare was answered as success",
     ).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(messages(refused.error?.error.details)).toContain('"weight"');
-    expect(messages(refused.error?.error.details)).toContain('"data"');
+    expect(named(refused.error?.error.details)).toContain("weight");
+    expect(named(refused.error?.error.details)).toContain("data");
     const stored = await client.getEdge(created.id);
     expect(stored.data.edge.version).toBe(created.version);
     expect(stored.data.edge.properties).toEqual({ note: "first" });

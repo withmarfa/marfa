@@ -800,7 +800,7 @@ If a key holding `config.manage` sends `PUT /config` with a lever that lacks a m
 
 ### `instance/config-unknown-key-path`
 
-If a key holding `config.manage` sends `PUT /config` with a key at the top level of the body that the server does not know, then the server MUST answer `400 validation_error` with an entry in `details.errors` whose `path` is the empty path of the body itself.
+If a key holding `config.manage` sends `PUT /config` with a key at the top level of the body that the server does not know, then the server MUST answer `400 validation_error` naming the key in `details.unknown_body_fields`.
 
 **Reason:** a key one letter wrong, such as `trash_retention_day`, must not be dropped while the answer is `200`, because that would erase every override the instance held.
 

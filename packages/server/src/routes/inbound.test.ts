@@ -2065,9 +2065,16 @@ describe("a body field the operation does not declare", () => {
     ).json()) as { data: Endpoint[] };
     expect(listed.data).toEqual([]);
 
+    const marked = await request(ctx.app, "POST", path, {
+      key: ctx.managementKey,
+      body: { label: "kept", _client: "refused like any other field" },
+    });
+    expect(marked.status).toBe(400);
+    expect(await unknownFields(marked)).toEqual(["_client"]);
+
     const made = await request(ctx.app, "POST", path, {
       key: ctx.managementKey,
-      body: { label: "kept", _client: "ignored" },
+      body: { label: "kept" },
     });
     expect(made.status).toBe(201);
   });

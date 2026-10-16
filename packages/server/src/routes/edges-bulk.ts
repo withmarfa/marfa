@@ -136,7 +136,7 @@ const edgesBulkRoute = createRoute({
             edges: z
               .array(BulkEdgeInputItemSchema)
               .describe(
-                "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key.",
+                "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key.",
               ),
             mode: z
               .enum(["upsert", "create_only"])

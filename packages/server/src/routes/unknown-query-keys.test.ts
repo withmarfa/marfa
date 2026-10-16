@@ -425,10 +425,10 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     expect(res.status).toBe(400);
   });
 
-  it("ignores a body key in the client's reserved namespace", async () => {
-    // The same escape hatch the query doors give, on the door that takes
-    // its request in a body: a correlation id or a client tag has a
-    // spelling that works and keeps working.
+  it("refuses a body or filter key that starts with an underscore, as it refuses any other", async () => {
+    // The query string reserves the prefix for a client's cache-buster. A body
+    // has no such need, and a hatch there would be a second way for a dropped
+    // field to look like a success.
     const res = await post({
       action: "update_tags",
       add: ["probe"],
@@ -436,7 +436,14 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
       _client_trace: "abc123",
       filter: { type: "core.note", _origin: "probe" },
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details?: { unknown_body_fields?: string[] } };
+    };
+    expect(body.error.details?.unknown_body_fields).toEqual([
+      "_client_trace",
+      "filter._origin",
+    ]);
   });
 
   it("still accepts every field it declares", async () => {
@@ -471,10 +478,10 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     const body = (await res.json()) as {
       error: {
         message: string;
-        details?: { unknown_filter_fields?: string[] };
+        details?: { unknown_body_fields?: string[] };
       };
     };
-    expect(body.error.details?.unknown_filter_fields).toEqual(["since"]);
+    expect(body.error.details?.unknown_body_fields).toEqual(["filter.since"]);
     expect(body.error.message).toContain("occurred_after");
   });
 });

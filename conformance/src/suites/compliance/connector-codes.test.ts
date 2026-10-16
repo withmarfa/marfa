@@ -503,9 +503,8 @@ describe("a body field no operation declares", () => {
       body: Record<string, unknown>;
       /** A field no operation names, spelled like one it does. */
       stray: string;
-      /** What the operation answers a body it takes, the first time and again. */
+      /** What the operation answers a body it takes. */
       first: number;
-      again: number;
     }
     const doors: Door[] = [
       {
@@ -515,7 +514,6 @@ describe("a body field no operation declares", () => {
         body: { name: `${ctx.runId} undeclared-register` },
         stray: "descripton",
         first: 201,
-        again: 200,
       },
       {
         label: "POST runs",
@@ -524,7 +522,6 @@ describe("a body field no operation declares", () => {
         body: { outcome: "succeeded", started_at: when, finished_at: when },
         stray: "sumary",
         first: 201,
-        again: 201,
       },
       {
         label: "POST hold",
@@ -533,7 +530,6 @@ describe("a body field no operation declares", () => {
         body: { process },
         stray: "window_ms",
         first: 200,
-        again: 200,
       },
       {
         label: "PUT state",
@@ -542,7 +538,6 @@ describe("a body field no operation declares", () => {
         body: { process, state: { cursor: "a" } },
         stray: "merge",
         first: 200,
-        again: 200,
       },
       {
         label: "POST agreements",
@@ -551,7 +546,6 @@ describe("a body field no operation declares", () => {
         body: { process, clear: [row] },
         stray: "sets",
         first: 200,
-        again: 200,
       },
       {
         label: "POST agreements/lookup",
@@ -560,7 +554,6 @@ describe("a body field no operation declares", () => {
         body: { item_ids: [row] },
         stray: "waiting",
         first: 200,
-        again: 200,
       },
       {
         label: "POST endpoints",
@@ -569,7 +562,6 @@ describe("a body field no operation declares", () => {
         body: { label: "undeclared" },
         stray: "lable",
         first: 201,
-        again: 201,
       },
       {
         label: "POST deliveries/handled",
@@ -578,7 +570,6 @@ describe("a body field no operation declares", () => {
         body: { ids: [delivery], outcome: "processed" },
         stray: "outcom",
         first: 200,
-        again: 200,
       },
     ];
 
@@ -599,25 +590,31 @@ describe("a body field no operation declares", () => {
         door.label,
       ).toEqual([door.stray]);
 
-      // The witnesses: the same body without the field is taken, and a field
-      // of the caller's own, which starts with an underscore, is ignored.
+      // A field that starts with an underscore is refused like any other.
+      const underscored = await call({ ...door.body, _client: true });
+      expect(underscored.status, `${door.label}: an underscore field`).toBe(
+        400,
+      );
+      expect(
+        underscored.error?.error.details?.["unknown_body_fields"],
+        door.label,
+      ).toEqual(["_client"]);
+
+      // The witness: the same body without the field is taken.
       expect((await call(door.body)).status, `${door.label}: without`).toBe(
         door.first,
       );
-      expect(
-        (await call({ ...door.body, _client: "kept by the caller" })).status,
-        `${door.label}: an underscore field`,
-      ).toBe(door.again);
     }
 
     // What the refusals would have done is not there to find: the one
-    // delivery was marked once, by the witness, and no run or endpoint came
-    // of a refusal.
+    // delivery was marked once, by the witness, and the one run and the one
+    // endpoint a witness made are all there is of either, besides the
+    // endpoint the delivery arrived at.
     expect((await own.client.listConnectorRuns(own.id)).data.data).toHaveLength(
-      2,
+      1,
     );
     expect(
       (await own.client.listInboundEndpoints(own.id)).data.data,
-    ).toHaveLength(3);
+    ).toHaveLength(2);
   });
 });

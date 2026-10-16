@@ -99,7 +99,6 @@ import {
 } from "../bulk-actions/types.js";
 import {
   refuseUnknownBodyKeys,
-  refuseUnknownFilterKeys,
   undeclaredEntryKeyRefusal,
 } from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
@@ -216,7 +215,7 @@ const bulkRoute = createRoute({
             items: z
               .array(BulkInputItemSchema)
               .describe(
-                "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key.",
+                "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key.",
               ),
             mode: z
               .enum(["upsert", "create_only"])
@@ -891,17 +890,15 @@ export function bulkRoutes(storage: Storage) {
     // no claim on the shape of its own refusal.
     const rawBody: unknown = await c.req.json().catch(() => undefined);
     if (typeof rawBody === "object" && rawBody !== null) {
-      const raw = rawBody as { filter?: unknown };
-      // The envelope first, then what it carries. The envelope is the more
-      // dangerous of the two: `dry_run` is read as `?? false`, so a
-      // misspelling is stripped and the action runs for real. `confirm` is
-      // checked by name, which is why `purge` fails safe and nothing else
-      // does.
-      refuseUnknownBodyKeys(raw, BULK_ACTION_SHAPES[action]);
-      // Then the filter. Unconditional on this door regardless of what the
-      // read doors do: a dropped filter field here is not a narrower match
-      // set but every item, and under the match cap it succeeds.
-      refuseUnknownFilterKeys(raw.filter, BulkActionFilterShape);
+      // The envelope and the filter in one refusal. The envelope is the more
+      // dangerous half: `dry_run` is read as `?? false`, so a misspelling is
+      // stripped and the action runs for real. `confirm` is checked by name,
+      // which is why `purge` fails safe and nothing else does. A dropped
+      // filter field is not a narrower match set but every item, and under
+      // the match cap it succeeds.
+      refuseUnknownBodyKeys(rawBody, BULK_ACTION_SHAPES[action], {
+        filter: BulkActionFilterShape,
+      });
     }
     // After the unknown keys, so a misspelt one is named as that. A filter
     // field sent empty is the same silence from the other side: a purge

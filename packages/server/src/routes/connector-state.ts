@@ -29,7 +29,10 @@ import {
   pageCursor,
 } from "../page-limits.js";
 import { pageOf } from "./_schemas.js";
-import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
+import {
+  CLOSED_BY_HANDLER,
+  refuseUnknownBodyKeys,
+} from "./_unknown-body-keys.js";
 import {
   IdParam,
   connectorOrRefuse,
@@ -105,51 +108,59 @@ const ConnectorAgreementSchema = z
   )
   .openapi("ConnectorAgreement");
 
-const HoldInputSchema = z.object({ process: ProcessSchema });
+const HoldInputSchema = z
+  .object({ process: ProcessSchema })
+  .meta(CLOSED_BY_HANDLER);
 
-const StateInputSchema = z.object({
-  process: HolderSchema,
-  problems: ConnectorProblemsSchema.optional().describe(
-    "The source's current problems. Leave it out to preserve the current map; send `{}` to clear it.",
-  ),
-  state: JsonObject.describe(
-    `The new document, a JSON object of at most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. It replaces the whole document.`,
-  ),
-});
-
-const FindInputSchema = z.object({
-  item_ids: z
-    .array(ItemId)
-    .min(1)
-    .max(MAX_AGREEMENTS_PER_REQUEST)
-    .describe("The IDs of the items to look up."),
-});
-
-const AgreementsInputSchema = z.object({
-  process: HolderSchema,
-  set: z
-    .array(
-      z.object({
-        item_id: ItemId.describe("The ID of the item."),
-        waiting: z.boolean().describe(WAITING),
-        record: JsonObject.describe(
-          `The connector's record of the item: a JSON object of at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized.`,
-        ),
-      }),
-    )
-    .max(MAX_AGREEMENTS_PER_REQUEST)
-    .optional()
-    .describe(
-      "Agreements to write. Each replaces the item's current agreement. Leave it out to write none.",
+const StateInputSchema = z
+  .object({
+    process: HolderSchema,
+    problems: ConnectorProblemsSchema.optional().describe(
+      "The source's current problems. Leave it out to preserve the current map; send `{}` to clear it.",
     ),
-  clear: z
-    .array(ItemId)
-    .max(MAX_AGREEMENTS_PER_REQUEST)
-    .optional()
-    .describe(
-      "The IDs of items whose agreements to remove. Leave it out to remove none.",
+    state: JsonObject.describe(
+      `The new document, a JSON object of at most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. It replaces the whole document.`,
     ),
-});
+  })
+  .meta(CLOSED_BY_HANDLER);
+
+const FindInputSchema = z
+  .object({
+    item_ids: z
+      .array(ItemId)
+      .min(1)
+      .max(MAX_AGREEMENTS_PER_REQUEST)
+      .describe("The IDs of the items to look up."),
+  })
+  .meta(CLOSED_BY_HANDLER);
+
+const AgreementsInputSchema = z
+  .object({
+    process: HolderSchema,
+    set: z
+      .array(
+        z.object({
+          item_id: ItemId.describe("The ID of the item."),
+          waiting: z.boolean().describe(WAITING),
+          record: JsonObject.describe(
+            `The connector's record of the item: a JSON object of at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized.`,
+          ),
+        }),
+      )
+      .max(MAX_AGREEMENTS_PER_REQUEST)
+      .optional()
+      .describe(
+        "Agreements to write. Each replaces the item's current agreement. Leave it out to write none.",
+      ),
+    clear: z
+      .array(ItemId)
+      .max(MAX_AGREEMENTS_PER_REQUEST)
+      .optional()
+      .describe(
+        "The IDs of items whose agreements to remove. Leave it out to remove none.",
+      ),
+  })
+  .meta(CLOSED_BY_HANDLER);
 
 const UNKNOWN_FIELD =
   "the body has a top-level field this endpoint doesn't take";

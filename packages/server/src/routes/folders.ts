@@ -381,7 +381,7 @@ const notFound = {
 };
 
 const SETTING_MALFORMED =
-  "a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it.";
+  "a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it. A key the body or a setting doesn't declare is named in `details.unknown_body_fields`.";
 
 const SETTING_TYPE_UNKNOWN =
   "- `unknown_type`: a setting names a type that isn't registered.";
@@ -414,7 +414,7 @@ const updateRefusal = {
         ]),
       },
     },
-    description: `- \`validation_error\`: a setting is malformed (\`details.errors[0].path\` names it), the body names no setting, or the query has a parameter such as \`conflict\`, which this endpoint doesn't take.\n- \`missing_required_field\`: \`version\` is missing.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is malformed.\n- \`invalid_transition\`: the folder is revoked.`,
+    description: `- \`validation_error\`: a setting is malformed (\`details.errors[0].path\` names it), a key is undeclared (\`details.unknown_body_fields\` names it), the body names no setting, or the query has \`conflict\`.\n- \`missing_required_field\`: \`version\` is missing.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is malformed.\n- \`invalid_transition\`: the folder is revoked.`,
   },
 };
 

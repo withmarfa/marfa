@@ -46,6 +46,22 @@ When a claim submits a password outside the sign-in provider's length bounds, th
 
 **Tests:** `compliance/owner.test.ts › validates the password without consuming valid setup proof`, `› creates exactly one owner and requires owner sign-in to read it`.
 
+### `instance-claim/owner-undeclared-key`
+
+If `POST /owner` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
+
+**Reason:** a misspelled `password` or `name` would otherwise be dropped, and the one owner of the instance would be created from a request the caller did not make.
+
+**Tests:** `compliance/owner.test.ts › refuses a key the claim does not declare without consuming valid setup proof`.
+
+### `instance-claim/setup-undeclared-key`
+
+If `POST /setup/exchange`, or `POST /setup/claim` with a JSON body, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
+
+**Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success.
+
+**Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare in a JSON body without consuming valid setup proof`.
+
 ### `instance-claim/owner-created`
 
 When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.

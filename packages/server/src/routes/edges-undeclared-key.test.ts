@@ -72,16 +72,16 @@ function target(): string {
 interface ValidationRefusal {
   error: {
     code: string;
-    details?: { errors?: { path: string; message: string }[] };
+    details?: { unknown_body_fields?: string[] };
   };
 }
 
-function messages(details: unknown): string {
+/** The keys a refusal names as undeclared. */
+function named(details: unknown): string[] {
   return (
-    (details as { errors?: { message: string }[] } | undefined)?.errors ?? []
-  )
-    .map((e) => e.message)
-    .join(" ");
+    (details as { unknown_body_fields?: string[] } | undefined)
+      ?.unknown_body_fields ?? []
+  );
 }
 
 describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
@@ -108,8 +108,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     const body = (await refused.json()) as ValidationRefusal;
     expect(refused.status, JSON.stringify(body)).toBe(400);
     expect(body.error.code).toBe("validation_error");
-    expect(messages(body.error.details)).toContain('"weight"');
-    expect(messages(body.error.details)).toContain('"data"');
+    expect(named(body.error.details)).toEqual(["data", "weight"]);
 
     const read = async () => {
       const res = await request(ctx.app, "GET", `/edges/${edge.id}`, {
@@ -150,8 +149,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     const body = (await refused.json()) as ValidationRefusal;
     expect(refused.status, JSON.stringify(body)).toBe(400);
     expect(body.error.code).toBe("validation_error");
-    expect(messages(body.error.details)).toContain('"weight"');
-    expect(messages(body.error.details)).toContain('"data"');
+    expect(named(body.error.details)).toEqual(["data", "weight"]);
     expect(await aboutTargets()).not.toContain(to);
 
     // The witness: the same body without the undeclared keys is created,
@@ -174,7 +172,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     const body = (await refused.json()) as ValidationRefusal;
     expect(refused.status, JSON.stringify(body)).toBe(400);
     expect(body.error.code).toBe("validation_error");
-    expect(messages(body.error.details)).toContain('"atomc"');
+    expect(named(body.error.details)).toEqual(["atomc"]);
     expect(await aboutTargets()).not.toContain(to);
   });
 
@@ -202,7 +200,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     expect(body.error.code).toBe("bulk_atomic_rollback");
     expect(body.error.details.index).toBe(1);
     expect(body.error.details.code).toBe("validation_error");
-    expect(messages(body.error.details.details)).toContain('"weight"');
+    expect(named(body.error.details.details)).toEqual(["weight"]);
     const listed = await aboutTargets();
     expect(listed).not.toContain(first);
     expect(listed).not.toContain(second);
@@ -234,8 +232,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     expect(body.results[0]?.outcome).toBe("created");
     expect(body.results[1]?.outcome).toBe("errored");
     expect(body.results[1]?.error?.code).toBe("validation_error");
-    expect(messages(body.results[1]?.error?.details)).toContain('"weight"');
-    expect(messages(body.results[1]?.error?.details)).toContain('"data"');
+    expect(named(body.results[1]?.error?.details)).toEqual(["data", "weight"]);
     const listed = await aboutTargets();
     expect(listed).toContain(kept);
     expect(listed).not.toContain(refusedEnd);

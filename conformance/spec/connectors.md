@@ -620,7 +620,7 @@ If `POST /connectors/{id}/hold` names no `process`, then the server MUST answer 
 
 ### `connectors/undeclared-body-field`
 
-If a request to an operation under `/connectors` that takes a body passes the operation's credential and registration checks, with a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error` with the field in `details.unknown_body_fields`.
+If a request to an operation under `/connectors` that takes a body passes the operation's credential and registration checks, with a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare, then the server MUST answer `400 validation_error` with the field in `details.unknown_body_fields`.
 
 **Reason:** a misspelled field would otherwise be dropped, and the request read as something it did not say.
 

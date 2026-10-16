@@ -286,6 +286,35 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
+  it("refuses a key the claim does not declare without consuming valid setup proof", async () => {
+    for (const key of ["bogus", "_trace"]) {
+      const refused = await post("/owner", { ...OWNER, code, [key]: 1 });
+      expect(refused.status).toBe(400);
+      const { error } = await refused.json();
+      expect(error.code).toBe("validation_error");
+      expect(error.details.unknown_body_fields).toEqual([key]);
+    }
+    expect((await local("/_control/setup/status")).body.claimed).toBe(false);
+  });
+
+  it("refuses a key the setup doors do not declare in a JSON body without consuming valid setup proof", async () => {
+    const origin = new URL(server.url).origin;
+    for (const [path, body] of [
+      ["/setup/exchange", { code }],
+      ["/setup/claim", { ...OWNER, code }],
+    ] as const) {
+      for (const key of ["bogus", "_trace"]) {
+        const refused = await post(path, { ...body, [key]: 1 }, { origin });
+        expect(refused.status, `${path} ${key}`).toBe(400);
+        const { error } = await refused.json();
+        expect(error.code).toBe("validation_error");
+        expect(error.details.unknown_body_fields).toEqual([key]);
+        expect(refused.headers.get("set-cookie")).toBeNull();
+      }
+    }
+    expect((await local("/_control/setup/status")).body.claimed).toBe(false);
+  });
+
   it("creates exactly one owner and requires owner sign-in to read it", async () => {
     const attempts = await Promise.all(
       [0, 1].map(() =>

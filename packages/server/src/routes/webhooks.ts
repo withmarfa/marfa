@@ -210,7 +210,7 @@ const createWebhookRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             url: z.string().min(1, "url is required").describe(URL_TEXT),
             events: z
               .array(EventNameSchema)
@@ -255,7 +255,7 @@ const createWebhookRoute = createRoute({
           ]),
         },
       },
-      description: `- \`validation_error\`: ${INVALID_FIELD}; \`secret\` is too short; or \`type_filter\` is \`*\`, malformed or a list.\n- \`missing_required_field\`: \`url\` or \`events\` is missing.`,
+      description: `- \`validation_error\`: ${INVALID_FIELD}; \`secret\` is too short; or \`type_filter\` is \`*\`, malformed or a list; or the body has a field this endpoint doesn't take.\n- \`missing_required_field\`: \`url\` or \`events\` is missing.`,
     },
     401: {
       content: {
@@ -378,7 +378,7 @@ const updateWebhookRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             url: z.string().optional().describe(URL_TEXT),
             events: z
               .array(EventNameSchema)
@@ -415,7 +415,7 @@ const updateWebhookRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: `- \`validation_error\`: ${INVALID_FIELD}; or \`type_filter\` is \`*\`, malformed or a list.`,
+      description: `- \`validation_error\`: ${INVALID_FIELD}; or \`type_filter\` is \`*\`, malformed or a list; or the body has a field this endpoint doesn't take.`,
     },
     401: {
       content: {

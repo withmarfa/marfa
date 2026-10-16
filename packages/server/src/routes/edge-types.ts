@@ -20,6 +20,7 @@ import {
 import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
+import { CLOSED_BY_HANDLER } from "./_unknown-body-keys.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -324,6 +325,7 @@ const EdgeTypeRegistrationRequestSchema = z
       ),
   })
   .describe("An edge type to register.")
+  .meta(CLOSED_BY_HANDLER)
   .openapi("EdgeTypeRegistrationRequest");
 
 const EdgeTypeRegistrationResponseSchema = z
