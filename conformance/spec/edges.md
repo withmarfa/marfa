@@ -1241,7 +1241,7 @@ When the server answers an edge type, on `GET /edge-types` and on the `201` of `
 
 ### `edges/types-register`
 
-When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register, the server MUST answer `201` with the `edge_type`.
+When a key sends `POST /edge-types` with an `id` and a `cardinality` it may register and leaves `evolve_constraints` absent or `false`, the server MUST answer `201` with the `edge_type`.
 
 **Tests:** `compliance/edge-types.test.ts › registers a custom edge type and answers 201`.
 
@@ -1275,7 +1275,7 @@ If `POST /edge-types` names the `id` of a shipped edge type, then the server MUS
 
 ### `edges/types-register-duplicate`
 
-If `POST /edge-types` names the `id` of an edge type already registered, then the server MUST answer `409 conflict`.
+If `POST /edge-types` names the `id` of an edge type already registered and leaves `evolve_constraints` absent or `false`, then the server MUST answer `409 conflict`.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an id a registered edge type already holds with 409 conflict, and keeps the first`.
 
@@ -1284,6 +1284,46 @@ If `POST /edge-types` names the `id` of an edge type already registered, then th
 When the server refuses `POST /edge-types` for an `id` already registered, the server MUST leave the first registration as it was.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an id a registered edge type already holds with 409 conflict, and keeps the first`.
+
+### `edges/types-evolve`
+
+When a key admitted by `edges/types-register-permission` and `edges/types-register-map` sends `POST /edge-types` with `evolve_constraints: true` for a registered edge type and a definition `edges/types-evolve-safe` permits, the server MUST update its endpoint constraints in place and answer `200` with the resulting definition.
+
+**Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`.
+
+### `edges/types-evolve-safe`
+
+If a constraint evolution removes an existing endpoint constraint token without making that endpoint unrestricted, or changes any definition member other than its endpoint constraints, then the server MUST answer `409 conflict` without changing the definition.
+
+**Reason:** retaining every token preserves its subtypes and role members, including future registrations; this conservative operation does not infer equivalent constraint sets from the current type inventory. An empty constraint list and a list containing `*` both permit every type.
+
+**Tests:** `compliance/edge-types.test.ts › refuses narrowing, structural changes, and a missing evolution target`, `› treats empty and wildcard constraint lists as unrestricted`.
+
+### `edges/types-evolve-missing`
+
+If `POST /edge-types` with `evolve_constraints: true` names no registered edge type, then the server MUST answer `404 edge_type_not_found` without registering it.
+
+**Tests:** `compliance/edge-types.test.ts › refuses narrowing, structural changes, and a missing evolution target`.
+
+### `edges/types-evolve-edges-kept`
+
+When an endpoint constraint evolution succeeds, the server MUST preserve every stored edge of that type, including its identifier, version, timestamps and properties.
+
+**Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`.
+
+### `edges/types-evolve-atomic`
+
+When the server admits an endpoint constraint evolution, the server MUST check the current definition and the caller's registration reach in the same writer transaction that updates the definition.
+
+**Reason:** a request prepared from an earlier definition cannot remove another admitted request's additions.
+
+**Tests:** `compliance/edge-types.test.ts › preserves an admitted addition when constraint evolutions compete`.
+
+### `edges/types-evolve-option`
+
+When `POST /edge-types` reads `evolve_constraints`, the server MUST treat it as operation metadata and exclude it from the stored and returned edge-type definition.
+
+**Tests:** `compliance/edge-types.test.ts › widens endpoint constraints without rewriting held edges`.
 
 ### `edges/types-register-id`
 

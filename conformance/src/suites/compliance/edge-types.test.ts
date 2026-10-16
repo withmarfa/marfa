@@ -1411,3 +1411,141 @@ describe("the order POST /edge-types asks its refusals in", () => {
     expect(alone.error?.error.code).toBe("edge_permission_denied");
   });
 });
+
+describe("explicit edge-type constraint evolution", () => {
+  it("widens endpoint constraints without rewriting held edges", async () => {
+    const definition = {
+      id: `mock.evolve.${ctx.runId}`,
+      label: "Kept connection",
+      cardinality: "many-to-many" as const,
+      source_type_constraints: ["core.note"],
+      target_type_constraints: ["core.note"],
+    };
+    expect((await client.registerEdgeType(definition)).status).toBe(201);
+    trackEdgeType(ctx, definition.id);
+    const note = async () => {
+      const answer = await client.createItem(
+        createNote({ source: ctx.source }),
+      );
+      expect(answer.status).toBe(201);
+      trackItem(ctx, answer.data.item.id);
+      return answer.data.item;
+    };
+    const a = await note();
+    const b = await note();
+    const made = await client.createEdge({
+      source_id: a.id,
+      target_id: b.id,
+      edge_type: definition.id,
+      properties: { note: "Kept" },
+    });
+    expect(made.status).toBe(201);
+    trackEdge(ctx, made.data.edge.id);
+    const before = (await client.getEdge(made.data.edge.id)).data.edge;
+    const evolution = {
+      ...definition,
+      source_type_constraints: ["core.note", "core.task"],
+      evolve_constraints: true,
+    };
+    const changed = await client.registerEdgeType(evolution);
+    expect(changed.status).toBe(200);
+    await expectMatchesSchema("POST", "/edge-types", 200, changed.data);
+    expect(changed.data.edge_type.source_type_constraints).toEqual([
+      "core.note",
+      "core.task",
+    ]);
+    expect(changed.data.edge_type).not.toHaveProperty("evolve_constraints");
+    expect((await client.getEdge(made.data.edge.id)).data.edge).toEqual(before);
+    expect((await client.registerEdgeType(evolution)).status).toBe(200);
+    expect((await client.getEdge(made.data.edge.id)).data.edge).toEqual(before);
+  });
+
+  it("refuses narrowing, structural changes, and a missing evolution target", async () => {
+    const definition = {
+      id: `mock.evolve-refused.${ctx.runId}`,
+      cardinality: "many-to-many" as const,
+      source_type_constraints: ["core.note"],
+    };
+    expect((await client.registerEdgeType(definition)).status).toBe(201);
+    trackEdgeType(ctx, definition.id);
+    const before = (await client.listEdgeTypes()).data.data.find(
+      (one) => one.id === definition.id,
+    );
+    for (const change of [
+      { source_type_constraints: ["core.task"] },
+      { cardinality: "many-to-one" as const },
+      { label: "Changed" },
+    ]) {
+      const evolution = { ...definition, ...change, evolve_constraints: true };
+      const refused = await client.registerEdgeType(evolution);
+      expect(refused.status).toBe(409);
+      expect(
+        (await client.listEdgeTypes()).data.data.find(
+          (one) => one.id === definition.id,
+        ),
+      ).toEqual(before);
+    }
+    const missing = {
+      ...definition,
+      id: `mock.evolve-missing.${ctx.runId}`,
+      evolve_constraints: true,
+    };
+    expect((await client.registerEdgeType(missing)).status).toBe(404);
+    expect((await client.registerEdgeType(definition)).status).toBe(409);
+  });
+
+  it("treats empty and wildcard constraint lists as unrestricted", async () => {
+    const definition = {
+      id: `mock.evolve-unrestricted.${ctx.runId}`,
+      cardinality: "many-to-many" as const,
+      source_type_constraints: [],
+    };
+    expect((await client.registerEdgeType(definition)).status).toBe(201);
+    trackEdgeType(ctx, definition.id);
+    const narrowing = {
+      ...definition,
+      source_type_constraints: ["core.note"],
+      evolve_constraints: true,
+    };
+    expect((await client.registerEdgeType(narrowing)).status).toBe(409);
+    const wildcard = {
+      ...definition,
+      source_type_constraints: ["*"],
+      evolve_constraints: true,
+    };
+    expect((await client.registerEdgeType(wildcard)).status).toBe(200);
+    const empty = { ...definition, evolve_constraints: true };
+    expect((await client.registerEdgeType(empty)).status).toBe(200);
+  });
+});
+
+it("preserves an admitted addition when constraint evolutions compete", async () => {
+  const definition = {
+    id: `mock.evolve-race.${ctx.runId}`,
+    cardinality: "many-to-many" as const,
+    source_type_constraints: ["core.note"],
+  };
+  expect((await client.registerEdgeType(definition)).status).toBe(201);
+  trackEdgeType(ctx, definition.id);
+  const attempts = await Promise.all(
+    ["core.task", "core.message"].map((type) => {
+      const evolution = {
+        ...definition,
+        source_type_constraints: ["core.note", type],
+        evolve_constraints: true,
+      };
+      return client.registerEdgeType(evolution);
+    }),
+  );
+  expect(attempts.map((one) => one.status).sort()).toEqual([200, 409]);
+  const held = (await client.listEdgeTypes()).data.data.find(
+    (one) => one.id === definition.id,
+  );
+  expect(held?.source_type_constraints).toHaveLength(2);
+  const combined = {
+    ...definition,
+    source_type_constraints: ["core.note", "core.task", "core.message"],
+    evolve_constraints: true,
+  };
+  expect((await client.registerEdgeType(combined)).status).toBe(200);
+});

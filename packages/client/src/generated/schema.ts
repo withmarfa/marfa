@@ -559,7 +559,7 @@ export interface paths {
         put?: never;
         /**
          * Register an edge type
-         * @description Registers an edge type and returns it. An edge type can't extend another.
+         * @description Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.
          */
         post: operations["registerEdgeType"];
         delete?: never;
@@ -2832,6 +2832,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        EdgeTypeNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_type_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         ConflictRefusal: {
             /** @description What went wrong. */
             error: {
@@ -2847,6 +2864,11 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /** @description An edge type to register. */
+        EdgeTypeRegistrationRequest: components["schemas"]["EdgeTypeRequest"] & {
+            /** @description `true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition. */
+            evolve_constraints?: boolean;
         };
         /** @description An edge type to register. */
         EdgeTypeRequest: {
@@ -2888,23 +2910,6 @@ export interface components {
             data: components["schemas"]["EdgeType"][];
             /** @description Always `null`: Marfa returns every edge type in one page. */
             next_cursor: string | null;
-        };
-        /** @description An error response. */
-        EdgeTypeNotFoundRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "edge_type_not_found";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         /** @description An error response. */
         EdgeTypeInUseRefusal: {
@@ -11446,10 +11451,26 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["EdgeTypeRequest"];
+                "application/json": components["schemas"]["EdgeTypeRegistrationRequest"];
             };
         };
         responses: {
+            /** @description Returns the widened edge type, or its unchanged definition for a repeated request. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        edge_type: components["schemas"]["EdgeType"];
+                    };
+                };
+            };
             /** @description Returns the new edge type. */
             201: {
                 headers: {
@@ -11518,7 +11539,22 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
-            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`. */
+            /** @description `edge_type_not_found`: constraint evolution names no registered edge type. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeTypeNotFoundRefusal"];
+                };
+            };
+            /** @description `conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

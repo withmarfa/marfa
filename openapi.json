@@ -2876,6 +2876,41 @@
         ],
         "description": "An error response."
       },
+      "EdgeTypeNotFoundRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_type_not_found"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "ConflictRefusal": {
         "type": "object",
         "properties": {
@@ -2910,6 +2945,23 @@
           "error"
         ],
         "description": "An error response."
+      },
+      "EdgeTypeRegistrationRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EdgeTypeRequest"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "evolve_constraints": {
+                "type": "boolean",
+                "description": "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition."
+              }
+            }
+          }
+        ],
+        "description": "An edge type to register."
       },
       "EdgeTypeRequest": {
         "type": "object",
@@ -3011,41 +3063,6 @@
           "next_cursor"
         ],
         "description": "A page holding every edge type."
-      },
-      "EdgeTypeNotFoundRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_type_not_found"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
       },
       "EdgeTypeInUseRefusal": {
         "type": "object",
@@ -21256,7 +21273,7 @@
           "Edge types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers an edge type and returns it. An edge type can't extend another.",
+        "description": "Registers an edge type and returns it. With `evolve_constraints: true`, widens a registered type's endpoint constraints without changing its edges. An edge type can't extend another.",
         "security": [
           {
             "bearerAuth": []
@@ -21267,12 +21284,47 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EdgeTypeRequest"
+                "$ref": "#/components/schemas/EdgeTypeRegistrationRequest"
               }
             }
           }
         },
         "responses": {
+          "200": {
+            "description": "Returns the widened edge type, or its unchanged definition for a repeated request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "edge_type": {
+                      "$ref": "#/components/schemas/EdgeType"
+                    }
+                  },
+                  "required": [
+                    "edge_type"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
           "201": {
             "description": "Returns the new edge type.",
             "content": {
@@ -21398,8 +21450,38 @@
               }
             }
           },
+          "404": {
+            "description": "`edge_type_not_found`: constraint evolution names no registered edge type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EdgeTypeNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "409": {
-            "description": "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`.",
+            "description": "`conflict`: `id` is the name of an edge type Marfa ships, `id` or `reverse_name` is already the ID or reverse name of an edge type, or `reverse_name` equals `id`, or constraint evolution would remove a constraint token without allowing every type or change another definition member.",
             "content": {
               "application/json": {
                 "schema": {
