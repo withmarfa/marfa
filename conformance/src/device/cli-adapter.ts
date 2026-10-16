@@ -400,6 +400,9 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   async forget(ids?: string[]): Promise<Outcome<number>> {
+    // The command clears every answered write when it is given no `--id`, so
+    // an empty list is not sent.
+    if (ids?.length === 0) return { ok: true, value: 0 };
     return this.json<number>([
       "forget",
       ...(ids ?? []).flatMap((id) => ["--id", id]),

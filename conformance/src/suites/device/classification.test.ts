@@ -2319,6 +2319,49 @@ describe("withdrawing a write that can never be sent", () => {
     },
   );
 
+  it("clears a named write refused unsent behind a withdrawn write, and keeps the one carrying content even when named", async () => {
+    const setup = await createHeldFor("class-withdraw-forget-named");
+    harness = setup.harness;
+    const { device } = harness;
+    const tagged = await device.addTag(setup.local, "mine");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    if (!tagged.ok) return;
+    expect((await device.withdraw(setup.create.id)).ok).toBe(true);
+    const refusedRows = (await queueOf(harness)).map((row) => [
+      row.id,
+      row.verdict,
+    ]);
+    expect(
+      refusedRows,
+      "the withdraw did not refuse both writes held for the create",
+    ).toEqual([
+      [setup.edit.id, "refused"],
+      [tagged.value.id, "refused"],
+    ]);
+
+    // An empty list names nothing, so nothing goes; the test below this one
+    // shows a clearing of every answered write taking the tag.
+    const none = await device.forget([]);
+    expect(none.ok && none.value, JSON.stringify(none)).toBe(0);
+    expect((await queueOf(harness)).map((row) => row.id)).toEqual([
+      setup.edit.id,
+      tagged.value.id,
+    ]);
+    const content = await device.forget([setup.edit.id]);
+    expect(
+      content.ok && content.value,
+      "a named write that carried content was cleared",
+    ).toBe(0);
+    const cleared = await device.forget([tagged.value.id]);
+    expect(
+      cleared.ok && cleared.value,
+      "a named write refused unsent behind a withdrawn write stayed",
+    ).toBe(1);
+    expect((await queueOf(harness)).map((row) => row.id)).toEqual([
+      setup.edit.id,
+    ]);
+  });
+
   it("clears with the answered rows those only a withdrawn write was keeping, but for one carrying content", async () => {
     const setup = await createHeldFor("class-withdraw-forget-held");
     harness = setup.harness;

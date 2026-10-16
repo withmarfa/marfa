@@ -459,7 +459,7 @@ export interface DeviceUnderTest {
   withdraw(id: string): Promise<Outcome<boolean>>;
   /**
    * Clear the rows the server has answered, and say how many went. With
-   * `ids`, only those named.
+   * `ids`, only those named, and none for an empty list.
    */
   forget(ids?: string[]): Promise<Outcome<number>>;
 

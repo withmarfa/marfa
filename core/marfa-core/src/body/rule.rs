@@ -1031,6 +1031,13 @@ fn lost_on_body(conn: &Connection, write: &str) -> Result<bool> {
 /// after its pass, and before answered writes are forgotten, so a pass that
 /// stopped part way is read at the next.
 pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
+    after_answers_of(conn, None)
+}
+
+/// `after_answers`, reading every answer but taking out of the queue only the
+/// writes named: an edge create left by a refusal that was not named stays
+/// where it is, read again by the next call that names it or names none.
+pub(crate) fn after_answers_of(conn: &mut Connection, named: Option<&[String]>) -> Result<()> {
     let tx = conn.transaction()?;
     let made: Vec<(String, String, String, String)> = {
         let mut statement =
@@ -1055,7 +1062,7 @@ pub(crate) fn after_answers(conn: &mut Connection) -> Result<()> {
                 if duplicate || row.reason.as_deref() == Some(LOST) {
                     // Refused while a write still waits on it, a delete of the
                     // same edge say, it goes once that one is answered.
-                    store::discard(&tx, &write)?
+                    named.is_none_or(|named| named.contains(&write)) && store::discard(&tx, &write)?
                 } else {
                     let reason = row
                         .refusal

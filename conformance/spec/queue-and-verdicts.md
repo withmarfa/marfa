@@ -1204,13 +1204,13 @@ When a caller clears named writes, a device MUST keep every write the caller did
 
 **Reason:** an app reads answers from a drain report and clears what it read. A drain running at the same time can record another answer between the app's read and its clear; cleared with the named ones, that answer is lost unread.
 
-**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`.
+**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`, `device/classification.test.ts › clears a named write refused unsent behind a withdrawn write, and keeps the one carrying content even when named`.
 
 ### `queue-and-verdicts/clear-named-rules`
 
-When a caller clears named writes, a device MUST take out of the queue only a named write that `queue-and-verdicts/clear-answered` takes out.
+When a caller clears named writes, a device MUST take out of the queue only a named write that `queue-and-verdicts/clear-answered` or `queue-and-verdicts/clear-withdrawn-leftovers` takes out.
 
-**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`.
+**Tests:** `device/queue.test.ts › clears only the answered writes it is told to, and keeps every other answered write`, `device/classification.test.ts › clears a named write refused unsent behind a withdrawn write, and keeps the one carrying content even when named`.
 
 ### `queue-and-verdicts/clear-named-unknown`
 
