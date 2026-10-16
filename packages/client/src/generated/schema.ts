@@ -2865,6 +2865,7 @@ export interface components {
                 };
             };
         };
+        /** @description An edge type to register. */
         EdgeTypeRegistrationRequest: {
             /** @description The identifier of the edge type, such as `acme.list-member`. */
             id: string;

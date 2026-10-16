@@ -3024,7 +3024,8 @@
         "required": [
           "id",
           "cardinality"
-        ]
+        ],
+        "description": "An edge type to register."
       },
       "EdgeTypePage": {
         "type": "object",

@@ -323,6 +323,7 @@ const EdgeTypeRegistrationRequestSchema = z
         "`true` to widen a registered edge type's endpoint constraints in place. Retain every existing constraint token, or allow every type with `[]` or `*`. Every other definition member must stay unchanged. Leave it out or set `false` to register a new edge type. This option is not stored in the definition.",
       ),
   })
+  .describe("An edge type to register.")
   .openapi("EdgeTypeRegistrationRequest");
 
 const registerEdgeTypeRoute = createRoute({
