@@ -56,7 +56,7 @@ function marker(): string {
 interface Refusal {
   error: {
     code: string;
-    details?: { errors?: { path: string; message: string }[] };
+    details?: { unknown_body_fields?: string[] };
   };
 }
 
@@ -64,14 +64,13 @@ interface Refusal {
 async function expectRefusedNaming(
   res: Response,
   keys: string[],
-  path = "",
 ): Promise<void> {
   const body = (await res.json()) as Refusal;
   expect(res.status, JSON.stringify(body)).toBe(400);
   expect(body.error.code).toBe("validation_error");
-  const at = body.error.details?.errors?.find((e) => e.path === path);
-  expect(at, JSON.stringify(body)).toBeDefined();
-  for (const key of keys) expect(at?.message).toContain(`"${key}"`);
+  expect(body.error.details?.unknown_body_fields, JSON.stringify(body)).toEqual(
+    keys,
+  );
 }
 
 describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
@@ -134,7 +133,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
         details: {
           index: number;
           code: string;
-          details: { errors: { path: string; message: string }[] };
+          details: { unknown_body_fields: string[] };
         };
       };
     };
@@ -142,7 +141,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     expect(body.error.code).toBe("bulk_atomic_rollback");
     expect(body.error.details.index).toBe(1);
     expect(body.error.details.code).toBe("validation_error");
-    expect(body.error.details.details.errors[0]?.message).toContain('"data"');
+    expect(body.error.details.details.unknown_body_fields).toEqual(["data"]);
     expect(await tagged(tag)).toEqual([]);
   });
 
@@ -167,7 +166,7 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
         id?: string;
         error?: {
           code: string;
-          details: { errors: { path: string; message: string }[] };
+          details: { unknown_body_fields: string[] };
         };
       }[];
     };
@@ -176,9 +175,10 @@ describe.each<Caller>(["key", "app"])("as the %s", (caller) => {
     expect(kept?.outcome).toBe("created");
     expect(refused?.outcome).toBe("errored");
     expect(refused?.error?.code).toBe("validation_error");
-    const message = refused?.error?.details.errors[0]?.message;
-    expect(message).toContain('"capture_latitude"');
-    expect(message).toContain('"device"');
+    expect(refused?.error?.details.unknown_body_fields).toEqual([
+      "capture_latitude",
+      "device",
+    ]);
     expect(await tagged(tag)).toEqual([kept?.id]);
   });
 

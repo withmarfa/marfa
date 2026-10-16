@@ -32,6 +32,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
+import { CLOSED_BY_HANDLER } from "./_unknown-body-keys.js";
 import {
   changesSchema,
   isLockedPlatformType,
@@ -206,9 +207,13 @@ export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
  *
  * The objects are loose, so a key the declaration does not name reaches the
  * validator as it was sent, which refuses it as `invalid_schema` naming its
- * path. A strict object would strip the key instead and register the type
- * without it. `refuseAsTheValidatorWould` answers the shape check with this
- * door's codes rather than a generic one.
+ * path, whether it sits at the top level or in a field, `display_hints` or
+ * another block: one refusal in this door's own code, which restore applies
+ * to an archived type too. A strict body would refuse the top-level key
+ * alone, as `validation_error`, ahead of that check. `CLOSED_BY_HANDLER`
+ * makes the document say what the door does, and
+ * `refuseAsTheValidatorWould` answers the shape check with this door's codes
+ * rather than a generic one.
  *
  * The declaration is the tighter of the two on three axes the validator
  * leaves to normalization: a `description`, a `required` flag or an
@@ -284,19 +289,28 @@ const TypeDefinitionInputSchema = z
       .describe("The type's identifier, such as `acme.deal` or `user.recipe`."),
   })
   .describe("A declared item type.")
+  .meta(CLOSED_BY_HANDLER)
   .openapi("TypeDefinitionInput");
 
 /**
  * The same body on the replacement door, where the path names the type.
  *
- * No `id`: the handler composes the schema from the path's identifier, and a
- * body carrying one has never moved anything. Declaring it would refuse a
- * body the door accepts, since a loose object passes an undeclared key
- * through untouched.
+ * The path names the type, so an `id` in the body moves nothing; it is
+ * declared because `GET /types/{id}` answers one, and a client that reads a
+ * type, changes one thing and replaces it sends it back.
  */
 const TypeDefinitionUpdateSchema = z
-  .looseObject(typeDefinitionBody)
+  .looseObject({
+    ...typeDefinitionBody,
+    id: z
+      .string()
+      .optional()
+      .describe(
+        "The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing.",
+      ),
+  })
   .describe("The schema that replaces a type's stored one.")
+  .meta(CLOSED_BY_HANDLER)
   .openapi("TypeDefinitionUpdate");
 
 /**

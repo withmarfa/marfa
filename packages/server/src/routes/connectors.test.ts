@@ -843,9 +843,10 @@ describe("a body field the operation does not declare", () => {
     expect(taken.status).toBe(201);
     const marked = await request(ctx.app, "POST", "/connectors", {
       key: mine.key,
-      body: { name: "stray", _client: "kept by the caller" },
+      body: { name: "stray", _client: "refused like any other field" },
     });
-    expect(marked.status).toBe(200);
+    expect(marked.status).toBe(400);
+    expect(await unknownFields(marked)).toEqual(["_client"]);
   });
 
   it("refuses a run that carries one, and records nothing", async () => {

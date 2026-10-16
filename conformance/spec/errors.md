@@ -144,6 +144,46 @@ When a request to an operation requiring a credential, other than `POST /auth/oa
 
 **Tests:** `compliance/json-body-doors.test.ts › answers 401 on every JSON door to a request with no credential, whatever body it sent, where a credential reaches the body's refusal`, `› answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body`, `› answers 400 to a key that holds no grant on an item's type, since that grant is checked after the body, and 403 once the body is JSON`.
 
+## A body key the operation does not declare
+
+A request body that names a key its operation does not declare is refused where every operation refuses it. The keys are named in `details.unknown_body_fields`, which holds each key's path from the root of the body: a top-level key by its name, and a key inside an object the operation fixes the keys of by its dotted path, such as `filter.since`.
+
+### `errors/undeclared-body-key`
+
+If a request to an operation that takes a JSON body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, except on `PUT /items/{id}/extensions/{namespace}`, `POST /auth/oauth2/register`, `POST /types`, `PUT /types/{id}`, `POST /types/normalize` and `POST /edge-types`.
+
+**Reason:** a key the server dropped answers a request half performed as success. A caller who misspells `dry_run`, or sends `data` where `properties` belongs, is told the whole of it landed. The two bodies left open are open by design, and the four that define a schema refuse the key as `invalid_schema`, which `types/unknown-key` and `edges/types-register-unknown-key` state.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`, `compliance/owner.test.ts › refuses a key the claim does not declare without consuming valid setup proof`.
+
+### `errors/undeclared-body-key-underscore`
+
+If a request to an operation that takes a JSON body carries a top-level key the operation does not declare and that starts with an underscore, then the server MUST answer `400 validation_error` naming the key in `details.unknown_body_fields`, except on the operations `errors/undeclared-body-key` excepts.
+
+**Reason:** the query string reserves the underscore for the client (`search-and-filters/undeclared-key`) because a client that appends a cache-buster to a URL has no other place to put it. A body has no such need: its client writes every key, and what it keeps for itself has a declared place in `properties`, a tag or an extension. A prefix that the server ignored in a body would be a second way for a dropped field to look like success.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`, `compliance/connector-codes.test.ts › refuses a body field it does not declare, on every connector and inbound operation that takes a body`, `compliance/bulk-limits.test.ts › refuses a body key the bulk-action operation does not declare, naming it`.
+
+### `errors/undeclared-body-key-order`
+
+The server MUST list the keys in `details.unknown_body_fields` in ascending order, whichever order the body sent them in.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › come in ascending order, whatever order the body sent them in`.
+
+### `errors/undeclared-body-key-nothing`
+
+If the server refuses a request under `errors/undeclared-body-key`, then the server MUST NOT perform the operation's write.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
+
+### `errors/undeclared-body-key-open`
+
+The server MUST NOT refuse a top-level key of the body of `PUT /items/{id}/extensions/{namespace}` or of `POST /auth/oauth2/register` as undeclared.
+
+**Reason:** the first body is the extension's own document, whose keys its namespace decides. The second follows RFC 7591, under which a server ignores client metadata it does not understand.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › PUT /items/{id}/extensions/{namespace} stores the extension's own document, whatever its keys`, `› POST /auth/oauth2/register ignores client metadata it does not understand`.
+
 ## Registration, which the sign-in library answers
 
 ### `errors/register-415`

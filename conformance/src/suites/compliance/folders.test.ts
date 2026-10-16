@@ -296,7 +296,6 @@ describe("the folder door", () => {
       "search.beneath",
     ],
     [{ search: { state: ["trashed"] } }, "validation_error", "search.state.0"],
-    [{ search: { tags: ["x"] } }, "validation_error", "search"],
     [
       { defaults: { type: "core.no-such-type" } },
       "unknown_type",
@@ -390,6 +389,32 @@ describe("the folder door", () => {
       }
     },
   );
+
+  it("refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change", async () => {
+    const { id } = await folder();
+    for (const r of [
+      await client.createFolder({
+        title: "refused",
+        search: { tags: ["x"] },
+        owner: "x",
+      } as never),
+      await client.updateFolder(id, {
+        version: 1,
+        search: { tags: ["x"] },
+        owner: "x",
+      } as never),
+    ]) {
+      expect(r.status).toBe(400);
+      const refusal = r.error as unknown as {
+        error: { code: string; details?: { unknown_body_fields?: string[] } };
+      };
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.unknown_body_fields).toEqual([
+        "owner",
+        "search.tags",
+      ]);
+    }
+  });
 
   it("caps defaults.edges at 100 edge types and 100 targets for each", async () => {
     const target = "01920000-0000-7000-8000-000000000000";

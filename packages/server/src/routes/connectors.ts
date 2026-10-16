@@ -41,7 +41,10 @@ import {
 } from "../page-limits.js";
 import { nullableRef, pageOf, wholeListOf } from "./_schemas.js";
 import { connectorsForReader } from "./_connector-reach.js";
-import { refuseUnknownBodyKeys } from "./_unknown-body-keys.js";
+import {
+  CLOSED_BY_HANDLER,
+  refuseUnknownBodyKeys,
+} from "./_unknown-body-keys.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -115,38 +118,42 @@ const ConnectorSchema = z
   )
   .openapi("Connector");
 
-const RegisterSchema = z.object({
-  name: maxStringLength(z.string().min(1), 200).describe(
-    "The connector's name.",
-  ),
-  description: maxStringLength(z.string(), 2000)
-    .optional()
-    .describe(
-      "What the connector does. Leave it out for none: registering again without it clears the old one.",
+const RegisterSchema = z
+  .object({
+    name: maxStringLength(z.string().min(1), 200).describe(
+      "The connector's name.",
     ),
-});
+    description: maxStringLength(z.string(), 2000)
+      .optional()
+      .describe(
+        "What the connector does. Leave it out for none: registering again without it clears the old one.",
+      ),
+  })
+  .meta(CLOSED_BY_HANDLER);
 
-const RunInputSchema = z.object({
-  outcome: OutcomeSchema,
-  started_at: z
-    .string()
-    .refine(isValidTimestamp, "an ISO 8601 timestamp")
-    .describe(
-      "When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC.",
-    ),
-  finished_at: z
-    .string()
-    .refine(isValidTimestamp, "an ISO 8601 timestamp")
-    .describe(
-      "When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`.",
-    ),
-  summary: maxStringLength(z.string(), 2000)
-    .optional()
-    .describe("A short summary of the run. Leave it out for none."),
-  error: maxStringLength(z.string(), 2000)
-    .optional()
-    .describe("The error the run hit. Leave it out for none."),
-});
+const RunInputSchema = z
+  .object({
+    outcome: OutcomeSchema,
+    started_at: z
+      .string()
+      .refine(isValidTimestamp, "an ISO 8601 timestamp")
+      .describe(
+        "When the run started, as an ISO 8601 time. Marfa converts it to UTC. A time with no offset is read as UTC.",
+      ),
+    finished_at: z
+      .string()
+      .refine(isValidTimestamp, "an ISO 8601 timestamp")
+      .describe(
+        "When the run finished, as an ISO 8601 time. Marfa converts it to UTC. It can't be before `started_at`.",
+      ),
+    summary: maxStringLength(z.string(), 2000)
+      .optional()
+      .describe("A short summary of the run. Leave it out for none."),
+    error: maxStringLength(z.string(), 2000)
+      .optional()
+      .describe("The error the run hit. Leave it out for none."),
+  })
+  .meta(CLOSED_BY_HANDLER);
 
 export const IdParam = z.object({
   id: z.string().describe("The ID of the connector."),
@@ -186,18 +193,20 @@ const InboundEndpointSchema = z
   )
   .openapi("InboundEndpoint");
 
-const EndpointInputSchema = z.object({
-  label: maxStringLength(z.string().min(1), 200)
-    .optional()
-    .describe("A name for people to read. Leave it out for none."),
-  duplicate_header: z
-    .string()
-    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/, "an HTTP header name")
-    .optional()
-    .describe(
-      "A header whose value identifies a delivery, such as `X-GitHub-Delivery`. Marfa stores a delivery that repeats a value and marks it as a repeat. Leave it out to mark none.",
-    ),
-});
+const EndpointInputSchema = z
+  .object({
+    label: maxStringLength(z.string().min(1), 200)
+      .optional()
+      .describe("A name for people to read. Leave it out for none."),
+    duplicate_header: z
+      .string()
+      .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/, "an HTTP header name")
+      .optional()
+      .describe(
+        "A header whose value identifies a delivery, such as `X-GitHub-Delivery`. Marfa stores a delivery that repeats a value and marks it as a repeat. Leave it out to mark none.",
+      ),
+  })
+  .meta(CLOSED_BY_HANDLER);
 
 const InboundOutcomeSchema = z.enum(["processed", "duplicate", "rejected"]);
 
@@ -251,16 +260,18 @@ const DeliveryParam = IdParam.extend({
   delivery_id: z.string().describe("The ID of the delivery."),
 });
 
-const HandledInputSchema = z.object({
-  ids: z
-    .array(z.string())
-    .min(1)
-    .max(MAX_PAGE_LIMIT)
-    .describe("The IDs of the deliveries to mark."),
-  outcome: InboundOutcomeSchema.describe(
-    "How the connector handled them: `processed`, `duplicate` or `rejected`. Marfa records it and acts on nothing.",
-  ),
-});
+const HandledInputSchema = z
+  .object({
+    ids: z
+      .array(z.string())
+      .min(1)
+      .max(MAX_PAGE_LIMIT)
+      .describe("The IDs of the deliveries to mark."),
+    outcome: InboundOutcomeSchema.describe(
+      "How the connector handled them: `processed`, `duplicate` or `rejected`. Marfa records it and acts on nothing.",
+    ),
+  })
+  .meta(CLOSED_BY_HANDLER);
 
 /** Live endpoints one registration may hold. */
 export const MAX_LIVE_ENDPOINTS = 10;

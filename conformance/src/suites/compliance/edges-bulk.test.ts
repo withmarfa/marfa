@@ -309,13 +309,9 @@ describe("edges.bulk", () => {
   });
 
   it("refuses a page or an entry carrying a key the operation does not declare, naming each one", async () => {
-    const messages = (details: unknown): string =>
-      (
-        (details as { errors?: { message: string }[] } | undefined)?.errors ??
-        []
-      )
-        .map((e) => e.message)
-        .join(" ");
+    const named = (details: unknown): string[] =>
+      (details as { unknown_body_fields?: string[] } | undefined)
+        ?.unknown_body_fields ?? [];
     const edgesOf = async (id: string): Promise<string[]> => {
       const list = await client.listItemEdges(id, { edge_type: "about" });
       expect(list.ok).toBe(true);
@@ -336,7 +332,7 @@ describe("edges.bulk", () => {
     });
     expect(envelope.status).toBe(400);
     expect(envelope.error?.error.code).toBe("validation_error");
-    expect(messages(envelope.error?.error.details)).toContain('"atomc"');
+    expect(named(envelope.error?.error.details)).toContain("atomc");
     expect(await edgesOf(a.sourceId)).toEqual([]);
 
     // An entry's keys under `atomic`: the page rolls back on that entry.
@@ -350,8 +346,8 @@ describe("edges.bulk", () => {
       { index: number; code: string; details: unknown } | undefined;
     expect(inner?.index).toBe(1);
     expect(inner?.code).toBe("validation_error");
-    expect(messages(inner?.details)).toContain('"weight"');
-    expect(messages(inner?.details)).toContain('"data"');
+    expect(named(inner?.details)).toContain("weight");
+    expect(named(inner?.details)).toContain("data");
     expect(await edgesOf(a.sourceId)).toEqual([]);
     expect(await edgesOf(b.sourceId)).toEqual([]);
 
@@ -366,9 +362,7 @@ describe("edges.bulk", () => {
     trackEdge(ctx, best.data.results[0]!.id!);
     expect(best.data.results[1]?.outcome).toBe("errored");
     expect(best.data.results[1]?.error?.code).toBe("validation_error");
-    expect(messages(best.data.results[1]?.error?.details)).toContain(
-      '"weight"',
-    );
+    expect(named(best.data.results[1]?.error?.details)).toContain("weight");
     expect(await edgesOf(a.sourceId)).toEqual([a.targetId]);
     expect(await edgesOf(b.sourceId)).toEqual([]);
   });

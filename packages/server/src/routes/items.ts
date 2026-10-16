@@ -1080,7 +1080,7 @@ const putMetadataRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             tags: z
               .array(TagSchema)
               .optional()
@@ -1113,7 +1113,7 @@ const putMetadataRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `tags` is not a list of valid tags, or has more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
+        "- `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1150,7 +1150,7 @@ const patchMetadataRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             tags: z
               .array(TagSchema)
               .optional()
@@ -1182,7 +1182,7 @@ const patchMetadataRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `tags` is not a list of valid tags, or the item would hold more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
+        "- `validation_error`: `tags` is not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {
@@ -1219,7 +1219,7 @@ const addTagsRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             tags: z
               .array(TagSchema)
               .min(1, "tags must be a non-empty array of strings")
@@ -1251,7 +1251,7 @@ const addTagsRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: `tags` is empty or not a list of valid tags, or the item would hold more than 100.\n- `missing_required_field`: `tags` is missing.\n- `invalid_id`: the ID is not a valid item ID.",
+        "- `validation_error`: `tags` is empty or not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `tags` is missing.\n- `invalid_id`: the ID is not a valid item ID.",
     },
     401: {
       content: {

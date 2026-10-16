@@ -3099,8 +3099,6 @@ export interface components {
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             /** @description The type's identifier, such as `acme.deal` or `user.recipe`. */
             id: string;
-        } & {
-            [key: string]: unknown;
         };
         /** @description One type. */
         TypeResponse: {
@@ -3182,8 +3180,8 @@ export interface components {
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
-        } & {
-            [key: string]: unknown;
+            /** @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing. */
+            id?: string;
         };
         /** @description An error response. */
         TypeHasSubtypesOrTypeInUseRefusal: {
@@ -6339,7 +6337,7 @@ export interface operations {
             /**
              * @description - `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.
              *     - `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.
-             *     - `validation_error`: `state` is not a valid state.
+             *     - `validation_error`: `state` is invalid, or the body has a field this endpoint doesn't take.
              *     - `missing_required_field`: `state` is missing.
              *     - `invalid_id`: the ID is not valid.
              */
@@ -6871,7 +6869,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `tags` is not a list of valid tags, or has more than 100.
+             * @description - `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: the ID is not a valid item ID.
              */
             400: {
@@ -7087,7 +7085,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `tags` is not a list of valid tags, or the item would hold more than 100.
+             * @description - `validation_error`: `tags` is not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: the ID is not a valid item ID.
              */
             400: {
@@ -7303,7 +7301,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `tags` is empty or not a list of valid tags, or the item would hold more than 100.
+             * @description - `validation_error`: `tags` is empty or not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.
              *     - `missing_required_field`: `tags` is missing.
              *     - `invalid_id`: the ID is not a valid item ID.
              */
@@ -7922,7 +7920,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key. */
+                    /** @description The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key. */
                     items: {
                         /** @description A UUIDv7 for the item. Leave it out and Marfa creates one. If no item matches the natural key, an `id` naming an existing item matches that item: under `upsert` only a live item you can read. */
                         id?: string;
@@ -8771,7 +8769,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `ids` is missing.
-             *     - `validation_error`: `ids` is not a list, or has more than 100 IDs.
+             *     - `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: an ID in `ids` is not a valid item ID.
              */
             400: {
@@ -11377,7 +11375,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key. */
+                    /** @description The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key. */
                     edges: {
                         /** @description A UUIDv7 you choose for the edge, if the entry creates one. Leave it out and Marfa creates one. */
                         id?: string;
@@ -21262,7 +21260,7 @@ export interface operations {
                     "application/json": components["schemas"]["Owner"];
                 };
             };
-            /** @description Owner details are invalid. */
+            /** @description Owner details are invalid, or the body has a field this endpoint doesn't take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22539,7 +22537,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; `secret` is too short; or `type_filter` is `*`, malformed or a list.
+             * @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; `secret` is too short; or `type_filter` is `*`, malformed or a list; or the body has a field this endpoint doesn't take.
              *     - `missing_required_field`: `url` or `events` is missing.
              */
             400: {
@@ -23010,7 +23008,7 @@ export interface operations {
                     "application/json": components["schemas"]["Webhook"];
                 };
             };
-            /** @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; or `type_filter` is `*`, malformed or a list. */
+            /** @description - `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; or `type_filter` is `*`, malformed or a list; or the body has a field this endpoint doesn't take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -12,7 +12,10 @@ import {
   TierEnum,
   WrittenPropertiesSchema,
 } from "../routes/_schemas.js";
-import type { DeclaresKeys } from "../routes/_unknown-body-keys.js";
+import {
+  CLOSED_BY_HANDLER,
+  type DeclaresKeys,
+} from "../routes/_unknown-body-keys.js";
 import { REFUSAL_TEXT } from "../openapi.js";
 
 /**
@@ -75,6 +78,7 @@ export const BulkActionFilterShape = z
   .describe(
     "Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`.",
   )
+  .meta(CLOSED_BY_HANDLER)
   .openapi("BulkActionFilter");
 
 /** The same shape as the request takes it: absent means "every item". */
@@ -94,12 +98,16 @@ const BulkActionBaseSchema = z.object({
   enable_fanout: z.boolean().optional(),
 });
 
+/** One action's body, closed in the document like the rest of the door. */
+const closedVariant = <S extends z.ZodRawShape>(shape: S) =>
+  BulkActionBaseSchema.extend(shape).meta(CLOSED_BY_HANDLER);
+
 export const BulkActionInputSchema = z.discriminatedUnion("action", [
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("transition"),
     state: z.enum(["active", "archived", "trashed"]),
   }),
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("purge"),
     confirm: z.literal("PURGE").optional(),
     expected_ids: z
@@ -110,20 +118,20 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
         "The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone.",
       ),
   }),
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("update_tags"),
     add: z.array(TagSchema).optional(),
     remove: z.array(z.string()).optional(),
   }),
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("update_tier"),
     tier: TierEnum,
   }),
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("update_properties"),
     patch: WrittenPropertiesSchema,
   }),
-  BulkActionBaseSchema.extend({
+  closedVariant({
     action: z.literal("update_occurred_at"),
     occurred_at: z.string(),
   }),

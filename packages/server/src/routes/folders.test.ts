@@ -102,7 +102,6 @@ describe("POST /folders", () => {
       "search.beneath",
     ],
     [{ search: { state: ["trashed"] } }, "validation_error", "search.state.0"],
-    [{ search: { owner: "x" } }, "validation_error", "search"],
     [{ defaults: { type: "core.nope" } }, "unknown_type", "defaults.type"],
     [
       { defaults: { edges: { "no-such-edge": [] } } },
@@ -190,6 +189,26 @@ describe("POST /folders", () => {
       }
     },
   );
+
+  it("names a setting a block does not declare by its path from the body, on a create and on a change", async () => {
+    const folder = await createFolder({ title: "Target" });
+    for (const res of [
+      await create({ title: "Bad", search: { owner: "x" } }),
+      await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+        key: ctx.workingKey,
+        body: { version: 1, search: { owner: "x" } },
+      }),
+    ]) {
+      expect(res.status).toBe(400);
+      const refusal = await body<{
+        error: { code: string; details?: { unknown_body_fields?: string[] } };
+      }>(res);
+      expect(refusal.error.code).toBe("validation_error");
+      expect(refusal.error.details?.unknown_body_fields).toEqual([
+        "search.owner",
+      ]);
+    }
+  });
 
   it("caps defaults.edges at 100 edge types and 100 targets each, on a create and on a change", async () => {
     const target = "01920000-0000-7000-8000-000000000000";

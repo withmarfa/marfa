@@ -59,7 +59,7 @@ If `POST /edges` names no `source_id`, no `target_id` or no `edge_type`, then th
 
 ### `edges/create-undeclared-key`
 
-If `POST /edges` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+If `POST /edges` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a dropped key is a request half performed and answered as success. Keys inside `properties` are the edge type's, not the operation's.
 
@@ -67,7 +67,7 @@ If `POST /edges` carries a top-level body key the operation does not declare, th
 
 ### `edges/update-undeclared-key`
 
-If `PATCH /edges/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+If `PATCH /edges/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the edge type's, not the operation's.
 
@@ -677,7 +677,7 @@ If a `POST /edges/bulk` page holds more than 5,000 entries, then the server MUST
 
 ### `edges/bulk-undeclared-key`
 
-If a `POST /edges/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+If a `POST /edges/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a misspelled `atomic` would otherwise be dropped and the page written under the default.
 
@@ -685,7 +685,7 @@ If a `POST /edges/bulk` body carries a top-level key the operation does not decl
 
 ### `edges/bulk-entry-undeclared-key`
 
-If a `POST /edges/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key.
+If a `POST /edges/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key in the entry's own `details.unknown_body_fields`.
 
 **Reason:** the entry is a create or an update, refused as `POST /edges` refuses one, and refused as an entry so that `atomic` decides what happens to the rest of the page.
 

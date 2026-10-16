@@ -158,23 +158,24 @@ describe("the order PUT /config refuses in", () => {
       expect(errorsOf(both), label).toEqual(errorsOf(alone));
     }
 
-    // A top-level key the server does not know is reported at the body
-    // itself, the empty path, though a known setting sits beside it, and a
-    // key one level down is reported at the lever that holds it.
+    // A top-level key the server does not know is named, though a known
+    // setting sits beside it, and a key one level down is named by its path
+    // from the body.
+    const unknownOf = (answer: {
+      error?: { error: { details?: Record<string, unknown> } };
+    }): unknown => answer.error?.error.details?.["unknown_body_fields"];
     const misspelled = await client.updateConfig({
       trash_retention_day: 3,
       audit_retention_days: 31,
     });
     expect(misspelled.status).toBe(400);
     expect(misspelled.error?.error.code).toBe("validation_error");
-    expect(errorsOf(misspelled).map((entry) => entry.path)).toEqual([""]);
+    expect(unknownOf(misspelled)).toEqual(["trash_retention_day"]);
     const nested = await client.updateConfig({
       enforcement: { strict_mode: { types: ["core.note"] }, not_a_lever: true },
     });
     expect(nested.status).toBe(400);
-    expect(errorsOf(nested).map((entry) => entry.path)).toEqual([
-      "enforcement",
-    ]);
+    expect(unknownOf(nested)).toEqual(["enforcement.not_a_lever"]);
 
     // Reverse witness: with the shape valid, the identity is what is refused.
     const identity = await client.updateConfig({ instance_id: ELSEWHERE });

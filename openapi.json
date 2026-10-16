@@ -2456,7 +2456,8 @@
             "description": "A filter expression, in the grammar `filter` takes on `GET /items`."
           }
         },
-        "description": "Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`."
+        "description": "Which items a bulk action applies to. Each field narrows the match as the same filter does on `GET /items`.",
+        "additionalProperties": false
       },
       "ForbiddenRefusal": {
         "type": "object",
@@ -3044,7 +3045,8 @@
           "id",
           "cardinality"
         ],
-        "description": "An edge type to register."
+        "description": "An edge type to register.",
+        "additionalProperties": false
       },
       "EdgeTypePage": {
         "type": "object",
@@ -3579,7 +3581,7 @@
           "fields",
           "id"
         ],
-        "additionalProperties": {},
+        "additionalProperties": false,
         "description": "A declared item type."
       },
       "TypeResponse": {
@@ -3797,12 +3799,16 @@
                 "description": "How Marfa merges conflicting edits to the type's items."
               }
             ]
+          },
+          "id": {
+            "type": "string",
+            "description": "The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing."
           }
         },
         "required": [
           "fields"
         ],
-        "additionalProperties": {},
+        "additionalProperties": false,
         "description": "The schema that replaces a type's stored one."
       },
       "TypeHasSubtypesOrTypeInUseRefusal": {
@@ -11155,7 +11161,8 @@
                 },
                 "required": [
                   "state"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -11192,7 +11199,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is not a valid state.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
+            "description": "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is invalid, or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12220,7 +12227,8 @@
                     "default": [],
                     "description": "The tags the item will have: at most 100, each up to 128 characters. An empty list clears them."
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -12257,7 +12265,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags, or has more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12656,7 +12664,8 @@
                     },
                     "description": "Tags to add: each up to 128 characters. The item can hold at most 100."
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -12693,7 +12702,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags, or the item would hold more than 100.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13098,7 +13107,8 @@
                 },
                 "required": [
                   "tags"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -13135,7 +13145,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is empty or not a list of valid tags, or the item would hold more than 100.\n- `missing_required_field`: `tags` is missing.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is empty or not a list of valid tags or the item would hold more than 100, or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `tags` is missing.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -14439,7 +14449,7 @@
                         "type"
                       ]
                     },
-                    "description": "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key."
+                    "description": "The entries to write, at most 5,000. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key."
                   },
                   "mode": {
                     "type": "string",
@@ -14849,7 +14859,8 @@
                     "required": [
                       "action",
                       "state"
-                    ]
+                    ],
+                    "additionalProperties": false
                   },
                   {
                     "type": "object",
@@ -14891,7 +14902,8 @@
                     },
                     "required": [
                       "action"
-                    ]
+                    ],
+                    "additionalProperties": false
                   },
                   {
                     "type": "object",
@@ -14933,7 +14945,8 @@
                     },
                     "required": [
                       "action"
-                    ]
+                    ],
+                    "additionalProperties": false
                   },
                   {
                     "type": "object",
@@ -14965,7 +14978,8 @@
                     "required": [
                       "action",
                       "tier"
-                    ]
+                    ],
+                    "additionalProperties": false
                   },
                   {
                     "type": "object",
@@ -14998,7 +15012,8 @@
                     "required": [
                       "action",
                       "patch"
-                    ]
+                    ],
+                    "additionalProperties": false
                   },
                   {
                     "type": "object",
@@ -15030,7 +15045,8 @@
                     "required": [
                       "action",
                       "occurred_at"
-                    ]
+                    ],
+                    "additionalProperties": false
                   }
                 ]
               }
@@ -16090,7 +16106,8 @@
                 },
                 "required": [
                   "ids"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -16153,7 +16170,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list, or has more than 100 IDs.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
+            "description": "- `missing_required_field`: `ids` is missing.\n- `validation_error`: `ids` is not a list or has more than 100 IDs, or the body has a field this endpoint doesn't take.\n- `invalid_id`: an ID in `ids` is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21502,7 +21519,7 @@
                       ],
                       "description": "One edge to create or update."
                     },
-                    "description": "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.errors` names each key."
+                    "description": "The entries to write, at most 5,000. The items they join must already exist. An entry with a key this operation doesn't declare is refused as `validation_error`, and `details.unknown_body_fields` names each key."
                   },
                   "mode": {
                     "type": "string",
@@ -28603,7 +28620,8 @@
                 },
                 "required": [
                   "name"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -30104,7 +30122,8 @@
                   "outcome",
                   "started_at",
                   "finished_at"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -30737,7 +30756,8 @@
                     "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$",
                     "description": "A header whose value identifies a delivery, such as `X-GitHub-Delivery`. Marfa stores a delivery that repeats a value and marks it as a repeat. Leave it out to mark none."
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -32406,7 +32426,8 @@
                 "required": [
                   "ids",
                   "outcome"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -32759,7 +32780,8 @@
                 },
                 "required": [
                   "process"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -33792,7 +33814,8 @@
                 "required": [
                   "process",
                   "state"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -34547,7 +34570,8 @@
                 },
                 "required": [
                   "process"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -35279,7 +35303,8 @@
                 },
                 "required": [
                   "item_ids"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -41267,7 +41292,8 @@
                 "required": [
                   "email",
                   "password"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -41292,7 +41318,7 @@
             }
           },
           "400": {
-            "description": "Owner details are invalid.",
+            "description": "Owner details are invalid, or the body has a field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
@@ -43556,7 +43582,8 @@
                 "required": [
                   "url",
                   "events"
-                ]
+                ],
+                "additionalProperties": false
               }
             }
           }
@@ -43590,7 +43617,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; `secret` is too short; or `type_filter` is `*`, malformed or a list.\n- `missing_required_field`: `url` or `events` is missing.",
+            "description": "- `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; `secret` is too short; or `type_filter` is `*`, malformed or a list; or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `url` or `events` is missing.",
             "content": {
               "application/json": {
                 "schema": {
@@ -44445,7 +44472,8 @@
                     "type": "boolean",
                     "description": "`false` stops sending events and cancels pending deliveries. `true` starts again."
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -44479,7 +44507,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; or `type_filter` is `*`, malformed or a list.",
+            "description": "- `validation_error`: a field is invalid. For example, `url` isn't `http` or `https`, carries a user name or password, or names an IP address that isn't public; `events` is empty or names an unknown event or `*`; or `type_filter` is `*`, malformed or a list; or the body has a field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {

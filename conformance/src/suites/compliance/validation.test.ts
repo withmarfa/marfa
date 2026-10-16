@@ -503,7 +503,7 @@ describe("validation edge cases", () => {
     const filter = refusal(await action({ filter: { type: "", bogus: 1 } }));
     expect(filter.status).toBe(400);
     expect(filter.code).toBe("validation_error");
-    expect(filter.details?.unknown_filter_fields).toEqual(["bogus"]);
+    expect(filter.details?.unknown_body_fields).toEqual(["filter.bogus"]);
     expect(filter.details).not.toHaveProperty("empty_parameters");
 
     // The empty value is refused ahead of the handler's own checks of the action.

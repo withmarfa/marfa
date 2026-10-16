@@ -100,7 +100,7 @@ If the `filter` of `POST /items/bulk-actions` carries `type`, `source`, `tags` o
 
 ### `search-and-filters/empty-narrowing-bulk-order`
 
-If a credential that the operation admits sends `POST /items/bulk-actions`, other than a `purge` without `confirm: "PURGE"`, with an empty `filter` field and a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's `400 validation_error`, naming it in `details.unknown_body_fields` or `details.unknown_filter_fields` and naming nothing in `details.empty_parameters`.
+If a credential that the operation admits sends `POST /items/bulk-actions`, other than a `purge` without `confirm: "PURGE"`, with an empty `filter` field and a body or `filter` key the operation does not declare, then the server MUST answer the undeclared key's `400 validation_error`, naming it in `details.unknown_body_fields`, a key of the filter as `filter.<key>`, and naming nothing in `details.empty_parameters`.
 
 **Tests:** `compliance/validation.test.ts › refuses an empty narrowing value before a missing required one, and after an undeclared key`.
 

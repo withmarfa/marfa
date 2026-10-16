@@ -110,12 +110,10 @@ describe("a field the wire does not declare", () => {
       "a create naming a field the door does not declare was answered as success",
     ).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    const createErrors = refused.error?.error.details?.errors as
-      { message: string }[] | undefined;
     expect(
-      createErrors?.some((e) => e.message.includes('"device"')),
+      refused.error?.error.details?.unknown_body_fields,
       "the refusal does not name the field the caller got wrong",
-    ).toBe(true);
+    ).toEqual(["device"]);
     const listed = await client.listItems({ tags: [tag], state: "any" });
     expect(listed.ok).toBe(true);
     expect(
@@ -153,11 +151,9 @@ describe("a field the wire does not declare", () => {
     );
     expect(refusedUpdate.status).toBe(400);
     expect(refusedUpdate.error?.error.code).toBe("validation_error");
-    const updateErrors = refusedUpdate.error?.error.details?.errors as
-      { message: string }[] | undefined;
-    expect(updateErrors?.some((e) => e.message.includes('"device"'))).toBe(
-      true,
-    );
+    expect(refusedUpdate.error?.error.details?.unknown_body_fields).toEqual([
+      "device",
+    ]);
   });
 
   it("a key inside properties is the type's, and a create carrying one is written", async () => {

@@ -76,7 +76,7 @@ When `POST /items` names both the `id` and the natural key of one item, the serv
 
 ### `items/create-undeclared-key`
 
-If `POST /items` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+If `POST /items` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a dropped key is a request half performed and answered as success: `data` sent where the operation takes `properties` creates an empty item. Keys inside `properties` are the type's, not the operation's.
 
@@ -496,6 +496,14 @@ If `POST /items/bulk-get` names `ids` that is not a list, then the server MUST a
 
 **Tests:** `compliance/bulk-get.test.ts › refuses a body whose ids is not a list`.
 
+### `items/bulk-get-undeclared-key`
+
+If `POST /items/bulk-get` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+
+**Reason:** a misspelled `include` would otherwise be dropped, and the answer would leave out the metadata, edges or extensions the caller asked for without saying so.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
+
 ### `items/bulk-get-metadata`
 
 When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answer a `metadata` list holding each answered item's metadata.
@@ -584,7 +592,7 @@ If `PATCH /items/{id}` names a `type` other than the item's without `retype: tru
 
 ### `items/update-undeclared-key`
 
-If `PATCH /items/{id}` carries a body key the operation does not declare, then the server MUST answer `400 validation_error`.
+If `PATCH /items/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a dropped key is a request half performed and answered `200`. Keys inside `properties` are the type's, not the operation's.
 
@@ -833,6 +841,14 @@ If `POST /items/{id}/transition` names a move the graph does not hold, the state
 If `POST /items/{id}/transition` names a `state` other than `active`, `archived` or `trashed`, `revoked` included, then the server MUST answer `400 validation_error` naming `state`.
 
 **Tests:** `correctness/lifecycle-transitions.test.ts › rejects a state outside the enum`, `› offers a canonical type three states, and not the fourth`.
+
+### `items/transition-undeclared-key`
+
+If `POST /items/{id}/transition` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+
+**Reason:** a key dropped from a request that otherwise fits would move the item as though nothing else had been asked.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
 
 ### `items/transition-announced`
 
@@ -1140,7 +1156,7 @@ If a `POST /items/bulk` or `POST /items/bulk-actions` body is larger than 16 MiB
 
 ### `items/bulk-undeclared-key`
 
-If a `POST /items/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key.
+If a `POST /items/bulk` body carries a top-level key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
 
 **Reason:** a misspelled `atomic` would otherwise be dropped and the page written under the default.
 
@@ -1148,7 +1164,7 @@ If a `POST /items/bulk` body carries a top-level key the operation does not decl
 
 ### `items/bulk-entry-undeclared-key`
 
-If a `POST /items/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key.
+If a `POST /items/bulk` entry carries a key the operation does not declare, then the server MUST refuse that entry as `validation_error` naming each such key in the entry's own `details.unknown_body_fields`.
 
 **Reason:** the entry is a create or an update, refused as `POST /items` and `PATCH /items/{id}` refuse one, and refused as an entry so that `atomic` decides what happens to the rest of the page.
 
@@ -1378,7 +1394,7 @@ If a bulk action's filter matches more items than its `max_items`, which is 10,0
 
 ### `items/bulk-action-undeclared`
 
-If a `POST /items/bulk-actions` body, or its filter, carries a key the operation does not declare, then the server MUST answer `400 validation_error` naming the key in `details.unknown_body_fields` or `details.unknown_filter_fields`.
+If a `POST /items/bulk-actions` body, or its filter, carries a key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, a key of the filter as `filter.<key>`.
 
 **Reason:** a dropped filter field is not a narrower match set but every item the credential may write, so the operation refuses the field rather than strips it.
 
@@ -1594,6 +1610,14 @@ If a tag write names `tags` that is not a list, then the server MUST answer `400
 
 **Tests:** `correctness/tags.test.ts › refuses a metadata patch whose tags are not an array, and answers 404 for an unknown item`, `compliance/metadata-routes.test.ts › refuses a tags body that is not an array`.
 
+### `items/metadata-undeclared-key`
+
+If `PUT /items/{id}/metadata`, `PATCH /items/{id}/metadata` or `POST /items/{id}/tags` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+
+**Reason:** a misspelled `tags` would otherwise be dropped, and the write answered as the success of a different request.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
+
 ### `items/metadata-missing`
 
 If a metadata, tag or extension operation names an item that does not exist, then the server MUST answer `404 item_not_found`.
@@ -1770,7 +1794,7 @@ If `search.types`, `defaults.type` or a `first_placement` key names a well-forme
 
 If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or edge target that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 targets for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute, carries a backslash or NUL or climbs out of the folder, a `removal_threshold` with negative `files` or a `fraction` outside 0 to 1, a `search.state` other than `active` or `archived`, or a key a setting does not declare, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`.
+**Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 targets for each`, `› refuses a key a folder setting does not declare, naming its path from the body, on a create and on a change`.
 
 ### `items/folder-placement-inside`
 

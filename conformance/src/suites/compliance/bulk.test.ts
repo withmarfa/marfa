@@ -773,13 +773,9 @@ describe("bulk", () => {
       properties: { title, body: title },
       tags: [tag],
     });
-    const messages = (details: unknown): string =>
-      (
-        (details as { errors?: { message: string }[] } | undefined)?.errors ??
-        []
-      )
-        .map((e) => e.message)
-        .join(" ");
+    const named = (details: unknown): string[] =>
+      (details as { unknown_body_fields?: string[] } | undefined)
+        ?.unknown_body_fields ?? [];
     const listed = async (): Promise<string[]> => {
       const list = await client.listItems({ tags: [tag], tier: "all" });
       expect(list.ok).toBe(true);
@@ -793,7 +789,7 @@ describe("bulk", () => {
     });
     expect(envelope.status).toBe(400);
     expect(envelope.error?.error.code).toBe("validation_error");
-    expect(messages(envelope.error?.error.details)).toContain('"atomc"');
+    expect(named(envelope.error?.error.details)).toContain("atomc");
     expect(await listed()).toEqual([]);
 
     // An entry's keys under `atomic`: the page rolls back on that entry.
@@ -809,8 +805,8 @@ describe("bulk", () => {
       { index: number; code: string; details: unknown } | undefined;
     expect(inner?.index).toBe(1);
     expect(inner?.code).toBe("validation_error");
-    expect(messages(inner?.details)).toContain('"data"');
-    expect(messages(inner?.details)).toContain('"device"');
+    expect(named(inner?.details)).toContain("data");
+    expect(named(inner?.details)).toContain("device");
     expect(await listed()).toEqual([]);
 
     // Without `atomic`, the entry alone is refused, and the witness: the
@@ -828,7 +824,7 @@ describe("bulk", () => {
     trackItem(ctx, kept!.id!);
     expect(refused?.outcome).toBe("errored");
     expect(refused?.error?.code).toBe("validation_error");
-    expect(messages(refused?.error?.details)).toContain('"data"');
+    expect(named(refused?.error?.details)).toContain("data");
     expect(await listed()).toEqual([kept!.id]);
   });
 
@@ -1060,8 +1056,8 @@ describe("bulk_action time filters", () => {
         filter: { [undeclared]: "2023-01-01T00:00:00.000Z" } as never,
       });
       expect(res.status).toBe(400);
-      expect(res.error?.error.details?.unknown_filter_fields).toEqual([
-        undeclared,
+      expect(res.error?.error.details?.unknown_body_fields).toEqual([
+        `filter.${undeclared}`,
       ]);
     }
   });

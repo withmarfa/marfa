@@ -22,6 +22,10 @@ import {
 } from "./middleware/undeclared-query-keys.js";
 import { refuseEmptyNarrowingValues } from "./middleware/empty-narrowing-values.js";
 import { isJsonContentType } from "./middleware/json-content-type.js";
+import {
+  undeclaredBodyFieldsRefusal,
+  undeclaredKeyPaths,
+} from "./routes/_unknown-body-keys.js";
 
 /**
  * Put a route's guards ahead of everything it declares for itself.
@@ -264,6 +268,17 @@ export function createOpenAPIRouter<
             `${field} is required`,
             { field },
           );
+        }
+
+        // A key the body carries and its door does not declare, at any depth
+        // of a strict schema, is named where every door names it. It is
+        // judged after a missing field and before every other fault, so a
+        // caller is told the shape of the request is wrong before being told
+        // what its values got wrong.
+        const undeclared =
+          result.target === "json" ? undeclaredKeyPaths(issues) : [];
+        if (undeclared.length > 0) {
+          throw undeclaredBodyFieldsRefusal(undeclared);
         }
 
         throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Validation failed", {

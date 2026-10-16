@@ -71,7 +71,7 @@ const createOwnerRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             email: z
               .email()
               .max(254)
@@ -103,7 +103,7 @@ const createOwnerRoute = createRoute({
     },
     400: failure(
       ["validation_error", "missing_required_field"],
-      "Owner details are invalid.",
+      "Owner details are invalid, or the body has a field this endpoint doesn't take.",
     ),
     401: failure(
       ["unauthorized"],

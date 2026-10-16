@@ -114,7 +114,7 @@ const transitionItemRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: z.object({
+          schema: z.strictObject({
             state: z
               .enum(["active", "archived", "trashed"])
               .describe("The state to move the item to."),
@@ -148,7 +148,7 @@ const transitionItemRoute = createRoute({
         },
       },
       description:
-        "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is not a valid state.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
+        "- `invalid_transition`: the type's lifecycle doesn't allow the move, such as `trashed` to `archived`. Restore first.\n- `edge_constraint_violation`: a `block` edge holds an item that a move to `trashed` would take.\n- `validation_error`: `state` is invalid, or the body has a field this endpoint doesn't take.\n- `missing_required_field`: `state` is missing.\n- `invalid_id`: the ID is not valid.",
     },
     401: {
       content: {

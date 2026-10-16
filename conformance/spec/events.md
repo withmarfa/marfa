@@ -817,6 +817,14 @@ When `PATCH /webhooks/{id}` names `url`, `events`, `type_filter` or `active`, th
 
 **Tests:** `compliance/webhooks.test.ts › updates the url, events, type filter and active flag in place`.
 
+### `events/webhook-update-undeclared-key`
+
+If `PATCH /webhooks/{id}` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+
+**Reason:** a misspelled `active` would otherwise be dropped, and a subscription the caller meant to stop would keep sending.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
+
 ### `events/webhook-delete`
 
 When `DELETE /webhooks/{id}` names a subscription the credential holds, the server MUST remove it, so that every later request for it is answered `404 webhook_not_found`.
@@ -866,6 +874,14 @@ If `PATCH /webhooks/{id}` names `*` in `events`, then the server MUST answer `40
 If `POST /webhooks` names no `url` or no `events`, then the server MUST answer `400 missing_required_field` with `details.field` naming the first missing field.
 
 **Tests:** `compliance/webhooks.test.ts › refuses a body with no url or no events`.
+
+### `events/webhook-create-undeclared-key`
+
+If `POST /webhooks` carries a top-level body key the operation does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`.
+
+**Reason:** a misspelled `type_filter` would otherwise be dropped, and the subscription would send every event of every type.
+
+**Tests:** `compliance/undeclared-body-keys.test.ts › refuses %j as undeclared, naming each key, and writes nothing`.
 
 ### `events/webhook-refused-keeps`
 

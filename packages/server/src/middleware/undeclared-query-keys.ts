@@ -26,6 +26,9 @@
  * parameter starting with `_`, and a misspelling of a real one never does
  * either, so the hatch does not weaken the catch.
  *
+ * A request body has no such hatch, because its client writes every key; see
+ * `routes/_unknown-body-keys.ts`.
+ *
  * ## Keys that no schema can list
  *
  * `GET /items` takes `edge[<type>]` and `backref[<type>]`, where the type
