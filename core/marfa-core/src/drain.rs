@@ -53,6 +53,16 @@ pub struct DrainReport {
 }
 
 impl DrainReport {
+    /// Whether the pass sent what it could and has no wait, outage or
+    /// credential stop to tell.
+    fn has_nothing_left(&self) -> bool {
+        self.unavailable.is_none()
+            && self.stopped.is_none()
+            && self.retry_after_seconds.is_none()
+            && self.undelivered == 0
+            && self.unmade == 0
+    }
+
     /// Takes in a later pass of the same drain, so the two read as one: what
     /// was sent adds up, and what still waits is what the later pass left.
     pub(crate) fn absorb(&mut self, later: DrainReport) {
@@ -629,6 +639,22 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
 }
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+    let mut pass = ViewChange::default();
+    let result = send_queue(core, stop, &mut pass);
+    // However the pass ended, a copy whose read view moved under it is
+    // expired once, here. The pass's own error, if any, is the one told. So is
+    // a report that has something to say a caller must act on (a wait, an
+    // unavailable server, a credential stopped, a write left undelivered), and
+    // the next call is refused `copy_expired`.
+    let expiry = pass.expire(core);
+    let report = result?;
+    match expiry? {
+        Some(expired) if report.has_nothing_left() => Err(expired),
+        _ => Ok(report),
+    }
+}
+
+fn send_queue(core: &Core, stop: &AtomicBool, pass: &mut ViewChange) -> Result<DrainReport> {
     crate::catch_up::refuse_if_stopped(stop)?;
     let http = core.http()?;
     let mut report = DrainReport {
@@ -706,7 +732,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
     let unconfirmed = owed && !confirm(&mut report)?;
-    if !unconfirmed && let Some(why) = read_owed_backs(core, stop)? {
+    if !unconfirmed && let Some(why) = read_owed_backs(core, stop, pass)? {
         report.unavailable = Some(why.reason);
         waited(&mut report, why.retry_after_seconds);
     }
@@ -830,7 +856,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
                     tx.commit()?;
                 }
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
-                let unread = reconcile(core, row)?;
+                let unread = reconcile(core, row, pass)?;
                 report.unsent += 1;
                 report.verdicts.push(verdict_of(
                     row,
@@ -987,7 +1013,7 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
         let class = refine(row, &payload, &answer, classify(&answer));
         let taken = match store_fault(row) {
             Some(error) => Err(error),
-            None => settle(core, row, &answer, class, shape),
+            None => settle(core, row, &answer, class, shape, pass),
         };
         let settled = match taken {
             Ok(settled) => settled,
@@ -1762,6 +1788,8 @@ fn settle_success(
     row: &QueuedWrite,
     answer: &Answer,
     shape: Shape,
+    pass: &mut ViewChange,
+    answered_now: bool,
 ) -> Result<Settled> {
     let item = if shape == Shape::Item {
         serde_json::from_str::<WireWriteAnswer>(&answer.body).ok()
@@ -1856,7 +1884,13 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
-    let read = match read_owed(core, &owed, Bin::Held) {
+    let read = match read_owed(
+        core,
+        &owed,
+        Bin::Held,
+        pass,
+        answered_now && moves_source(row),
+    ) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
@@ -1915,7 +1949,11 @@ fn settle_success(
     // The receipt can rename a pin, but the fresh response was checked against
     // the exact pre-adoption pin set while this transaction held the writer.
     apply_read_back_unchecked(&tx, &read)?;
-    store::settle_read_back(&tx, owed.subject, &owed.id)?;
+    // Everything the receipt settles is settled; an unread answer leaves only
+    // the read owed, for the pass after the copy is built again.
+    if !matches!(read, ReadBack::Unread) {
+        store::settle_read_back(&tx, owed.subject, &owed.id)?;
+    }
     store::meta_delete(&tx, &receipt_key(&row.id))?;
     tx.commit()?;
     Ok(settled)
@@ -1927,6 +1965,7 @@ fn settle(
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
     shape: Shape,
+    pass: &mut ViewChange,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     match class {
@@ -1935,6 +1974,8 @@ fn settle(
             row,
             answer.as_ref().expect("a success has a response"),
             shape,
+            pass,
+            true,
         ),
         Classified::Environmental => Ok(Settled {
             retry_after_seconds: answer
@@ -1974,7 +2015,7 @@ fn settle(
                 }
                 tx.commit()?;
             }
-            let unread = reconcile(core, row)?;
+            let unread = reconcile(core, row, pass)?;
             Ok(Settled {
                 retry_after_seconds: unread
                     .as_ref()
@@ -1989,13 +2030,13 @@ fn settle(
             drop(conn);
             finish_counted(core, row, refusals, envelope)
         }
-        Classified::Landed { id, code } => land(core, row, answer, shape, &id, code),
+        Classified::Landed { id, code } => land(core, row, answer, shape, &id, code, pass),
         Classified::Trashed => {
             let mut response = answer.clone();
             if let Ok(answer) = &mut response {
                 answer.code = "trashed".into();
             }
-            settle(core, row, &response, Classified::Contract, shape)
+            settle(core, row, &response, Classified::Contract, shape, pass)
         }
         Classified::Unclaimed { source } => {
             let mut conn = core.conn()?;
@@ -2073,6 +2114,7 @@ fn land(
     _shape: Shape,
     id: &str,
     code: String,
+    pass: &mut ViewChange,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
     let owed = store::Owed {
@@ -2103,7 +2145,7 @@ fn land(
         tx.commit()?;
     }
     let mut settled = Settled::plain(Some(Verdict::Refused), Some(code), row.refusals);
-    let read = match read_owed(core, &owed, Bin::NotFound) {
+    let read = match read_owed(core, &owed, Bin::NotFound, pass, false) {
         Ok(read @ ReadBack::Item { held: Some(_), .. }) => read,
         // The receipt stays owed and the writes behind the create stay held,
         // but nothing else waits on a row the server may never hold again.
@@ -2170,17 +2212,25 @@ fn finish_counted(
 /// is removed only after a fresh response passes the local context guard.
 /// A contract mismatch, redirect, failed renewal or full store ends the pass.
 /// Other unavailable reads return their reason and end the pass too.
-fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<Unreadable>> {
+fn reconcile(core: &Core, row: &QueuedWrite, pass: &mut ViewChange) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
-    match read_owed(core, &owed, Bin::Held).and_then(|read| {
+    match read_owed(core, &owed, Bin::Held, pass, false).and_then(|read| {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         check_read_back(&tx, &read)?;
         same_attempt(&tx, row)?;
         restore_settled_overlay(&tx, row, &read)?;
         move_edits_back(&tx, row)?;
+        if matches!(read, ReadBack::Unread) {
+            // The queue's side is done, so the receipt goes: only the read
+            // stays owed, and a pass that came back to the receipt would
+            // rebase the writes behind it a second time.
+            store::meta_delete(&tx, &receipt_key(&row.id))?;
+            tx.commit()?;
+            return Ok(());
+        }
         apply_read_back_unchecked(&tx, &read)?;
         store::settle_read_back(&tx, owed.subject, &owed.id)?;
         store::meta_delete(&tx, &receipt_key(&row.id))?;
@@ -2221,7 +2271,11 @@ fn unreadable(error: &CoreError) -> Option<Unreadable> {
 /// Every read-back a refusal left owed, tried before anything is sent. One
 /// that fails again stays owed, and one that cannot get through ends the
 /// pass before anything is sent.
-fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>> {
+fn read_owed_backs(
+    core: &Core,
+    stop: &AtomicBool,
+    pass: &mut ViewChange,
+) -> Result<Option<Unreadable>> {
     let pending = {
         let conn = core.conn()?;
         store::queued_writes(&conn)?
@@ -2242,7 +2296,7 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
     for (row, shape) in pending {
         crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
-            if let Some(unread) = reconcile(core, &row)? {
+            if let Some(unread) = reconcile(core, &row, pass)? {
                 return Ok(Some(unread));
             }
             continue;
@@ -2263,6 +2317,7 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
                 Shape::Plain,
                 id,
                 row.reason.clone().unwrap_or_default(),
+                pass,
             )?
         } else {
             let shape = match shape.as_str() {
@@ -2270,7 +2325,7 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
                 "edge" => Shape::Edge,
                 _ => Shape::Plain,
             };
-            settle_success(core, &row, &answer, shape)?
+            settle_success(core, &row, &answer, shape, pass, false)?
         };
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {
@@ -2285,7 +2340,9 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
         if entry.subject == Subject::Item && landing.contains(&entry.id) {
             continue;
         }
-        match read_owed(core, &entry, Bin::Held).and_then(|read| apply_owed(core, &entry, &read)) {
+        match read_owed(core, &entry, Bin::Held, pass, false)
+            .and_then(|read| apply_owed(core, &entry, &read))
+        {
             Err(
                 error @ (CoreError::Redirected { .. }
                 | CoreError::ContractMismatch { .. }
@@ -2309,6 +2366,9 @@ fn read_owed_backs(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadable>>
 }
 
 fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
+    if matches!(read, ReadBack::Unread) {
+        return Ok(());
+    }
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     apply_read_back(&tx, read)?;
@@ -2319,6 +2379,9 @@ fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
 
 pub(crate) enum ReadBack {
     Nothing,
+    /// Not asked for: the pass had seen the copy's read view change, so the
+    /// server would refuse the read. The read stays owed.
+    Unread,
     Item {
         context: read_view::Context,
         id: String,
@@ -2339,7 +2402,7 @@ pub(crate) enum ReadBack {
 pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let owed = store::owed_of(&*core.conn()?, row)?;
     match owed {
-        Some(owed) => read_owed(core, &owed, Bin::Held),
+        Some(owed) => read_owed(core, &owed, Bin::Held, &mut ViewChange::default(), false),
         None => Ok(ReadBack::Nothing),
     }
 }
@@ -2352,7 +2415,52 @@ enum Bin {
     NotFound,
 }
 
-fn read_owed(core: &Core, owed: &store::Owed, bin: Bin) -> Result<ReadBack> {
+/// What a pass has learned of the copy's read view from the answers it read.
+#[derive(Default)]
+struct ViewChange {
+    /// The copy as it stood when the server first said its read view had
+    /// changed under a source move, and the reason it gave.
+    seen: Option<(read_view::Context, String)>,
+}
+
+impl ViewChange {
+    fn changed(&self) -> bool {
+        self.seen.is_some()
+    }
+
+    /// Expires the copy the server said had changed, once, however many
+    /// answers came after it. Answers the expiry to tell.
+    fn expire(self, core: &Core) -> Result<Option<CoreError>> {
+        self.seen
+            .map(|(context, reason)| context.expire(core, &reason))
+            .transpose()
+    }
+}
+
+/// Whether a write moves an edge's source, which the server answers by
+/// changing the read view (`read-views/view-moves-edge-source`). Only a move
+/// answered in the pass at hand is known to have changed it; a receipt a
+/// pass finds from an earlier one is not.
+fn moves_source(row: &QueuedWrite) -> bool {
+    row.kind == WriteKind::UpdateEdge && row.body.get("source_id").is_some()
+}
+
+/// Reads the row an answer or a refusal owes the copy. Where the read meets a
+/// changed read view and `source_move` says the write was a move of an edge's
+/// source, the pass notes it and goes on, and every read after it is left
+/// unmade, since the server would refuse each the same way
+/// (`queue-and-verdicts/edge-source-move-carries-on`); any other change ends
+/// the pass here, with the copy expired.
+fn read_owed(
+    core: &Core,
+    owed: &store::Owed,
+    bin: Bin,
+    pass: &mut ViewChange,
+    source_move: bool,
+) -> Result<ReadBack> {
+    if pass.changed() {
+        return Ok(ReadBack::Unread);
+    }
     let (context, before) = {
         let conn = core.conn()?;
         (
@@ -2360,16 +2468,33 @@ fn read_owed(core: &Core, owed: &store::Owed, bin: Bin) -> Result<ReadBack> {
             store::stamp(&conn, owed.subject, &owed.id)?,
         )
     };
+    match read_held(core, owed, bin, &context, before) {
+        Err(CoreError::CopyExpired { reason }) if source_move && reason == "read_view_changed" => {
+            pass.seen = Some((context, reason));
+            Ok(ReadBack::Unread)
+        }
+        Err(error) => Err(context.failed(core, error)?),
+        Ok(read) => Ok(read),
+    }
+}
+
+fn read_held(
+    core: &Core,
+    owed: &store::Owed,
+    bin: Bin,
+    context: &read_view::Context,
+    before: Option<store::Stamp>,
+) -> Result<ReadBack> {
     let http = context.http(core.http()?);
     if owed.subject == Subject::Edge {
         let held = match http.edge(&owed.id) {
             Ok(found) => found,
             Err(CoreError::Forbidden { .. }) => None,
             Err(error) if names_no_row(&error) => None,
-            Err(error) => return Err(context.failed(core, error)?),
+            Err(error) => return Err(error),
         };
         return Ok(ReadBack::Edge {
-            context,
+            context: context.clone(),
             id: owed.id.clone(),
             held: held.map(Box::new),
             before,
@@ -2384,14 +2509,14 @@ fn read_owed(core: &Core, owed: &store::Owed, bin: Bin) -> Result<ReadBack> {
         Ok(None) if bin == Bin::Held => match http.trashed_item(&owed.id) {
             Ok(found) => found,
             Err(CoreError::Forbidden { .. }) => None,
-            Err(error) => return Err(context.failed(core, error)?),
+            Err(error) => return Err(error),
         },
         Ok(None) | Err(CoreError::Forbidden { .. }) => None,
         Err(error) if names_no_row(&error) => None,
-        Err(error) => return Err(context.failed(core, error)?),
+        Err(error) => return Err(error),
     };
     Ok(ReadBack::Item {
-        context,
+        context: context.clone(),
         id: owed.id.clone(),
         held: held.map(Box::new),
         before,
@@ -2406,7 +2531,7 @@ fn names_no_row(error: &CoreError) -> bool {
 
 pub(crate) fn check_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
     match read {
-        ReadBack::Nothing => Ok(()),
+        ReadBack::Nothing | ReadBack::Unread => Ok(()),
         ReadBack::Item { context, .. } | ReadBack::Edge { context, .. } => context.check(conn),
     }
 }
@@ -2450,7 +2575,7 @@ fn restore_settled_overlay(
 
 fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
     match read {
-        ReadBack::Nothing => {}
+        ReadBack::Nothing | ReadBack::Unread => {}
         ReadBack::Edge {
             id,
             held: Some(edge),
@@ -2758,7 +2883,15 @@ mod tests {
                         contract_named: true,
                     })
                 };
-                settle(&core, &ahead, &answer, classify(&answer), Shape::Item).unwrap();
+                settle(
+                    &core,
+                    &ahead,
+                    &answer,
+                    classify(&answer),
+                    Shape::Item,
+                    &mut ViewChange::default(),
+                )
+                .unwrap();
                 let conn = core.conn().unwrap();
                 let expected = if code == "unauthorized" { 2 } else { 1 };
                 assert_eq!(
@@ -3204,7 +3337,8 @@ mod tests {
             let owed = store::owed_of(&core.conn().unwrap(), &row)
                 .unwrap()
                 .unwrap();
-            let read = read_owed(&core, &owed, Bin::Held).unwrap();
+            let read =
+                read_owed(&core, &owed, Bin::Held, &mut ViewChange::default(), false).unwrap();
             {
                 let conn = core.conn().unwrap();
                 read_view::advance_generation(&conn).unwrap();
@@ -3397,6 +3531,474 @@ mod tests {
         }
     }
 
+    /// A copy holding the notes `p1` and `p2`, and for each name in `edges` a
+    /// note `c-<name>` and the edge `<name>` from `p1` to it.
+    fn holding_edges(
+        server: &crate::scripted::Scripted,
+        edges: &[&str],
+    ) -> (tempfile::TempDir, Core) {
+        let (dir, core) = deleting(server, &[]);
+        {
+            let conn = core.conn().unwrap();
+            let held = ["p1", "p2"]
+                .into_iter()
+                .map(str::to_string)
+                .chain(edges.iter().map(|name| format!("c-{name}")));
+            for id in held {
+                let item = store::testing::note(&id, &id, "", "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+            }
+            for name in edges {
+                store::put_server_edge(
+                    &conn,
+                    &store::testing::wire_edge(name, "p1", &format!("c-{name}"), "parent-of"),
+                )
+                .unwrap();
+            }
+        }
+        (dir, core)
+    }
+
+    fn edge_answered(id: &str, source: &str, version: i64) -> crate::scripted::Answer {
+        crate::scripted::json(
+            200,
+            &json!({
+                "edge": {
+                    "id": id,
+                    "source_id": source,
+                    "target_id": format!("c-{id}"),
+                    "edge_type": "parent-of",
+                    "properties": {},
+                    "version": version,
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": "2026-02-01T00:00:00Z",
+                },
+                "acknowledged": false,
+            })
+            .to_string(),
+        )
+    }
+
+    fn moved_to_p2(core: &Core, edge: &str) -> QueuedWrite {
+        core.update_edge(
+            edge,
+            &crate::model::EdgeEdit {
+                base_version: Some(1),
+                source_id: Some("p2".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    fn rank_edit(core: &Core, edge: &str) -> QueuedWrite {
+        core.update_edge(
+            edge,
+            &crate::model::EdgeEdit {
+                base_version: Some(1),
+                properties: json!({ "rank": 1 }).as_object().unwrap().clone(),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    fn view_changed() -> CoreError {
+        CoreError::CopyExpired {
+            reason: "read_view_changed".into(),
+        }
+    }
+
+    #[test]
+    fn a_run_of_source_moves_is_sent_whole_and_expires_the_copy_once_at_its_end() {
+        let server = crate::scripted::Scripted::start();
+        let names = ["e1", "e2", "e3"];
+        let (_dir, core) = holding_edges(&server, &names);
+        let queued: Vec<QueuedWrite> = names.iter().map(|name| moved_to_p2(&core, name)).collect();
+        for name in names {
+            // The move, then the read of the edge under a view the move changed.
+            server.on(
+                &format!("/edges/{name}"),
+                vec![
+                    edge_answered(name, "p2", 2),
+                    crate::scripted::refusal(409, "read_view_changed"),
+                ],
+            );
+        }
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        let conn = core.conn().unwrap();
+        for row in &queued {
+            let settled = store::queued_write(&conn, &row.id).unwrap().unwrap();
+            assert_eq!(settled.verdict, Some(Verdict::Accepted), "{}", row.id);
+        }
+        let reads = |name: &str| {
+            server
+                .seen(&format!("/edges/{name}"))
+                .iter()
+                .filter(|seen| seen.read_view.is_some())
+                .count()
+        };
+        // The witness: the move that changed the view was read back under it.
+        assert_eq!(reads("e1"), 1);
+        for name in ["e2", "e3"] {
+            assert_eq!(
+                server.seen(&format!("/edges/{name}")).len(),
+                1,
+                "{name} was not sent once"
+            );
+            assert_eq!(
+                reads(name),
+                0,
+                "{name} was read under a view known to have changed"
+            );
+        }
+        assert!(read_view::expired(&conn).unwrap());
+        assert_eq!(
+            store::owed_read_backs(&conn).unwrap().len(),
+            3,
+            "the reads stay owed for the hydration that follows"
+        );
+    }
+
+    #[test]
+    fn a_view_change_met_anywhere_but_in_a_source_move_ends_the_drain_at_once() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        let (first, second) = (rank_edit(&core, "e1"), rank_edit(&core, "e2"));
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p1", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on("/edges/e2", vec![edge_answered("e2", "p1", 2)]);
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        let conn = core.conn().unwrap();
+        let verdict = |id: &str| store::queued_write(&conn, id).unwrap().unwrap().verdict;
+        assert_eq!(verdict(&first.id), Some(Verdict::Accepted));
+        assert_eq!(verdict(&second.id), None);
+        assert!(
+            server.seen("/edges/e2").is_empty(),
+            "a write behind was sent after the view changed under a write that moved no source"
+        );
+        assert!(read_view::expired(&conn).unwrap());
+    }
+
+    #[test]
+    fn the_reads_a_run_of_source_moves_left_owed_are_made_by_the_drain_after_the_copy_is_built_again()
+     {
+        let server = crate::scripted::Scripted::start();
+        let names = ["e1", "e2"];
+        let (_dir, core) = holding_edges(&server, &names);
+        for name in names {
+            moved_to_p2(&core, name);
+            server.on(
+                &format!("/edges/{name}"),
+                vec![
+                    edge_answered(name, "p2", 2),
+                    crate::scripted::refusal(409, "read_view_changed"),
+                ],
+            );
+        }
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        // A hydration, as far as the drain can tell.
+        {
+            let conn = core.conn().unwrap();
+            read_view::advance_generation(&conn).unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "20").unwrap();
+            store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+        }
+        for name in names {
+            server.on(
+                &format!("/edges/{name}"),
+                vec![crate::scripted::certified(edge_answered(name, "p2", 2))],
+            );
+        }
+        let report = core.drain().unwrap();
+        assert_eq!(
+            report.answered, 0,
+            "a write already answered was sent again"
+        );
+        let conn = core.conn().unwrap();
+        assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+        for name in names {
+            assert_eq!(
+                store::edge_by_id(&conn, name).unwrap().unwrap().source_id,
+                "p2"
+            );
+        }
+    }
+
+    #[test]
+    fn an_edit_behind_a_source_move_goes_on_the_version_the_move_made() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1"]);
+        let moved = moved_to_p2(&core, "e1");
+        let edited = rank_edit(&core, "e1");
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+                edge_answered("e1", "p2", 3),
+            ],
+        );
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        let conn = core.conn().unwrap();
+        for row in [&moved, &edited] {
+            let settled = store::queued_write(&conn, &row.id).unwrap().unwrap();
+            assert_eq!(settled.verdict, Some(Verdict::Accepted), "{}", row.id);
+        }
+        let sent: Vec<serde_json::Value> = server
+            .seen("/edges/e1")
+            .iter()
+            .filter(|seen| seen.read_view.is_none())
+            .map(|seen| serde_json::from_slice(&seen.body).unwrap())
+            .collect();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[0]["source_id"], "p2");
+        assert_eq!(
+            sent[1]["version"], 2,
+            "the edit went on the version it was based on"
+        );
+    }
+
+    #[test]
+    fn a_write_refused_behind_a_source_move_is_judged_as_it_would_have_been() {
+        let server = crate::scripted::Scripted::start();
+        let names = ["e1", "e2", "e3"];
+        let (_dir, core) = holding_edges(&server, &names);
+        let queued: Vec<QueuedWrite> = names.iter().map(|name| moved_to_p2(&core, name)).collect();
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![crate::scripted::refusal(404, "item_not_found")],
+        );
+        server.on("/edges/e3", vec![edge_answered("e3", "p2", 2)]);
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        let conn = core.conn().unwrap();
+        let verdicts: Vec<Option<Verdict>> = queued
+            .iter()
+            .map(|row| {
+                store::queued_write(&conn, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict
+            })
+            .collect();
+        assert_eq!(
+            verdicts,
+            vec![
+                Some(Verdict::Accepted),
+                Some(Verdict::Refused),
+                Some(Verdict::Accepted)
+            ]
+        );
+    }
+
+    /// The copy as a hydration leaves it, as far as the drain can tell.
+    fn hydrated_again(core: &Core) {
+        let conn = core.conn().unwrap();
+        read_view::advance_generation(&conn).unwrap();
+        store::meta_set(&conn, store::META_EVENT_CURSOR, "20").unwrap();
+        store::meta_set(&conn, read_view::FENCE, &"a".repeat(64)).unwrap();
+    }
+
+    #[test]
+    fn a_refusal_left_to_its_read_behind_a_source_move_does_not_rebase_the_writes_behind_it_again()
+    {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        moved_to_p2(&core, "e1");
+        let refused = rank_edit(&core, "e2");
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+                crate::scripted::certified(edge_answered("e1", "p2", 2)),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![
+                crate::scripted::refusal(404, "item_not_found"),
+                crate::scripted::certified(edge_answered("e2", "p1", 1)),
+            ],
+        );
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        {
+            let conn = core.conn().unwrap();
+            let settled = store::queued_write(&conn, &refused.id).unwrap().unwrap();
+            assert_eq!(settled.verdict, Some(Verdict::Refused));
+            assert!(
+                store::meta_get(&conn, &receipt_key(&refused.id))
+                    .unwrap()
+                    .is_none(),
+                "the refusal's queue work is done, yet its receipt stands to do it again"
+            );
+            assert!(
+                store::owed_read_backs(&conn)
+                    .unwrap()
+                    .iter()
+                    .any(|owed| owed.id == "e2"),
+                "the refusal's read is no longer owed"
+            );
+        }
+        hydrated_again(&core);
+        // A later edit of the same property, moved onto version 2 since.
+        let later = {
+            let conn = core.conn().unwrap();
+            store::enqueue(
+                &conn,
+                &store::NewWrite {
+                    kind: WriteKind::UpdateEdge,
+                    item_id: Some("p1"),
+                    target_id: Some("c-e2"),
+                    edge_id: Some("e2"),
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(2),
+                    payload: r#"{"properties":{"rank":2},"version":2}"#,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default()).unwrap();
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &later.id)
+                .unwrap()
+                .unwrap()
+                .base_version,
+            Some(2),
+            "recovering the refusal rebased a later edit a second time, back onto version 1"
+        );
+    }
+
+    #[test]
+    fn a_wait_the_server_asks_for_after_a_source_move_is_reported_with_the_expiry() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        let moves = [moved_to_p2(&core, "e1"), moved_to_p2(&core, "e2")];
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on(
+            "/edges/e2",
+            vec![crate::scripted::Answer::Json {
+                status: 429,
+                body: r#"{"error":{"code":"rate_limited","message":"slow down"}}"#.into(),
+                headers: vec![("Retry-After".into(), "120".into())],
+            }],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.retry_after_seconds, Some(120));
+        assert!(report.unavailable.is_some());
+        let conn = core.conn().unwrap();
+        assert!(
+            read_view::expired(&conn).unwrap(),
+            "the copy was left current"
+        );
+        let verdicts: Vec<_> = moves
+            .iter()
+            .map(|row| {
+                store::queued_write(&conn, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict
+            })
+            .collect();
+        assert_eq!(verdicts, vec![Some(Verdict::Accepted), None]);
+        drop(conn);
+        assert!(matches!(
+            core.drain().unwrap_err(),
+            CoreError::CopyExpired { .. }
+        ));
+    }
+
+    #[test]
+    fn a_read_owed_from_an_earlier_pass_ends_the_drain_at_once_where_the_view_has_changed() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = holding_edges(&server, &["e1", "e2"]);
+        moved_to_p2(&core, "e1");
+        let behind = moved_to_p2(&core, "e2");
+        server.on(
+            "/edges/e1",
+            vec![
+                edge_answered("e1", "p2", 2),
+                crate::scripted::json(503, r#"{"error":{"code":"unavailable","message":"busy"}}"#),
+                crate::scripted::refusal(409, "read_view_changed"),
+            ],
+        );
+        server.on("/edges/e2", vec![edge_answered("e2", "p2", 2)]);
+        let first = core.drain().unwrap();
+        assert!(first.unavailable.is_some(), "the witness: the read failed");
+        assert!(server.seen("/edges/e2").is_empty());
+        assert_eq!(core.drain().unwrap_err(), view_changed());
+        assert!(
+            server.seen("/edges/e2").is_empty(),
+            "a write was sent after an earlier pass's read met a changed view"
+        );
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::queued_write(&conn, &behind.id)
+                .unwrap()
+                .unwrap()
+                .verdict,
+            None
+        );
+        assert!(read_view::expired(&conn).unwrap());
+    }
+
+    #[test]
+    fn moves_the_server_refuses_leave_the_copy_current() {
+        let server = crate::scripted::Scripted::start();
+        let names = ["e1", "e2"];
+        let (_dir, core) = holding_edges(&server, &names);
+        let moves: Vec<_> = names.iter().map(|name| moved_to_p2(&core, name)).collect();
+        for name in names {
+            server.on(
+                &format!("/edges/{name}"),
+                vec![
+                    crate::scripted::refusal(404, "item_not_found"),
+                    crate::scripted::certified(crate::scripted::refusal(404, "edge_not_found")),
+                ],
+            );
+        }
+        let report = core.drain().unwrap();
+        assert_eq!(report.answered, 2);
+        let conn = core.conn().unwrap();
+        for row in &moves {
+            assert_eq!(
+                store::queued_write(&conn, &row.id)
+                    .unwrap()
+                    .unwrap()
+                    .verdict,
+                Some(Verdict::Refused)
+            );
+        }
+        assert!(
+            !read_view::expired(&conn).unwrap(),
+            "a refused move expired the copy"
+        );
+    }
+
     #[test]
     fn an_edge_read_back_uses_direct_certified_absence() {
         let server = crate::scripted::Scripted::start();
@@ -3416,7 +4018,7 @@ mod tests {
                 "edge_not_found",
             ))],
         );
-        let read = read_owed(&core, &owed, Bin::Held).unwrap();
+        let read = read_owed(&core, &owed, Bin::Held, &mut ViewChange::default(), false).unwrap();
         apply_owed(&core, &owed, &read).unwrap();
         assert_eq!(server.seen("/edges/edge").len(), 1);
         assert!(server.seen("/items/source/edges").is_empty());
@@ -3477,6 +4079,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
+            &mut ViewChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -3541,6 +4144,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
+            &mut ViewChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -3576,7 +4180,7 @@ mod tests {
             ))],
         );
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false))
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
                 .unwrap()
                 .is_none()
         );
@@ -3664,6 +4268,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
+            &mut ViewChange::default(),
         )
         .unwrap();
         assert!(
@@ -3710,7 +4315,7 @@ mod tests {
         let reads = server.seen("/items/server").len();
         assert!(reads > 0);
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false))
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
                 .unwrap()
                 .is_none()
         );
@@ -3929,6 +4534,7 @@ mod tests {
             Shape::Item,
             "server",
             "version_conflict".into(),
+            &mut ViewChange::default(),
         )
         .unwrap();
         assert_eq!(settled.verdict, Some(Verdict::Refused));
@@ -3952,7 +4558,7 @@ mod tests {
 
         // A later drain reads the target again for the landing alone.
         assert!(
-            read_owed_backs(&core, &AtomicBool::new(false))
+            read_owed_backs(&core, &AtomicBool::new(false), &mut ViewChange::default())
                 .unwrap()
                 .is_none()
         );

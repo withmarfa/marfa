@@ -250,6 +250,8 @@ When a write names the type the item already has, the server MUST leave the read
 
 When `PATCH /edges/{id}` moves the source of an edge, the server MUST change the read view.
 
+**Reason:** the server makes the change on the move alone and never from the rows a copy holds, so a copy cannot tell a move that leaves its rows as they were from one that does, and a device expires its copy for every move it sends (`queue-and-verdicts/edge-source-move-expires`).
+
 **Tests:** `compliance/read-views.test.ts › changes the read view when an edge moves to another source, and keeps it when only the target moves`.
 
 ### `read-views/view-keeps-edge-writes`

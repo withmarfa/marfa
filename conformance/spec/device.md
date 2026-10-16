@@ -2368,7 +2368,7 @@ When a device expires its copy for a proof it cannot accept, a device MUST end t
 
 ### `device/view-changed`
 
-If the server says the copy's read view has changed, then a device MUST end the operation `copy_expired` with the reason `read_view_changed`, expiring the copy and keeping its queue.
+If the server says the copy's read view has changed, other than in the read after the answer a drain has just had to a move of an edge's source (`queue-and-verdicts/edge-source-move-carries-on`), then a device MUST end the operation `copy_expired` with the reason `read_view_changed`, expiring the copy and keeping its queue.
 
 **Reason:** a retype, a narrowed grant or a changed source filter cannot then leave old rows readable as current.
 

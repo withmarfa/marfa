@@ -253,6 +253,73 @@ it("re-parents a note offline in one write a real server takes, never leaving it
   }
 });
 
+it("re-parents several notes in one drain a real server takes, and one hydration covers them", async () => {
+  const store = newStore("edge-move-live-batch");
+  try {
+    const first = await note("first project");
+    const second = await note("second project");
+    const children = [
+      await note("child one"),
+      await note("child two"),
+      await note("child three"),
+    ];
+    const edges = [];
+    for (const child of children) edges.push(await parentOf(first, child));
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store,
+      url: apiUrl,
+      key: apiKey,
+    });
+    value(await device.hydrate(["core.note"], "library"));
+    const queued = [];
+    for (const edge of edges) {
+      queued.push(
+        value(
+          queuedEdit(
+            await device.updateEdge(edge.id, {
+              properties: {},
+              version: edge.version,
+              source_id: second,
+            }),
+          ),
+        ),
+      );
+    }
+
+    // Each move changes the server's read view
+    // (`read-views/view-moves-edge-source`), and the drain goes on to send
+    // the ones behind the first, ending once with the copy expired.
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("copy_expired");
+    expect(
+      value(await device.queue()).map((row) => [row.id, row.verdict]),
+      "a move behind the one that changed the view was not sent",
+    ).toEqual(queued.map((row) => [row.id, "accepted"]));
+    expect(value(await device.status()).hydration).toBe("expired");
+    for (const child of children) {
+      expect(await serverParents(child)).toEqual([second]);
+    }
+
+    value(await device.hydrate(["core.note"], "library"));
+    expect(value(await device.status()).hydration).toBe("complete");
+    for (const child of children) {
+      expect(
+        value(await device.edgesTo(child)).map((held) => held.source_id),
+      ).toEqual([second]);
+    }
+    expect(value(await device.edgesFrom(first))).toEqual([]);
+    const settled = value(await device.drain());
+    expect(
+      [settled.answered, settled.verdicts],
+      "a drain after the hydration had something left to do",
+    ).toEqual([0, []]);
+  } finally {
+    rmSync(dirname(store), { recursive: true, force: true });
+  }
+});
+
 it("puts the edge back at its old parent when the server refuses the move for a cycle", async () => {
   const store = newStore("edge-move-live-cycle");
   try {
