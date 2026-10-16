@@ -1,10 +1,10 @@
 /**
  * Every version in the committed document is an integer.
  *
- * A version is a whole number that starts at 0 or 1 and goes up by one. A
- * generated client types a plain number as a float, so a version published as
- * `number` leaves every client to convert it. This walks the whole document,
- * request and response, for each member or parameter named for a version.
+ * A version is a whole number of at least 0 or 1. A generated client types a
+ * plain number as a float, so a version published as `number` leaves every
+ * client to convert it. This walks the whole document, request and response,
+ * for each member or parameter named for a version.
  *
  * Read from the committed file, which `openapi-committed-spec.test.ts` holds
  * to what the routes produce.
@@ -66,7 +66,9 @@ function versionPositions(node: unknown, path: string[] = []): Position[] {
 describe("the committed API description", () => {
   const document: unknown = JSON.parse(readFileSync(COMMITTED, "utf8"));
   const positions = versionPositions(document).filter(
-    (p) => p.schema.type !== "string",
+    // The build the instance runs, not a version of a row.
+    (p) =>
+      p.where !== "components/schemas/InstanceDescription/properties/version",
   );
 
   it("finds the versions it is meant to check", () => {
@@ -82,10 +84,12 @@ describe("the committed API description", () => {
     }
   });
 
-  it("types every version as an integer with a lower bound", () => {
+  it("types every version as an integer of at least 0 or 1", () => {
     const wrong = positions
       .filter(
-        (p) => p.schema.type !== "integer" || p.schema.minimum === undefined,
+        (p) =>
+          p.schema.type !== "integer" ||
+          (p.schema.minimum !== 0 && p.schema.minimum !== 1),
       )
       .map((p) => `${p.where}: ${JSON.stringify(p.schema)}`);
     expect(wrong).toEqual([]);
