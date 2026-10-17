@@ -738,6 +738,78 @@ describe("links", () => {
     }
   });
 
+  it("keeps what a link from another device named through a hydration that lands its item renamed", async () => {
+    const on = await copy();
+    const title = named("Hydrated after a rename");
+    const plan = await note(on, title);
+    const host = await note(on, named(`Hydrated host ${title}`));
+    await drained(on);
+    await writtenElsewhere(host.id, `see [[${title}]]`);
+    await linkedElsewhere(host.id, plan.id);
+    value(await on.catchUp());
+
+    const stored = await client.getItem(plan.id);
+    expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+    const renamed = await client.updateItem(plan.id, {
+      version: stored.data.item.version,
+      properties: { title: `${title} v2` },
+    });
+    expect(renamed.ok, JSON.stringify(renamed.error)).toBe(true);
+    value(await on.hydrate(["core.note", "core.file"], "library"));
+    expect(
+      value(await on.get(plan.id)).properties.title,
+      "the hydration did not land the rename, so the answer below proves nothing",
+    ).toBe(`${title} v2`);
+    expect(
+      targets(value(await on.bodyLinks(host.id)).links),
+      "a hydration that landed the rename left another device's link naming nothing",
+    ).toEqual([{ state: "item", id: plan.id }]);
+  });
+
+  it("takes the edge of a link to a renamed item out with an edit based on an older version", async () => {
+    const title = named("Older edit renamed");
+    const plan = await note(device, title);
+    const host = await note(
+      device,
+      named("Older edit renamed host"),
+      `[[${title}]]`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([plan.id]);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: `${title} v2` },
+      }),
+    );
+    await drained(device);
+    const read = value(await device.get(host.id)).version;
+    value(
+      await device.update(host.id, {
+        version: read,
+        properties: { title: named("Older edit renamed host, renamed") },
+      }),
+    );
+    await drained(device);
+    value(
+      await device.update(host.id, {
+        version: read,
+        asRead: true,
+        properties: { body: "no link" },
+      }),
+    );
+    await drained(device);
+    expect(
+      (await unsent(device))
+        .filter((write) => write.kind === "delete_edge")
+        .map((write) => [write.item_id, write.target_id]),
+      "the edit's answer was read without what the link it took out named",
+    ).toEqual([[host.id, plan.id]]);
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([]);
+  });
+
   it("reads a link another device takes out and puts back by the titles, not by the item the link taken out named", async () => {
     const title = named("Put back");
     const plan = await note(device, title);
