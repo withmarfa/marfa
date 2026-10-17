@@ -3,11 +3,14 @@
 //! that writes a `system.folder` (`items/folder-create` and
 //! `items/system-types`), so a write here is sent at once and never queued.
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value};
 
 use crate::folder::{FOLDER_TYPE, Settings};
 use crate::http::{Method, Outgoing};
 use crate::model::{Item, ItemState, SearchHit, Shown, Sort, Tier};
+use crate::store::Unreadable;
 use crate::wire::{WireItem, WireItemWithMetadata};
 use crate::{Core, CoreError, Result, catalog, query, read_view, search, store};
 
@@ -60,16 +63,45 @@ impl Core {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<(Item, Shown)>> {
-        let (conn, catalog, clauses, values) = self.folder_scope(id)?;
-        Ok(
-            query::list_where(&conn, &clauses, &values, sort, limit, offset)?
-                .into_iter()
-                .map(|item| {
-                    let shown = catalog.shown(&item);
-                    (item, shown)
-                })
-                .collect(),
+        self.list_in_folder_with(id, sort, limit, offset, &mut Unreadable::Refuse)
+    }
+
+    /// `list_in_folder`, but an item whose stored properties cannot be read
+    /// stays in the answer with no properties, and its `Shown` says why.
+    pub fn list_in_folder_kept(
+        &self,
+        id: &str,
+        sort: Sort,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<Vec<(Item, Shown)>> {
+        self.list_in_folder_with(
+            id,
+            sort,
+            limit,
+            offset,
+            &mut Unreadable::Keep(HashMap::new()),
         )
+    }
+
+    fn list_in_folder_with(
+        &self,
+        id: &str,
+        sort: Sort,
+        limit: Option<u32>,
+        offset: Option<u32>,
+        unreadable: &mut Unreadable,
+    ) -> Result<Vec<(Item, Shown)>> {
+        let (conn, catalog, clauses, values) = self.folder_scope(id)?;
+        let items =
+            query::list_where_with(&conn, &clauses, &values, sort, limit, offset, unreadable)?;
+        Ok(items
+            .into_iter()
+            .map(|item| {
+                let shown = catalog.shown_unreadable(&item, unreadable);
+                (item, shown)
+            })
+            .collect())
     }
 
     /// A local search narrowed to what the folder holds, refused as
@@ -80,11 +112,33 @@ impl Core {
         id: &str,
         limit: usize,
     ) -> Result<Vec<(SearchHit, Shown)>> {
+        self.search_in_folder_with(text, id, limit, &mut Unreadable::Refuse)
+    }
+
+    /// `search_in_folder`, keeping a hit whose item's stored properties
+    /// cannot be read as `list_in_folder_kept` does.
+    pub fn search_in_folder_kept(
+        &self,
+        text: &str,
+        id: &str,
+        limit: usize,
+    ) -> Result<Vec<(SearchHit, Shown)>> {
+        self.search_in_folder_with(text, id, limit, &mut Unreadable::Keep(HashMap::new()))
+    }
+
+    fn search_in_folder_with(
+        &self,
+        text: &str,
+        id: &str,
+        limit: usize,
+        unreadable: &mut Unreadable,
+    ) -> Result<Vec<(SearchHit, Shown)>> {
         let (conn, catalog, clauses, values) = self.folder_scope(id)?;
-        Ok(search::search_where(&conn, text, &clauses, values, limit)?
+        let hits = search::search_where(&conn, text, &clauses, values, limit, unreadable)?;
+        Ok(hits
             .into_iter()
             .map(|hit| {
-                let shown = catalog.shown(&hit.item);
+                let shown = catalog.shown_unreadable(&hit.item, unreadable);
                 (hit, shown)
             })
             .collect())

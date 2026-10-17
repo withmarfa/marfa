@@ -949,12 +949,18 @@ mod tests {
         let mut clauses = Vec::new();
         let mut values = Vec::new();
         narrow(filter, beneath, &mut clauses, &mut values).unwrap();
-        let mut ids: Vec<String> =
-            store::items_where(conn, &clauses.join(" AND "), "", "", &values)
-                .unwrap()
-                .into_iter()
-                .map(|item| item.id)
-                .collect();
+        let mut ids: Vec<String> = store::items_where(
+            conn,
+            &clauses.join(" AND "),
+            "",
+            "",
+            &values,
+            &mut store::Unreadable::Refuse,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|item| item.id)
+        .collect();
         ids.sort();
         ids
     }
