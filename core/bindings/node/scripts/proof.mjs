@@ -219,6 +219,7 @@ if (phase === "hydrate") {
   const first = [];
   /** @type {import("../index.js").Change[]} */
   const second = [];
+  /** @type {Array<unknown>} */
   const ended = [];
   const one = core.watch(
     (change) => first.push(change),

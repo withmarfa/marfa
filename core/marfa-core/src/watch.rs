@@ -110,6 +110,9 @@ struct Shared {
 pub(crate) struct Watch {
     shared: Mutex<Shared>,
     follow_pace: Mutex<Pace>,
+    /// Makes the dispatcher fault on its next turn.
+    #[cfg(test)]
+    pub(crate) fault_once: AtomicBool,
     /// The dispatcher waits here for work.
     work: Condvar,
     /// A source waits here for room, and a taker for the source to rest.
@@ -130,6 +133,8 @@ impl Watch {
                 ..Shared::default()
             }),
             follow_pace: Mutex::new(PACE),
+            #[cfg(test)]
+            fault_once: AtomicBool::new(false),
             work: Condvar::new(),
             rest: Condvar::new(),
         })
@@ -290,7 +295,6 @@ impl Core {
             shared.recovered = false;
             shared.resumed = false;
             shared.drained = false;
-            shared.at_rest = true;
             let (core, watch) = (Arc::clone(self), Arc::clone(&self.watch));
             let spawned = thread::Builder::new()
                 .name("marfa-watch".into())
@@ -337,6 +341,7 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
         outage: None,
         failed: None,
         halted: false,
+        live: false,
         cursor: String::new(),
         run: None,
         restart: false,
@@ -355,7 +360,6 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
         }
         let mut shared = held(&watch.shared);
         shared.dispatcher = None;
-        shared.at_rest = true;
         shared.joined.drain(..).for_each(|slot| {
             farewells.push((slot.listener, Some(error.clone())));
         });
@@ -394,6 +398,9 @@ struct Dispatcher<'a> {
     failed: Option<CoreError>,
     /// The follow failed: no stream until a taker has finished.
     halted: bool,
+    /// A request reached the server and the source has not ended or told it
+    /// lost since.
+    live: bool,
     cursor: String,
     run: Option<Run>,
     restart: bool,
@@ -413,8 +420,27 @@ struct Inbox {
 impl Dispatcher<'_> {
     fn serve(&mut self) {
         self.cursor = self.held_cursor();
+        {
+            // A source the last dispatcher left running, stopped by its fault,
+            // still has its end to tell: it is waited for, not taken for a
+            // failure of the one started now.
+            let mut shared = held(&self.watch.shared);
+            if shared.at_rest {
+                shared.queue.clear();
+            } else {
+                shared.queue.retain(|told| matches!(told, Told::Ended(_)));
+                self.run = Some(Run {
+                    stop: Arc::new(AtomicBool::new(true)),
+                    stopping: true,
+                });
+            }
+        }
         loop {
             let inbox = self.wait();
+            #[cfg(test)]
+            if self.watch.fault_once.swap(false, Ordering::SeqCst) {
+                panic!("a fault in the dispatcher");
+            }
             self.admit(inbox.joined);
             for told in inbox.queue {
                 self.tell(told);
@@ -430,6 +456,8 @@ impl Dispatcher<'_> {
             if inbox.resumed {
                 self.halted = false;
                 self.failed = None;
+                // The call that was holding the stream moved the cursor.
+                self.cursor = self.held_cursor();
             }
             self.depart(&inbox.left);
             self.reconcile();
@@ -528,7 +556,15 @@ impl Dispatcher<'_> {
                         .follow_watched(
                             &flag,
                             owes_drain,
-                            |change| told(Told::Change(change.clone())),
+                            |change| {
+                                // Kept before the dispatcher, which may be many
+                                // changes behind, hears of it: a debt written
+                                // there could outlive the drain that paid it.
+                                if let ChangeEvent::ServerUnreachable(_) = change.event {
+                                    core.owe_drain(true);
+                                }
+                                told(Told::Change(change.clone()))
+                            },
                             || told(Told::Contact),
                         )
                         .map(|_| ()),
@@ -593,6 +629,10 @@ impl Dispatcher<'_> {
                     self.change(ChangeEvent::ServerUnreachable(reason)),
                 );
             }
+            if alive && slot.unreachable && self.live && self.outage.is_none() {
+                slot.unreachable = false;
+                alive = self.deliver(&mut slot, self.change(ChangeEvent::ServerReachable));
+            }
             if alive && let Some(error) = self.failed.clone() {
                 alive = self.deliver(&mut slot, self.change(ChangeEvent::WatchFailed(error)));
             }
@@ -618,11 +658,16 @@ impl Dispatcher<'_> {
     }
 
     fn change(&self, event: ChangeEvent) -> Change {
+        let cursor = match self.source {
+            // Another process moves a reading handle's cursor.
+            Source::Saves => self.held_cursor(),
+            Source::Follow => self.cursor.clone(),
+        };
         Change {
             event,
             item_id: None,
             edge_id: None,
-            cursor: self.cursor.clone(),
+            cursor,
         }
     }
 
@@ -694,8 +739,7 @@ impl Dispatcher<'_> {
         self.cursor = change.cursor.clone();
         match &change.event {
             ChangeEvent::ServerUnreachable(reason) => {
-                // The drain owed is kept where a restart or a new core finds it.
-                self.core.owe_drain(true);
+                self.live = false;
                 self.outage = Some(reason.clone());
                 self.tell_each(|slot| {
                     (!std::mem::replace(&mut slot.unreachable, true)).then(|| change.clone())
@@ -711,6 +755,7 @@ impl Dispatcher<'_> {
     /// A request reached the server. Answers whether any listener was told it
     /// had not.
     fn clear_outage(&mut self) -> bool {
+        self.live = true;
         let told = self.outage.take().is_some() | self.slots.iter().any(|slot| slot.unreachable);
         if told {
             let change = self.change(ChangeEvent::ServerReachable);
@@ -727,6 +772,7 @@ impl Dispatcher<'_> {
     }
 
     fn source_ended(&mut self, result: Result<()>) {
+        self.live = false;
         let stopping = self.run.take().is_some_and(|run| run.stopping);
         {
             let mut shared = held(&self.watch.shared);

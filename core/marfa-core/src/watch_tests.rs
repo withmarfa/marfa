@@ -777,3 +777,141 @@ fn a_reader_that_fails_to_read_says_so_once_and_tells_every_listener_a_save_when
         "a failure was told more than once, or a read that mended it told no one a save"
     );
 }
+
+#[test]
+fn a_listener_that_says_it_was_told_unreachable_is_told_reachable_when_it_joins_a_held_stream() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on("/events", vec![held_answer(vec![created("n1", "11")])]);
+    let early = listener();
+    let _one = watch(&core, &early);
+    early.wait_for_kind("item.created", 1);
+    let late = listener();
+    let _two = core
+        .watch(true, Arc::clone(&late) as Arc<dyn WatchListener>)
+        .unwrap();
+    late.wait_for_kind("server.reachable", 1);
+    // The witness: one that says nothing of an outage is told nothing.
+    let quiet = listener();
+    let _three = watch(&core, &quiet);
+    thread::sleep(MS(150));
+    assert_eq!(late.kinds(), ["server.reachable"]);
+    assert!(quiet.kinds().is_empty());
+}
+
+#[test]
+fn an_outage_a_slow_listener_hears_late_does_not_owe_a_drain_the_follow_already_paid() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![
+            stream(vec![created("n1", "11")], Then::End),
+            scripted::refusal(503, "unavailable"),
+            // At the cursor the first stream left.
+            scripted::stream(
+                vec![
+                    scripted::connected(),
+                    scripted::copy_marker("stream_cursor", "11"),
+                ],
+                held(),
+            ),
+        ],
+    );
+    // Hears the first change slowly, so the dispatcher is behind the follow
+    // when the follow loses the server and has it back.
+    let slow = Arc::new(Heard {
+        slow: Some(MS(400)),
+        ..Heard::default()
+    });
+    let _listening = watch(&core, &slow);
+    server.wait_for("/events", 3, Duration::from_secs(5));
+    slow.wait_for_kind("server.reachable", 1);
+    thread::sleep(MS(300));
+    assert!(
+        !store::drain_owed(&core.conn().unwrap()).unwrap(),
+        "an outage told late set the debt again after the follow paid it"
+    );
+}
+
+#[test]
+fn a_failure_told_after_a_catch_up_names_the_cursor_the_catch_up_left() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![
+            another_contract(),
+            stream(
+                vec![
+                    created("n1", "11"),
+                    created("n2", "12"),
+                    scripted::copy_marker("stream_live", "12"),
+                ],
+                Then::End,
+            ),
+            another_contract(),
+        ],
+    );
+    let heard = listener();
+    let _listening = watch(&core, &heard);
+    heard.wait_for_kind("watch.failed", 1);
+    core.catch_up().unwrap();
+    heard.wait_for_kind("watch.failed", 2);
+    let cursors: Vec<String> = heard
+        .changes
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|change| change.event.as_str() == "watch.failed")
+        .map(|change| change.cursor.clone())
+        .collect();
+    assert_eq!(cursors, ["10", "12"]);
+}
+
+#[test]
+fn a_save_is_told_with_the_cursor_the_store_holds_then() {
+    let dir = tempfile::tempdir().unwrap();
+    let (writer, reader) = reader_of(&dir);
+    let heard = listener();
+    let _listening = reader
+        .watch_paced(
+            false,
+            Arc::clone(&heard) as Arc<dyn WatchListener>,
+            FAST_SAVES,
+        )
+        .unwrap();
+    thread::sleep(MS(100));
+    store::meta_set(&writer.conn().unwrap(), store::META_EVENT_CURSOR, "42").unwrap();
+    heard.wait_for_kind("store.saved", 1);
+    assert_eq!(heard.changes.lock().unwrap()[0].cursor, "42");
+}
+
+#[test]
+fn a_watch_started_after_a_fault_in_the_dispatcher_does_not_start_failed() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![
+            held_answer(vec![created("n1", "11")]),
+            held_answer(vec![created("n2", "12")]),
+        ],
+    );
+    let first = listener();
+    let _one = watch(&core, &first);
+    first.wait_for_kind("item.created", 1);
+    core.watch.fault_once.store(true, Ordering::SeqCst);
+    let second = listener();
+    let _two = watch(&core, &second);
+    first.wait_for_end();
+    assert!(matches!(
+        first.ended.lock().unwrap().first(),
+        Some(Some(CoreError::Invalid(_)))
+    ));
+    let again = listener();
+    let _three = watch(&core, &again);
+    again.wait_for_kind("item.created", 1);
+    thread::sleep(MS(200));
+    assert_eq!(again.kinds(), ["item.created"], "{:?}", again.kinds());
+}
