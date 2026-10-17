@@ -13,10 +13,19 @@ pub(crate) const FILE_TYPE: &str = "core.file";
 
 /// The hash of a file item's bytes; `None` for an item that is not one.
 pub(crate) fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
-    if !catalog.matches(FILE_TYPE, &item.r#type) {
+    blob_ref_of(catalog, &item.r#type, &item.properties)
+}
+
+/// `bytes_of`, for a row's type and properties.
+pub(crate) fn blob_ref_of<'a>(
+    catalog: &Catalog,
+    r#type: &str,
+    properties: &'a serde_json::Map<String, Value>,
+) -> Option<&'a str> {
+    if !catalog.matches(FILE_TYPE, r#type) {
         return None;
     }
-    item.properties.get("blob_ref").and_then(Value::as_str)
+    properties.get("blob_ref").and_then(Value::as_str)
 }
 
 fn extension_of(path: &Path) -> Option<String> {

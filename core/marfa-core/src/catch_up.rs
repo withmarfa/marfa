@@ -1266,8 +1266,7 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                let indexing = catalog.indexing(&item.r#type);
-                store::put_server_item(tx, item, tags, &indexing)?;
+                store::put_server_item(tx, item, tags, catalog)?;
                 store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
                 Ok(true)
             } else {

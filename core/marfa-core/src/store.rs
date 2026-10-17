@@ -553,7 +553,7 @@ pub fn put_server_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    indexing: &Indexing,
+    catalog: &crate::catalog::Catalog,
 ) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Item, &item.id)?;
     if holds_later(
@@ -569,8 +569,13 @@ pub fn put_server_item(
         Some(tags) => Some(tags.to_vec()),
         None => beneath_item(conn, &item.id)?.map(|held| held.tags),
     };
-    upsert_item(conn, item, tags, indexing)?;
+    upsert_item(conn, item, tags, &catalog.indexing(&item.r#type))?;
     keep_beneath_item(conn, &item.id, beneath_tags)?;
+    if crate::body::rule::drops_on_landing(conn, &item.id)?
+        && current_item_writes(conn, &item.id)?.is_empty()
+    {
+        crate::body::rule::landed(conn, catalog, &item.id)?;
+    }
     Ok(true)
 }
 
@@ -2053,6 +2058,7 @@ pub fn upsert_item(
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     conn.execute(
         "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -2304,6 +2310,7 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 /// hydration holds them.
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, id, None)?;
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
         "source_id = ?1".to_string()
@@ -2446,6 +2453,7 @@ pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 }
 
 pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> {
+    crate::body::rule::edge_changing(conn, edge)?;
     conn.execute(
         "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -2472,6 +2480,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
 /// of this device's laid over it. An edge leaving the copy goes by
 /// `forget_edge`.
 pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    crate::body::rule::edge_leaving(conn, id)?;
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
 }
 
@@ -2685,6 +2694,14 @@ fn read_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Edge, Option<String>)
     Ok((edge, why))
 }
 
+const UNREADABLE_PROPERTIES: &str = "the properties of ";
+
+/// Whether a refusing read failed on a row whose stored properties are not
+/// one JSON object, rather than on the store.
+pub(crate) fn unreadable(error: &CoreError) -> bool {
+    matches!(error, CoreError::Store(message) if message.starts_with(UNREADABLE_PROPERTIES))
+}
+
 /// What a read does with a row whose stored properties are not one JSON
 /// object. The text is not echoed: it is the person's content.
 pub enum Unreadable {
@@ -2705,7 +2722,7 @@ impl Unreadable {
     fn note(&mut self, kind: &str, id: &str, why: String) -> Result<(), CoreError> {
         match self {
             Unreadable::Refuse => Err(CoreError::Store(format!(
-                "the properties of {kind} {id} cannot be read: {why}"
+                "{UNREADABLE_PROPERTIES}{kind} {id} cannot be read: {why}"
             ))),
             Unreadable::Keep(kept) => {
                 kept.insert(id.to_string(), why);
@@ -3865,6 +3882,7 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
 /// writes after this is ordered against them (`Stamp`).
 pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, id, None)?;
     let changed = conn.execute(
         "UPDATE items SET state = ?2 WHERE id = ?1",
         params![id, state.as_str()],
@@ -4071,7 +4089,7 @@ mod tests {
                 &conn,
                 &testing::note(id, id, "", "2026-01-01T00:00:00Z"),
                 Some(&[]),
-                &Default::default(),
+                &crate::catalog::Catalog::empty(),
             )
             .unwrap();
         }
@@ -5322,7 +5340,7 @@ mod tests {
         later.version = 3;
         later.state = "archived".into();
         later.updated_at = "2026-01-02T00:00:00.000Z".into();
-        assert!(put_server_item(&conn, &later, None, &Indexing::default()).unwrap());
+        assert!(put_server_item(&conn, &later, None, &crate::catalog::Catalog::empty()).unwrap());
         let mut older = later.clone();
         older.state = "active".into();
         older.properties.insert("title".into(), "older".into());
@@ -5339,7 +5357,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !put_server_item(&conn, &older, None, &Indexing::default()).unwrap(),
+            !put_server_item(&conn, &older, None, &crate::catalog::Catalog::empty()).unwrap(),
             "a row stamped before the one held went in over it"
         );
         let held = item_by_id(&conn, "row").unwrap().unwrap();

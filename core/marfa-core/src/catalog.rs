@@ -437,6 +437,15 @@ pub struct Catalog {
 const MAX_PARENT_WALK: usize = 64;
 
 impl Catalog {
+    /// A catalog that declares no type, where every type reads its title and
+    /// body from the default properties.
+    #[cfg(test)]
+    pub fn empty() -> Catalog {
+        Catalog {
+            entries: HashMap::new(),
+        }
+    }
+
     pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
         let mut statement = conn.prepare(
             "SELECT id, parent, title_field, thumbnail_field,

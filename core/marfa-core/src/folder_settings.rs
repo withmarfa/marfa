@@ -395,14 +395,14 @@ mod tests {
         );
         row.tier = Some(tier.into());
         let tags: Vec<String> = tags.iter().map(|tag| tag.to_string()).collect();
-        let indexing = catalog::Catalog::load(&conn).unwrap().indexing(r#type);
-        store::put_server_item(&conn, &row, Some(&tags), &indexing).unwrap();
+        let catalog = catalog::Catalog::load(&conn).unwrap();
+        store::put_server_item(&conn, &row, Some(&tags), &catalog).unwrap();
     }
 
     fn folder(core: &Core, state: &str, settings: Value) {
         let conn = core.conn().unwrap();
         let row = wire_item(FOLDER, FOLDER_TYPE, state, "2026-01-01T00:00:00Z", settings);
-        store::put_server_item(&conn, &row, Some(&[]), &Default::default()).unwrap();
+        store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty()).unwrap();
     }
 
     fn ids(items: Vec<Item>) -> Vec<String> {
