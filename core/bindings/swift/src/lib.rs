@@ -3632,6 +3632,38 @@ mod tests {
                 .count(),
             2
         );
+        // A damaged row matches no property condition: a filtered list and a
+        // filtered search leave it out and still answer.
+        let filter = Some(r#"properties.title eq "kept zebra""#.to_string());
+        let filtered = core
+            .list(
+                ListFilters {
+                    filter: filter.clone(),
+                    ..ListFilters::default()
+                },
+                Sort {
+                    field: SortField::CreatedAt,
+                    direction: SortDirection::Ascending,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            filtered.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+            [ids[0].clone()]
+        );
+        let found = core
+            .search(
+                "zebra".into(),
+                SearchFilters {
+                    filter,
+                    ..SearchFilters::default()
+                },
+                10,
+            )
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].item.id, ids[0]);
+
         let one = core.get(ids[1].clone()).unwrap().unwrap();
         assert!(one.unreadable_properties.is_some());
         assert_eq!(core.status().unwrap().items, 3);

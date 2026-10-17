@@ -222,7 +222,11 @@ impl Condition {
             Term::Property { name, op } => {
                 values.push(Value::String(format!("$.{name}")));
                 let extract = "json_extract(items.properties, ?)";
-                match op {
+                // SQLite raises on stored text that is not JSON and so would
+                // fail the whole query for one damaged row; such a row matches
+                // no property condition. `CASE`, not `AND`, because SQLite
+                // promises no order of evaluation for `AND`.
+                let clause = match op {
                     Op::Compare(compare @ (Compare::Eq | Compare::Neq))
                         if matches!(self.value, Literal::Number(_)) =>
                     {
@@ -247,7 +251,8 @@ impl Condition {
                     Op::Compare(compare) => compared(extract, *compare, &self.value, values),
                     Op::Exists => format!("{extract} IS NOT NULL"),
                     Op::NotExists => format!("{extract} IS NULL"),
-                }
+                };
+                format!("CASE WHEN json_valid(items.properties) THEN ({clause}) ELSE 0 END")
             }
             // `+` takes the column's text affinity off, so a number is
             // compared as the number it is, as it is against the server's
@@ -963,6 +968,36 @@ mod tests {
         .collect();
         ids.sort();
         ids
+    }
+
+    #[test]
+    fn a_row_whose_stored_text_is_not_json_matches_no_property_condition_and_fails_no_list() {
+        let conn = family();
+        conn.execute(
+            "UPDATE items SET properties = '{\"rating\":' WHERE id = 'stranger'",
+            [],
+        )
+        .unwrap();
+        // The witness: before the guard SQLite raised `malformed JSON` for the
+        // whole query, whatever the other rows held.
+        let unguarded = conn.query_row(
+            "SELECT json_extract(properties, '$.rating') FROM items WHERE id = 'stranger'",
+            [],
+            |row| row.get::<_, Option<String>>(0),
+        );
+        assert!(unguarded.is_err(), "{unguarded:?}");
+        for (filter, wanted) in [
+            ("properties.rating lte 5", vec!["child", "root"]),
+            ("properties.rating gt 4", vec!["root"]),
+            ("properties.rating eq 2", vec!["child"]),
+            ("properties.rating neq 2", vec!["root"]),
+            ("properties.note contains \"_\"", vec!["child"]),
+            ("properties.rating exists", vec!["child", "root"]),
+            ("properties.rating not_exists", vec!["grandchild"]),
+            ("properties.flag eq true", vec!["root"]),
+        ] {
+            assert_eq!(ids(&conn, Some(filter), None), wanted, "{filter}");
+        }
     }
 
     #[test]

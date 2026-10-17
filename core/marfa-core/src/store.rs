@@ -3347,10 +3347,22 @@ pub fn lay_waiting_writes_over(
     if waiting.is_empty() {
         return Ok(());
     }
-    let Some(mut item) = items_by_ids(conn, std::slice::from_ref(&item_id.to_string()))?.pop()
-    else {
+    // A row whose stored properties cannot be read has nothing to lay the
+    // writes over; they stay queued, and a fresh copy from the server takes
+    // them when it arrives. Failing here would fail a hydration or a catch-up
+    // for one damaged row.
+    let mut damaged = Unreadable::Keep(HashMap::new());
+    let Some(mut item) = items_by_ids_with(
+        conn,
+        std::slice::from_ref(&item_id.to_string()),
+        &mut damaged,
+    )?
+    .pop() else {
         return Ok(());
     };
+    if damaged.why(item_id).is_some() {
+        return Ok(());
+    }
     let mut tags = item.tags.clone();
     for mut row in waiting {
         let mut read = read_of(conn, &row.id)?
@@ -3600,9 +3612,14 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
     let waiting = current_edge_writes(conn, edge_id)?;
-    let Some(mut edge) = edge_by_id(conn, edge_id)? else {
+    // As for an item: a damaged edge is left as it is under its writes.
+    let mut damaged = Unreadable::Keep(HashMap::new());
+    let Some(mut edge) = edge_by_id_with(conn, edge_id, &mut damaged)? else {
         return Ok(());
     };
+    if damaged.why(edge_id).is_some() {
+        return Ok(());
+    }
     for mut row in waiting {
         if row.verdict == Some(Verdict::Dead)
             && row.kind == WriteKind::UpdateEdge
@@ -5067,6 +5084,72 @@ mod tests {
         lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
+    }
+
+    #[test]
+    fn a_row_whose_stored_properties_cannot_be_read_is_left_as_it_is_under_its_waiting_writes() {
+        let conn = conn();
+        let mut edge = wire_edge("e1", "a", "b", "references");
+        edge.properties.insert("weight".into(), Value::from(1));
+        upsert_edge(&conn, &edge).unwrap();
+        upsert_item(
+            &conn,
+            &note("n1", "t", "b", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Indexing::default(),
+        )
+        .unwrap();
+        let queue = |kind: WriteKind, item: &str, edge_id: Option<&str>, payload: &str| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some(item),
+                    target_id: edge_id.map(|_| "b"),
+                    edge_id,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: None,
+                    payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        queue(
+            WriteKind::UpdateEdge,
+            "a",
+            Some("e1"),
+            r#"{"properties":{"weight":2}}"#,
+        );
+        queue(
+            WriteKind::UpdateItem,
+            "n1",
+            None,
+            r#"{"properties":{"title":"edited"},"version":1}"#,
+        );
+        // The witness: the readable rows take what waits.
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
+        assert_eq!(
+            edge_by_id(&conn, "e1").unwrap().unwrap().properties["weight"],
+            2
+        );
+
+        for table in ["edges", "items"] {
+            conn.execute(&format!("UPDATE {table} SET properties = '{{\"a\":'"), [])
+                .unwrap();
+        }
+        // Damaged and not fetched again, they cannot have the writes laid
+        // over them: they stay as they are, and the writes stay queued.
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
+        let stored: String = conn
+            .query_row("SELECT properties FROM edges", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, r#"{"a":"#);
+        assert_eq!(read_writes(&conn, "", []).unwrap().len(), 2);
     }
 
     #[test]

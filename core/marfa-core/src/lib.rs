@@ -3829,6 +3829,43 @@ mod tests {
                 .contains("not a JSON object")
         );
 
+        // A damaged row matches no property condition, so a filtered list and
+        // a filtered search leave it out and still answer.
+        let titled = |title: &str| format!(r#"properties.title eq "{title}""#);
+        let only_calm = core
+            .list_kept(
+                &ListFilters {
+                    filter: Some(titled("calm")),
+                    ..ListFilters::default()
+                },
+                Sort::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            only_calm
+                .iter()
+                .map(|(item, _)| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["calm"]
+        );
+        let found = core
+            .search_kept(
+                "zebra",
+                &SearchFilters {
+                    filter: Some(titled("calm")),
+                    ..SearchFilters::default()
+                },
+                10,
+            )
+            .unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .map(|(hit, _)| hit.item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["calm"]
+        );
+
         let hits = core.search_kept("zebra", &search, 10).unwrap();
         assert_eq!(hits.len(), 3);
         assert_eq!(
