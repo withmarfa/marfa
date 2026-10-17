@@ -3405,6 +3405,36 @@ mod tests {
     }
 
     #[test]
+    fn a_draft_and_an_edit_that_name_no_properties_cross_as_an_empty_object() {
+        let (_dir, _path, core) = copy_with_entries();
+        let id = core
+            .create_item(Draft {
+                properties: JsonObject::default(),
+                ..draft("app.test.entry", "{}")
+            })
+            .unwrap()
+            .item_id
+            .unwrap();
+        let held = core.get(id.clone()).unwrap().unwrap();
+        assert!(held.properties.members.is_empty());
+        assert_eq!(held.unreadable_properties, None);
+        let write = core
+            .update_item(
+                id,
+                Edit {
+                    tier: Some(Tier::Feed),
+                    ..edit("{}", held.version)
+                },
+            )
+            .unwrap();
+        let sent = write.body.members.iter().find(|m| m.key == "properties");
+        assert_eq!(
+            sent.map(|m| &m.value),
+            Some(&JsonValue::Object(JsonObject::default()))
+        );
+    }
+
+    #[test]
     fn an_edit_keeps_every_property_it_does_not_name_including_ones_the_type_does_not_declare() {
         let (_dir, _path, core) = copy_with_entries();
         let id = core
