@@ -571,6 +571,11 @@ pub fn put_server_item(
     };
     upsert_item(conn, item, tags, indexing)?;
     keep_beneath_item(conn, &item.id, beneath_tags)?;
+    if crate::body::rule::holds_rows(conn, &item.id)?
+        && current_item_writes(conn, &item.id)?.is_empty()
+    {
+        crate::body::rule::landed(conn, &item.id)?;
+    }
     Ok(true)
 }
 
@@ -2019,6 +2024,7 @@ pub fn upsert_item(
 ) -> Result<(), CoreError> {
     ItemState::from_str_checked(&item.state)?;
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, &item.id, Some(item))?;
     conn.execute(
         "INSERT INTO items (id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -2270,6 +2276,7 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 /// hydration holds them.
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, id, None)?;
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
         "source_id = ?1".to_string()
@@ -2412,6 +2419,7 @@ pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 }
 
 pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> {
+    crate::body::rule::edge_changing(conn, edge)?;
     conn.execute(
         "INSERT INTO edges (id, source_id, target_id, edge_type, properties, version, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -2438,6 +2446,7 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
 /// of this device's laid over it. An edge leaving the copy goes by
 /// `forget_edge`.
 pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    crate::body::rule::edge_leaving(conn, id)?;
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
 }
 
@@ -3726,6 +3735,7 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
 /// writes after this is ordered against them (`Stamp`).
 pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
     crate::body::rule::rows_changed(conn)?;
+    crate::body::rule::item_changing(conn, id, None)?;
     let changed = conn.execute(
         "UPDATE items SET state = ?2 WHERE id = ?1",
         params![id, state.as_str()],
