@@ -217,6 +217,11 @@ impl Item {
 pub struct Shown {
     pub title: Option<String>,
     pub body: Option<String>,
+    /// Why the item has no properties, where a read that keeps such rows
+    /// found its stored properties unreadable. Never set by a read that
+    /// refuses them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreadable_properties: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

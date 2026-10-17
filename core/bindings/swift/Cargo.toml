@@ -16,6 +16,7 @@ serde_json = "1"
 uniffi = "0.31"
 
 [dev-dependencies]
+rusqlite = { version = "0.40", features = ["bundled"] }
 tempfile = "3"
 
 # Its own workspace: cargo-swift will not name a package inside a multi-crate one.
