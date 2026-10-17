@@ -44,6 +44,9 @@ mod telemetry_tests;
 mod tier_tests;
 mod time;
 mod validation;
+mod watch;
+#[cfg(test)]
+mod watch_tests;
 mod wire;
 
 use std::collections::{HashMap, HashSet};
@@ -78,6 +81,7 @@ pub use model::{
 };
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
+pub use watch::{Listening, WatchListener};
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 
@@ -181,6 +185,8 @@ pub struct Core {
     /// Two drains at once would each send every unanswered write, so a
     /// second waits for the one under way.
     draining: Mutex<()>,
+    /// The one source this store's listeners share (`watch`).
+    watch: Arc<watch::Watch>,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -309,6 +315,7 @@ impl Core {
             lock: Arc::new(lock::WriterLock::reader()),
             streaming: Mutex::default(),
             draining: Mutex::new(()),
+            watch: watch::Watch::new(),
         })
     }
 
@@ -391,6 +398,7 @@ impl Core {
             lock,
             streaming: Mutex::default(),
             draining: Mutex::new(()),
+            watch: watch::Watch::new(),
         })
     }
 
@@ -448,7 +456,8 @@ impl Core {
 
     /// Refused while a catch-up or a follow runs on this handle: a follow
     /// left running across a hydration would apply events read against the
-    /// old slice to the new copy. A caller stops its follow first.
+    /// old slice to the new copy. A caller stops its follow first. A watch is
+    /// not stopped: the hydration takes its stream, and gives it back.
     pub fn hydrate(&self, types: &[String], tier: SliceTier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
     }
@@ -464,8 +473,10 @@ impl Core {
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
+        let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
         let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, false, stop)?;
+        taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)
     }
@@ -490,8 +501,10 @@ impl Core {
         stop: &AtomicBool,
     ) -> Result<HydrateReport> {
         self.lock.refuse_unless_writer()?;
+        let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::Hydration)?;
         let report = hydrate::hydrate(self, self.http()?, types, tier, edge_types, true, stop)?;
+        taken.reached();
         self.settle_bodies(stop)?;
         Ok(report)
     }
@@ -603,6 +616,7 @@ impl Core {
         stop: &AtomicBool,
     ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
         self.lock.refuse_unless_writer()?;
+        let mut taken = self.watch.take()?;
         let _streaming = self.claim_stream(Mover::CatchUp)?;
         let mut catalog_changed = false;
         catch_up::catch_up(
@@ -613,6 +627,7 @@ impl Core {
             &mut catalog_changed,
         )
         .and_then(|report| {
+            taken.reached();
             self.settle_bodies(stop)?;
             Ok(report)
         })
@@ -650,21 +665,55 @@ impl Core {
         told_unreachable: bool,
         on_change: impl FnMut(&Change),
     ) -> Result<FollowReport> {
+        self.follow_from(
+            stop,
+            catch_up::FollowAs {
+                told_unreachable,
+                owes_drain: false,
+                drains: true,
+                pace: catch_up::PACE,
+            },
+            on_change,
+            || {},
+        )
+    }
+
+    /// The follow a watch holds. `owes_drain` has it drain once at its first
+    /// stream, as it does after the server was lost.
+    pub(crate) fn follow_watched(
+        &self,
+        stop: &AtomicBool,
+        owes_drain: bool,
+        on_change: impl FnMut(&Change),
+        on_contact: impl FnMut(),
+    ) -> Result<FollowReport> {
+        self.follow_from(
+            stop,
+            catch_up::FollowAs {
+                told_unreachable: false,
+                owes_drain,
+                drains: true,
+                pace: self.watch.follow_pace(),
+            },
+            on_change,
+            on_contact,
+        )
+    }
+
+    fn follow_from(
+        &self,
+        stop: &AtomicBool,
+        how: catch_up::FollowAs,
+        on_change: impl FnMut(&Change),
+        on_contact: impl FnMut(),
+    ) -> Result<FollowReport> {
         self.lock.refuse_unless_writer()?;
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
         let _following = self.claim_follow()?;
         let Some(streaming) = self.claim_stream_once_hydrated(stop)? else {
             return Ok(FollowReport::default());
         };
-        self.follow_claimed(
-            http,
-            streaming,
-            stop,
-            told_unreachable,
-            true,
-            on_change,
-            |_| {},
-        )
+        self.follow_claimed(http, streaming, stop, how, on_change, |_| {}, on_contact)
     }
 
     /// A folder's watch hydrates its copy on the thread that follows it, so
@@ -686,10 +735,15 @@ impl Core {
             http,
             streaming,
             stop,
-            told_unreachable,
-            false,
+            catch_up::FollowAs {
+                told_unreachable,
+                owes_drain: false,
+                drains: false,
+                pace: catch_up::PACE,
+            },
             on_change,
             on_live,
+            || {},
         )
     }
 
@@ -721,10 +775,10 @@ impl Core {
         http: Arc<http::Http>,
         _streaming: StreamClaim<'_>,
         stop: &AtomicBool,
-        told_unreachable: bool,
-        drains: bool,
+        how: catch_up::FollowAs,
         mut on_change: impl FnMut(&Change),
         mut on_live: impl FnMut(bool),
+        mut on_contact: impl FnMut(),
     ) -> Result<FollowReport> {
         // A binding says the follow ended when this returns: a fault that
         // unwound past here would end the thread silently, and a caller
@@ -734,10 +788,10 @@ impl Core {
                 self,
                 http,
                 stop,
-                told_unreachable,
-                drains,
+                how,
                 &mut on_change,
                 &mut on_live,
+                &mut on_contact,
             )
         }))
         .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
@@ -1075,7 +1129,11 @@ impl Core {
     /// queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
         let _one = self.wait_to_drain(stop)?;
-        drain::drain(self, stop)
+        let report = drain::drain(self, stop)?;
+        if report.answered > 0 {
+            self.watch.drained();
+        }
+        Ok(report)
     }
 
     /// Waits as `drain_until` does, then drains only where work is left for
@@ -1087,7 +1145,10 @@ impl Core {
             Err(error) => return Some(Err(error)),
         };
         match drain::would_send(self) {
-            Ok(false) => None,
+            Ok(false) => {
+                self.owe_drain(false);
+                None
+            }
             Ok(true) => Some(drain::drain(self, stop)),
             Err(error) => Some(Err(error)),
         }
@@ -5652,6 +5713,7 @@ mod tests {
                     "write_create",
                     "write_update",
                     "catch_up_pass",
+                    "follow_from",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain_checked"][..]),

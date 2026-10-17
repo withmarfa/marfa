@@ -609,6 +609,9 @@ pub(crate) fn would_send(core: &Core) -> Result<bool> {
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
+    if let Ok(report) = &result {
+        core.owe_drain(report.undelivered > 0 || report.unavailable.is_some());
+    }
     telemetry::ended!(op, result.as_ref(), |report| {
         outcome = if report.stopped.is_some() {
             "credential_refused"
