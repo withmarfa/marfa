@@ -5,13 +5,23 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::filter;
 use crate::model::{Item, ListFilters, Sort};
-use crate::store;
+use crate::store::{self, Unreadable};
 
 pub(crate) fn list(
     conn: &Connection,
     catalog: &Catalog,
     filters: &ListFilters,
     sort: Sort,
+) -> Result<Vec<Item>> {
+    list_with(conn, catalog, filters, sort, &mut Unreadable::Refuse)
+}
+
+pub(crate) fn list_with(
+    conn: &Connection,
+    catalog: &Catalog,
+    filters: &ListFilters,
+    sort: Sort,
+    unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
@@ -56,7 +66,15 @@ pub(crate) fn list(
         &mut clauses,
         &mut values,
     )?;
-    list_where(conn, &clauses, &values, sort, filters.limit, filters.offset)
+    list_where_with(
+        conn,
+        &clauses,
+        &values,
+        sort,
+        filters.limit,
+        filters.offset,
+        unreadable,
+    )
 }
 
 pub(crate) fn list_where(
@@ -66,6 +84,26 @@ pub(crate) fn list_where(
     sort: Sort,
     limit: Option<u32>,
     offset: Option<u32>,
+) -> Result<Vec<Item>> {
+    list_where_with(
+        conn,
+        clauses,
+        values,
+        sort,
+        limit,
+        offset,
+        &mut Unreadable::Refuse,
+    )
+}
+
+pub(crate) fn list_where_with(
+    conn: &Connection,
+    clauses: &[String],
+    values: &[Value],
+    sort: Sort,
+    limit: Option<u32>,
+    offset: Option<u32>,
+    unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>> {
     let where_sql = if clauses.is_empty() {
         "1 = 1".to_string()
@@ -86,7 +124,7 @@ pub(crate) fn list_where(
             offset.unwrap_or(0)
         ),
     };
-    store::items_where(conn, &where_sql, &order_sql, &limit_sql, values)
+    store::items_where(conn, &where_sql, &order_sql, &limit_sql, values, unreadable)
 }
 
 /// A declared type and its subtree, by name and by declared parent, the

@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use crate::error::CoreError;
 use crate::model::{Item, Shown};
 use crate::store;
+use crate::store::Unreadable;
 use crate::wire::{WireCatalog, WireEdgeType};
 
 const TITLE_PROPERTY: &str = "title";
@@ -709,6 +710,16 @@ impl Catalog {
         Shown {
             title: text(self.title_property(&item.r#type)),
             body: text(self.body_property(&item.r#type)),
+            unreadable_properties: None,
+        }
+    }
+
+    /// `shown`, naming why the properties are empty where the read kept a
+    /// row whose stored properties it could not read.
+    pub fn shown_unreadable(&self, item: &Item, unreadable: &Unreadable) -> Shown {
+        Shown {
+            unreadable_properties: unreadable.why(&item.id),
+            ..self.shown(item)
         }
     }
 

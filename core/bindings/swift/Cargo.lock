@@ -843,6 +843,7 @@ name = "marfa-core-ffi"
 version = "0.0.0"
 dependencies = [
  "marfa-core",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "uniffi",

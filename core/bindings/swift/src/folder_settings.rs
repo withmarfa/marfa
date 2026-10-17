@@ -9,7 +9,7 @@ use marfa_core::folder::settings::{
 };
 use serde_json::{Map, Value};
 
-use crate::{Core, Item, ItemState, MarfaError, SearchHit, Sort, Tier};
+use crate::{Core, Item, ItemState, JsonObject, MarfaError, SearchHit, Sort, Tier};
 
 /// What a folder holds and what a new file in it takes: the settings a
 /// `system.folder` carries.
@@ -60,9 +60,8 @@ pub struct FolderDefaults {
     pub r#type: Option<String>,
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
-    /// One JSON object.
-    #[uniffi(default = "{}")]
-    pub properties_json: String,
+    #[uniffi(default)]
+    pub properties: JsonObject,
     #[uniffi(default = [])]
     pub tags: Vec<String>,
     /// From edge type to the ids of the items each new file is linked to.
@@ -127,7 +126,9 @@ impl Core {
         limit: Option<u32>,
         offset: Option<u32>,
     ) -> Result<Vec<Item>, MarfaError> {
-        let items = self.inner.list_in_folder(&id, sort.into(), limit, offset)?;
+        let items = self
+            .inner
+            .list_in_folder_kept(&id, sort.into(), limit, offset)?;
         Ok(items
             .into_iter()
             .map(|(found, shown)| crate::item(found, shown))
@@ -141,7 +142,9 @@ impl Core {
         id: String,
         limit: u32,
     ) -> Result<Vec<SearchHit>, MarfaError> {
-        let hits = self.inner.search_in_folder(&query, &id, limit as usize)?;
+        let hits = self
+            .inner
+            .search_in_folder_kept(&query, &id, limit as usize)?;
         Ok(hits
             .into_iter()
             .map(|(hit, shown)| SearchHit {
@@ -235,7 +238,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
         defaults: FolderDefaults {
             r#type: defaults.r#type,
             tier: defaults.tier.map(Into::into),
-            properties_json: Value::Object(defaults.properties).to_string(),
+            properties: defaults.properties.into(),
             tags: defaults.tags,
             edges: defaults.edges.into_iter().collect(),
         },
@@ -277,14 +280,7 @@ fn core_search(search: FolderSearch) -> Search {
 }
 
 fn core_defaults(defaults: FolderDefaults) -> Result<Defaults, MarfaError> {
-    let properties = match serde_json::from_str::<Value>(&defaults.properties_json) {
-        Ok(Value::Object(properties)) => properties,
-        _ => {
-            return Err(MarfaError::Invalid {
-                message: "a folder's default properties are one JSON object".into(),
-            });
-        }
-    };
+    let properties = defaults.properties.into_map()?;
     Ok(Defaults {
         r#type: defaults.r#type,
         tier: defaults.tier.map(Into::into),
@@ -352,6 +348,7 @@ fn encoding(error: serde_json::Error) -> MarfaError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{JsonMember, JsonValue};
 
     #[test]
     fn settings_cross_the_binding_and_back_unchanged() {
@@ -387,7 +384,12 @@ mod tests {
             defaults: Some(FolderDefaults {
                 r#type: None,
                 tier: None,
-                properties_json: "[]".into(),
+                properties: JsonObject {
+                    members: vec![JsonMember {
+                        key: "rating".into(),
+                        value: JsonValue::Number(f64::NAN),
+                    }],
+                },
                 tags: vec![],
                 edges: HashMap::new(),
             }),

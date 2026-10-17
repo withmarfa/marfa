@@ -3765,7 +3765,7 @@ fn moved_line(
         (Some(to), None) if target == &bound.item_id => (crate::catalog::End::Target, source, to),
         _ => return Ok(None),
     };
-    let edge_type = match crate::store::edge_by_id(conn, edge_id)? {
+    let edge_type = match crate::store::edge_ends(conn, edge_id)? {
         Some(edge) => edge.edge_type,
         None => match bound
             .lines
@@ -6167,6 +6167,76 @@ fn name_from_title(title: &str, extension: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A move queued before its edge was damaged still names the edge's type,
+    /// which is all the folder pass needs of the edge.
+    #[test]
+    fn a_move_of_an_edge_whose_stored_properties_cannot_be_read_still_names_its_type() {
+        use crate::model::{Draft, EdgeDraft, EdgeEdit};
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("copy.db"), None).unwrap();
+        let note = |title: &str| {
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": title, "body": "" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let (from, to, other) = (note("from"), note("to"), note("other"));
+        let edge = core
+            .create_edge(&EdgeDraft {
+                source_id: from,
+                target_id: to.clone(),
+                edge_type: "parent-of".into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .edge_id
+            .unwrap();
+        let moved = core
+            .update_edge(
+                &edge,
+                &EdgeEdit {
+                    source_id: Some(other),
+                    base_version: Some(0),
+                    ..EdgeEdit::default()
+                },
+            )
+            .unwrap()
+            .unwrap();
+        let bound = state::Bound {
+            path: "to.md".into(),
+            item_id: to,
+            identity: None,
+            content_hash: "hash".into(),
+            presentation: None,
+            written_hash: None,
+            links: Vec::new(),
+            lines: Vec::new(),
+            edit_line: None,
+            held: None,
+            own: None,
+            writes: Default::default(),
+        };
+        let conn = core.conn().unwrap();
+        // The witness: the readable edge names its type.
+        let line = moved_line(&conn, &moved, &bound).unwrap().unwrap();
+        assert_eq!(line.to.edge_type, "parent-of");
+
+        conn.execute(
+            "UPDATE edges SET properties = '{\"a\":' WHERE id = ?1",
+            [&edge],
+        )
+        .unwrap();
+        let line = moved_line(&conn, &moved, &bound).unwrap().unwrap();
+        assert_eq!(line.to.edge_type, "parent-of");
+    }
 
     #[cfg(unix)]
     #[test]

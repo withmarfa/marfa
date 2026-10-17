@@ -27,14 +27,18 @@ pub(crate) const ATTACHMENT_EDGE: &str = "attached-to";
 const PLACEMENT_EDGE: &str = "in-folder";
 
 /// The paths a working copy knows items' files by: their placements in
-/// folders, which every machine reads alike.
+/// folders, which every machine reads alike. A placement whose stored
+/// properties are not JSON names no path: SQLite raises on such text, so each
+/// JSON function is behind `json_valid` in a `CASE`, which SQLite evaluates in
+/// order where it promises no order for `AND`.
 pub(crate) struct Placements;
 
 impl Paths for Placements {
     fn every(&self, conn: &Connection) -> Result<Vec<(String, String)>> {
         let mut statement = conn.prepare(
             "SELECT json_extract(properties, '$.path'), source_id FROM edges
-              WHERE edge_type = ?1 AND json_type(properties, '$.path') = 'text'",
+              WHERE edge_type = ?1
+                AND CASE WHEN json_valid(properties) THEN json_type(properties, '$.path') END = 'text'",
         )?;
         let rows = statement.query_map([PLACEMENT_EDGE], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -43,7 +47,8 @@ impl Paths for Placements {
     fn of(&self, conn: &Connection, id: &str) -> Result<Vec<String>> {
         let mut statement = conn.prepare(
             "SELECT json_extract(properties, '$.path') FROM edges
-              WHERE edge_type = ?1 AND source_id = ?2 AND json_type(properties, '$.path') = 'text'
+              WHERE edge_type = ?1 AND source_id = ?2
+                AND CASE WHEN json_valid(properties) THEN json_type(properties, '$.path') END = 'text'
               ORDER BY 1",
         )?;
         let rows = statement.query_map(params![PLACEMENT_EDGE, id], |row| row.get(0))?;
@@ -1696,6 +1701,39 @@ mod tests {
 
     fn copy(dir: &tempfile::TempDir) -> Core {
         Core::open(dir.path().join("copy.db"), None).unwrap()
+    }
+
+    #[test]
+    fn a_placement_whose_stored_text_is_not_json_fails_no_path_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let conn = core.conn().unwrap();
+        for (id, source, path) in [("sound", "a", Some("x.md")), ("torn", "b", Some("y.md"))] {
+            let mut edge = crate::store::testing::wire_edge(id, source, "folder", PLACEMENT_EDGE);
+            edge.properties = props(serde_json::json!({ "path": path }));
+            crate::store::put_server_edge(&conn, &edge).unwrap();
+        }
+        conn.execute(
+            "UPDATE edges SET properties = '{\"path\":' WHERE id = 'torn'",
+            [],
+        )
+        .unwrap();
+        // The witness: SQLite raises `malformed JSON` on that text, whatever
+        // the other rows hold.
+        assert!(
+            conn.query_row(
+                "SELECT json_type(properties, '$.path') FROM edges WHERE id = 'torn'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            Placements.every(&conn).unwrap(),
+            [("x.md".to_string(), "a".to_string())]
+        );
+        assert_eq!(Placements.of(&conn, "a").unwrap(), ["x.md"]);
+        assert!(Placements.of(&conn, "b").unwrap().is_empty());
     }
 
     fn props(value: Value) -> serde_json::Map<String, Value> {

@@ -6,7 +6,7 @@ use crate::catalog::Catalog;
 use crate::filter;
 use crate::model::{SearchFilters, SearchHit};
 use crate::query;
-use crate::store;
+use crate::store::{self, Unreadable};
 
 pub(crate) fn search(
     conn: &Connection,
@@ -14,6 +14,7 @@ pub(crate) fn search(
     query: &str,
     filters: &SearchFilters,
     limit: usize,
+    unreadable: &mut Unreadable,
 ) -> Result<Vec<SearchHit>> {
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
@@ -43,7 +44,7 @@ pub(crate) fn search(
         &mut clauses,
         &mut values,
     )?;
-    search_where(conn, query, &clauses, values, limit)
+    search_where(conn, query, &clauses, values, limit, unreadable)
 }
 
 /// Ranked as `search` ranks, narrowed by `clauses` on `items`.
@@ -53,6 +54,7 @@ pub(crate) fn search_where(
     clauses: &[String],
     mut values: Vec<Value>,
     limit: usize,
+    unreadable: &mut Unreadable,
 ) -> Result<Vec<SearchHit>> {
     let Some(expression) = fts_expression(query) else {
         return Ok(Vec::new());
@@ -82,7 +84,7 @@ pub(crate) fn search_where(
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let ids: Vec<String> = ranked.iter().map(|(id, _, _)| id.clone()).collect();
-    let items = store::items_by_ids(conn, &ids)?;
+    let items = store::items_by_ids_with(conn, &ids, unreadable)?;
     Ok(ranked
         .into_iter()
         .filter_map(|(id, rank, snippet)| {
@@ -180,6 +182,23 @@ mod tests {
     use crate::model::ItemState;
     use crate::store;
     use crate::store::testing::*;
+
+    fn search(
+        conn: &Connection,
+        catalog: &Catalog,
+        query: &str,
+        filters: &SearchFilters,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>> {
+        super::search(
+            conn,
+            catalog,
+            query,
+            filters,
+            limit,
+            &mut Unreadable::Refuse,
+        )
+    }
 
     #[test]
     fn hits_rank_by_bm25_then_id_and_only_the_active_state_answers() {

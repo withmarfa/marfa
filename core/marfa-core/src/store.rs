@@ -734,7 +734,7 @@ pub fn owed_of(conn: &Connection, row: &QueuedWrite) -> Result<Option<Owed>, Cor
             };
             // A delete emptied the copy at queue time, so the type can come
             // only from the payload.
-            let edge_type = match edge_by_id(conn, id)? {
+            let edge_type = match edge_ends(conn, id)? {
                 Some(edge) => Some(edge.edge_type),
                 None => row
                     .body
@@ -840,9 +840,43 @@ pub struct NewWrite<'a> {
     pub depends_on: &'a [String],
 }
 
+/// Refuses a body the server would refuse for its nesting
+/// (`items/json-depth`), and that a later read of the queue could not parse.
+/// One pass over the text, with no tree, so it also bounds a hostile value.
+fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for byte in payload.bytes() {
+        if in_string {
+            match (escaped, byte) {
+                (true, _) => escaped = false,
+                (false, b'\\') => escaped = true,
+                (false, b'"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > crate::MAX_JSON_DEPTH {
+                    return Err(CoreError::Invalid(format!(
+                        "a write nests its JSON deeper than {} levels, counting the write's own",
+                        crate::MAX_JSON_DEPTH
+                    )));
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// The idempotency key is minted here, not at send: a key minted per send
 /// would let a retry of a write whose answer was lost write it twice.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    refuse_too_deep(write.payload)?;
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
     let depends_on = if write.depends_on.is_empty() {
@@ -2350,7 +2384,7 @@ pub fn takes_edge(
 
 /// Keeps an edge a waiting write of this device's is laid over.
 pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some(edge) = edge_by_id(conn, id)? else {
+    let Some(edge) = edge_ends(conn, id)? else {
         return Ok(false);
     };
     if takes_edge(
@@ -2459,20 +2493,41 @@ pub fn forget_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 /// Nothing for a trashed row, as the server answers a read by id.
 pub fn item_by_id(conn: &Connection, id: &str) -> Result<Option<Item>, CoreError> {
-    let mut items = items_by_ids(conn, std::slice::from_ref(&id.to_string()))?;
+    item_by_id_with(conn, id, &mut Unreadable::Refuse)
+}
+
+pub fn item_by_id_with(
+    conn: &Connection,
+    id: &str,
+    unreadable: &mut Unreadable,
+) -> Result<Option<Item>, CoreError> {
+    let mut items = items_by_ids_with(conn, std::slice::from_ref(&id.to_string()), unreadable)?;
     Ok(items.pop().filter(|item| item.state != ItemState::Trashed))
 }
 
 /// Items for `ids`, in the order given, skipping ids not held.
 pub fn items_by_ids(conn: &Connection, ids: &[String]) -> Result<Vec<Item>, CoreError> {
+    items_by_ids_with(conn, ids, &mut Unreadable::Refuse)
+}
+
+/// `items_by_ids`, with `unreadable` deciding what a row whose stored
+/// properties cannot be read does.
+pub fn items_by_ids_with(
+    conn: &Connection,
+    ids: &[String],
+    unreadable: &mut Unreadable,
+) -> Result<Vec<Item>, CoreError> {
     let mut by_id: HashMap<String, Item> = HashMap::new();
     for chunk in ids.chunks(500) {
         let placeholders = vec!["?"; chunk.len()].join(", ");
         let sql = format!("SELECT {ITEM_COLUMNS} FROM items WHERE id IN ({placeholders})");
         let mut statement = conn.prepare(&sql)?;
-        let rows = statement.query_map(params_from_iter(chunk.iter()), row_to_item)?;
+        let rows = statement.query_map(params_from_iter(chunk.iter()), read_item)?;
         for row in rows {
-            let item = row?;
+            let (item, why) = row?;
+            if let Some(why) = why {
+                unreadable.note("item", &item.id, why)?;
+            }
             by_id.insert(item.id.clone(), item);
         }
     }
@@ -2487,18 +2542,28 @@ pub fn items_by_ids(conn: &Connection, ids: &[String]) -> Result<Vec<Item>, Core
         .collect())
 }
 
+/// Items matching `where_sql`, with `unreadable` deciding what a row whose
+/// stored properties cannot be read does.
 pub fn items_where(
     conn: &Connection,
     where_sql: &str,
     order_sql: &str,
     limit_sql: &str,
     values: &[Value],
+    unreadable: &mut Unreadable,
 ) -> Result<Vec<Item>, CoreError> {
     let sql = format!("SELECT {ITEM_COLUMNS} FROM items WHERE {where_sql} {order_sql} {limit_sql}");
     let mut statement = conn.prepare(&sql)?;
     let params = values.iter().map(sql_value).collect::<Vec<_>>();
-    let rows = statement.query_map(params_from_iter(params.iter()), row_to_item)?;
-    let mut items = rows.collect::<Result<Vec<Item>, _>>()?;
+    let rows = statement.query_map(params_from_iter(params.iter()), read_item)?;
+    let mut items = Vec::new();
+    for row in rows {
+        let (item, why) = row?;
+        if let Some(why) = why {
+            unreadable.note("item", &item.id, why)?;
+        }
+        items.push(item);
+    }
     let ids: Vec<String> = items.iter().map(|item| item.id.clone()).collect();
     let tags = tags_for(conn, &ids)?;
     for item in &mut items {
@@ -2508,24 +2573,37 @@ pub fn items_where(
 }
 
 pub fn edges_from(conn: &Connection, source_id: &str) -> Result<Vec<Edge>, CoreError> {
-    edges_at(conn, "source_id", source_id)
+    edges_at(conn, "source_id", source_id, &mut Unreadable::Refuse)
 }
 
 pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreError> {
-    edges_at(conn, "target_id", target_id)
+    edges_at(conn, "target_id", target_id, &mut Unreadable::Refuse)
 }
 
 pub fn edges_of_type(conn: &Connection, edge_type: &str) -> Result<Vec<Edge>, CoreError> {
-    edges_at(conn, "edge_type", edge_type)
+    edges_at(conn, "edge_type", edge_type, &mut Unreadable::Refuse)
 }
 
 /// `column` is spliced into the query, so it is a literal, never a caller's text.
-fn edges_at(conn: &Connection, column: &'static str, value: &str) -> Result<Vec<Edge>, CoreError> {
+pub fn edges_at(
+    conn: &Connection,
+    column: &'static str,
+    value: &str,
+    unreadable: &mut Unreadable,
+) -> Result<Vec<Edge>, CoreError> {
     let sql =
         format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {column} = ?1 ORDER BY created_at, id");
     let mut statement = conn.prepare(&sql)?;
-    let rows = statement.query_map([value], row_to_edge)?;
-    Ok(rows.collect::<Result<Vec<Edge>, _>>()?)
+    let rows = statement.query_map([value], read_edge)?;
+    let mut edges = Vec::new();
+    for row in rows {
+        let (edge, why) = row?;
+        if let Some(why) = why {
+            unreadable.note("edge", &edge.id, why)?;
+        }
+        edges.push(edge);
+    }
+    Ok(edges)
 }
 
 pub fn count(conn: &Connection, table: &str) -> Result<u64, CoreError> {
@@ -2572,11 +2650,14 @@ fn tags_for(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<Str
     Ok(tags)
 }
 
-fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
+/// A row of `items`, with why its properties are empty where the stored text
+/// could not be read.
+fn read_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Item, Option<String>)> {
     let state: String = row.get(2)?;
     let tier: Option<String> = row.get(3)?;
     let properties: String = row.get(11)?;
-    Ok(Item {
+    let (properties, why) = split_properties(&properties);
+    let item = Item {
         id: row.get(0)?,
         r#type: row.get(1)?,
         state: state.parse().map_err(|_| invalid_row(2, &state))?,
@@ -2591,29 +2672,70 @@ fn row_to_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<Item> {
         occurred_at: row.get(8)?,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
-        properties: parse_object(&properties).map_err(|_| invalid_row(11, &properties))?,
+        properties,
         tags: Vec::new(),
-    })
+    };
+    Ok((item, why))
 }
 
-fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<Edge> {
+fn read_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Edge, Option<String>)> {
     let properties: String = row.get(4)?;
-    Ok(Edge {
+    let (properties, why) = split_properties(&properties);
+    let edge = Edge {
         id: row.get(0)?,
         source_id: row.get(1)?,
         target_id: row.get(2)?,
         edge_type: row.get(3)?,
-        properties: parse_object(&properties).map_err(|_| invalid_row(4, &properties))?,
+        properties,
         version: row.get(5)?,
         created_at: row.get(6)?,
         updated_at: row.get(7)?,
-    })
+    };
+    Ok((edge, why))
 }
 
-fn parse_object(text: &str) -> Result<Map<String, Value>, serde_json::Error> {
-    match serde_json::from_str::<Value>(text)? {
-        Value::Object(map) => Ok(map),
-        _ => Ok(Map::new()),
+/// What a read does with a row whose stored properties are not one JSON
+/// object. The text is not echoed: it is the person's content.
+pub enum Unreadable {
+    /// The read fails.
+    Refuse,
+    /// The row stays, with no properties, and its id is noted with the reason.
+    Keep(HashMap<String, String>),
+}
+
+impl Unreadable {
+    pub fn why(&self, id: &str) -> Option<String> {
+        match self {
+            Unreadable::Refuse => None,
+            Unreadable::Keep(kept) => kept.get(id).cloned(),
+        }
+    }
+
+    fn note(&mut self, kind: &str, id: &str, why: String) -> Result<(), CoreError> {
+        match self {
+            Unreadable::Refuse => Err(CoreError::Store(format!(
+                "the properties of {kind} {id} cannot be read: {why}"
+            ))),
+            Unreadable::Keep(kept) => {
+                kept.insert(id.to_string(), why);
+                Ok(())
+            }
+        }
+    }
+}
+
+/// The stored properties, or none and why they could not be read.
+fn split_properties(text: &str) -> (Map<String, Value>, Option<String>) {
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(map)) => (map, None),
+        Ok(_) => (
+            Map::new(),
+            Some("the stored text is not a JSON object".into()),
+        ),
+        Err(error) => (
+            Map::new(),
+            Some(format!("the stored text is not JSON ({error})")),
+        ),
     }
 }
 
@@ -3234,10 +3356,22 @@ pub fn lay_waiting_writes_over(
     if waiting.is_empty() {
         return Ok(());
     }
-    let Some(mut item) = items_by_ids(conn, std::slice::from_ref(&item_id.to_string()))?.pop()
-    else {
+    // A row whose stored properties cannot be read has nothing to lay the
+    // writes over; they stay queued, and a fresh copy from the server takes
+    // them when it arrives. Failing here would fail a hydration or a catch-up
+    // for one damaged row.
+    let mut damaged = Unreadable::Keep(HashMap::new());
+    let Some(mut item) = items_by_ids_with(
+        conn,
+        std::slice::from_ref(&item_id.to_string()),
+        &mut damaged,
+    )?
+    .pop() else {
         return Ok(());
     };
+    if damaged.why(item_id).is_some() {
+        return Ok(());
+    }
     let mut tags = item.tags.clone();
     for mut row in waiting {
         let mut read = read_of(conn, &row.id)?
@@ -3487,9 +3621,14 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
     let waiting = current_edge_writes(conn, edge_id)?;
-    let Some(mut edge) = edge_by_id(conn, edge_id)? else {
+    // As for an item: a damaged edge is left as it is under its writes.
+    let mut damaged = Unreadable::Keep(HashMap::new());
+    let Some(mut edge) = edge_by_id_with(conn, edge_id, &mut damaged)? else {
         return Ok(());
     };
+    if damaged.why(edge_id).is_some() {
+        return Ok(());
+    }
     for mut row in waiting {
         if row.verdict == Some(Verdict::Dead)
             && row.kind == WriteKind::UpdateEdge
@@ -3751,26 +3890,37 @@ pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<b
 }
 
 pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
-    Ok(conn
+    edge_by_id_with(conn, id, &mut Unreadable::Refuse)
+}
+
+/// The edge for a reader that needs only its ends and type, such as one
+/// asking whether the copy holds it: where its stored properties cannot be
+/// read, they are empty. A reader that writes from the properties calls
+/// `edge_by_id`, which refuses.
+pub fn edge_ends(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
+    edge_by_id_with(conn, id, &mut Unreadable::Keep(HashMap::new()))
+}
+
+pub fn edge_by_id_with(
+    conn: &Connection,
+    id: &str,
+    unreadable: &mut Unreadable,
+) -> Result<Option<Edge>, CoreError> {
+    let read = conn
         .query_row(
             "SELECT id, source_id, target_id, edge_type, properties, version, created_at, updated_at
                FROM edges WHERE id = ?1",
             [id],
-            |row| {
-                Ok(Edge {
-                    id: row.get(0)?,
-                    source_id: row.get(1)?,
-                    target_id: row.get(2)?,
-                    edge_type: row.get(3)?,
-                    properties: serde_json::from_str(&row.get::<_, String>(4)?)
-                        .unwrap_or_default(),
-                    version: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
+            read_edge,
         )
-        .optional()?)
+        .optional()?;
+    let Some((edge, why)) = read else {
+        return Ok(None);
+    };
+    if let Some(why) = why {
+        unreadable.note("edge", &edge.id, why)?;
+    }
+    Ok(Some(edge))
 }
 
 /// The only write an edit or a delete of the edge cannot go without; the
@@ -4944,6 +5094,72 @@ mod tests {
         lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
+    }
+
+    #[test]
+    fn a_row_whose_stored_properties_cannot_be_read_is_left_as_it_is_under_its_waiting_writes() {
+        let conn = conn();
+        let mut edge = wire_edge("e1", "a", "b", "references");
+        edge.properties.insert("weight".into(), Value::from(1));
+        upsert_edge(&conn, &edge).unwrap();
+        upsert_item(
+            &conn,
+            &note("n1", "t", "b", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Indexing::default(),
+        )
+        .unwrap();
+        let queue = |kind: WriteKind, item: &str, edge_id: Option<&str>, payload: &str| {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind,
+                    item_id: Some(item),
+                    target_id: edge_id.map(|_| "b"),
+                    edge_id,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: None,
+                    payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        queue(
+            WriteKind::UpdateEdge,
+            "a",
+            Some("e1"),
+            r#"{"properties":{"weight":2}}"#,
+        );
+        queue(
+            WriteKind::UpdateItem,
+            "n1",
+            None,
+            r#"{"properties":{"title":"edited"},"version":1}"#,
+        );
+        // The witness: the readable rows take what waits.
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
+        assert_eq!(
+            edge_by_id(&conn, "e1").unwrap().unwrap().properties["weight"],
+            2
+        );
+
+        for table in ["edges", "items"] {
+            conn.execute(&format!("UPDATE {table} SET properties = '{{\"a\":'"), [])
+                .unwrap();
+        }
+        // Damaged and not fetched again, they cannot have the writes laid
+        // over them: they stay as they are, and the writes stay queued.
+        lay_waiting_edge_writes_over(&conn, "e1").unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::default()).unwrap();
+        let stored: String = conn
+            .query_row("SELECT properties FROM edges", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stored, r#"{"a":"#);
+        assert_eq!(read_writes(&conn, "", []).unwrap().len(), 2);
     }
 
     #[test]
