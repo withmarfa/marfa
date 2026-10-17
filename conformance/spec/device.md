@@ -2128,6 +2128,14 @@ When a listener joins a watch while the server is unreachable, a device MUST tel
 
 **Tests:** waiting on #1890.
 
+### `device/watch-join-reachable`
+
+When a listener joins a watch whose stream is held, and its caller says it was last told `server.unreachable`, a device MUST tell it `server.reachable`.
+
+**Reason:** a caller that restarts its watch around a new key would leave its listener showing an outage that is over.
+
+**Tests:** waiting on #1890.
+
 ### `device/watch-join-failed`
 
 When a listener joins a watch that failed, a device MUST tell it `watch.failed`, with the error, before any later change.
@@ -2238,9 +2246,11 @@ While no drain has left a write undelivered and no listener was told `server.unr
 
 ### `device/watch-saves`
 
-While a device holds a watch of a store opened to read, a device MUST tell each listener `store.saved`, with the data version, for each save another connection makes after the version the listener read when it joined.
+While a device holds a watch of a store opened to read, a device MUST tell each listener `store.saved`, with the data version, after another connection saves to the store, unless that listener already read or was told that data version.
 
-**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`.
+**Reason:** a reader that polls tells saves made within one poll once, and a listener that joined after a save read its version when it joined.
+
+**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`, `› tells a save made as soon as the reader says it is watching`.
 
 ### `device/watch-reads-failed`
 
