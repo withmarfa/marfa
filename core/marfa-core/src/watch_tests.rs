@@ -197,13 +197,19 @@ fn until(ready: &Arc<AtomicBool>, answer: Answer) -> Answer {
 fn one_stream_is_read_for_every_listener_and_each_is_told_in_order() {
     let server = Scripted::start();
     let core = copy(&server);
+    // Held until both have joined, so neither joins after a change is told.
+    let ready = Arc::new(AtomicBool::new(false));
     server.on(
         "/events",
-        vec![held_answer(vec![created("n1", "11"), created("n2", "12")])],
+        vec![until(
+            &ready,
+            held_answer(vec![created("n1", "11"), created("n2", "12")]),
+        )],
     );
     let (first, second) = (listener(), listener());
     let _one = watch(&core, &first);
     let _two = watch(&core, &second);
+    ready.store(true, Ordering::Relaxed);
     for heard in [&first, &second] {
         heard.wait_for_kind("item.created", 2);
         assert_eq!(heard.ids(), ["n1", "n2"]);
@@ -274,20 +280,25 @@ fn a_listener_that_joins_after_an_event_hears_only_what_follows() {
 fn a_listener_let_go_is_told_it_ended_once_and_nothing_after_while_the_rest_go_on() {
     let server = Scripted::start();
     let core = copy(&server);
+    let ready = Arc::new(AtomicBool::new(false));
     server.on(
         "/events",
-        vec![stream(
-            vec![created("n1", "11")],
-            Then::Later {
-                keepalive: MS(5),
-                after: MS(300),
-                frames: vec![created("n2", "12")],
-            },
+        vec![until(
+            &ready,
+            stream(
+                vec![created("n1", "11")],
+                Then::Later {
+                    keepalive: MS(5),
+                    after: MS(300),
+                    frames: vec![created("n2", "12")],
+                },
+            ),
         )],
     );
     let (leaving, staying) = (listener(), listener());
     let gone = watch(&core, &leaving);
     let _kept = watch(&core, &staying);
+    ready.store(true, Ordering::Relaxed);
     leaving.wait_for_kind("item.created", 1);
     gone.stop();
     gone.stop();
@@ -325,9 +336,13 @@ fn the_store_is_let_go_before_the_last_listener_is_told_it_ended() {
 fn a_listener_that_faults_is_removed_and_the_others_go_on() {
     let server = Scripted::start();
     let core = copy(&server);
+    let ready = Arc::new(AtomicBool::new(false));
     server.on(
         "/events",
-        vec![held_answer(vec![created("n1", "11"), created("n2", "12")])],
+        vec![until(
+            &ready,
+            held_answer(vec![created("n1", "11"), created("n2", "12")]),
+        )],
     );
     let faulting = Arc::new(Heard {
         panics: true,
@@ -336,6 +351,7 @@ fn a_listener_that_faults_is_removed_and_the_others_go_on() {
     let steady = listener();
     let _one = watch(&core, &faulting);
     let _two = watch(&core, &steady);
+    ready.store(true, Ordering::Relaxed);
     steady.wait_for_kind("item.created", 2);
     faulting.wait_for_end();
     assert!(matches!(
@@ -352,7 +368,8 @@ fn a_slow_listener_loses_nothing_and_changes_stay_in_order() {
     let frames: Vec<String> = (0..1500)
         .map(|n| created(&format!("n{n}"), &(11 + n).to_string()))
         .collect();
-    server.on("/events", vec![held_answer(frames)]);
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on("/events", vec![until(&ready, held_answer(frames))]);
     let slow = Arc::new(Heard {
         slow: Some(Duration::from_micros(300)),
         ..Heard::default()
@@ -360,6 +377,7 @@ fn a_slow_listener_loses_nothing_and_changes_stay_in_order() {
     let quick = listener();
     let _one = watch(&core, &slow);
     let _two = watch(&core, &quick);
+    ready.store(true, Ordering::Relaxed);
     slow.wait_for_kind("item.created", 1500);
     let expected: Vec<String> = (0..1500).map(|n| format!("n{n}")).collect();
     assert_eq!(slow.ids(), expected);
