@@ -2098,6 +2098,208 @@ If a catch-up's stream sends a line of more than 67,108,864 bytes (64 MiB), its 
 
 **Tests:** `device/catch-up.test.ts › refuses a line longer than 64 MiB, keeping the cursor it had`.
 
+## Watched
+
+A watch is the one source a working copy has for its listeners, an app's streams among them: a held stream for a copy with a server, and the store's data version for a store opened to read. However many listeners it has, it runs once. The command line runs one listener.
+
+### `device/watch-tells`
+
+While a device holds a watch of a working copy that has a server, a device MUST tell each listener each change a held stream tells its caller (`device/follow-tells`), in the order the stream produced them.
+
+**Tests:** `device/watch.test.ts › tells each event a held stream applied, in order, as a follow does`.
+
+### `device/watch-one-stream`
+
+While a working copy has listeners watching it, a device MUST hold one stream for all of them.
+
+**Reason:** a stream for each listener would move the one cursor once for each, and ask the server for as many streams.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-from-join`
+
+When a listener joins a watch, a device MUST tell it each change made after it joined and none made before.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-join-outage`
+
+When a listener joins a watch while the server is unreachable, a device MUST tell it `server.unreachable`, with why, before any later change.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-join-failed`
+
+When a listener joins a watch that failed, a device MUST tell it `watch.failed`, with the error, before any later change.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-reach-once`
+
+While a device holds a watch, a device MUST tell each listener `server.unreachable` once for each loss of the server and `server.reachable` once for each return.
+
+**Tests:** `device/watch.test.ts › tells once that the server cannot be reached, and once that it can again`.
+
+### `device/watch-answer-clears`
+
+If a watch's stream ends on the server's own answer while a listener was last told `server.unreachable`, then a device MUST tell that listener `server.reachable` before it tells that the watch failed.
+
+**Reason:** a listener left showing the server unreachable once it has answered would show an outage that is over.
+
+**Tests:** `device/watch.test.ts › tells the server is reachable when the stream ends on the server's own answer, then that it failed`.
+
+### `device/watch-recovery-clears`
+
+When a hydration or a catch-up succeeds on a working copy whose watch has a listener last told `server.unreachable`, a device MUST tell that listener `server.reachable`.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-drain-clears`
+
+When a drain a caller started answers a write on a working copy whose watch has a listener last told `server.unreachable`, a device MUST tell that listener `server.reachable`.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-failed-told`
+
+If a watch's stream ends on an error, then a device MUST tell each listener `watch.failed` once, with the error and naming no item and no edge.
+
+**Tests:** `device/watch.test.ts › tells the server is reachable when the stream ends on the server's own answer, then that it failed`.
+
+### `device/watch-failed-holds`
+
+While a watch has failed, a device MUST NOT hold a stream for it until a hydration or a catch-up has ended.
+
+**Tests:** waiting on #1890.
+
+### `device/command-watch-failed`
+
+If a watch fails, then the CLI MUST end `watch` with the error that failed it.
+
+**Reason:** no hydration or catch-up in the command's own process would start the watch again.
+
+**Tests:** `device/watch.test.ts › tells the server is reachable when the stream ends on the server's own answer, then that it failed`.
+
+### `device/watch-takeover`
+
+When a hydration or a catch-up is called on a working copy that has a watch, a device MUST take the stream from the watch for the call, without its caller stopping the watch.
+
+**Reason:** an app that had to stop its watch around each hydration would carry the state machine that does so.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-takeover-listeners`
+
+While a hydration or a catch-up holds the stream of a watch, a device MUST NOT end a listener of the watch.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-takeover-returns`
+
+When a hydration or a catch-up that took the stream from a watch ends, however it ends, a device MUST hold the watch's stream again from the cursor the call left.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-no-reentry`
+
+If a listener calls a hydration or a catch-up while a device tells it a change, then a device MUST refuse the call `invalid`.
+
+**Reason:** the call would wait for the thread that is calling it.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-drains-owed`
+
+When a watch has its first stream after a drain left a write undelivered, a device MUST drain the queue once.
+
+**Reason:** a drain that lost the server part way leaves writes that nothing but a later drain sends, and an app told only that the server is back would not know to send them.
+
+**Tests:** `device/watch.test.ts › drains once at its first stream what a drain left undelivered, though the server was never lost`.
+
+### `device/watch-owed-silent`
+
+When a watch drains for a drain that left a write undelivered, and no listener was told `server.unreachable`, a device MUST NOT tell any listener `server.reachable`.
+
+**Tests:** `device/watch.test.ts › drains once at its first stream what a drain left undelivered, though the server was never lost`.
+
+### `device/watch-owed-cleared`
+
+When a drain leaves no write undelivered, a device MUST NOT drain the queue for it at a later stream of a watch.
+
+**Tests:** `device/watch.test.ts › drains once at its first stream what a drain left undelivered, though the server was never lost`.
+
+### `device/watch-drains-held-not`
+
+While no drain has left a write undelivered and no listener was told `server.unreachable`, a device MUST NOT drain the queue for a watch.
+
+**Reason:** a server never lost had every write the caller drained, and draining on a timer would send what the caller chose to hold.
+
+**Tests:** `device/watch.test.ts › drains nothing for a server never lost where the app only holds writes`.
+
+### `device/watch-saves`
+
+While a device holds a watch of a store opened to read, a device MUST tell each listener `store.saved`, with the data version, for each save another connection makes after the version the listener read when it joined.
+
+**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`.
+
+### `device/watch-reads-failed`
+
+If a watch of a store opened to read cannot read the store's data version, then a device MUST tell each listener `watch.failed` once.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-reads-mended`
+
+When a watch of a store opened to read reads the data version after a read failed, a device MUST tell each listener `store.saved`.
+
+**Reason:** a save may have been made while reads failed.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-listener-ends`
+
+When a listener stops watching, a device MUST tell it that it ended, once.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-ended-last`
+
+While a listener has been told that it ended, a device MUST NOT tell it a change.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-store-released`
+
+When a device tells the last listener of a watch that it ended, a device MUST have let go of the working copy's store.
+
+**Reason:** a caller that opens the store again on being told must find the writer's role free.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-slow-listener`
+
+While a listener takes long to return from a change, a device MUST tell every listener every change, in order, losing none.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-faulting-listener`
+
+If a listener faults while a device tells it a change, then a device MUST end that listener with the fault.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-fault-contained`
+
+If a listener faults while a device tells it a change, then a device MUST tell every other listener that change.
+
+**Tests:** waiting on #1890.
+
+### `device/watch-no-server`
+
+If a caller watches a working copy that has no server and was not opened to read, then a device MUST refuse it `no_server`.
+
+**Tests:** waiting on #1890.
+
 ## A store opened to read
 
 ### `device/reader-not-writer`
