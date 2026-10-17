@@ -1,7 +1,7 @@
 //! A body written through a working copy, read as the edges it names: a
 //! `references` edge for each link, and a file item's `attached-to` edge for
 //! each embed of a file. A folder reads its own files and keeps its own
-//! record, so its sync does not come through here.
+//! record, so the edges its sync makes do not come through here.
 
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::embed::{FILE_TYPE, bytes_of, file_like, is_note, joined, read_as};
+use super::embed::{FILE_TYPE, blob_ref_of, bytes_of, file_like, is_note, joined, read_as};
 use super::resolve::{Others, Paths, Resolved, Resolver, is_id, resolve_reference};
 use super::text::{self, Embed, Typed};
 use crate::catalog::Catalog;
@@ -19,6 +19,7 @@ use crate::error::CoreError;
 use crate::folder::fields;
 use crate::model::{Edge, EdgeDraft, Item, Verdict, WriteKind};
 use crate::names::{folded, name_of, same};
+use crate::wire::{WireEdge, WireItem};
 use crate::{Core, Result, store};
 
 pub(crate) const LINK_EDGE: &str = "references";
@@ -559,11 +560,26 @@ fn read_offline(
     recorded: &Recorded,
     reading: Reading,
 ) -> Result<Read> {
+    read_against(conn, catalog, host, body, recorded, reading, Others::load)
+}
+
+type LoadOthers = fn(&Connection, &Catalog, &dyn Paths, &[String]) -> Result<Others>;
+
+/// `read_offline`, with the referenced items' names read by `load`.
+fn read_against(
+    conn: &Connection,
+    catalog: &Catalog,
+    host: &str,
+    body: &str,
+    recorded: &Recorded,
+    reading: Reading,
+    load: LoadOthers,
+) -> Result<Read> {
     let mut read = Read::default();
     if body.is_empty() {
         return Ok(read);
     }
-    let references = Others::load(conn, catalog, &Placements, &references_of(conn, host)?)?;
+    let references = load(conn, catalog, &Placements, &references_of(conn, host)?)?;
     for raw in text::links(body) {
         let resolved = match link_offline(
             conn,
@@ -737,6 +753,314 @@ pub(crate) fn derive_on_answer(
         "INSERT OR REPLACE INTO body_checks (write_id, item_id, body) VALUES (?1, ?2, ?3)",
         params![write, before.id, body_of(catalog, before)],
     )?;
+    Ok(())
+}
+
+/// The items whose bodies link to `id` or embed it: the sources of its
+/// `references` edges and the targets of its `attached-to` edges.
+fn linking(conn: &Connection, id: &str) -> Result<Vec<String>> {
+    let mut statement = conn.prepare(
+        "SELECT source_id FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3
+         UNION
+         SELECT target_id FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3",
+    )?;
+    let rows = statement.query_map(params![LINK_EDGE, ATTACHMENT_EDGE, id], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Records, for each of `hosts`, the item each link and embed in its body
+/// that has no row names now, where the edge to that item stands. A body
+/// another device wrote reaches the copy with its edges but no word of which
+/// link made which, and this is the last moment the copy can still tell.
+fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> Result<()> {
+    for host in hosts {
+        match record_host(conn, catalog, host) {
+            // A row whose stored properties cannot be read, the host's or one
+            // its reading reaches, leaves that body unrecorded and fails no
+            // landing or hydration.
+            Err(error) if store::unreadable(&error) => {}
+            other => other?,
+        }
+    }
+    Ok(())
+}
+
+fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
+    let Some(item) = store::item_by_id(conn, host)? else {
+        return Ok(());
+    };
+    let held = recorded(conn, host)?;
+    let body = body_of(catalog, &item);
+    let embeds = text::embeds(body);
+    let texts = text::links(body)
+        .into_iter()
+        .map(|raw| (Kind::Link, raw))
+        .chain(
+            embeds
+                .iter()
+                .map(|embed| (Kind::Embed, embed.raw().to_string())),
+        );
+    let mut open: Vec<(Kind, String)> = Vec::new();
+    for (kind, text) in texts {
+        if !answered(conn, &held, kind, host, &text)? {
+            open.push((kind, text));
+        }
+    }
+    if open.is_empty() {
+        return Ok(());
+    }
+    // Read as held: before a hydration the copy may be one that cannot be
+    // kept current, and what it holds is still the last word on its names.
+    let read = read_against(
+        conn,
+        catalog,
+        host,
+        body,
+        &Recorded::new(),
+        Reading::Previous,
+        Others::held,
+    )?;
+    for (kind, text, other) in read.found {
+        if !open.contains(&(kind, text.clone())) || held_edges(conn, kind, host, &other)?.is_empty()
+        {
+            return Ok(());
+        }
+        // The write that left the body carrying the text still did, so a
+        // row this copy wrote keeps it.
+        let write_id = held
+            .get(&(kind.as_str(), text.clone()))
+            .and_then(|row| row.write_id.clone());
+        put_row(
+            conn,
+            &Row {
+                item_id: host.to_string(),
+                kind,
+                text,
+                state: "resolved".into(),
+                other_id: Some(other),
+                reason: None,
+                held: None,
+                write_id,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+/// Whether a link or embed's row still answers for it: it names an item the
+/// edge to which stands, or it says the server refused the edge, which stays
+/// the answer until the refused write is discarded (`device/body-name-refused`).
+/// Any other row, a name the server has not settled or one whose edge has
+/// gone, is replaced by what the copy reads now.
+fn answered(
+    conn: &Connection,
+    held: &Recorded,
+    kind: Kind,
+    host: &str,
+    text: &str,
+) -> Result<bool> {
+    Ok(match held.get(&(kind.as_str(), text.to_string())) {
+        Some(row) if row.state == "refused" => true,
+        Some(row) if row.state == "resolved" => made_to(conn, held, kind, host, text)?.is_some(),
+        _ => false,
+    })
+}
+
+/// Called before the copy writes `id`'s row, whoever wrote it: `next` is
+/// the row it is about to hold, `None` for a change of state or the row
+/// leaving the copy. A change of what names the item (its type, state or
+/// title), or of whether it holds bytes, which makes a file item one an
+/// embed can name, can take away the name a link or embed was read by, so
+/// what the links to it name is recorded first.
+pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>) -> Result<()> {
+    if !linked(conn, id)? || !recording(conn)? {
+        return Ok(());
+    }
+    let mut catalog = None;
+    if let Some(next) = next {
+        let held: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT type, state, properties FROM items WHERE id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((r#type, state, properties)) = held else {
+            return Ok(());
+        };
+        if r#type == next.r#type && state == next.state {
+            // Stored text that is not one object names nothing the copy can
+            // read, so the write is taken as changing the item's names.
+            let properties = match serde_json::from_str(&properties) {
+                Ok(Value::Object(properties)) => properties,
+                _ => serde_json::Map::new(),
+            };
+            if properties == next.properties {
+                return Ok(());
+            }
+            let loaded = Catalog::load(conn)?;
+            let title = fields::title_field(&loaded, &r#type);
+            if properties.get(title) == next.properties.get(title)
+                && blob_ref_of(&loaded, &r#type, &properties).is_some()
+                    == blob_ref_of(&loaded, &r#type, &next.properties).is_some()
+            {
+                return Ok(());
+            }
+            catalog = Some(loaded);
+        }
+    }
+    let catalog = match catalog {
+        Some(catalog) => catalog,
+        None => Catalog::load(conn)?,
+    };
+    record_unrecorded(conn, &catalog, &linking(conn, id)?)
+}
+
+/// Whether any body links to `id` or embeds it.
+fn linked(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3)
+             OR EXISTS (SELECT 1 FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3)",
+        params![LINK_EDGE, ATTACHMENT_EDGE, id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Called before a hydration clears the slice: it lands every row as the
+/// server holds it now, so a rename the copy has not heard of would land
+/// with no record of which link made which edge. The rows outlast the
+/// clearing.
+pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
+    let hosts: Vec<String> = {
+        let mut statement = conn.prepare(
+            "SELECT source_id FROM edges WHERE edge_type = ?1
+             UNION
+             SELECT target_id FROM edges WHERE edge_type = ?2",
+        )?;
+        let rows = statement.query_map(params![LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if hosts.is_empty() {
+        return Ok(());
+    }
+    record_unrecorded(conn, &Catalog::load(conn)?, &hosts)
+}
+
+/// Called before the copy writes an edge, whoever wrote it. An edge from a
+/// body to an item it did not reference before can make a link's name answer
+/// two of the items it references, and a placement that moves changes the
+/// path its item is named by, so what the affected links name is recorded
+/// first.
+pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
+    let (kind, host, other) = match edge.edge_type.as_str() {
+        LINK_EDGE => (Kind::Link, &edge.source_id, &edge.target_id),
+        ATTACHMENT_EDGE => (Kind::Embed, &edge.target_id, &edge.source_id),
+        PLACEMENT_EDGE => {
+            let held = store::edge_by_id_with(
+                conn,
+                &edge.id,
+                &mut store::Unreadable::Keep(Default::default()),
+            )?;
+            let mut moved = vec![edge.source_id.as_str()];
+            if let Some(held) = &held {
+                if held.source_id == edge.source_id
+                    && held.properties.get("path") == edge.properties.get("path")
+                {
+                    return Ok(());
+                }
+                if held.source_id != edge.source_id {
+                    moved.push(&held.source_id);
+                }
+            }
+            for item in moved {
+                item_changing(conn, item, None)?;
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    if !recording(conn)? || edge_held(conn, &edge.edge_type, &edge.source_id, &edge.target_id)? {
+        return Ok(());
+    }
+    let others = match kind {
+        Kind::Link => "SELECT 1 FROM edges WHERE source_id = ?1 AND edge_type = ?2 LIMIT 1",
+        Kind::Embed => "SELECT 1 FROM edges WHERE target_id = ?1 AND edge_type = ?2 LIMIT 1",
+    };
+    // With no edge of its kind yet, no link or embed of the body has an edge
+    // to be recorded against.
+    let any = conn
+        .query_row(others, params![host, edge.edge_type], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if !any || other == host {
+        return Ok(());
+    }
+    record_unrecorded(conn, &Catalog::load(conn)?, std::slice::from_ref(host))
+}
+
+fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM edges WHERE edge_type = ?1 AND source_id = ?2 AND target_id = ?3 LIMIT 1",
+            params![edge_type, source, target],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Called before the copy takes an edge out, whoever took it: a placement
+/// that goes takes its path with it.
+pub(crate) fn edge_leaving(conn: &Connection, id: &str) -> Result<()> {
+    match store::edge_by_id_with(conn, id, &mut store::Unreadable::Keep(Default::default()))? {
+        Some(held) if held.edge_type == PLACEMENT_EDGE => {
+            item_changing(conn, &held.source_id, None)
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Whether the copy records what links name before a change: always but
+/// part way through a hydration, which lands every row as the server holds
+/// it now, so nothing it lands takes away a name the copy could still read
+/// by. A copy that cannot be kept current still records, since a read-back
+/// can land a rename on it and the next hydration reads what it holds.
+fn recording(conn: &Connection) -> Result<bool> {
+    store::hydration_complete(conn)
+}
+
+/// Whether a server row landing on `id` can leave rows its body no longer
+/// carries: the copy holds rows for it, and no edit read on its answer
+/// (`body_checks`) still needs them to read the body it was made against.
+pub(crate) fn drops_on_landing(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)
+            AND NOT EXISTS (SELECT 1 FROM body_checks WHERE item_id = ?1)",
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Once a server row has landed on `id` with no write of this copy's laid
+/// over it, drops the row of each link and embed text the landed body does
+/// not carry. A link another device took out and put back is then read
+/// afresh, not by what the link taken out named.
+pub(crate) fn landed(conn: &Connection, catalog: &Catalog, id: &str) -> Result<()> {
+    let Some(item) = store::item_by_id(conn, id)? else {
+        return Ok(());
+    };
+    let body = body_of(catalog, &item);
+    let links = text::links(body);
+    let embeds = text::embeds(body);
+    for row in rows_of(conn, id)? {
+        let carried = match row.kind {
+            Kind::Link => links.contains(&row.text),
+            Kind::Embed => embeds.iter().any(|embed| embed.raw() == row.text),
+        };
+        if !carried {
+            forget_row(conn, &row)?;
+        }
+    }
     Ok(())
 }
 
@@ -1875,14 +2199,584 @@ mod tests {
     /// Lands `body` on the item as the server's row, as another device's
     /// write does: no link of it is read or recorded here.
     fn land_remote_body(core: &Core, host: &str, body: &str) {
+        land_remote(core, host, serde_json::json!({ "body": body }));
+    }
+
+    /// Lands `properties` over the item's as the server's row.
+    fn land_remote(core: &Core, id: &str, properties: Value) {
         let conn = core.conn().unwrap();
-        let mut item = store::item_by_id(&conn, host).unwrap().unwrap();
-        item.properties
-            .insert("body".into(), Value::String(body.into()));
+        let mut item = store::item_by_id(&conn, id).unwrap().unwrap();
+        item.properties.extend(props(properties));
         item.version += 1;
         let wire: crate::wire::WireItem =
             serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
-        store::put_server_item(&conn, &wire, None, &crate::catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &wire, None, &crate::catalog::Catalog::empty()).unwrap();
+    }
+
+    /// Lands an edge as the server's, as another device's write does.
+    fn land_remote_edge(core: &Core, edge: crate::wire::WireEdge) {
+        store::put_server_edge(&core.conn().unwrap(), &edge).unwrap();
+    }
+
+    fn link_edge(source: &str, target: &str) -> crate::wire::WireEdge {
+        store::testing::wire_edge(&uuid::Uuid::now_v7().to_string(), source, target, LINK_EDGE)
+    }
+
+    /// Takes every write out of the queue, so the rows stand as the server's
+    /// and nothing of this copy's waits on them.
+    fn as_the_server_s(core: &Core) {
+        core.conn()
+            .unwrap()
+            .execute("DELETE FROM queue", [])
+            .unwrap();
+    }
+
+    fn recorded_texts(core: &Core, host: &str) -> Vec<String> {
+        let mut texts: Vec<String> = rows_of(&core.conn().unwrap(), host)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.text)
+            .collect();
+        texts.sort();
+        texts
+    }
+
+    fn creates_from(core: &Core, host: &str) -> Vec<String> {
+        edge_writes(core)
+            .into_iter()
+            .filter(|(kind, source, _)| *kind == WriteKind::CreateEdge && source == host)
+            .map(|(.., target)| target)
+            .collect()
+    }
+
+    /// A host whose body `[[Plan]]` and edge to "Plan" landed from another
+    /// device, so this copy has recorded nothing of the link.
+    fn plan_from_another_device(core: &Core, body: &str) -> (String, String) {
+        let plan = note(core, "Plan", "");
+        let host = note(core, "Reader", "");
+        as_the_server_s(core);
+        land_remote_body(core, &host, body);
+        land_remote_edge(core, link_edge(&host, &plan));
+        assert_eq!(
+            recorded_texts(core, &host),
+            Vec::<String>::new(),
+            "a link another device wrote was recorded as it landed"
+        );
+        (host, plan)
+    }
+
+    #[test]
+    fn a_link_from_another_device_keeps_its_item_after_a_rename() {
+        for rename_here in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy(&dir);
+            let (host, plan) = plan_from_another_device(&core, "see [[Plan]]");
+            if rename_here {
+                edit(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+            } else {
+                land_remote(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+            }
+            assert_eq!(
+                targets(&core.body_links(&host).unwrap().links),
+                vec![BodyTarget::Item { id: plan.clone() }],
+                "renamed here: {rename_here}"
+            );
+            let taker = note(&core, "Plan", "");
+            edit(
+                &core,
+                &host,
+                serde_json::json!({ "body": format!("[[Plan]] [[{taker}]]") }),
+            );
+            assert_eq!(
+                targets(&core.body_links(&host).unwrap().links),
+                vec![
+                    BodyTarget::Item { id: plan.clone() },
+                    BodyTarget::Item { id: taker.clone() },
+                ],
+                "renamed here: {rename_here}"
+            );
+            assert_eq!(creates_from(&core, &host), vec![taker]);
+            assert_eq!(deletes(&core), vec![]);
+            assert!(!waiting(&core.conn().unwrap()).unwrap(), "a name waits");
+        }
+    }
+
+    #[test]
+    fn a_link_from_another_device_keeps_its_item_however_untidily_it_is_spelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let cafe = note(&core, "Caf\u{e9} Plan", "");
+        let host = note(&core, "Reader", "");
+        as_the_server_s(&core);
+        land_remote_body(
+            &core,
+            &host,
+            "[[ caf\u{e9} plan ]] [[CAFE\u{301} PLAN|shown]]",
+        );
+        land_remote_edge(&core, link_edge(&host, &cafe));
+        edit(&core, &cafe, serde_json::json!({ "title": "Elsewhere" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![
+                BodyTarget::Item { id: cafe.clone() },
+                BodyTarget::Item { id: cafe },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_link_from_another_device_keeps_its_item_when_a_new_link_names_another_of_its_title() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        let other = note(&core, "Plan", "");
+        as_the_server_s(&core);
+        land_remote_body(&core, &host, &format!("[[Plan]] [[{other}]]"));
+        land_remote_edge(&core, link_edge(&host, &other));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![
+                BodyTarget::Item { id: plan },
+                BodyTarget::Item { id: other },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_link_by_path_from_another_device_keeps_its_item_when_its_file_moves() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[notes/Plan]]");
+        let placed = |version: i64, path: &str| {
+            let mut edge = store::testing::wire_edge("placed", &plan, "folder", PLACEMENT_EDGE);
+            edge.properties.insert("path".into(), path.into());
+            edge.version = version;
+            edge.updated_at = format!("2026-01-0{version}T00:00:00Z");
+            edge
+        };
+        land_remote_edge(&core, placed(1, "notes/Plan.md"));
+        land_remote(&core, &plan, serde_json::json!({ "title": "Elsewhere" }));
+        land_remote_edge(&core, placed(2, "notes/Plan v2.md"));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item { id: plan }]
+        );
+    }
+
+    #[test]
+    fn an_embed_from_another_device_keeps_its_file_after_a_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "");
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"not really a png").unwrap();
+        let file = core
+            .attach(&host, &photo, &Attachment::default())
+            .unwrap()
+            .item
+            .item_id
+            .unwrap();
+        as_the_server_s(&core);
+        land_remote_body(&core, &host, "![[photo.png]]");
+        edit(&core, &file, serde_json::json!({ "title": "renamed.png" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }]
+        );
+    }
+
+    #[test]
+    fn a_link_another_device_takes_out_and_puts_back_is_read_afresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan, taker) = plan_renamed_and_taken(&core, "Plan");
+        edit(
+            &core,
+            &host,
+            serde_json::json!({ "body": format!("[[Plan]] [[{plan}]]") }),
+        );
+        as_the_server_s(&core);
+        land_remote_body(&core, &host, &format!("[[{plan}]]"));
+        assert_eq!(recorded_texts(&core, &host), vec![plan.clone()]);
+        land_remote_body(&core, &host, &format!("[[Plan]] [[{plan}]]"));
+        land_remote_edge(&core, link_edge(&host, &taker));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![
+                BodyTarget::Item { id: taker },
+                BodyTarget::Item { id: plan },
+            ],
+            "a link put back elsewhere was answered by the one taken out"
+        );
+    }
+
+    #[test]
+    fn a_server_row_under_a_waiting_write_leaves_the_rows_of_this_copy_s_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "[[Nobody]]");
+        land_remote_body(&core, &host, "no link");
+        assert_eq!(
+            recorded_texts(&core, &host),
+            vec!["Nobody".to_string()],
+            "a server row landing under a waiting write dropped its body's name"
+        );
+        as_the_server_s(&core);
+        land_remote_body(&core, &host, "still no link");
+        assert_eq!(recorded_texts(&core, &host), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_older_edit_that_takes_out_a_link_to_a_renamed_item_deletes_its_edge_once_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan, _) = plan_renamed_and_taken(&core, "Plan");
+        as_the_server_s(&core);
+        // The copy holds a later version than the one the edit was read at.
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET version = 2 WHERE id = ?1", [&host])
+            .unwrap();
+        let queued = core
+            .update_item_as_read(
+                &host,
+                &Edit {
+                    properties: props(serde_json::json!({ "body": "no link" })),
+                    base_version: Some(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'accepted' WHERE id = ?1",
+                [&queued.id],
+            )
+            .unwrap();
+        land_remote_body(&core, &host, "no link");
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert_eq!(
+            deletes(&core),
+            vec![(host, plan)],
+            "the edit's answer was read without the row of the link it took out"
+        );
+    }
+
+    /// Lands a note as the server's row, as another device's create does.
+    fn remote_note(core: &Core, id: &str, title: &str) {
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &store::testing::note(id, title, "", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Catalog::empty(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_rename_records_a_link_whose_row_no_longer_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let gone = note(&core, "Plan", "");
+        let host = note(&core, "Host", "");
+        core.create_edge(&draft(Kind::Link, &host, &gone)).unwrap();
+        edit(&core, &host, serde_json::json!({ "body": "see [[Plan]]" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+        as_the_server_s(&core);
+        store::purge_item(&core.conn().unwrap(), &gone).unwrap();
+        // Another device makes a new "Plan" and links the body to it.
+        remote_note(&core, "plan-a", "Plan");
+        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item {
+                id: "plan-a".into()
+            }]
+        );
+        land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item {
+                id: "plan-a".into()
+            }],
+            "a row whose edge had gone stood in for a record of the rename"
+        );
+    }
+
+    #[test]
+    fn a_rename_records_a_link_this_copy_left_unresolved_once_another_device_links_it() {
+        for state in ["pending", "missing", "ambiguous", "unanswered"] {
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy(&dir);
+            let host = note(&core, "Host", "[[Plan]]");
+            as_the_server_s(&core);
+            core.conn()
+                .unwrap()
+                .execute("UPDATE body_names SET state = ?1", [state])
+                .unwrap();
+            remote_note(&core, "plan-a", "Plan");
+            land_remote_edge(&core, link_edge(&host, "plan-a"));
+            land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+            assert_eq!(
+                targets(&core.body_links(&host).unwrap().links),
+                vec![BodyTarget::Item {
+                    id: "plan-a".into()
+                }],
+                "a {state} row stood in for a record of the rename"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rename_leaves_a_refused_link_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "[[Plan]]");
+        as_the_server_s(&core);
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE body_names SET state = 'refused', reason = 'not allowed'",
+                [],
+            )
+            .unwrap();
+        remote_note(&core, "plan-a", "Plan");
+        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Refused {
+                reason: "not allowed".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_attachment_gaining_bytes_leaves_an_embed_naming_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "");
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"not really a png").unwrap();
+        let file = core
+            .attach(&host, &photo, &Attachment::default())
+            .unwrap()
+            .item
+            .item_id
+            .unwrap();
+        as_the_server_s(&core);
+        let blob = core.get(&file).unwrap().unwrap().properties["blob_ref"].clone();
+        let mut second =
+            store::testing::wire_item("second", "core.file", "active", "2026-01-01T00:00:00Z", {
+                serde_json::json!({ "title": "photo.png" })
+            });
+        store::put_server_item(&core.conn().unwrap(), &second, Some(&[]), &Catalog::empty())
+            .unwrap();
+        let mut attached = store::testing::wire_edge("attached", "second", &host, ATTACHMENT_EDGE);
+        attached.version = 1;
+        land_remote_edge(&core, attached);
+        land_remote_body(&core, &host, "![[photo.png]]");
+        second.properties.insert("blob_ref".into(), blob);
+        second.version = 2;
+        second.updated_at = "2026-01-02T00:00:00Z".into();
+        store::put_server_item(&core.conn().unwrap(), &second, Some(&[]), &Catalog::empty())
+            .unwrap();
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }],
+            "a second file of the embed's name gaining bytes left nothing recorded"
+        );
+    }
+
+    /// A second host linking `plan`, whose stored properties are torn.
+    fn torn_host(core: &Core, plan: &str) {
+        remote_note(core, "torn", "Torn");
+        land_remote_edge(core, link_edge("torn", plan));
+        let conn = core.conn().unwrap();
+        conn.execute(
+            "UPDATE items SET properties = '{\"body\":' WHERE id = 'torn'",
+            [],
+        )
+        .unwrap();
+        // The witness: a refusing read of the row fails.
+        assert!(store::item_by_id(&conn, "torn").is_err());
+    }
+
+    #[test]
+    fn a_body_whose_row_cannot_be_read_fails_no_rename_of_an_item_it_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        torn_host(&core, &plan);
+        land_remote(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_body_whose_row_cannot_be_read_fails_no_hydration() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        torn_host(&core, &plan);
+        before_rebuild(&core.conn().unwrap()).unwrap();
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_linked_item_whose_row_cannot_be_read_fails_no_landing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (_, plan) = plan_from_another_device(&core, "[[Plan]]");
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET properties = '[1]' WHERE id = ?1", [&plan])
+            .unwrap();
+        let mut renamed = store::testing::note(&plan, "Plan v2", "", "2026-01-02T00:00:00Z");
+        renamed.version = 5;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &renamed,
+            Some(&[]),
+            &Catalog::empty(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_copy_that_cannot_be_kept_current_still_records_before_a_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            assert!(!store::hydrated(&conn).unwrap() && !store::never_synced(&conn).unwrap());
+        }
+        land_remote(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn an_edit_to_a_linked_item_s_own_body_records_nothing_and_a_rename_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        edit(&core, &plan, serde_json::json!({ "body": "edited" }));
+        land_remote(
+            &core,
+            &plan,
+            serde_json::json!({ "body": "edited elsewhere" }),
+        );
+        assert_eq!(
+            recorded_texts(&core, &host),
+            Vec::<String>::new(),
+            "an edit that names the item no differently recorded the links to it"
+        );
+        edit(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_hydration_keeps_what_a_link_from_another_device_named_before_its_item_was_renamed() {
+        use crate::scripted::{self, Scripted, Then};
+        let server = Scripted::start();
+        let core = crate::stop_tests::copy(&server);
+        let edge = link_edge("reader", "plan");
+        {
+            let conn = core.conn().unwrap();
+            let catalog = Catalog::empty();
+            store::put_server_item(
+                &conn,
+                &store::testing::note("plan", "Plan", "", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &catalog,
+            )
+            .unwrap();
+            store::put_server_item(
+                &conn,
+                &store::testing::note("reader", "Reader", "[[Plan]]", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &catalog,
+            )
+            .unwrap();
+            store::put_server_edge(&conn, &edge).unwrap();
+            // The cursor has gone, so the copy can only hydrate again.
+            store::meta_delete(&conn, store::META_EVENT_CURSOR).unwrap();
+        }
+        let row = |id: &str, title: &str, body: &str, version: i64, edges: Value| {
+            serde_json::json!({
+                "item": {
+                    "id": id, "type": "core.note", "state": "active", "tier": "library",
+                    "properties": { "title": title, "body": body },
+                    "version": version, "schema_version": 1, "source": "test",
+                    "occurred_at": "2026-01-01T00:00:00Z",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": format!("2026-01-0{version}T00:00:00Z"),
+                    "edges": edges,
+                },
+                "metadata": { "item_id": id, "tags": [], "extensions": {} },
+                "listed": true,
+            })
+        };
+        let wire_edge = serde_json::json!({
+            "id": edge.id, "source_id": "reader", "target_id": "plan",
+            "edge_type": LINK_EDGE, "properties": {}, "version": 1,
+            "created_at": edge.created_at, "updated_at": edge.updated_at,
+        });
+        let page = serde_json::json!({
+            "data": [
+                row("plan", "Plan v2", "", 2, serde_json::json!({})),
+                row(
+                    "reader",
+                    "Reader",
+                    "[[Plan]]",
+                    1,
+                    serde_json::json!({ LINK_EDGE: { "data": [wire_edge], "next_cursor": null } }),
+                ),
+            ],
+            "next_cursor": null,
+        });
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(200, &page.to_string()))],
+        );
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "11"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        core.hydrate_until(
+            &["core.note".into()],
+            crate::SliceTier::Library,
+            &[],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            store::item_by_id(&core.conn().unwrap(), "plan")
+                .unwrap()
+                .unwrap()
+                .properties["title"],
+            "Plan v2",
+            "the hydration did not land the rename, so the answer below proves nothing"
+        );
+        assert_eq!(
+            targets(&core.body_links("reader").unwrap().links),
+            vec![BodyTarget::Item { id: "plan".into() }]
+        );
     }
 
     #[test]

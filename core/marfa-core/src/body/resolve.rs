@@ -354,12 +354,24 @@ impl Others {
         paths: &dyn Paths,
         others: &[String],
     ) -> Result<Others> {
+        if !others.is_empty() {
+            store::refuse_unless_usable(conn)?;
+        }
+        Others::held(conn, catalog, paths, others)
+    }
+
+    /// `load`, from whatever the copy holds, usable or not.
+    pub fn held(
+        conn: &Connection,
+        catalog: &Catalog,
+        paths: &dyn Paths,
+        others: &[String],
+    ) -> Result<Others> {
         let mut named = Vec::new();
         for other in others {
             if named.iter().any(|(held, _): &(String, _)| held == other) {
                 continue;
             }
-            store::refuse_unless_usable(conn)?;
             let mut names = BTreeSet::new();
             if let Some(item) = store::item_by_id(conn, other)?
                 && let Some(title) = item

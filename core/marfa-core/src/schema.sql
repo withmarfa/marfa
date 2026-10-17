@@ -225,8 +225,9 @@ CREATE TABLE IF NOT EXISTS folder_journal (
 -- What each link and embed in a body written through this copy names: the
 -- item it resolved to, by which its edge is still known as the body's once
 -- that item is renamed, or why it names none yet, so it is reported and
--- asked again. A folder keeps its own record of what each file showed, in
--- `folder_files`.
+-- asked again. For a body written elsewhere, the item each link names is
+-- recorded just before something it is read by changes. A folder keeps its
+-- own record of what each file showed, in `folder_files`.
 CREATE TABLE IF NOT EXISTS body_names (
   item_id TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('link', 'embed')),
@@ -241,7 +242,7 @@ CREATE TABLE IF NOT EXISTS body_names (
   -- answered it, so it is asked again only once that changes.
   held INTEGER,
   -- The write that left the body carrying it, which an edge made from it
-  -- waits on while it is unanswered.
+  -- waits on while it is unanswered; none for a body written elsewhere.
   write_id TEXT,
   PRIMARY KEY (item_id, kind, text)
 ) WITHOUT ROWID;

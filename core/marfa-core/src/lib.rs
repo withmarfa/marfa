@@ -2986,7 +2986,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &catalog::Indexing::default(),
+            &crate::catalog::Catalog::empty(),
         )
         .unwrap();
         id
@@ -3451,7 +3451,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &catalog::Indexing::default(),
+            &crate::catalog::Catalog::empty(),
         )
         .unwrap();
         let edit = |base, properties: Value, replace| Edit {
@@ -3570,7 +3570,7 @@ mod tests {
             &core.conn().unwrap(),
             &row,
             None,
-            &catalog::Indexing::default(),
+            &crate::catalog::Catalog::empty(),
         )
         .unwrap();
         let keyed = |key: &str, properties: Value| Draft {
@@ -3655,7 +3655,7 @@ mod tests {
                 &conn,
                 &row,
                 Some(&["a".into()]),
-                &catalog::Indexing::default(),
+                &crate::catalog::Catalog::empty(),
             )
             .unwrap();
             store::put_server_edge(
@@ -3693,7 +3693,7 @@ mod tests {
             &core.conn().unwrap(),
             &store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z"),
             Some(&[]),
-            &catalog::Indexing::default(),
+            &crate::catalog::Catalog::empty(),
         )
         .unwrap();
         let version = core.get("row").unwrap().unwrap().version;
@@ -3819,7 +3819,7 @@ mod tests {
             let conn = core.conn().unwrap();
             for id in ["torn", "bare", "calm"] {
                 let row = store::testing::note(id, id, "zebra", "2026-01-01T00:00:00Z");
-                store::put_server_item(&conn, &row, Some(&[]), &catalog::Indexing::default())
+                store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty())
                     .unwrap();
             }
             // A conflicted copy of "row", whose properties are among the damaged.
@@ -3828,7 +3828,7 @@ mod tests {
                 &conn,
                 &copy,
                 Some(&[CONFLICTED_COPY_TAG.to_string()]),
-                &catalog::Indexing::default(),
+                &crate::catalog::Catalog::empty(),
             )
             .unwrap();
             store::put_server_edge(
@@ -3994,7 +3994,7 @@ mod tests {
                 inbox.tier = Some("feed".into());
                 inbox.source = "reader".into();
                 inbox.source_id = Some("article-1".into());
-                store::put_server_item(&conn, &inbox, Some(&[]), &catalog::Indexing::default())
+                store::put_server_item(&conn, &inbox, Some(&[]), &crate::catalog::Catalog::empty())
                     .unwrap();
             }
             let keyed = |source_id: &str| Draft {
@@ -4047,7 +4047,7 @@ mod tests {
             inbox.tier = Some("feed".into());
             inbox.source = "reader".into();
             inbox.source_id = Some("article-1".into());
-            store::put_server_item(&conn, &inbox, Some(&[]), &catalog::Indexing::default())
+            store::put_server_item(&conn, &inbox, Some(&[]), &crate::catalog::Catalog::empty())
                 .unwrap();
             assert!(!store::item_held(&conn, &resynced_id).unwrap());
             let catalog = catalog::Catalog::load(&conn).unwrap();
@@ -4121,7 +4121,7 @@ mod tests {
                 "2026-01-01T00:00:00Z",
                 serde_json::json!({ "title": "Inbox" }),
             );
-            store::put_server_item(&conn, &folder, Some(&[]), &catalog::Indexing::default())
+            store::put_server_item(&conn, &folder, Some(&[]), &crate::catalog::Catalog::empty())
                 .unwrap();
         }
         let before = core.get("folder").unwrap();
@@ -4565,7 +4565,7 @@ mod tests {
                 &conn,
                 &baseline,
                 Some(&["a".into(), "b".into()]),
-                &catalog::Indexing::default(),
+                &crate::catalog::Catalog::empty(),
             )
             .unwrap();
             store::lay_waiting_writes_over(&conn, "row", &|_| catalog::Indexing::default())
@@ -4634,7 +4634,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+            store::put_server_item(&conn, &other, None, &crate::catalog::Catalog::empty()).unwrap();
             store::put_server_edge(
                 &conn,
                 &store::testing::wire_edge("link2", "row", "other", "references"),
@@ -4718,7 +4718,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+            store::put_server_item(&conn, &other, None, &crate::catalog::Catalog::empty()).unwrap();
             store::put_server_edge(
                 &conn,
                 &store::testing::wire_edge("link", "row", "older", "supersedes"),
