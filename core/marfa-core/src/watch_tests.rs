@@ -362,7 +362,7 @@ fn a_listener_that_faults_is_removed_and_the_others_go_on() {
 }
 
 #[test]
-fn a_slow_listener_loses_nothing_and_changes_stay_in_order() {
+fn a_dispatcher_that_falls_behind_makes_the_source_wait_and_loses_nothing() {
     let server = Scripted::start();
     let core = copy(&server);
     let frames: Vec<String> = (0..1500)
@@ -370,18 +370,28 @@ fn a_slow_listener_loses_nothing_and_changes_stay_in_order() {
         .collect();
     let ready = Arc::new(AtomicBool::new(false));
     server.on("/events", vec![until(&ready, held_answer(frames))]);
-    let slow = Arc::new(Heard {
-        slow: Some(Duration::from_micros(300)),
-        ..Heard::default()
-    });
-    let quick = listener();
-    let _one = watch(&core, &slow);
-    let _two = watch(&core, &quick);
+    let (first, second) = (listener(), listener());
+    let _one = watch(&core, &first);
+    let _two = watch(&core, &second);
+    // The source is asking, so the dispatcher is past its first turn.
+    server.wait_for("/events", 1, Duration::from_secs(5));
+    // Held where it takes what is queued, while the stream floods in.
+    core.watch.held_up.store(true, Ordering::SeqCst);
     ready.store(true, Ordering::Relaxed);
-    slow.wait_for_kind("item.created", 1500);
+    let until = Instant::now() + Duration::from_secs(20);
+    while core.watch.queued_changes() < 1_000 {
+        assert!(Instant::now() < until, "the queue never filled");
+        thread::sleep(MS(5));
+    }
+    // More than a queue holds is in the stream, and the source waits for room.
+    thread::sleep(MS(200));
+    assert!(core.watch.queued_changes() <= 1_024 + 1);
+    core.watch.held_up.store(false, Ordering::SeqCst);
+    first.wait_for_kind("item.created", 1500);
+    second.wait_for_kind("item.created", 1500);
     let expected: Vec<String> = (0..1500).map(|n| format!("n{n}")).collect();
-    assert_eq!(slow.ids(), expected);
-    assert_eq!(quick.ids(), expected);
+    assert_eq!(first.ids(), expected);
+    assert_eq!(second.ids(), expected);
 }
 
 #[test]
@@ -1052,33 +1062,116 @@ fn a_joiner_is_told_the_state_as_of_its_join_not_a_later_one_a_slow_listener_has
 fn a_joiner_hears_nothing_that_was_queued_before_it_joined() {
     let server = Scripted::start();
     let core = copy(&server);
+    let (entered, ready) = (
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(AtomicBool::new(false)),
+    );
     server.on(
         "/events",
         vec![stream(
-            vec![
-                created("n1", "11"),
-                created("n2", "12"),
-                created("n3", "13"),
-            ],
-            Then::Later {
-                keepalive: MS(5),
-                after: MS(1_500),
-                frames: vec![created("n4", "14")],
+            vec![created("n0", "11")],
+            Then::WaitFor {
+                entered: Arc::clone(&entered),
+                ready: Arc::clone(&ready),
+                then: Box::new(Then::Later {
+                    keepalive: MS(5),
+                    after: MS(0),
+                    frames: vec![
+                        created("n1", "12"),
+                        created("n2", "13"),
+                        created("n3", "14"),
+                    ],
+                }),
             },
         )],
     );
-    let slow = Arc::new(Heard {
-        slow: Some(MS(400)),
-        ..Heard::default()
-    });
-    let _one = watch(&core, &slow);
-    server.wait_for("/events", 1, Duration::from_secs(5));
-    // The three are applied and queued behind the slow listener's first.
-    thread::sleep(MS(200));
+    let early = listener();
+    let _one = watch(&core, &early);
+    early.wait_for_kind("item.created", 1);
+    assert!(entered.load(Ordering::SeqCst));
+    // The dispatcher is held at its next turn, so the three are queued
+    // before the joiner joins and are taken together with it.
+    core.watch.held_up.store(true, Ordering::SeqCst);
+    let before = core.watch.pushed();
+    ready.store(true, Ordering::SeqCst);
+    let until = Instant::now() + Duration::from_secs(20);
+    while core.watch.pushed() < before + 3 {
+        assert!(Instant::now() < until, "the three were never queued");
+        thread::sleep(MS(5));
+    }
     let joiner = listener();
     let _two = watch(&core, &joiner);
-    joiner.wait_for_kind("item.created", 1);
-    assert_eq!(joiner.ids(), ["n4"]);
+    core.watch.held_up.store(false, Ordering::SeqCst);
+    early.wait_for_kind("item.created", 4);
+    thread::sleep(MS(200));
+    assert!(
+        joiner.ids().is_empty(),
+        "a joiner heard {:?}, which was queued before it joined",
+        joiner.ids()
+    );
+}
+
+#[test]
+fn a_catch_up_that_succeeds_as_the_dispatcher_starts_still_ends_the_outage_a_joiner_says_it_was_told()
+ {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![at_head("10"), scripted::refusal(503, "unavailable")],
+    );
+    // The dispatcher is made but held before its first turn.
+    core.watch.held_up.store(true, Ordering::SeqCst);
+    let joiner = listener();
+    let _listening = core
+        .watch(true, Arc::clone(&joiner) as Arc<dyn WatchListener>)
+        .unwrap();
+    core.catch_up().unwrap();
+    core.watch.held_up.store(false, Ordering::SeqCst);
+    joiner.wait_for_kind("server.reachable", 1);
+    assert_eq!(joiner.kinds()[0], "server.reachable");
+}
+
+#[test]
+fn the_store_is_let_go_before_a_last_listener_is_told_it_ended_while_a_faulted_source_ends() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    // A source that is slow to notice it was stopped.
+    core.watch.set_follow_pace(Pace {
+        stop_poll: MS(300),
+        ..QUICK
+    });
+    server.on(
+        "/events",
+        vec![
+            stream(
+                vec![created("n1", "11")],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            ),
+            held_answer(vec![]),
+        ],
+    );
+    let first = listener();
+    let _one = watch(&core, &first);
+    first.wait_for_kind("item.created", 1);
+    core.watch.fault_once.store(true, Ordering::SeqCst);
+    let second = listener();
+    let _two = watch(&core, &second);
+    first.wait_for_end();
+    // The source of the faulted dispatcher is still stopping.
+    let last = listener();
+    *last.core.lock().unwrap() = Some(Arc::clone(&core));
+    let leaving = watch(&core, &last);
+    drop(leaving);
+    last.wait_for_end();
+    assert_eq!(
+        *last.held_at_end.lock().unwrap(),
+        Some(1),
+        "the last listener was told it ended while a source still held the store"
+    );
 }
 
 #[test]

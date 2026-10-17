@@ -139,6 +139,10 @@ pub(crate) struct Watch {
     /// Makes the dispatcher fault on its next turn.
     #[cfg(test)]
     pub(crate) fault_once: AtomicBool,
+    /// Holds the dispatcher where it starts and before it takes what has
+    /// arrived.
+    #[cfg(test)]
+    pub(crate) held_up: AtomicBool,
     /// The dispatcher waits here for work.
     work: Condvar,
     /// A source waits here for room, and a taker for the source to end.
@@ -158,9 +162,27 @@ impl Watch {
             follow_pace: Mutex::new(PACE),
             #[cfg(test)]
             fault_once: AtomicBool::new(false),
+            #[cfg(test)]
+            held_up: AtomicBool::new(false),
             work: Condvar::new(),
             rest: Condvar::new(),
         })
+    }
+
+    /// How many changes from a source are queued.
+    #[cfg(test)]
+    pub(crate) fn queued_changes(&self) -> usize {
+        held(&self.shared)
+            .queue
+            .iter()
+            .filter(|entry| matches!(entry.told, Told::Change(_)))
+            .count()
+    }
+
+    /// The number of the last entry queued.
+    #[cfg(test)]
+    pub(crate) fn pushed(&self) -> u64 {
+        held(&self.shared).seq
     }
 
     pub(crate) fn follow_pace(&self) -> Pace {
@@ -458,9 +480,11 @@ struct Inbox {
 
 impl Dispatcher<'_> {
     fn serve(&mut self) {
+        #[cfg(test)]
+        while self.watch.held_up.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
         self.cursor = self.held_cursor();
-        // What an earlier dispatcher left queued is of its time.
-        held(&self.watch.shared).queue.clear();
         loop {
             let mut inbox = self.wait();
             #[cfg(test)]
@@ -507,6 +531,12 @@ impl Dispatcher<'_> {
                 .work
                 .wait(shared)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        #[cfg(test)]
+        while self.watch.held_up.load(Ordering::SeqCst) {
+            drop(shared);
+            thread::sleep(Duration::from_millis(5));
+            shared = held(&self.watch.shared);
         }
         self.takers_seen = shared.takers;
         // Kept here before anything else is done, so that a fault in this turn
@@ -626,7 +656,13 @@ impl Dispatcher<'_> {
             return false;
         }
         let mut shared = held(&self.watch.shared);
-        if !shared.joined.is_empty() || !shared.left.is_empty() || !shared.queue.is_empty() {
+        // Not while a source an earlier dispatcher started still holds the
+        // store: its end wakes this to look again.
+        if !shared.joined.is_empty()
+            || !shared.left.is_empty()
+            || !shared.queue.is_empty()
+            || shared.source_running
+        {
             return false;
         }
         shared.dispatcher = None;
