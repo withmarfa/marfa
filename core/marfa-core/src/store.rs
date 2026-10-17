@@ -729,7 +729,7 @@ pub fn owed_of(conn: &Connection, row: &QueuedWrite) -> Result<Option<Owed>, Cor
             };
             // A delete emptied the copy at queue time, so the type can come
             // only from the payload.
-            let edge_type = match edge_by_id(conn, id)? {
+            let edge_type = match edge_ends(conn, id)? {
                 Some(edge) => Some(edge.edge_type),
                 None => row
                     .body
@@ -835,9 +835,43 @@ pub struct NewWrite<'a> {
     pub depends_on: &'a [String],
 }
 
+/// Refuses a body the server would refuse for its nesting
+/// (`items/json-depth`), and that a later read of the queue could not parse.
+/// One pass over the text, with no tree, so it also bounds a hostile value.
+fn refuse_too_deep(payload: &str) -> Result<(), CoreError> {
+    let (mut depth, mut in_string, mut escaped) = (0usize, false, false);
+    for byte in payload.bytes() {
+        if in_string {
+            match (escaped, byte) {
+                (true, _) => escaped = false,
+                (false, b'\\') => escaped = true,
+                (false, b'"') => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match byte {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                if depth > crate::MAX_JSON_DEPTH {
+                    return Err(CoreError::Invalid(format!(
+                        "a write nests its JSON deeper than {} levels, counting the write's own",
+                        crate::MAX_JSON_DEPTH
+                    )));
+                }
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// The idempotency key is minted here, not at send: a key minted per send
 /// would let a retry of a write whose answer was lost write it twice.
 pub fn enqueue(conn: &Connection, write: &NewWrite<'_>) -> Result<QueuedWrite, CoreError> {
+    refuse_too_deep(write.payload)?;
     let id = Uuid::now_v7().to_string();
     let key = Uuid::now_v7().to_string();
     let depends_on = if write.depends_on.is_empty() {
@@ -2343,7 +2377,7 @@ pub fn takes_edge(
 
 /// Keeps an edge a waiting write of this device's is laid over.
 pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some(edge) = edge_by_id(conn, id)? else {
+    let Some(edge) = edge_ends(conn, id)? else {
         return Ok(false);
     };
     if takes_edge(
@@ -3829,26 +3863,37 @@ pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<b
 }
 
 pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
-    Ok(conn
+    edge_by_id_with(conn, id, &mut Unreadable::Refuse)
+}
+
+/// The edge for a reader that needs only its ends and type, such as one
+/// asking whether the copy holds it: where its stored properties cannot be
+/// read, they are empty. A reader that writes from the properties calls
+/// `edge_by_id`, which refuses.
+pub fn edge_ends(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
+    edge_by_id_with(conn, id, &mut Unreadable::Keep(HashMap::new()))
+}
+
+pub fn edge_by_id_with(
+    conn: &Connection,
+    id: &str,
+    unreadable: &mut Unreadable,
+) -> Result<Option<Edge>, CoreError> {
+    let read = conn
         .query_row(
             "SELECT id, source_id, target_id, edge_type, properties, version, created_at, updated_at
                FROM edges WHERE id = ?1",
             [id],
-            |row| {
-                Ok(Edge {
-                    id: row.get(0)?,
-                    source_id: row.get(1)?,
-                    target_id: row.get(2)?,
-                    edge_type: row.get(3)?,
-                    properties: serde_json::from_str(&row.get::<_, String>(4)?)
-                        .unwrap_or_default(),
-                    version: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
+            read_edge,
         )
-        .optional()?)
+        .optional()?;
+    let Some((edge, why)) = read else {
+        return Ok(None);
+    };
+    if let Some(why) = why {
+        unreadable.note("edge", &edge.id, why)?;
+    }
+    Ok(Some(edge))
 }
 
 /// The only write an edit or a delete of the edge cannot go without; the

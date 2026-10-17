@@ -341,7 +341,7 @@ pub(crate) fn lay_queue_over(
             }
             WriteKind::CreateEdge => {
                 let (id, draft) = EdgeDraft::from_payload(&store::payload_of(conn, &row.id)?)?;
-                if store::edge_by_id(conn, &id)?.is_none()
+                if store::edge_ends(conn, &id)?.is_none()
                     && store::takes_edge(conn, &draft.source_id, &draft.edge_type, whole)?
                 {
                     let mut wire = draft.wire(&id);

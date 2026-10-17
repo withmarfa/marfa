@@ -420,7 +420,7 @@ impl Folder {
                     })
             }
             WriteKind::UpdateEdge => match row.edge_id.as_deref() {
-                Some(id) => store::edge_by_id(&conn, id)?.map(|edge| edge.edge_type),
+                Some(id) => store::edge_ends(&conn, id)?.map(|edge| edge.edge_type),
                 None => None,
             },
             _ => None,
