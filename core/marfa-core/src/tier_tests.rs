@@ -6,7 +6,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::scripted::{self, Scripted};
-use crate::{Core, Draft, QueuedWrite, Server, Tier, catalog, store};
+use crate::{Core, Draft, QueuedWrite, Server, Tier, store};
 
 fn open(server: &Scripted, dir: &Path) -> Core {
     Core::open(
@@ -400,7 +400,7 @@ fn a_keyed_create_naming_no_source_is_looked_up_under_its_credentials_own() {
         held.tier = Some("feed".into());
         held.source = "reader".into();
         held.source_id = Some("held-1".into());
-        store::put_server_item(&conn, &held, Some(&[]), &catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &held, Some(&[]), &crate::catalog::Catalog::empty()).unwrap();
     }
     let resaved = core.create_item(&unsourced("held-1")).unwrap();
     assert_eq!(
@@ -452,7 +452,7 @@ fn only_a_keyed_create_whose_tier_the_slice_chose_is_looked_up() {
         held.version = 2;
         held.source = "reader".into();
         held.source_id = Some("held-1".into());
-        store::put_server_item(&conn, &held, Some(&[]), &catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &held, Some(&[]), &crate::catalog::Catalog::empty()).unwrap();
     }
     server.on("/items/lookup", vec![found(&[])]);
     // A tier named, a key naming a held row, and no key at all.
@@ -554,7 +554,7 @@ fn a_source_learned_for_another_credential_is_not_taken_for_the_one_in_use() {
         held.tier = Some("feed".into());
         held.source = "reader".into();
         held.source_id = Some("held-1".into());
-        store::put_server_item(&conn, &held, Some(&[]), &catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &held, Some(&[]), &crate::catalog::Catalog::empty()).unwrap();
     }
     // The same copy with another key, whose own source is not yet known.
     let core = Core::open(

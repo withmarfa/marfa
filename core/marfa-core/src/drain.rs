@@ -2654,14 +2654,13 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
                 return Ok(());
             }
             let catalog = Catalog::load(conn)?;
-            let indexing = catalog.indexing(&item.r#type);
             let let_go =
                 !store::slice_holds(conn, &catalog, item)? && !store::item_waits(conn, &item.id)?;
             if let_go {
                 store::evict_item(conn, &item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
             }
-            store::put_server_item(conn, item, Some(&held.metadata.tags), &indexing)?;
+            store::put_server_item(conn, item, Some(&held.metadata.tags), &catalog)?;
             store::lay_waiting_writes_over(conn, &item.id, &|laid| catalog.indexing(laid))?;
         }
         ReadBack::Item {

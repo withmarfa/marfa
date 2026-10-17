@@ -700,7 +700,7 @@ mod tests {
             )
             .unwrap();
             let note = store::testing::note("note", "Plan", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &note, None, &Default::default()).unwrap();
+            store::put_server_item(&conn, &note, None, &crate::catalog::Catalog::empty()).unwrap();
             store::put_server_edge(&conn, &placed_at(1, "Plan.md")).unwrap();
         }
         core.update_edge(
@@ -997,7 +997,7 @@ mod tests {
         {
             let conn = folder.core.conn().unwrap();
             let memo = store::testing::note("memo", "Memo", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &memo, None, &Default::default()).unwrap();
+            store::put_server_item(&conn, &memo, None, &crate::catalog::Catalog::empty()).unwrap();
             store::put_server_edge(&conn, &memo_at(1, "Memo.md")).unwrap();
         }
         folder

@@ -553,7 +553,7 @@ pub fn put_server_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
-    indexing: &Indexing,
+    catalog: &crate::catalog::Catalog,
 ) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Item, &item.id)?;
     if holds_later(
@@ -569,12 +569,12 @@ pub fn put_server_item(
         Some(tags) => Some(tags.to_vec()),
         None => beneath_item(conn, &item.id)?.map(|held| held.tags),
     };
-    upsert_item(conn, item, tags, indexing)?;
+    upsert_item(conn, item, tags, &catalog.indexing(&item.r#type))?;
     keep_beneath_item(conn, &item.id, beneath_tags)?;
-    if crate::body::rule::holds_rows(conn, &item.id)?
+    if crate::body::rule::drops_on_landing(conn, &item.id)?
         && current_item_writes(conn, &item.id)?.is_empty()
     {
-        crate::body::rule::landed(conn, &item.id)?;
+        crate::body::rule::landed(conn, catalog, &item.id)?;
     }
     Ok(true)
 }
@@ -3931,7 +3931,7 @@ mod tests {
                 &conn,
                 &testing::note(id, id, "", "2026-01-01T00:00:00Z"),
                 Some(&[]),
-                &Default::default(),
+                &crate::catalog::Catalog::empty(),
             )
             .unwrap();
         }
@@ -5116,7 +5116,7 @@ mod tests {
         later.version = 3;
         later.state = "archived".into();
         later.updated_at = "2026-01-02T00:00:00.000Z".into();
-        assert!(put_server_item(&conn, &later, None, &Indexing::default()).unwrap());
+        assert!(put_server_item(&conn, &later, None, &crate::catalog::Catalog::empty()).unwrap());
         let mut older = later.clone();
         older.state = "active".into();
         older.properties.insert("title".into(), "older".into());
@@ -5133,7 +5133,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !put_server_item(&conn, &older, None, &Indexing::default()).unwrap(),
+            !put_server_item(&conn, &older, None, &crate::catalog::Catalog::empty()).unwrap(),
             "a row stamped before the one held went in over it"
         );
         let held = item_by_id(&conn, "row").unwrap().unwrap();

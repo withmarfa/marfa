@@ -106,6 +106,7 @@ fn hydrate_inner(
             store::META_SLICE_EDGE_TYPES,
             &serde_json::to_string(&edge_types)?,
         )?;
+        crate::body::rule::before_rebuild(&tx)?;
         store::clear_slice(&tx)?;
         store::replace_catalog(&tx, &catalog_rows)?;
         tx.commit()?;
@@ -150,8 +151,7 @@ fn hydrate_inner(
                         &row.item.id,
                         row.listed.ok_or_else(crate::read_view::invalid)?,
                     )?;
-                    let indexing = catalog.indexing(&row.item.r#type);
-                    store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
+                    store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                     for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                         for edge in &block.data {
                             store::put_server_edge(&tx, edge)?;
@@ -230,12 +230,7 @@ fn hydrate_inner(
                     &row.item.id,
                     row.listed.ok_or_else(crate::read_view::invalid)?,
                 )?;
-                store::put_server_item(
-                    &tx,
-                    &row.item,
-                    Some(&row.metadata.tags),
-                    &catalog.indexing(&row.item.r#type),
-                )?;
+                store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
                         store::put_server_edge(&tx, edge)?;
@@ -662,8 +657,7 @@ pub(crate) fn hold_row(
         &row.item.id,
         row.listed.ok_or_else(crate::read_view::invalid)?,
     )?;
-    let indexing = catalog.indexing(&row.item.r#type);
-    if store::put_server_item(conn, &row.item, Some(&row.metadata.tags), &indexing)? {
+    if store::put_server_item(conn, &row.item, Some(&row.metadata.tags), catalog)? {
         store::lay_waiting_writes_over(conn, &row.item.id, &|laid| catalog.indexing(laid))?;
     }
     for edge in edges {

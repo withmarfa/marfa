@@ -555,11 +555,26 @@ fn read_offline(
     recorded: &Recorded,
     reading: Reading,
 ) -> Result<Read> {
+    read_against(conn, catalog, host, body, recorded, reading, Others::load)
+}
+
+type LoadOthers = fn(&Connection, &Catalog, &dyn Paths, &[String]) -> Result<Others>;
+
+/// `read_offline`, with the referenced items' names read by `load`.
+fn read_against(
+    conn: &Connection,
+    catalog: &Catalog,
+    host: &str,
+    body: &str,
+    recorded: &Recorded,
+    reading: Reading,
+    load: LoadOthers,
+) -> Result<Read> {
     let mut read = Read::default();
     if body.is_empty() {
         return Ok(read);
     }
-    let references = Others::load(conn, catalog, &Placements, &references_of(conn, host)?)?;
+    let references = load(conn, catalog, &Placements, &references_of(conn, host)?)?;
     for raw in text::links(body) {
         let resolved = match link_offline(
             conn,
@@ -758,13 +773,28 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
             continue;
         };
         let held = recorded(conn, host)?;
-        let read = read_offline(
+        let body = body_of(catalog, &item);
+        let unrecorded =
+            |kind: Kind, text: &str| !held.contains_key(&(kind.as_str(), text.to_string()));
+        if !text::links(body)
+            .iter()
+            .any(|raw| unrecorded(Kind::Link, raw))
+            && !text::embeds(body)
+                .iter()
+                .any(|embed| unrecorded(Kind::Embed, embed.raw()))
+        {
+            continue;
+        }
+        // Read as held: before a hydration the copy may be one that cannot be
+        // kept current, and what it holds is still the last word on its names.
+        let read = read_against(
             conn,
             catalog,
             host,
-            body_of(catalog, &item),
+            body,
             &Recorded::new(),
             Reading::Previous,
+            Others::held,
         )?;
         for (kind, text, other) in read.found {
             if held.contains_key(&(kind.as_str(), text.clone()))
@@ -792,13 +822,14 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
 
 /// Called before the copy writes `id`'s row, whoever wrote it: `next` is
 /// the row it is about to hold, `None` for a change of state or the row
-/// leaving the copy. A change can take away the name a link to the item was
-/// read by, so what the links to it name is recorded first.
+/// leaving the copy. A change of what names the item (its type, state or
+/// title) can take away the name a link to it was read by, so what the links
+/// to it name is recorded first.
 pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>) -> Result<()> {
-    let hosts = linking(conn, id)?;
-    if hosts.is_empty() || !recording(conn)? {
+    if !linked(conn, id)? || !recording(conn)? {
         return Ok(());
     }
+    let mut catalog = None;
     if let Some(next) = next {
         let held: Option<(String, String, String)> = conn
             .query_row(
@@ -810,10 +841,52 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
         let Some((r#type, state, properties)) = held else {
             return Ok(());
         };
-        let properties: serde_json::Map<String, Value> = serde_json::from_str(&properties)?;
-        if r#type == next.r#type && state == next.state && properties == next.properties {
-            return Ok(());
+        if r#type == next.r#type && state == next.state {
+            let properties: serde_json::Map<String, Value> = serde_json::from_str(&properties)?;
+            if properties == next.properties {
+                return Ok(());
+            }
+            let loaded = Catalog::load(conn)?;
+            let title = fields::title_field(&loaded, &r#type);
+            if properties.get(title) == next.properties.get(title) {
+                return Ok(());
+            }
+            catalog = Some(loaded);
         }
+    }
+    let catalog = match catalog {
+        Some(catalog) => catalog,
+        None => Catalog::load(conn)?,
+    };
+    record_unrecorded(conn, &catalog, &linking(conn, id)?)
+}
+
+/// Whether any body links to `id` or embeds it.
+fn linked(conn: &Connection, id: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = ?1 AND target_id = ?3 AND source_id <> ?3)
+             OR EXISTS (SELECT 1 FROM edges WHERE edge_type = ?2 AND source_id = ?3 AND target_id <> ?3)",
+        params![LINK_EDGE, ATTACHMENT_EDGE, id],
+        |row| row.get(0),
+    )?)
+}
+
+/// Called before a hydration clears the slice: it lands every row as the
+/// server holds it now, so a rename the copy has not heard of would land
+/// with no record of which link made which edge. The rows outlast the
+/// clearing.
+pub(crate) fn before_rebuild(conn: &Connection) -> Result<()> {
+    let hosts: Vec<String> = {
+        let mut statement = conn.prepare(
+            "SELECT source_id FROM edges WHERE edge_type = ?1
+             UNION
+             SELECT target_id FROM edges WHERE edge_type = ?2",
+        )?;
+        let rows = statement.query_map(params![LINK_EDGE, ATTACHMENT_EDGE], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    if hosts.is_empty() {
+        return Ok(());
     }
     record_unrecorded(conn, &Catalog::load(conn)?, &hosts)
 }
@@ -896,10 +969,13 @@ fn recording(conn: &Connection) -> Result<bool> {
     Ok(store::hydrated(conn)? || store::never_synced(conn)?)
 }
 
-/// Whether the copy holds rows for the item's body.
-pub(crate) fn holds_rows(conn: &Connection, id: &str) -> Result<bool> {
+/// Whether a server row landing on `id` can leave rows its body no longer
+/// carries: the copy holds rows for it, and no edit read on its answer
+/// (`body_checks`) still needs them to read the body it was made against.
+pub(crate) fn drops_on_landing(conn: &Connection, id: &str) -> Result<bool> {
     Ok(conn.query_row(
-        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)",
+        "SELECT EXISTS (SELECT 1 FROM body_names WHERE item_id = ?1)
+            AND NOT EXISTS (SELECT 1 FROM body_checks WHERE item_id = ?1)",
         [id],
         |row| row.get(0),
     )?)
@@ -909,12 +985,11 @@ pub(crate) fn holds_rows(conn: &Connection, id: &str) -> Result<bool> {
 /// over it, drops the row of each link and embed text the landed body does
 /// not carry. A link another device took out and put back is then read
 /// afresh, not by what the link taken out named.
-pub(crate) fn landed(conn: &Connection, id: &str) -> Result<()> {
+pub(crate) fn landed(conn: &Connection, catalog: &Catalog, id: &str) -> Result<()> {
     let Some(item) = store::item_by_id(conn, id)? else {
         return Ok(());
     };
-    let catalog = Catalog::load(conn)?;
-    let body = body_of(&catalog, &item);
+    let body = body_of(catalog, &item);
     let links = text::links(body);
     let embeds = text::embeds(body);
     for row in rows_of(conn, id)? {
@@ -2042,7 +2117,7 @@ mod tests {
         item.version += 1;
         let wire: crate::wire::WireItem =
             serde_json::from_value(serde_json::to_value(&item).unwrap()).unwrap();
-        store::put_server_item(&conn, &wire, None, &crate::catalog::Indexing::default()).unwrap();
+        store::put_server_item(&conn, &wire, None, &crate::catalog::Catalog::empty()).unwrap();
     }
 
     /// Lands an edge as the server's, as another device's write does.
@@ -2256,6 +2331,164 @@ mod tests {
         as_the_server_s(&core);
         land_remote_body(&core, &host, "still no link");
         assert_eq!(recorded_texts(&core, &host), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_older_edit_that_takes_out_a_link_to_a_renamed_item_deletes_its_edge_once_answered() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan, _) = plan_renamed_and_taken(&core, "Plan");
+        as_the_server_s(&core);
+        // The copy holds a later version than the one the edit was read at.
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET version = 2 WHERE id = ?1", [&host])
+            .unwrap();
+        let queued = core
+            .update_item_as_read(
+                &host,
+                &Edit {
+                    properties: props(serde_json::json!({ "body": "no link" })),
+                    base_version: Some(1),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE queue SET verdict = 'accepted' WHERE id = ?1",
+                [&queued.id],
+            )
+            .unwrap();
+        land_remote_body(&core, &host, "no link");
+        after_answers(&mut core.conn().unwrap()).unwrap();
+        assert_eq!(
+            deletes(&core),
+            vec![(host, plan)],
+            "the edit's answer was read without the row of the link it took out"
+        );
+    }
+
+    #[test]
+    fn an_edit_to_a_linked_item_s_own_body_records_nothing_and_a_rename_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        edit(&core, &plan, serde_json::json!({ "body": "edited" }));
+        land_remote(
+            &core,
+            &plan,
+            serde_json::json!({ "body": "edited elsewhere" }),
+        );
+        assert_eq!(
+            recorded_texts(&core, &host),
+            Vec::<String>::new(),
+            "an edit that names the item no differently recorded the links to it"
+        );
+        edit(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_hydration_keeps_what_a_link_from_another_device_named_before_its_item_was_renamed() {
+        use crate::scripted::{self, Scripted, Then};
+        let server = Scripted::start();
+        let core = crate::stop_tests::copy(&server);
+        let edge = link_edge("reader", "plan");
+        {
+            let conn = core.conn().unwrap();
+            let catalog = Catalog::empty();
+            store::put_server_item(
+                &conn,
+                &store::testing::note("plan", "Plan", "", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &catalog,
+            )
+            .unwrap();
+            store::put_server_item(
+                &conn,
+                &store::testing::note("reader", "Reader", "[[Plan]]", "2026-01-01T00:00:00Z"),
+                Some(&[]),
+                &catalog,
+            )
+            .unwrap();
+            store::put_server_edge(&conn, &edge).unwrap();
+            // The cursor has gone, so the copy can only hydrate again.
+            store::meta_delete(&conn, store::META_EVENT_CURSOR).unwrap();
+        }
+        let row = |id: &str, title: &str, body: &str, version: i64, edges: Value| {
+            serde_json::json!({
+                "item": {
+                    "id": id, "type": "core.note", "state": "active", "tier": "library",
+                    "properties": { "title": title, "body": body },
+                    "version": version, "schema_version": 1, "source": "test",
+                    "occurred_at": "2026-01-01T00:00:00Z",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "updated_at": format!("2026-01-0{version}T00:00:00Z"),
+                    "edges": edges,
+                },
+                "metadata": { "item_id": id, "tags": [], "extensions": {} },
+                "listed": true,
+            })
+        };
+        let wire_edge = serde_json::json!({
+            "id": edge.id, "source_id": "reader", "target_id": "plan",
+            "edge_type": LINK_EDGE, "properties": {}, "version": 1,
+            "created_at": edge.created_at, "updated_at": edge.updated_at,
+        });
+        let page = serde_json::json!({
+            "data": [
+                row("plan", "Plan v2", "", 2, serde_json::json!({})),
+                row(
+                    "reader",
+                    "Reader",
+                    "[[Plan]]",
+                    1,
+                    serde_json::json!({ LINK_EDGE: { "data": [wire_edge], "next_cursor": null } }),
+                ),
+            ],
+            "next_cursor": null,
+        });
+        server.on(
+            "/items",
+            vec![scripted::certified(scripted::json(200, &page.to_string()))],
+        );
+        server.on(
+            "/events",
+            vec![
+                scripted::stream(
+                    vec![scripted::copy_marker("stream_cursor", "10")],
+                    Then::End,
+                ),
+                scripted::stream(
+                    vec![
+                        scripted::copy_marker("stream_cursor", "10"),
+                        scripted::copy_marker("stream_live", "11"),
+                    ],
+                    Then::End,
+                ),
+            ],
+        );
+        core.hydrate_until(
+            &["core.note".into()],
+            crate::SliceTier::Library,
+            &[],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            store::item_by_id(&core.conn().unwrap(), "plan")
+                .unwrap()
+                .unwrap()
+                .properties["title"],
+            "Plan v2",
+            "the hydration did not land the rename, so the answer below proves nothing"
+        );
+        assert_eq!(
+            targets(&core.body_links("reader").unwrap().links),
+            vec![BodyTarget::Item { id: "plan".into() }]
+        );
     }
 
     #[test]

@@ -371,7 +371,8 @@ mod tests {
             let conn = core.conn().unwrap();
             store::pin(&conn, "p").unwrap();
             let row = store::testing::note("x", "x", "", "2026-01-01T00:00:00Z");
-            store::put_server_item(&conn, &row, Some(&[]), &Default::default()).unwrap();
+            store::put_server_item(&conn, &row, Some(&[]), &crate::catalog::Catalog::empty())
+                .unwrap();
             set_listed(&conn, "x", true).unwrap();
         }
         let data = |v| {
@@ -923,7 +924,13 @@ mod tests {
                 &[store::testing::wire_type("core.note", None, Some("title"))],
             )
             .unwrap();
-            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            store::put_server_item(
+                &conn,
+                &baseline,
+                Some(&[]),
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
             set_listed(&conn, "x", true).unwrap();
         }
         core.update_item(
@@ -972,7 +979,13 @@ mod tests {
                 &[store::testing::wire_type("core.note", None, Some("title"))],
             )
             .unwrap();
-            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            store::put_server_item(
+                &conn,
+                &baseline,
+                Some(&[]),
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
             set_listed(&conn, "x", true).unwrap();
         }
         core.update_item(
@@ -994,7 +1007,13 @@ mod tests {
         baseline.properties.insert("title".into(), "newer".into());
         {
             let conn = core.conn().unwrap();
-            store::put_server_item(&conn, &baseline, Some(&[]), &Default::default()).unwrap();
+            store::put_server_item(
+                &conn,
+                &baseline,
+                Some(&[]),
+                &crate::catalog::Catalog::empty(),
+            )
+            .unwrap();
             store::lay_waiting_writes_over(&conn, "x", &|_| Default::default()).unwrap();
         }
         assert_eq!(core.get("x").unwrap().unwrap().properties["title"], "mine");
