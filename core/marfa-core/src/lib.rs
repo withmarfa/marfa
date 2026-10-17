@@ -188,6 +188,11 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// Well past any fetch or copy of a blob's bytes still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
+/// The deepest a queued write's body may nest, counting each array or object
+/// inside another and no bracket inside a string: the server refuses a request
+/// body nested deeper (`items/json-depth`), so the core refuses it first.
+pub const MAX_JSON_DEPTH: usize = 64;
+
 /// The tag the server gives a conflicted copy (`versions/copy-written`).
 pub const CONFLICTED_COPY_TAG: &str = "conflicted-copy";
 
@@ -929,17 +934,20 @@ impl Core {
     /// outside the bin tagged `conflicted-copy` whose `derived-from` edge
     /// names it. `id` need not be a row the copy holds.
     pub fn conflicted_copies_of(&self, id: &str) -> Result<Vec<Item>> {
-        Ok(self
-            .conflicted_copies_with(id, &mut store::Unreadable::Refuse)?
-            .0)
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
+        conflicted_copies_in(&conn, id, &mut store::Unreadable::Refuse)
     }
 
     /// `conflicted_copies_of`, each copy with the title and body it shows, and
     /// a copy whose stored properties cannot be read kept with no properties,
     /// its `Shown` saying why.
     pub fn conflicted_copies_kept(&self, id: &str) -> Result<Vec<(Item, Shown)>> {
+        let conn = self.conn()?;
+        store::refuse_unless_usable(&conn)?;
         let mut unreadable = store::Unreadable::Keep(HashMap::new());
-        let (copies, catalog) = self.conflicted_copies_with(id, &mut unreadable)?;
+        let copies = conflicted_copies_in(&conn, id, &mut unreadable)?;
+        let catalog = catalog::Catalog::load(&conn)?;
         Ok(copies
             .into_iter()
             .map(|item| {
@@ -947,28 +955,6 @@ impl Core {
                 (item, shown)
             })
             .collect())
-    }
-
-    fn conflicted_copies_with(
-        &self,
-        id: &str,
-        unreadable: &mut store::Unreadable,
-    ) -> Result<(Vec<Item>, catalog::Catalog)> {
-        let conn = self.conn()?;
-        store::refuse_unless_usable(&conn)?;
-        let sources: Vec<String> = store::edges_at(&conn, "target_id", id, unreadable)?
-            .into_iter()
-            .filter(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
-            .map(|edge| edge.source_id)
-            .collect();
-        let copies = store::items_by_ids_with(&conn, &sources, unreadable)?
-            .into_iter()
-            .filter(|item| {
-                item.state != ItemState::Trashed
-                    && item.tags.iter().any(|tag| tag == CONFLICTED_COPY_TAG)
-            })
-            .collect();
-        Ok((copies, catalog::Catalog::load(&conn)?))
     }
 
     /// Best match first.
@@ -2800,6 +2786,25 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
     )
 }
 
+fn conflicted_copies_in(
+    conn: &Connection,
+    id: &str,
+    unreadable: &mut store::Unreadable,
+) -> Result<Vec<Item>> {
+    let sources: Vec<String> = store::edges_at(conn, "target_id", id, unreadable)?
+        .into_iter()
+        .filter(|edge| edge.edge_type == CONFLICTED_COPY_EDGE)
+        .map(|edge| edge.source_id)
+        .collect();
+    Ok(store::items_by_ids_with(conn, &sources, unreadable)?
+        .into_iter()
+        .filter(|item| {
+            item.state != ItemState::Trashed
+                && item.tags.iter().any(|tag| tag == CONFLICTED_COPY_TAG)
+        })
+        .collect())
+}
+
 fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
     store::edge_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
         code: "edge_not_found".into(),
@@ -3603,6 +3608,147 @@ mod tests {
 
     fn properties(value: serde_json::Value) -> serde_json::Map<String, Value> {
         value.as_object().unwrap().clone()
+    }
+
+    /// `{"deep": [[...]]}` with `arrays` arrays inside the one object.
+    fn nested(arrays: usize) -> serde_json::Map<String, Value> {
+        let mut inner = Value::Null;
+        for _ in 0..arrays {
+            inner = Value::Array(vec![inner]);
+        }
+        properties(serde_json::json!({ "deep": inner }))
+    }
+
+    #[test]
+    fn a_write_nested_past_what_the_server_reads_is_refused_before_it_is_queued() {
+        // The server refuses a request body nested more than `MAX_JSON_DEPTH`
+        // levels (`items/json-depth`), so the largest `deep` is the one that
+        // leaves the body, with its wrapper, at the limit: an item's and an
+        // edge's properties sit one level down, an extension's body is the
+        // object itself.
+        let at = MAX_JSON_DEPTH - 2;
+        let core = held_copy();
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &catalog::Indexing::default(),
+        )
+        .unwrap();
+        let version = core.get("row").unwrap().unwrap().version;
+        let queued = |core: &Core| core.queue().unwrap().len();
+        let edit = |arrays: usize| Edit {
+            properties: nested(arrays),
+            base_version: Some(version),
+            ..Edit::default()
+        };
+        let draft = |arrays: usize| Draft {
+            r#type: "core.note".into(),
+            properties: nested(arrays),
+            ..Default::default()
+        };
+        let edge = |arrays: usize| EdgeDraft {
+            source_id: "row".into(),
+            target_id: "other".into(),
+            edge_type: "references".into(),
+            properties: nested(arrays),
+            ..Default::default()
+        };
+        let edge_edit = |arrays: usize| EdgeEdit {
+            properties: nested(arrays),
+            base_version: Some(1),
+            ..EdgeEdit::default()
+        };
+        let extension =
+            |arrays: usize| serde_json::to_string(&Value::Object(nested(arrays))).unwrap();
+        for (what, refused) in [
+            ("create", core.create_item(&draft(at + 1)).map(|_| ())),
+            ("update", core.update_item("row", &edit(at + 1)).map(|_| ())),
+            ("edge", core.create_edge(&edge(at + 1)).map(|_| ())),
+            (
+                "edge update",
+                core.update_edge("link", &edge_edit(at + 1)).map(|_| ()),
+            ),
+            (
+                "extension",
+                core.write_extension("row", "acme.x", &extension(at + 2))
+                    .map(|_| ()),
+            ),
+        ] {
+            assert!(
+                matches!(refused, Err(CoreError::Invalid(_))),
+                "{what}: {refused:?}"
+            );
+        }
+        assert_eq!(queued(&core), 0, "a refused write was queued");
+        // The witnesses: one level less is taken, and so is the limit itself.
+        assert!(core.create_item(&draft(at)).is_ok());
+        assert!(core.create_item(&draft(at - 1)).is_ok());
+        assert!(core.update_item("row", &edit(at)).is_ok());
+        assert!(core.create_edge(&edge(at)).is_ok());
+        assert!(core.update_edge("link", &edge_edit(at)).is_ok());
+        assert!(
+            core.write_extension("row", "acme.x", &extension(at + 1))
+                .is_ok()
+        );
+        assert_eq!(queued(&core), 6);
+        // What was queued reads back, so no later read of the queue fails.
+        assert_eq!(core.queue().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_damaged_edge_is_not_edited_or_deleted_over_and_a_server_copy_repairs_it() {
+        let core = held_copy();
+        let damaged = r#"{"position":1,"note":"#;
+        let stored = |core: &Core| -> String {
+            core.conn()
+                .unwrap()
+                .query_row(
+                    "SELECT properties FROM edges WHERE id = 'link'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE edges SET properties = ?1 WHERE id = 'link'",
+                [damaged],
+            )
+            .unwrap();
+        let version = core.edges_from_kept("row").unwrap()[0].0.version;
+        let edit = EdgeEdit {
+            properties: properties(serde_json::json!({ "position": 2 })),
+            base_version: Some(version),
+            ..EdgeEdit::default()
+        };
+        // The witness: the same edit on a readable edge is queued.
+        let sound = held_copy();
+        assert!(sound.update_edge("link", &edit).unwrap().is_some());
+
+        assert!(core.update_edge("link", &edit).is_err());
+        assert!(core.delete_edge("link").is_err());
+        assert_eq!(stored(&core), damaged, "the damaged text was written over");
+        assert_eq!(core.queue().unwrap().len(), 0);
+        let conn = core.conn().unwrap();
+        let beneath: i64 = conn
+            .query_row("SELECT COUNT(*) FROM beneath", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(beneath, 0, "a row of empty properties was held beneath");
+        // What needs only an edge's ends and type still finds a damaged one.
+        assert!(store::edge_ends(&conn, "link").unwrap().is_some());
+        drop(conn);
+
+        // The server's copy replaces it.
+        let conn = core.conn().unwrap();
+        store::put_server_edge(
+            &conn,
+            &store::testing::wire_edge("link", "row", "row", "references"),
+        )
+        .unwrap();
+        drop(conn);
+        assert_eq!(core.edges_from("row").unwrap().len(), 1);
     }
 
     #[test]

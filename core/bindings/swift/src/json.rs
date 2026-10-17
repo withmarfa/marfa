@@ -5,9 +5,10 @@ use serde_json::{Map, Number, Value};
 
 use crate::MarfaError;
 
-/// The deepest nesting a value may have to cross into the core, the limit
-/// `serde_json` puts on a document it reads.
-const NESTING_LIMIT: usize = 128;
+/// The deepest nesting a value may cross into the core. The core refuses a
+/// write whose whole body nests deeper than this, counting the body's own
+/// levels; this stops a value too deep to be one before it is converted.
+const NESTING_LIMIT: usize = marfa_core::MAX_JSON_DEPTH;
 
 /// One JSON value.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]

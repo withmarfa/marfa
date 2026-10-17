@@ -122,11 +122,11 @@ pub struct Edge {
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchFilters {
     #[uniffi(default = None)]
+    pub r#type: Option<String>,
+    #[uniffi(default = None)]
     pub state: Option<ItemState>,
     #[uniffi(default = false)]
     pub all_states: bool,
-    #[uniffi(default = None)]
-    pub r#type: Option<String>,
     #[uniffi(default = [])]
     pub tags: Vec<String>,
     /// An expression in the server's listing grammar, answered as the server
@@ -3342,6 +3342,55 @@ mod tests {
         )])
         .unwrap();
         (dir, path, core)
+    }
+
+    #[test]
+    fn a_value_nested_past_what_the_server_reads_is_refused_invalid_whole() {
+        let (_dir, _path, core) = copy_with_entries();
+        let nested = |arrays: usize| {
+            let deep = (0..arrays).fold(JsonValue::Null, |inner, _| JsonValue::Array(vec![inner]));
+            JsonObject {
+                members: vec![JsonMember {
+                    key: "deep".into(),
+                    value: deep,
+                }],
+            }
+        };
+        let id = core
+            .create_item(draft("app.test.entry", r#"{"title":"t"}"#))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let version = core.get(id.clone()).unwrap().unwrap().version;
+        let queued = core.queue().unwrap().len();
+        // The properties object and 63 arrays pass the binding's own limit,
+        // and the body that holds them is one level too deep for the core.
+        for arrays in [62 + 1, 62 + 2, 200] {
+            let created = core.create_item(Draft {
+                properties: nested(arrays),
+                ..draft("app.test.entry", "{}")
+            });
+            let updated = core.update_item(
+                id.clone(),
+                Edit {
+                    properties: nested(arrays),
+                    ..edit("{}", version)
+                },
+            );
+            for refusal in [created.map(|_| ()), updated.map(|_| ())] {
+                assert!(
+                    matches!(refusal, Err(MarfaError::Invalid { .. })),
+                    "{arrays}: {refusal:?}"
+                );
+            }
+        }
+        assert_eq!(core.queue().unwrap().len(), queued);
+        core.create_item(Draft {
+            properties: nested(62),
+            ..draft("app.test.entry", "{}")
+        })
+        .unwrap();
+        assert_eq!(core.queue().unwrap().len(), queued + 1);
     }
 
     #[test]
