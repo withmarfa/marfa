@@ -3374,7 +3374,7 @@ While the edge a body's link made stands, and the device held the body and that 
 
 **Reason:** a body and the edges another device made from it carry no record of which link made which edge. A device records it from the names it holds just before one of them changes, and before a hydration replaces what it holds, so a body and edge that reach it only after the rename are read by the names it holds then.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`, `› answers a link from another device with the item it named after a rename, when another item takes the old title`, `› keeps what a link from another device named through a hydration that lands its item renamed`.
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`, `› answers a link from another device with the item it named after a rename, when another item takes the old title`, `› keeps what a link from another device named through a hydration that lands its item renamed`, `› answers a link this device left missing with the item another device linked it to, after that item is renamed`.
 
 ### `device/body-link-kept`
 

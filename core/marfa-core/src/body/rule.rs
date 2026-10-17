@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 use serde_json::Value;
 
-use super::embed::{FILE_TYPE, bytes_of, file_like, is_note, joined, read_as};
+use super::embed::{FILE_TYPE, blob_ref_of, bytes_of, file_like, is_note, joined, read_as};
 use super::resolve::{Others, Paths, Resolved, Resolver, is_id, resolve_reference};
 use super::text::{self, Embed, Typed};
 use crate::catalog::Catalog;
@@ -774,15 +774,22 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
         };
         let held = recorded(conn, host)?;
         let body = body_of(catalog, &item);
-        let unrecorded =
-            |kind: Kind, text: &str| !held.contains_key(&(kind.as_str(), text.to_string()));
-        if !text::links(body)
-            .iter()
-            .any(|raw| unrecorded(Kind::Link, raw))
-            && !text::embeds(body)
-                .iter()
-                .any(|embed| unrecorded(Kind::Embed, embed.raw()))
-        {
+        let embeds = text::embeds(body);
+        let texts = text::links(body)
+            .into_iter()
+            .map(|raw| (Kind::Link, raw))
+            .chain(
+                embeds
+                    .iter()
+                    .map(|embed| (Kind::Embed, embed.raw().to_string())),
+            );
+        let mut open: Vec<(Kind, String)> = Vec::new();
+        for (kind, text) in texts {
+            if !answered(conn, &held, kind, host, &text)? {
+                open.push((kind, text));
+            }
+        }
+        if open.is_empty() {
             continue;
         }
         // Read as held: before a hydration the copy may be one that cannot be
@@ -797,11 +804,16 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
             Others::held,
         )?;
         for (kind, text, other) in read.found {
-            if held.contains_key(&(kind.as_str(), text.clone()))
+            if !open.contains(&(kind, text.clone()))
                 || held_edges(conn, kind, host, &other)?.is_empty()
             {
                 continue;
             }
+            // The write that left the body carrying the text still did, so a
+            // row this copy wrote keeps it.
+            let write_id = held
+                .get(&(kind.as_str(), text.clone()))
+                .and_then(|row| row.write_id.clone());
             put_row(
                 conn,
                 &Row {
@@ -812,7 +824,7 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
                     other_id: Some(other),
                     reason: None,
                     held: None,
-                    write_id: None,
+                    write_id,
                 },
             )?;
         }
@@ -820,11 +832,31 @@ fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> 
     Ok(())
 }
 
+/// Whether a link or embed's row still answers for it: it names an item the
+/// edge to which stands, or it says the server refused the edge, which stays
+/// the answer until the refused write is discarded (`device/body-name-refused`).
+/// Any other row, a name the server has not settled or one whose edge has
+/// gone, is replaced by what the copy reads now.
+fn answered(
+    conn: &Connection,
+    held: &Recorded,
+    kind: Kind,
+    host: &str,
+    text: &str,
+) -> Result<bool> {
+    Ok(match held.get(&(kind.as_str(), text.to_string())) {
+        Some(row) if row.state == "refused" => true,
+        Some(row) if row.state == "resolved" => made_to(conn, held, kind, host, text)?.is_some(),
+        _ => false,
+    })
+}
+
 /// Called before the copy writes `id`'s row, whoever wrote it: `next` is
 /// the row it is about to hold, `None` for a change of state or the row
 /// leaving the copy. A change of what names the item (its type, state or
-/// title) can take away the name a link to it was read by, so what the links
-/// to it name is recorded first.
+/// title), or of whether it holds bytes, which makes a file item one an
+/// embed can name, can take away the name a link or embed was read by, so
+/// what the links to it name is recorded first.
 pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>) -> Result<()> {
     if !linked(conn, id)? || !recording(conn)? {
         return Ok(());
@@ -848,7 +880,10 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
             }
             let loaded = Catalog::load(conn)?;
             let title = fields::title_field(&loaded, &r#type);
-            if properties.get(title) == next.properties.get(title) {
+            if properties.get(title) == next.properties.get(title)
+                && blob_ref_of(&loaded, &r#type, &properties).is_some()
+                    == blob_ref_of(&loaded, &r#type, &next.properties).is_some()
+            {
                 return Ok(());
             }
             catalog = Some(loaded);
@@ -961,12 +996,13 @@ pub(crate) fn edge_leaving(conn: &Connection, id: &str) -> Result<()> {
     }
 }
 
-/// Whether the copy records what links name before a change. A copy part
-/// way through a hydration lands every row as the server holds it now, so
-/// nothing it lands takes away a name the copy could still read by; and one
-/// that cannot be kept current is read by nobody until it hydrates again.
+/// Whether the copy records what links name before a change: always but
+/// part way through a hydration, which lands every row as the server holds
+/// it now, so nothing it lands takes away a name the copy could still read
+/// by. A copy that cannot be kept current still records, since a read-back
+/// can land a rename on it and the next hydration reads what it holds.
 fn recording(conn: &Connection) -> Result<bool> {
-    Ok(store::hydrated(conn)? || store::never_synced(conn)?)
+    store::hydration_complete(conn)
 }
 
 /// Whether a server row landing on `id` can leave rows its body no longer
@@ -2368,6 +2404,147 @@ mod tests {
             vec![(host, plan)],
             "the edit's answer was read without the row of the link it took out"
         );
+    }
+
+    /// Lands a note as the server's row, as another device's create does.
+    fn remote_note(core: &Core, id: &str, title: &str) {
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &store::testing::note(id, title, "", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Catalog::empty(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_rename_records_a_link_whose_row_no_longer_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let gone = note(&core, "Plan", "");
+        let host = note(&core, "Host", "");
+        core.create_edge(&draft(Kind::Link, &host, &gone)).unwrap();
+        edit(&core, &host, serde_json::json!({ "body": "see [[Plan]]" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+        as_the_server_s(&core);
+        store::purge_item(&core.conn().unwrap(), &gone).unwrap();
+        // Another device makes a new "Plan" and links the body to it.
+        remote_note(&core, "plan-a", "Plan");
+        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item {
+                id: "plan-a".into()
+            }]
+        );
+        land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Item {
+                id: "plan-a".into()
+            }],
+            "a row whose edge had gone stood in for a record of the rename"
+        );
+    }
+
+    #[test]
+    fn a_rename_records_a_link_this_copy_left_unresolved_once_another_device_links_it() {
+        for state in ["pending", "missing", "ambiguous", "unanswered"] {
+            let dir = tempfile::tempdir().unwrap();
+            let core = copy(&dir);
+            let host = note(&core, "Host", "[[Plan]]");
+            as_the_server_s(&core);
+            core.conn()
+                .unwrap()
+                .execute("UPDATE body_names SET state = ?1", [state])
+                .unwrap();
+            remote_note(&core, "plan-a", "Plan");
+            land_remote_edge(&core, link_edge(&host, "plan-a"));
+            land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+            assert_eq!(
+                targets(&core.body_links(&host).unwrap().links),
+                vec![BodyTarget::Item {
+                    id: "plan-a".into()
+                }],
+                "a {state} row stood in for a record of the rename"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rename_leaves_a_refused_link_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "[[Plan]]");
+        as_the_server_s(&core);
+        core.conn()
+            .unwrap()
+            .execute(
+                "UPDATE body_names SET state = 'refused', reason = 'not allowed'",
+                [],
+            )
+            .unwrap();
+        remote_note(&core, "plan-a", "Plan");
+        land_remote_edge(&core, link_edge(&host, "plan-a"));
+        land_remote(&core, "plan-a", serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().links),
+            vec![BodyTarget::Refused {
+                reason: "not allowed".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_second_attachment_gaining_bytes_leaves_an_embed_naming_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let host = note(&core, "Host", "");
+        let photo = dir.path().join("photo.png");
+        std::fs::write(&photo, b"not really a png").unwrap();
+        let file = core
+            .attach(&host, &photo, &Attachment::default())
+            .unwrap()
+            .item
+            .item_id
+            .unwrap();
+        as_the_server_s(&core);
+        let blob = core.get(&file).unwrap().unwrap().properties["blob_ref"].clone();
+        let mut second =
+            store::testing::wire_item("second", "core.file", "active", "2026-01-01T00:00:00Z", {
+                serde_json::json!({ "title": "photo.png" })
+            });
+        store::put_server_item(&core.conn().unwrap(), &second, Some(&[]), &Catalog::empty())
+            .unwrap();
+        let mut attached = store::testing::wire_edge("attached", "second", &host, ATTACHMENT_EDGE);
+        attached.version = 1;
+        land_remote_edge(&core, attached);
+        land_remote_body(&core, &host, "![[photo.png]]");
+        second.properties.insert("blob_ref".into(), blob);
+        second.version = 2;
+        second.updated_at = "2026-01-02T00:00:00Z".into();
+        store::put_server_item(&core.conn().unwrap(), &second, Some(&[]), &Catalog::empty())
+            .unwrap();
+        assert_eq!(
+            targets(&core.body_links(&host).unwrap().embeds),
+            vec![BodyTarget::Item { id: file }],
+            "a second file of the embed's name gaining bytes left nothing recorded"
+        );
+    }
+
+    #[test]
+    fn a_copy_that_cannot_be_kept_current_still_records_before_a_rename() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            assert!(!store::hydrated(&conn).unwrap() && !store::never_synced(&conn).unwrap());
+        }
+        land_remote(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
     }
 
     #[test]

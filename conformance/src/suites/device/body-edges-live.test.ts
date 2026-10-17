@@ -738,6 +738,35 @@ describe("links", () => {
     }
   });
 
+  it("answers a link this device left missing with the item another device linked it to, after that item is renamed", async () => {
+    const title = named("Linked elsewhere later");
+    const host = await note(
+      device,
+      named("Linked elsewhere later host"),
+      `[[${title}]]`,
+    );
+    await drained(device);
+    expect(targets(value(await device.bodyLinks(host.id)).links)).toEqual([
+      { state: "missing" },
+    ]);
+    // Another device makes the item, links the body to it and renames it,
+    // all heard in one catch-up.
+    const plan = await remoteNote(title);
+    await linkedElsewhere(host.id, plan);
+    const stored = await client.getItem(plan);
+    expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+    const renamed = await client.updateItem(plan, {
+      version: stored.data.item.version,
+      properties: { title: `${title} v2` },
+    });
+    expect(renamed.ok, JSON.stringify(renamed.error)).toBe(true);
+    value(await device.catchUp());
+    expect(
+      targets(value(await device.bodyLinks(host.id)).links),
+      "the record of a name the server had not found stood in for the item another device linked",
+    ).toEqual([{ state: "item", id: plan }]);
+  });
+
   it("keeps what a link from another device named through a hydration that lands its item renamed", async () => {
     const on = await copy();
     const title = named("Hydrated after a rename");
