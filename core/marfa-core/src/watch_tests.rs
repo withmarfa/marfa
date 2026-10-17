@@ -887,8 +887,19 @@ fn a_save_is_told_with_the_cursor_the_store_holds_then() {
     assert_eq!(heard.changes.lock().unwrap()[0].cursor, "42");
 }
 
+/// Runs `call` on another thread and gives up on it after a few seconds, so
+/// a hang fails the test instead of stopping the run.
+fn within<T: Send + 'static>(what: &str, call: impl FnOnce() -> T + Send + 'static) -> T {
+    let (sent, got) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sent.send(call());
+    });
+    got.recv_timeout(Duration::from_secs(5))
+        .unwrap_or_else(|_| panic!("{what} waited for good"))
+}
+
 #[test]
-fn a_watch_started_after_a_fault_in_the_dispatcher_does_not_start_failed() {
+fn a_watch_started_after_a_fault_in_the_dispatcher_works_and_a_catch_up_is_not_held() {
     let server = Scripted::start();
     let core = copy(&server);
     server.on(
@@ -896,22 +907,197 @@ fn a_watch_started_after_a_fault_in_the_dispatcher_does_not_start_failed() {
         vec![
             held_answer(vec![created("n1", "11")]),
             held_answer(vec![created("n2", "12")]),
+            at_head("12"),
+            held_answer(vec![created("n3", "13")]),
         ],
     );
     let first = listener();
     let _one = watch(&core, &first);
     first.wait_for_kind("item.created", 1);
     core.watch.fault_once.store(true, Ordering::SeqCst);
+    // Joins on the turn that faults.
     let second = listener();
     let _two = watch(&core, &second);
-    first.wait_for_end();
-    assert!(matches!(
-        first.ended.lock().unwrap().first(),
-        Some(Some(CoreError::Invalid(_)))
-    ));
+    for heard in [&first, &second] {
+        heard.wait_for_end();
+        assert!(matches!(
+            heard.ended.lock().unwrap().first(),
+            Some(Some(CoreError::Invalid(_)))
+        ));
+    }
     let again = listener();
     let _three = watch(&core, &again);
     again.wait_for_kind("item.created", 1);
     thread::sleep(MS(200));
     assert_eq!(again.kinds(), ["item.created"], "{:?}", again.kinds());
+    // A catch-up while the new watch exists takes its stream.
+    let caught = Arc::clone(&core);
+    within("a catch-up after a dispatcher fault", move || {
+        caught.catch_up().unwrap()
+    });
+    again.wait_for_kind("item.created", 2);
+    assert_eq!(again.ids(), ["n2", "n3"]);
+}
+
+#[test]
+fn a_catch_up_called_as_the_dispatcher_faults_is_not_held() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![held_answer(vec![created("n1", "11")]), at_head("11")],
+    );
+    let heard = listener();
+    let _listening = watch(&core, &heard);
+    heard.wait_for_kind("item.created", 1);
+    // The turn the call wakes is the one that faults, with the source's end
+    // still to come.
+    core.watch.fault_once.store(true, Ordering::SeqCst);
+    let caught = Arc::clone(&core);
+    within("a catch-up as the dispatcher faulted", move || {
+        caught.catch_up().unwrap()
+    });
+    heard.wait_for_end();
+}
+
+#[test]
+fn server_reachable_after_a_catch_up_carries_the_cursor_the_catch_up_left() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/events",
+        vec![
+            scripted::refusal(503, "unavailable"),
+            until(&ready, scripted::refusal(503, "unavailable")),
+            stream(
+                vec![
+                    created("n1", "11"),
+                    created("n2", "12"),
+                    scripted::copy_marker("stream_live", "12"),
+                ],
+                Then::End,
+            ),
+            scripted::stream(
+                vec![
+                    scripted::connected(),
+                    scripted::copy_marker("stream_cursor", "12"),
+                ],
+                held(),
+            ),
+        ],
+    );
+    let heard = listener();
+    let _listening = watch(&core, &heard);
+    heard.wait_for_kind("server.unreachable", 1);
+    server.wait_for("/events", 2, Duration::from_secs(5));
+    core.catch_up().unwrap();
+    heard.wait_for_kind("server.reachable", 1);
+    let reachable = heard
+        .changes
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|change| change.event.as_str() == "server.reachable")
+        .cloned()
+        .unwrap();
+    assert_eq!(reachable.cursor, "12");
+    ready.store(true, Ordering::Relaxed);
+}
+
+#[test]
+fn a_joiner_is_told_the_state_as_of_its_join_not_a_later_one_a_slow_listener_has_not_reached() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/events",
+        vec![
+            stream(vec![created("n1", "11")], Then::End),
+            scripted::refusal(503, "unavailable"),
+            until(
+                &ready,
+                scripted::stream(
+                    vec![
+                        scripted::connected(),
+                        scripted::copy_marker("stream_cursor", "11"),
+                    ],
+                    held(),
+                ),
+            ),
+        ],
+    );
+    // Busy with the first change while the follow loses the server.
+    let slow = Arc::new(Heard {
+        slow: Some(MS(500)),
+        ..Heard::default()
+    });
+    let _one = watch(&core, &slow);
+    server.wait_for("/events", 3, Duration::from_secs(5));
+    let joiner = listener();
+    let _two = core
+        .watch(true, Arc::clone(&joiner) as Arc<dyn WatchListener>)
+        .unwrap();
+    thread::sleep(MS(1_500));
+    assert!(
+        joiner.kinds().is_empty(),
+        "a joiner was told {:?} on evidence the queue had already outdated",
+        joiner.kinds()
+    );
+    ready.store(true, Ordering::Relaxed);
+    joiner.wait_for_kind("server.reachable", 1);
+}
+
+#[test]
+fn a_joiner_hears_nothing_that_was_queued_before_it_joined() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on(
+        "/events",
+        vec![stream(
+            vec![
+                created("n1", "11"),
+                created("n2", "12"),
+                created("n3", "13"),
+            ],
+            Then::Later {
+                keepalive: MS(5),
+                after: MS(1_500),
+                frames: vec![created("n4", "14")],
+            },
+        )],
+    );
+    let slow = Arc::new(Heard {
+        slow: Some(MS(400)),
+        ..Heard::default()
+    });
+    let _one = watch(&core, &slow);
+    server.wait_for("/events", 1, Duration::from_secs(5));
+    // The three are applied and queued behind the slow listener's first.
+    thread::sleep(MS(200));
+    let joiner = listener();
+    let _two = watch(&core, &joiner);
+    joiner.wait_for_kind("item.created", 1);
+    assert_eq!(joiner.ids(), ["n4"]);
+}
+
+#[test]
+fn a_drain_on_a_failed_watch_is_no_evidence_for_a_joiner_that_says_it_was_told_unreachable() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on("/events", vec![another_contract()]);
+    let (_, took) = queue_note(&core, &server, "waiting");
+    server.on("/items", vec![took]);
+    let first = listener();
+    let _one = watch(&core, &first);
+    first.wait_for_kind("watch.failed", 1);
+    assert_eq!(core.drain().unwrap().answered, 1);
+    thread::sleep(MS(100));
+    let joiner = listener();
+    let _two = core
+        .watch(true, Arc::clone(&joiner) as Arc<dyn WatchListener>)
+        .unwrap();
+    joiner.wait_for_kind("watch.failed", 1);
+    thread::sleep(MS(200));
+    assert_eq!(joiner.kinds(), ["watch.failed"]);
 }

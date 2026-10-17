@@ -71,6 +71,9 @@ enum Source {
 
 struct Slot {
     id: u64,
+    /// The sequence number the queue had when it joined: it hears what is
+    /// queued after that.
+    joined_at: u64,
     listener: Arc<dyn WatchListener>,
     /// Last told `server.unreachable`.
     unreachable: bool,
@@ -80,10 +83,28 @@ struct Slot {
 
 pub(crate) enum Told {
     Change(Change),
-    Saved { version: i64, forced: bool },
+    Saved {
+        version: i64,
+        forced: bool,
+    },
     SavesFailed(CoreError),
     Contact,
     Ended(Result<()>),
+    /// A hydration or catch-up that took the stream succeeded.
+    Recovered,
+    /// The last hydration or catch-up holding the stream finished.
+    Resumed,
+    /// A drain the caller started answered a write.
+    Drained,
+}
+
+/// What the source, a taker or a caller hands the dispatcher, in the order it
+/// happened.
+struct Entry {
+    seq: u64,
+    /// The source run it came from, where it came from one.
+    run: Option<u64>,
+    told: Told,
 }
 
 #[derive(Default)]
@@ -94,17 +115,22 @@ struct Shared {
     /// Hydrations and catch-ups holding the stream. Outlives a dispatcher, so
     /// a listener that joins during one waits for it.
     takers: usize,
-    /// No source thread runs.
-    at_rest: bool,
+    /// A source thread runs, whichever dispatcher started it: it records its
+    /// own end here, so a dispatcher that faulted loses nothing.
+    source_running: bool,
+    /// The runs started so far.
+    runs: u64,
+    /// The number of the last entry queued.
+    seq: u64,
     joined: Vec<Slot>,
     left: Vec<u64>,
-    queue: VecDeque<Told>,
-    /// The last taker finished.
-    resumed: bool,
-    /// A taker succeeded.
-    recovered: bool,
-    /// A drain the caller started answered a write.
-    drained: bool,
+    queue: VecDeque<Entry>,
+}
+
+fn enqueue(shared: &mut Shared, run: Option<u64>, told: Told) {
+    shared.seq += 1;
+    let seq = shared.seq;
+    shared.queue.push_back(Entry { seq, run, told });
 }
 
 pub(crate) struct Watch {
@@ -115,7 +141,7 @@ pub(crate) struct Watch {
     pub(crate) fault_once: AtomicBool,
     /// The dispatcher waits here for work.
     work: Condvar,
-    /// A source waits here for room, and a taker for the source to rest.
+    /// A source waits here for room, and a taker for the source to end.
     rest: Condvar,
 }
 
@@ -128,10 +154,7 @@ fn held(shared: &Mutex<Shared>) -> MutexGuard<'_, Shared> {
 impl Watch {
     pub(crate) fn new() -> Arc<Watch> {
         Arc::new(Watch {
-            shared: Mutex::new(Shared {
-                at_rest: true,
-                ..Shared::default()
-            }),
+            shared: Mutex::new(Shared::default()),
             follow_pace: Mutex::new(PACE),
             #[cfg(test)]
             fault_once: AtomicBool::new(false),
@@ -173,7 +196,7 @@ impl Watch {
             reached: false,
         };
         self.work.notify_all();
-        while shared.dispatcher.is_some() && !shared.at_rest {
+        while shared.source_running {
             shared = self
                 .rest
                 .wait(shared)
@@ -186,12 +209,14 @@ impl Watch {
     pub(crate) fn drained(&self) {
         let mut shared = held(&self.shared);
         if shared.dispatcher.is_some() {
-            shared.drained = true;
+            enqueue(&mut shared, None, Told::Drained);
             self.work.notify_all();
         }
     }
 
-    fn push(&self, stop: &AtomicBool, told: Told) {
+    /// Queues what the source of `run` tells. `last` also records that the
+    /// source has ended, in the same step.
+    fn push(&self, stop: &AtomicBool, run: u64, told: Told, last: bool) {
         let mut shared = held(&self.shared);
         while shared.queue.len() >= QUEUE && !stop.load(Ordering::Relaxed) {
             shared = self
@@ -200,9 +225,15 @@ impl Watch {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .0;
         }
-        shared.queue.push_back(told);
+        enqueue(&mut shared, Some(run), told);
+        if last {
+            shared.source_running = false;
+        }
         drop(shared);
         self.work.notify_all();
+        if last {
+            self.rest.notify_all();
+        }
     }
 }
 
@@ -224,8 +255,12 @@ impl Drop for Taken {
         let mut shared = held(&self.watch.shared);
         shared.takers -= 1;
         if shared.dispatcher.is_some() {
-            shared.recovered |= self.reached;
-            shared.resumed |= shared.takers == 0;
+            if self.reached {
+                enqueue(&mut shared, None, Told::Recovered);
+            }
+            if shared.takers == 0 {
+                enqueue(&mut shared, None, Told::Resumed);
+            }
         }
         drop(shared);
         self.watch.work.notify_all();
@@ -285,16 +320,15 @@ impl Core {
         let mut shared = held(&self.watch.shared);
         let id = shared.next;
         shared.next += 1;
+        let joined_at = shared.seq;
         shared.joined.push(Slot {
             id,
+            joined_at,
             listener,
             unreachable: told_unreachable,
             saved,
         });
         if shared.dispatcher.is_none() {
-            shared.recovered = false;
-            shared.resumed = false;
-            shared.drained = false;
             let (core, watch) = (Arc::clone(self), Arc::clone(&self.watch));
             let spawned = thread::Builder::new()
                 .name("marfa-watch".into())
@@ -338,6 +372,7 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
         source,
         pace,
         slots: Vec::new(),
+        joiners: VecDeque::new(),
         outage: None,
         failed: None,
         halted: false,
@@ -355,6 +390,8 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
             "the watch stopped on a fault in the core: {}",
             crate::fault_said(fault.as_ref())
         ));
+        // The source ends itself, and records that in the shared state; the
+        // next dispatcher and a taker wait on that.
         if let Some(run) = &dispatcher.run {
             run.stop.store(true, Ordering::Relaxed);
         }
@@ -365,10 +402,13 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
         });
         drop(shared);
         watch.rest.notify_all();
+        // Those taken from the shared state for the turn that faulted are
+        // told too.
         farewells.extend(
             dispatcher
-                .slots
+                .joiners
                 .drain(..)
+                .chain(dispatcher.slots.drain(..))
                 .map(|slot| (slot.listener, Some(error.clone()))),
         );
     }
@@ -382,6 +422,7 @@ fn dispatch(core: Arc<Core>, watch: Arc<Watch>, source: Source, pace: SavesPace)
 }
 
 struct Run {
+    id: u64,
     stop: Arc<AtomicBool>,
     stopping: bool,
 }
@@ -392,6 +433,8 @@ struct Dispatcher<'a> {
     source: Source,
     pace: SavesPace,
     slots: Vec<Slot>,
+    /// Joined, and not yet reached in the queue.
+    joiners: VecDeque<Slot>,
     /// The outage the listeners were told, for one that joins.
     outage: Option<CoreError>,
     /// The failure the listeners were told, for one that joins.
@@ -409,56 +452,32 @@ struct Dispatcher<'a> {
 }
 
 struct Inbox {
-    joined: Vec<Slot>,
     left: Vec<u64>,
-    queue: VecDeque<Told>,
-    resumed: bool,
-    recovered: bool,
-    drained: bool,
+    queue: VecDeque<Entry>,
 }
 
 impl Dispatcher<'_> {
     fn serve(&mut self) {
         self.cursor = self.held_cursor();
-        {
-            // A source the last dispatcher left running, stopped by its fault,
-            // still has its end to tell: it is waited for, not taken for a
-            // failure of the one started now.
-            let mut shared = held(&self.watch.shared);
-            if shared.at_rest {
-                shared.queue.clear();
-            } else {
-                shared.queue.retain(|told| matches!(told, Told::Ended(_)));
-                self.run = Some(Run {
-                    stop: Arc::new(AtomicBool::new(true)),
-                    stopping: true,
-                });
-            }
-        }
+        // What an earlier dispatcher left queued is of its time.
+        held(&self.watch.shared).queue.clear();
         loop {
-            let inbox = self.wait();
+            let mut inbox = self.wait();
             #[cfg(test)]
             if self.watch.fault_once.swap(false, Ordering::SeqCst) {
                 panic!("a fault in the dispatcher");
             }
-            self.admit(inbox.joined);
-            for told in inbox.queue {
-                self.tell(told);
+            // A listener hears what was queued after it joined, and is told
+            // the state as the queue left it just before.
+            while let Some(entry) = inbox.queue.pop_front() {
+                self.admit(entry.seq);
+                // From a source that has since ended.
+                if entry.run.is_some() && entry.run != self.run.as_ref().map(|run| run.id) {
+                    continue;
+                }
+                self.tell(entry.told);
             }
-            if inbox.recovered {
-                self.clear_outage();
-            }
-            if inbox.drained && self.clear_outage() {
-                // The follow believes it has told the outage; it must ask again
-                // to tell a new one.
-                self.restart = true;
-            }
-            if inbox.resumed {
-                self.halted = false;
-                self.failed = None;
-                // The call that was holding the stream moved the cursor.
-                self.cursor = self.held_cursor();
-            }
+            self.admit(u64::MAX);
             self.depart(&inbox.left);
             self.reconcile();
             if !self.slots.is_empty() {
@@ -478,9 +497,6 @@ impl Dispatcher<'_> {
             if !shared.joined.is_empty()
                 || !shared.left.is_empty()
                 || !shared.queue.is_empty()
-                || shared.resumed
-                || shared.recovered
-                || shared.drained
                 || moved
                 || self.must_reconcile(&shared)
             {
@@ -493,13 +509,12 @@ impl Dispatcher<'_> {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
         }
         self.takers_seen = shared.takers;
+        // Kept here before anything else is done, so that a fault in this turn
+        // can still tell them.
+        self.joiners.extend(std::mem::take(&mut shared.joined));
         let inbox = Inbox {
-            joined: std::mem::take(&mut shared.joined),
             left: std::mem::take(&mut shared.left),
             queue: std::mem::take(&mut shared.queue),
-            resumed: std::mem::take(&mut shared.resumed),
-            recovered: std::mem::take(&mut shared.recovered),
-            drained: std::mem::take(&mut shared.drained),
         };
         drop(shared);
         self.watch.rest.notify_all();
@@ -509,7 +524,7 @@ impl Dispatcher<'_> {
     /// Nothing arrived, but the source is not as it should be.
     fn must_reconcile(&self, shared: &Shared) -> bool {
         match &self.run {
-            None => self.wanted(shared),
+            None => self.wanted(shared) && !shared.source_running,
             Some(run) => !run.stopping && (self.slots.is_empty() || self.restart),
         }
     }
@@ -524,11 +539,14 @@ impl Dispatcher<'_> {
         let mut shared = held(&self.watch.shared);
         let wanted = self.wanted(&shared);
         match &mut self.run {
-            None if wanted => {
-                shared.at_rest = false;
+            // Not while a source an earlier dispatcher started still runs.
+            None if wanted && !shared.source_running => {
+                shared.source_running = true;
+                shared.runs += 1;
+                let id = shared.runs;
                 drop(shared);
                 self.restart = false;
-                self.start();
+                self.start(id);
             }
             Some(run) if (!wanted || self.restart) && !run.stopping => {
                 run.stopping = true;
@@ -538,7 +556,7 @@ impl Dispatcher<'_> {
         }
     }
 
-    fn start(&mut self) {
+    fn start(&mut self, id: u64) {
         let stop = Arc::new(AtomicBool::new(false));
         let (core, watch, flag) = (
             Arc::clone(self.core),
@@ -550,7 +568,7 @@ impl Dispatcher<'_> {
         let spawned = thread::Builder::new()
             .name("marfa-watch-source".into())
             .spawn(move || {
-                let told = |told| watch.push(&flag, told);
+                let told = |told| watch.push(&flag, id, told, false);
                 let ended = catch_unwind(AssertUnwindSafe(|| match source {
                     Source::Follow => core
                         .follow_watched(
@@ -581,17 +599,18 @@ impl Dispatcher<'_> {
                 });
                 // The store is let go before the dispatcher hears it ended.
                 drop(core);
-                watch.push(&flag, Told::Ended(ended));
+                watch.push(&flag, id, Told::Ended(ended), true);
             });
         match spawned {
             Ok(_) => {
                 self.run = Some(Run {
+                    id,
                     stop,
                     stopping: false,
                 })
             }
             Err(error) => {
-                held(&self.watch.shared).at_rest = true;
+                held(&self.watch.shared).source_running = false;
                 self.halted = true;
                 self.fail(CoreError::Invalid(format!(
                     "the watch's source cannot start: {error}"
@@ -603,7 +622,7 @@ impl Dispatcher<'_> {
     /// Nothing is left to run or to tell: the watch ends here unless a
     /// listener joined meanwhile.
     fn finished(&mut self) -> bool {
-        if !self.slots.is_empty() || self.run.is_some() {
+        if !self.slots.is_empty() || !self.joiners.is_empty() || self.run.is_some() {
             return false;
         }
         let mut shared = held(&self.watch.shared);
@@ -611,14 +630,21 @@ impl Dispatcher<'_> {
             return false;
         }
         shared.dispatcher = None;
-        shared.at_rest = true;
         drop(shared);
         self.watch.rest.notify_all();
         true
     }
 
-    fn admit(&mut self, joined: Vec<Slot>) {
-        for mut slot in joined {
+    /// Admits the listeners that joined before entry `seq` was queued.
+    fn admit(&mut self, seq: u64) {
+        while self
+            .joiners
+            .front()
+            .is_some_and(|slot| slot.joined_at < seq)
+        {
+            let Some(mut slot) = self.joiners.pop_front() else {
+                return;
+            };
             let mut alive = true;
             if let Some(reason) = self.outage.clone()
                 && !slot.unreachable
@@ -729,9 +755,27 @@ impl Dispatcher<'_> {
             }
             Told::SavesFailed(error) => self.fail(error),
             Told::Contact => {
+                self.live = true;
                 self.clear_outage();
             }
             Told::Ended(result) => self.source_ended(result),
+            Told::Recovered => {
+                // The call moved the cursor.
+                self.cursor = self.held_cursor();
+                self.clear_outage();
+            }
+            Told::Resumed => {
+                self.halted = false;
+                self.failed = None;
+                self.cursor = self.held_cursor();
+            }
+            Told::Drained => {
+                if self.clear_outage() {
+                    // The follow believes it has told the outage; it must ask
+                    // again to tell a new one.
+                    self.restart = true;
+                }
+            }
         }
     }
 
@@ -746,6 +790,7 @@ impl Dispatcher<'_> {
                 });
             }
             ChangeEvent::ServerReachable => {
+                self.live = true;
                 self.clear_outage();
             }
             _ => self.tell_each(|_| Some(change.clone())),
@@ -755,7 +800,6 @@ impl Dispatcher<'_> {
     /// A request reached the server. Answers whether any listener was told it
     /// had not.
     fn clear_outage(&mut self) -> bool {
-        self.live = true;
         let told = self.outage.take().is_some() | self.slots.iter().any(|slot| slot.unreachable);
         if told {
             let change = self.change(ChangeEvent::ServerReachable);
@@ -774,11 +818,6 @@ impl Dispatcher<'_> {
     fn source_ended(&mut self, result: Result<()>) {
         self.live = false;
         let stopping = self.run.take().is_some_and(|run| run.stopping);
-        {
-            let mut shared = held(&self.watch.shared);
-            shared.at_rest = true;
-        }
-        self.watch.rest.notify_all();
         // An error met while it was being stopped is met again by the next
         // stream, or beside a hydration that mends it.
         if stopping {

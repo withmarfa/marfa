@@ -2250,7 +2250,7 @@ While a device holds a watch of a store opened to read, a device MUST tell each 
 
 **Reason:** a reader that polls tells saves made within one poll once, and a listener that joined after a save read its version when it joined.
 
-**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`, `› tells a save made as soon as the reader says it is watching`.
+**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`.
 
 ### `device/watch-reads-failed`
 

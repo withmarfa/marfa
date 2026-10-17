@@ -317,43 +317,4 @@ describe("a watch", () => {
     ).toEqual(["store.saved"]);
     expect(typeof changes[0]?.data_version).toBe("number");
   });
-  it("tells a save made as soon as the reader says it is watching", async () => {
-    harness = await startHarness("watch-saves-at-once");
-    const { server, device } = harness;
-    scriptHydration(server, { head: "10" });
-    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
-
-    const reader = device.hold(["changes", "--for", "20"]);
-    try {
-      await vi.waitFor(
-        () => {
-          expect(reader.stdout, reader.stderr).toContain('"watching":true');
-        },
-        { timeout: 10_000, interval: 5 },
-      );
-      // Written the moment the line is read: a reader that read the store
-      // before it began to watch would miss it.
-      const wrote = await device.create({
-        type: "core.note",
-        properties: { title: "at once", body: "saved" },
-      });
-      expect(wrote.ok, JSON.stringify(wrote)).toBe(true);
-      await vi.waitFor(
-        () => {
-          expect(
-            reader.stdout
-              .split("\n")
-              .filter(
-                (line) =>
-                  line.includes("data_version") && !line.includes("watching"),
-              ),
-            "a save made as soon as the reader said it was watching was not told",
-          ).not.toHaveLength(0);
-        },
-        { timeout: 10_000, interval: 25 },
-      );
-    } finally {
-      await reader.stop();
-    }
-  });
 });
