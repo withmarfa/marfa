@@ -1647,7 +1647,7 @@ fn watching(
     });
     let listening = core.watch(false, printing.clone())?;
     while !stop.load(Ordering::Relaxed) {
-        std::thread::sleep(CHANGES_POLL);
+        std::thread::sleep(STOP_POLL);
     }
     // So that nothing is told after the command's last word.
     drop(listening);
@@ -1663,7 +1663,7 @@ fn watching(
     }
 }
 
-const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 struct Store {
     db: Option<PathBuf>,
