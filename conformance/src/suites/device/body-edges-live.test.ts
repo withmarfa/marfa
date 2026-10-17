@@ -106,6 +106,27 @@ async function setBody(on: CliDevice, id: string, body: string) {
   );
 }
 
+/** Writes the body through the server, as another device does. */
+async function writtenElsewhere(id: string, body: string) {
+  const stored = await client.getItem(id);
+  expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+  const changed = await client.updateItem(id, {
+    version: stored.data.item.version,
+    properties: { body },
+  });
+  expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+}
+
+/** Makes the edge a link makes, through the server, as another device does. */
+async function linkedElsewhere(source: string, target: string) {
+  const made = await client.createEdge({
+    source_id: source,
+    target_id: target,
+    edge_type: "references",
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+}
+
 async function drained(on: CliDevice) {
   const report = value(await on.drain());
   expect(report.unavailable).toBeNull();
@@ -650,6 +671,105 @@ describe("links", () => {
     ).toEqual([plan.id]);
     await drained(device);
     expect(await referencesFrom(host.id)).toEqual([taker.id]);
+  });
+
+  it("answers a link from another device with the item it named after a rename, when another item takes the old title", async () => {
+    for (const renamedHere of [true, false]) {
+      const title = named(`Elsewhere ${renamedHere ? "here" : "there"}`);
+      const plan = await note(device, title);
+      const host = await note(device, named(`Elsewhere host ${title}`));
+      await drained(device);
+      await writtenElsewhere(host.id, `see [[${title}]]`);
+      await linkedElsewhere(host.id, plan.id);
+      value(await device.catchUp());
+
+      if (renamedHere) {
+        const held = value(await device.get(plan.id));
+        value(
+          await device.update(plan.id, {
+            version: held.version,
+            properties: { title: `${title} v2` },
+          }),
+        );
+        await drained(device);
+      } else {
+        const stored = await client.getItem(plan.id);
+        expect(stored.ok, JSON.stringify(stored.error)).toBe(true);
+        const renamed = await client.updateItem(plan.id, {
+          version: stored.data.item.version,
+          properties: { title: `${title} v2` },
+        });
+        expect(renamed.ok, JSON.stringify(renamed.error)).toBe(true);
+        value(await device.catchUp());
+      }
+      const links = async () => value(await device.bodyLinks(host.id)).links;
+      expect(
+        targets(await links()),
+        "a rename made another device's link read as naming nothing",
+      ).toEqual([{ state: "item", id: plan.id }]);
+
+      const taker = await note(device, title);
+      await drained(device);
+      await setBody(device, host.id, `[[${title}]] [[${taker.id}]]`);
+      expect(
+        targets(await links()),
+        "another device's link was answered with the item that took its title",
+      ).toEqual([
+        { state: "item", id: plan.id },
+        { state: "item", id: taker.id },
+      ]);
+      const queued = (await unsent(device)).filter(
+        (write) => write.item_id === host.id,
+      );
+      expect(
+        queued
+          .filter((write) => write.kind === "create_edge")
+          .map((write) => write.target_id),
+      ).toEqual([taker.id]);
+      expect(queued.filter((write) => write.kind === "delete_edge")).toEqual(
+        [],
+      );
+      await drained(device);
+      expect(await referencesFrom(host.id)).toEqual([plan.id, taker.id].sort());
+      expect(targets(await links())).toEqual([
+        { state: "item", id: plan.id },
+        { state: "item", id: taker.id },
+      ]);
+    }
+  });
+
+  it("reads a link another device takes out and puts back by the titles, not by the item the link taken out named", async () => {
+    const title = named("Put back");
+    const plan = await note(device, title);
+    const host = await note(
+      device,
+      named("Put back host"),
+      `[[${title}]] [[${plan.id}]]`,
+    );
+    await drained(device);
+    expect(await referencesFrom(host.id)).toEqual([plan.id]);
+    const held = value(await device.get(plan.id));
+    value(
+      await device.update(plan.id, {
+        version: held.version,
+        properties: { title: `${title} v2` },
+      }),
+    );
+    const taker = await note(device, title);
+    await drained(device);
+
+    await writtenElsewhere(host.id, `[[${plan.id}]]`);
+    value(await device.catchUp());
+    await writtenElsewhere(host.id, `[[${title}]] [[${plan.id}]]`);
+    await linkedElsewhere(host.id, taker.id);
+    value(await device.catchUp());
+    expect(
+      targets(value(await device.bodyLinks(host.id)).links),
+      "a link put back elsewhere was answered with the item the link taken out named",
+    ).toEqual([
+      { state: "item", id: taker.id },
+      { state: "item", id: plan.id },
+    ]);
   });
 
   it("makes an edge for a fresh link by a title another item took, once the server has answered", async () => {

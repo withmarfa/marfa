@@ -3370,9 +3370,11 @@ When an edit based on a version older than the one the copy holds changes an ite
 
 ### `device/body-link-renamed`
 
-While the edge a body's link made stands, a device MUST answer the link with the item it named, even after that item is renamed.
+While the edge a body's link made stands, and the device held the body and that edge before the item the link named was renamed, a device MUST answer the link with that item.
 
-**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`.
+**Reason:** a body and the edges another device made from it carry no record of which link made which edge. A device records it from the names it holds just before one of them changes, so a body and edge that reach it only after the rename are read by the names it holds then.
+
+**Tests:** `device/body-edges-live.test.ts › takes the edge of a link to an item renamed since, when the link is taken out`, `› answers a link with the item it named when another item takes the old title, and a link to that item is added or taken out`, `› answers a link from another device with the item it named after a rename, when another item takes the old title`.
 
 ### `device/body-link-kept`
 
@@ -3389,6 +3391,14 @@ When a write types a link whose spelling the body before the write did not carry
 **Reason:** a person who replaces a link with a new spelling chose it deliberately. A record left from a body that carried the spelling earlier, and since lost it, would otherwise send the new link to the old item and keep that item's edge.
 
 **Tests:** `device/body-edges-live.test.ts › answers a link typed afresh by the titles, not by an earlier link of that spelling another device took out`.
+
+### `device/body-link-taken-out-elsewhere`
+
+When a body from the server that does not carry a link lands on an item that no write of the device waits on, a device MUST NOT answer a link of that spelling in a later body from the item the link taken out named.
+
+**Reason:** another device that takes a link out and puts it back types it afresh, so the link names what its text names then, as `device/body-link-typed-afresh` says for a write on the device.
+
+**Tests:** `device/body-edges-live.test.ts › reads a link another device takes out and puts back by the titles, not by the item the link taken out named`.
 
 ### `device/body-link-renamed-removed`
 
