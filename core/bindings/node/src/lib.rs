@@ -1,7 +1,7 @@
 //! The Node-facing shape of `marfa_core`.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode};
@@ -1118,8 +1118,8 @@ pub struct Thumbnail {
 }
 
 /// What a held stream changed in the copy, what became of the server, or
-/// what became of the queue it drained then, told apart by `kind`. `cursor`
-/// is the cursor held after it.
+/// what became of the queue it drained then, told apart by `kind`; and, from
+/// a watch only, a save or a failure. `cursor` is the cursor held after it.
 #[napi(discriminant = "kind", discriminant_case = "camelCase")]
 pub enum Change {
     /// An event the stream applied, by the event's type, with the item or
@@ -1144,6 +1144,18 @@ pub enum Change {
     /// `code` is the same word a thrown error carries, and `reason` its
     /// message. The answers it had recorded stay recorded.
     QueueNotDrained {
+        code: String,
+        reason: String,
+        cursor: String,
+    },
+    /// Told by a watch of a reading handle: another process saved to the
+    /// store, which now has this data version.
+    Saved { data_version: i64, cursor: String },
+    /// Told by a watch, once, when what feeds it fails: `code` is the same
+    /// word a thrown error carries, and `reason` its message. A follow that
+    /// failed holds no stream until the next hydration or catch-up; a reading
+    /// handle's reads go on, and the first that works is told as `saved`.
+    WatchFailed {
         code: String,
         reason: String,
         cursor: String,
@@ -1173,6 +1185,15 @@ impl From<&marfa_core::Change> for Change {
                 Err(error) => not_drained(&error, cursor),
             },
             marfa_core::ChangeEvent::QueueNotDrained(error) => not_drained(error, cursor),
+            marfa_core::ChangeEvent::Saved(data_version) => Change::Saved {
+                data_version: *data_version,
+                cursor,
+            },
+            marfa_core::ChangeEvent::WatchFailed(error) => Change::WatchFailed {
+                code: error.code().to_string(),
+                reason: error.to_string(),
+                cursor,
+            },
         }
     }
 }
@@ -1190,28 +1211,104 @@ enum Told {
     End(Option<marfa_core::CoreError>),
 }
 
-/// A held stream, stopped by `stop` or by being collected. The follow ends
-/// within a quarter second of either, and `onEnd` is called once it has.
+/// A held stream or a place in a store's watch, stopped by `stop` or by being
+/// collected. A follow ends within a quarter second of either, and `onEnd` is
+/// called once it has.
 #[napi]
 pub struct Subscription {
-    stop: Arc<AtomicBool>,
+    ending: Ending,
+}
+
+enum Ending {
+    Flag(Arc<AtomicBool>),
+    Listening(Arc<marfa_core::Listening>),
 }
 
 #[napi]
 impl Subscription {
     #[napi]
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        match &self.ending {
+            Ending::Flag(stop) => stop.store(true, Ordering::Relaxed),
+            Ending::Listening(listening) => listening.stop(),
+        }
     }
 }
 
 /// The follow's thread holds the core, and with it the writer's claim on
 /// the store, so a subscription nobody holds any more must end it. Node
 /// drops it when it is collected and when its environment is torn down, a
-/// worker's included, so either ends the follow.
+/// worker's included, so either ends the follow. A place in a watch is
+/// left the same way.
 impl Drop for Subscription {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop();
+    }
+}
+
+/// Both callbacks of a listener on one queue, so `onEnd` runs after every
+/// `onChange` sent before it; two would keep no order between them. Its own
+/// function does nothing: each call is made here, where a throw can be caught
+/// and `stop` called, and `onEnd` is then given an error whose `code` is
+/// `listener_threw`. Neither callback keeps the process alive.
+fn told_by(
+    env: Env,
+    on_change: Function<Change, ()>,
+    on_end: Function<Option<Unknown<'static>>, ()>,
+    stop: impl Fn() + Send + 'static,
+) -> Result<impl Fn(Told) + Send + Sync + 'static> {
+    let on_change = on_change.create_ref()?;
+    let on_end = on_end.create_ref()?;
+    let mut threw: Option<String> = None;
+    let tell = env
+        .create_function_from_closure::<(), (), _>("listener", |_| Ok(()))?
+        .build_threadsafe_function::<Told>()
+        .callee_handled::<false>()
+        .weak::<true>()
+        .build_callback(move |context: ThreadsafeCallContext<Told>| {
+            match context.value {
+                Told::Change(change) => {
+                    if threw.is_none()
+                        && let Err(thrown) = on_change.borrow_back(&context.env)?.call(change)
+                    {
+                        threw = Some(thrown.reason);
+                        stop();
+                    }
+                }
+                Told::End(error) => {
+                    let env = &context.env;
+                    let error = match (threw.take(), error) {
+                        (Some(thrown), _) => {
+                            let mut made = env.create_error(Error::new(
+                                napi::Status::GenericFailure,
+                                format!("listener_threw: onChange threw {thrown}"),
+                            ))?;
+                            made.set_named_property("code", "listener_threw")?;
+                            Some(made.into_unknown(env)?)
+                        }
+                        (None, Some(error)) => Some(error_value(env, &error)?),
+                        (None, None) => None,
+                    };
+                    on_end.borrow_back(env)?.call(error)?;
+                }
+            }
+            Ok(())
+        })?;
+    Ok(move |told| {
+        tell.call(told, ThreadsafeFunctionCallMode::NonBlocking);
+    })
+}
+
+/// Hands a watch's changes to the callbacks of an app.
+struct Telling<F: Fn(Told) + Send + Sync>(F);
+
+impl<F: Fn(Told) + Send + Sync> marfa_core::WatchListener for Telling<F> {
+    fn changed(&self, change: &marfa_core::Change) {
+        (self.0)(Told::Change(change.into()));
+    }
+
+    fn ended(&self, error: Option<marfa_core::CoreError>) {
+        (self.0)(Told::End(error));
     }
 }
 
@@ -1555,66 +1652,69 @@ impl MarfaCore {
         on_end: Function<Option<Unknown<'static>>, ()>,
     ) -> Result<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
-        let on_change = on_change.create_ref()?;
-        let on_end = on_end.create_ref()?;
         let flag = Arc::clone(&stop);
-        let mut threw: Option<String> = None;
-        // One queue carries both callbacks, so `onEnd` runs after every
-        // `onChange` sent before it; two would keep no order between them.
-        // Its own function does nothing: each call is made here, where a
-        // throw can be caught.
-        let tell = env
-            .create_function_from_closure::<(), (), _>("follow", |_| Ok(()))?
-            .build_threadsafe_function::<Told>()
-            .callee_handled::<false>()
-            .weak::<true>()
-            .build_callback(move |context: ThreadsafeCallContext<Told>| {
-                match context.value {
-                    Told::Change(change) => {
-                        if threw.is_none()
-                            && let Err(thrown) = on_change.borrow_back(&context.env)?.call(change)
-                        {
-                            threw = Some(thrown.reason);
-                            flag.store(true, Ordering::Relaxed);
-                        }
-                    }
-                    Told::End(error) => {
-                        let env = &context.env;
-                        let error = match (threw.take(), error) {
-                            (Some(thrown), _) => {
-                                let mut made = env.create_error(Error::new(
-                                    napi::Status::GenericFailure,
-                                    format!("listener_threw: onChange threw {thrown}"),
-                                ))?;
-                                made.set_named_property("code", "listener_threw")?;
-                                Some(made.into_unknown(env)?)
-                            }
-                            (None, Some(error)) => Some(error_value(env, &error)?),
-                            (None, None) => None,
-                        };
-                        on_end.borrow_back(env)?.call(error)?;
-                    }
-                }
-                Ok(())
-            })?;
+        let tell = told_by(env, on_change, on_end, move || {
+            flag.store(true, Ordering::Relaxed)
+        })?;
         let flag = Arc::clone(&stop);
         let core = Arc::clone(&self.inner);
         std::thread::spawn(move || {
-            let result = core.follow(&flag, false, |change| {
-                tell.call(
-                    Told::Change(change.into()),
-                    ThreadsafeFunctionCallMode::NonBlocking,
-                );
-            });
+            let result = core.follow(&flag, false, |change| tell(Told::Change(change.into())));
             // Let go of the store before saying so: an `onEnd` that opens it
             // again must find the writer's role free.
             drop(core);
-            tell.call(
-                Told::End(result.err()),
-                ThreadsafeFunctionCallMode::NonBlocking,
-            );
+            tell(Told::End(result.err()));
         });
-        Ok(Subscription { stop })
+        Ok(Subscription {
+            ending: Ending::Flag(stop),
+        })
+    }
+
+    /// Adds a listener to this store's watch, and starts it if it was idle.
+    /// However many listeners there are, one source runs: a writer with a
+    /// server holds the event stream and tells what `follow` tells, and a
+    /// reading handle tells `saved` each time another process saves. A
+    /// hydration or catch-up takes the stream for its duration and gives it
+    /// back, and no listener is told of the gap.
+    ///
+    /// `onChange` is called for each change after the listener joins, which
+    /// is first told the outage or failure that holds then; `onEnd` is called
+    /// once, last, when the subscription stops, with null, or with the error
+    /// that removed the listener. A request that reaches the server tells
+    /// `serverReachable` to a listener that was told it did not: the
+    /// follow's, a hydration's or catch-up's that succeeded, or a drain's that
+    /// answered a write. A follow that fails ends no listener: each is told
+    /// `watchFailed` once, and no stream is held until the next hydration or
+    /// catch-up. The first stream the watch has after the server was lost, or
+    /// after a drain left a write undelivered, is drained to once, and the
+    /// drain is told as `follow` tells it. An `onChange` that throws ends its
+    /// listener, and `onEnd` is given an error whose `code` is
+    /// `listener_threw`. Throws `no_server` for a writer with no server.
+    #[napi(
+        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
+    )]
+    pub fn watch(
+        &self,
+        env: Env,
+        on_change: Function<Change, ()>,
+        on_end: Function<Option<Unknown<'static>>, ()>,
+    ) -> Result<Subscription> {
+        let leaving: Arc<OnceLock<Arc<marfa_core::Listening>>> = Arc::new(OnceLock::new());
+        let leave = Arc::clone(&leaving);
+        let tell = told_by(env, on_change, on_end, move || {
+            if let Some(listening) = leave.get() {
+                listening.stop();
+            }
+        })?;
+        let listening = self
+            .inner
+            .watch(false, Arc::new(Telling(tell)))
+            .map_err(|error| failure(env, error))?;
+        let listening = Arc::new(listening);
+        let _ = leaving.set(Arc::clone(&listening));
+        Ok(Subscription {
+            ending: Ending::Listening(listening),
+        })
     }
 
     /// Opens the file at `path`, creating it when absent. `url` and `key` go
