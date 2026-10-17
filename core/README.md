@@ -182,6 +182,10 @@ The `value` is never the error's message, which can echo a field name, an id, a 
 
 Swift: `bindings/swift/build.sh` builds the XCFramework and its glue for macOS, iOS and the simulator. `withmarfa/marfa-swift` runs it at the commit it pins.
 
+Both bindings hand properties, a queued write's body and its answer across as values, not as JSON text: the Node module as plain objects, the Swift crate as `JsonValue`, `JsonObject` and `JsonMember`, which the generated Swift holds as types of its own. A `JsonObject` keeps its keys in order. Sent to the core, a key that repeats, a number that is not finite and nesting deeper than 128 are refused `Invalid`, as a document `serde_json` reads is held to the same depth. An integer that `i64` holds crosses exact; any other number crosses as an `f64`. A queued write's answer crosses as the JSON it held, or as its text where it was not JSON.
+
+The core's reads refuse a row whose stored properties are not one JSON object, so nothing that writes from a row's properties writes from empty ones. The Swift binding's `list`, `get`, `search`, `edges_from`, `edges_to`, `edges_of_type`, `list_in_folder`, `search_in_folder` and `conflicted_copies_of` keep such a row instead: it comes with empty properties and `unreadable_properties` naming why, so one damaged row fails no list or search. These are the core's `*_kept` reads. The command line and the Node module still refuse the read.
+
 `cargo-swift` embeds one UniFFI bindgen, and the crate's `uniffi` has to write the metadata that bindgen reads. `build.sh` pins `cargo-swift`; `Cargo.toml` and `.github/dependabot.yml` keep `uniffi` to the version that `cargo-swift` embeds. To move to a newer `uniffi`, wait for a `cargo-swift` release that embeds the matching bindgen, then change the `cargo-swift` pin, `uniffi` and the Dependabot ignore in one pull request.
 
 Node: it sits outside the pnpm workspace, so every pnpm call carries `--ignore-workspace`:

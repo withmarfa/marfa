@@ -1,5 +1,6 @@
-//! The Swift-facing shape of `marfa_core`. Properties cross as a JSON string
-//! because UniFFI has no arbitrary-JSON type.
+//! The Swift-facing shape of `marfa_core`. Properties, bodies and answers
+//! cross as `JsonValue` and `JsonObject`, values the generated Swift holds as
+//! its own, not as text to parse.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,7 +9,12 @@ uniffi::setup_scaffolding!();
 
 mod folder_settings;
 mod folders;
+mod json;
 
+pub use json::{JsonMember, JsonObject, JsonValue};
+
+/// The tier an item is in: `library` for lasting material, `feed` for an
+/// incoming stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Tier {
     Library,
@@ -23,6 +29,7 @@ pub enum SliceTier {
     All,
 }
 
+/// Where an item is in its life.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum ItemState {
     Active,
@@ -47,12 +54,14 @@ pub enum SortDirection {
     Descending,
 }
 
+/// An item as the copy holds it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Item {
     pub id: String,
     pub r#type: String,
-    /// The item's properties as one JSON object.
-    pub properties_json: String,
+    /// The item's properties, in the order the server answers them. Empty
+    /// where `unreadable_properties` is set.
+    pub properties: JsonObject,
     pub state: ItemState,
     pub tier: Option<Tier>,
     pub version: i64,
@@ -66,11 +75,19 @@ pub struct Item {
     /// The text under the property the type's display hints name as its
     /// title, or `title` where they name none; none where that holds no
     /// string.
+    #[uniffi(default = None)]
     pub title: Option<String>,
     /// The text under the property the type's display hints name as its
     /// body, or `body` where they name none; none where that holds no
     /// string.
+    #[uniffi(default = None)]
     pub body: Option<String>,
+    /// Why `properties` is empty where the copy holds the item but its stored
+    /// properties cannot be read, such as a store written to by something
+    /// else. Every other field is as the copy holds it. A hydration replaces
+    /// the stored properties from the server.
+    #[uniffi(default = None)]
+    pub unreadable_properties: Option<String>,
 }
 
 /// A page of the server's bin.
@@ -81,16 +98,22 @@ pub struct BinPage {
     pub next_cursor: Option<String>,
 }
 
+/// An edge as the copy holds it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Edge {
     pub id: String,
     pub source_id: String,
     pub target_id: String,
     pub edge_type: String,
-    pub properties_json: String,
+    /// Empty where `unreadable_properties` is set.
+    pub properties: JsonObject,
     pub version: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// Why `properties` is empty where the copy holds the edge but its stored
+    /// properties cannot be read.
+    #[uniffi(default = None)]
+    pub unreadable_properties: Option<String>,
 }
 
 /// Narrowing for a search: the state rule a list takes, a type with its
@@ -156,6 +179,7 @@ pub struct Sort {
     pub direction: SortDirection,
 }
 
+/// One hit of a search, with the item it found.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct SearchHit {
     pub item: Item,
@@ -304,8 +328,8 @@ pub struct TypeField {
     /// The type that declares it: the type itself, or the nearest one it
     /// inherits the field from.
     pub declared_by: String,
-    /// The definition whole, as the server answers it, as one JSON object.
-    pub definition_json: String,
+    /// The definition whole, as the server answers it.
+    pub definition: JsonObject,
 }
 
 /// An item type as the copy holds it, with the fields it inherits.
@@ -365,7 +389,10 @@ impl From<marfa_core::TypeField> for TypeField {
             required: field.required,
             description: field.description,
             declared_by: field.declared_by,
-            definition_json: field.definition.to_string(),
+            definition: match field.definition {
+                serde_json::Value::Object(map) => map.into(),
+                _ => JsonObject::default(),
+            },
         }
     }
 }
@@ -520,19 +547,28 @@ pub enum GrantLevel {
 }
 
 /// A create, before it is queued.
+///
+/// The tags are queued as writes of their own. Where `source_id` names a row
+/// the server already holds, the create lands on it, and `base_version` makes
+/// that conditional on the version it was read at. With no `tier`, the copy
+/// uses its slice's tier, `library` in a slice of both tiers, or `library`
+/// before its first hydration, and sends that tier explicitly, unless
+/// `source` and `source_id` name an item the copy holds, or the server's
+/// answer to a lookup of that natural key does not say that no row holds
+/// it. The create is then sent with no tier: a row keeps its own, and a new
+/// row takes the key's default. A create outside the slice is held as a pin.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Draft {
     pub r#type: String,
-    #[uniffi(default = None)]
-    pub id: Option<String>,
-    /// The properties as one JSON object.
-    #[uniffi(default = "{}")]
-    pub properties_json: String,
+    #[uniffi(default)]
+    pub properties: JsonObject,
     /// Each queued as a write of its own, waiting on the create.
     #[uniffi(default = [])]
     pub tags: Vec<String>,
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
+    #[uniffi(default = None)]
+    pub id: Option<String>,
     #[uniffi(default = None)]
     pub source: Option<String>,
     #[uniffi(default = None)]
@@ -546,27 +582,33 @@ pub struct Draft {
 }
 
 /// A change to an item, and the version it was read at.
+///
+/// A type or a tier the item already has moves nothing and is not sent. A
+/// `type` the copy's catalog does not hold is refused `UnknownType` before
+/// anything is queued.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Edit {
-    /// Whole field values, as one JSON object; a device never merges
-    /// inside a field.
-    pub properties_json: String,
+    /// Whole field values; a device never merges inside a field. Unless
+    /// `replace_properties` is set, each property given replaces its value and
+    /// the rest stay, and a `null` clears nothing: the server drops it, and
+    /// so does the copy, so the property keeps its value.
+    #[uniffi(default)]
+    pub properties: JsonObject,
     /// The properties are the item's whole properties: one left out is
-    /// cleared. Otherwise each one given replaces its value and the rest stay.
+    /// cleared. Sent at a version older than the one the copy holds, through
+    /// `update_item_as_read`, it is merged as a merge is.
     #[uniffi(default = false)]
     pub replace_properties: bool,
-    /// Required: an update naming no version is refused before it is sent.
-    #[uniffi(default = None)]
-    pub base_version: Option<i64>,
+    /// The version the change was made against.
+    pub base_version: i64,
     /// The natural key to move the row to.
     #[uniffi(default = None)]
     pub source_id: Option<String>,
-    /// The type to move the row to, sent as the server's retype. A type the
-    /// copy's catalog does not hold is refused `UnknownType` before anything
-    /// is queued; the type the row has already moves nothing.
+    /// The type to move the row to, sent as the server's retype. The
+    /// properties it ends up with are held to that type.
     #[uniffi(default = None)]
     pub r#type: Option<String>,
-    /// The tier to move the row to; the tier it has already moves nothing.
+    /// The tier to move the row to.
     #[uniffi(default = None)]
     pub tier: Option<Tier>,
 }
@@ -574,8 +616,8 @@ pub struct Edit {
 impl Edit {
     fn core(self) -> Result<marfa_core::Edit, MarfaError> {
         Ok(marfa_core::Edit {
-            properties: object(&self.properties_json)?,
-            base_version: self.base_version,
+            properties: self.properties.into_map()?,
+            base_version: Some(self.base_version),
             source_id: self.source_id,
             r#type: self.r#type,
             tier: self.tier.map(Into::into),
@@ -591,8 +633,8 @@ pub struct EdgeDraft {
     pub source_id: String,
     pub target_id: String,
     pub edge_type: String,
-    #[uniffi(default = "{}")]
-    pub properties_json: String,
+    #[uniffi(default)]
+    pub properties: JsonObject,
     #[uniffi(default = None)]
     pub id: Option<String>,
 }
@@ -601,9 +643,11 @@ pub struct EdgeDraft {
 /// and the version it was read at.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EdgeEdit {
-    pub properties_json: String,
-    #[uniffi(default = None)]
-    pub base_version: Option<i64>,
+    /// Each property given replaces its whole value; every other one stays as
+    /// it is.
+    #[uniffi(default)]
+    pub properties: JsonObject,
+    pub base_version: i64,
     #[uniffi(default = None)]
     pub moves: Option<EdgeMove>,
 }
@@ -639,11 +683,12 @@ pub struct QueuedWrite {
     /// Held behind a write that has no answer yet: `depends_on` and
     /// `follows` say which.
     pub waiting: bool,
-    /// The body the write sends, or sent, as one JSON object: a refused
-    /// write's content stays readable here until it is discarded.
-    pub body_json: String,
-    /// The server's answer, whole, as it arrived.
-    pub answer: Option<String>,
+    /// The body the write sends, or sent: a refused write's content stays
+    /// readable here until it is discarded.
+    pub body: JsonObject,
+    /// The server's answer, whole, as it arrived: the JSON it held, or, for
+    /// an answer that was not JSON, its text as a string.
+    pub answer: Option<JsonValue>,
     pub refusals: i64,
     pub queued_at: String,
     pub answered_at: Option<String>,
@@ -1182,7 +1227,7 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
     Item {
         id: item.id,
         r#type: item.r#type,
-        properties_json: serde_json::Value::Object(item.properties).to_string(),
+        properties: item.properties.into(),
         state: item.state.into(),
         tier: item.tier.map(Into::into),
         version: item.version,
@@ -1195,21 +1240,23 @@ fn item(item: marfa_core::Item, shown: marfa_core::Shown) -> Item {
         tags: item.tags,
         title: shown.title,
         body: shown.body,
+        unreadable_properties: shown.unreadable_properties,
     }
 }
 
-impl From<marfa_core::Edge> for Edge {
-    fn from(edge: marfa_core::Edge) -> Self {
-        Edge {
-            id: edge.id,
-            source_id: edge.source_id,
-            target_id: edge.target_id,
-            edge_type: edge.edge_type,
-            properties_json: serde_json::Value::Object(edge.properties).to_string(),
-            version: edge.version,
-            created_at: edge.created_at,
-            updated_at: edge.updated_at,
-        }
+/// `unreadable_properties` is why the edge has none, where the read kept an
+/// edge whose stored properties it could not read.
+fn edge(edge: marfa_core::Edge, unreadable_properties: Option<String>) -> Edge {
+    Edge {
+        id: edge.id,
+        source_id: edge.source_id,
+        target_id: edge.target_id,
+        edge_type: edge.edge_type,
+        properties: edge.properties.into(),
+        version: edge.version,
+        created_at: edge.created_at,
+        updated_at: edge.updated_at,
+        unreadable_properties,
     }
 }
 
@@ -1364,7 +1411,10 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
     Ok(QueuedWrite {
         verdict,
         waiting,
-        body_json: write.body.to_string(),
+        body: match write.body {
+            serde_json::Value::Object(map) => map.into(),
+            _ => JsonObject::default(),
+        },
         id: write.id,
         kind: write.kind.into(),
         item_id: write.item_id,
@@ -1377,7 +1427,7 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
         idempotency_key: write.idempotency_key,
         depends_on: write.depends_on,
         follows: write.follows,
-        answer: write.answer,
+        answer: write.answer.as_deref().map(json::answer),
         refusals: write.refusals,
         queued_at: write.queued_at,
         answered_at: write.answered_at,
@@ -1409,15 +1459,6 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
         unclaimed_sources: report.unclaimed_sources,
         retry_after_seconds: report.retry_after_seconds,
     })
-}
-
-fn object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, MarfaError> {
-    match serde_json::from_str::<serde_json::Value>(json) {
-        Ok(serde_json::Value::Object(map)) => Ok(map),
-        _ => Err(MarfaError::Invalid {
-            message: "properties must be one JSON object".into(),
-        }),
-    }
 }
 
 /// A local copy of a slice of one server. Every method blocks; call from off
@@ -1617,35 +1658,33 @@ impl Core {
             .into())
     }
 
-    /// Declares the types this app saves, each a JSON object with its `id`,
-    /// its `fields` and whatever else a type carries. A copy that has never
+    /// Declares the types this app saves, each an object with its `id`, its
+    /// `fields` and whatever else a type carries. A copy that has never
     /// reached a server checks what it queues against them and the types
-    /// Marfa ships, and a hydration registers the ones the instance
-    /// lacks, where the key may. The call is the app's whole set and replaces every earlier declaration.
-    pub fn declare_types(&self, types: Vec<String>) -> Result<(), MarfaError> {
+    /// Marfa ships, and a hydration registers the ones the instance lacks,
+    /// where the key may. The call is the app's whole set and replaces every
+    /// earlier declaration.
+    pub fn declare_types(&self, types: Vec<JsonObject>) -> Result<(), MarfaError> {
         let parsed = types
-            .iter()
-            .map(|text| {
-                serde_json::from_str::<serde_json::Value>(text).map_err(|error| {
-                    MarfaError::Invalid {
-                        message: format!("a type definition is not JSON: {error}"),
-                    }
-                })
-            })
+            .into_iter()
+            .map(|declaration| declaration.into_map().map(serde_json::Value::Object))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(self.inner.declare_types(&parsed)?)
     }
 
-    /// The declarations this copy holds, each as JSON, with the empty
-    /// `fields` and the `version` a registration needs filled in where the app
-    /// left them out.
-    pub fn declared_types(&self) -> Result<Vec<String>, MarfaError> {
-        Ok(self
-            .inner
+    /// The declarations this copy holds, with the empty `fields` and the
+    /// `version` a registration needs filled in where the app left them out.
+    pub fn declared_types(&self) -> Result<Vec<JsonObject>, MarfaError> {
+        self.inner
             .declared_types()?
-            .iter()
-            .map(serde_json::Value::to_string)
-            .collect())
+            .into_iter()
+            .map(|declaration| match declaration {
+                serde_json::Value::Object(map) => Ok(map.into()),
+                other => Err(MarfaError::Store {
+                    message: format!("a declared type is not an object: {other}"),
+                }),
+            })
+            .collect()
     }
 
     /// Holds one row by id whatever the slice says of it, read now. An item
@@ -1679,7 +1718,7 @@ impl Core {
     pub fn list(&self, filters: ListFilters, sort: Sort) -> Result<Vec<Item>, MarfaError> {
         Ok(self
             .inner
-            .list_shown(&filters.into(), sort.into())?
+            .list_kept(&filters.into(), sort.into())?
             .into_iter()
             .map(|(held, shown)| item(held, shown))
             .collect())
@@ -1688,34 +1727,34 @@ impl Core {
     pub fn get(&self, id: String) -> Result<Option<Item>, MarfaError> {
         Ok(self
             .inner
-            .get_shown(&id)?
+            .get_kept(&id)?
             .map(|(held, shown)| item(held, shown)))
     }
 
     pub fn edges_from(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
         Ok(self
             .inner
-            .edges_from(&id)?
+            .edges_from_kept(&id)?
             .into_iter()
-            .map(Into::into)
+            .map(|(held, why)| edge(held, why))
             .collect())
     }
 
     pub fn edges_to(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
         Ok(self
             .inner
-            .edges_to(&id)?
+            .edges_to_kept(&id)?
             .into_iter()
-            .map(Into::into)
+            .map(|(held, why)| edge(held, why))
             .collect())
     }
 
     pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>, MarfaError> {
         Ok(self
             .inner
-            .edges_of_type(&edge_type)?
+            .edges_of_type_kept(&edge_type)?
             .into_iter()
-            .map(Into::into)
+            .map(|(held, why)| edge(held, why))
             .collect())
     }
 
@@ -1728,13 +1767,12 @@ impl Core {
     /// The held conflicted copies made from `id` that are outside the bin,
     /// oldest link first.
     pub fn conflicted_copies_of(&self, id: String) -> Result<Vec<Item>, MarfaError> {
-        let mut copies = Vec::new();
-        for copy in self.inner.conflicted_copies_of(&id)? {
-            if let Some((held, shown)) = self.inner.get_shown(&copy.id)? {
-                copies.push(item(held, shown));
-            }
-        }
-        Ok(copies)
+        Ok(self
+            .inner
+            .conflicted_copies_kept(&id)?
+            .into_iter()
+            .map(|(held, shown)| item(held, shown))
+            .collect())
     }
 
     pub fn search(
@@ -1745,7 +1783,7 @@ impl Core {
     ) -> Result<Vec<SearchHit>, MarfaError> {
         Ok(self
             .inner
-            .search_shown(&query, &filters.into(), limit as usize)?
+            .search_kept(&query, &filters.into(), limit as usize)?
             .into_iter()
             .map(|(hit, shown)| SearchHit {
                 item: item(hit.item, shown),
@@ -1831,7 +1869,7 @@ impl Core {
     /// Writes a new item into the local copy and queues it for the server.
     pub fn create_item(&self, draft: Draft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::Draft {
-            properties: object(&draft.properties_json)?,
+            properties: draft.properties.into_map()?,
             r#type: draft.r#type,
             id: draft.id,
             tags: draft.tags,
@@ -1919,7 +1957,7 @@ impl Core {
     /// Links two items. An edge is its own write.
     pub fn create_edge(&self, draft: EdgeDraft) -> Result<QueuedWrite, MarfaError> {
         let draft = marfa_core::EdgeDraft {
-            properties: object(&draft.properties_json)?,
+            properties: draft.properties.into_map()?,
             source_id: draft.source_id,
             target_id: draft.target_id,
             edge_type: draft.edge_type,
@@ -1947,8 +1985,8 @@ impl Core {
             }) => (None, Some(to)),
         };
         let edit = marfa_core::EdgeEdit {
-            properties: object(&edit.properties_json)?,
-            base_version: edit.base_version,
+            properties: edit.properties.into_map()?,
+            base_version: Some(edit.base_version),
             source_id,
             target_id,
         };
@@ -1984,15 +2022,14 @@ impl Core {
         queued(self.inner.write_metadata(&id, &write, false)?)
     }
 
-    /// Writes one extension namespace, as its own write. The body is one
-    /// JSON object.
+    /// Writes one extension namespace, as its own write.
     pub fn write_extension(
         &self,
         id: String,
         namespace: String,
-        body_json: String,
+        body: JsonObject,
     ) -> Result<QueuedWrite, MarfaError> {
-        let body = serde_json::Value::Object(object(&body_json)?).to_string();
+        let body = serde_json::Value::Object(body.into_map()?).to_string();
         queued(self.inner.write_extension(&id, &namespace, &body)?)
     }
 
@@ -2679,7 +2716,7 @@ mod tests {
         let host = core
             .create_item(Draft {
                 r#type: "core.note".into(),
-                properties_json: r#"{"title":"Host","body":""}"#.into(),
+                properties: object(serde_json::json!({ "title": "Host", "body": "" })),
                 id: None,
                 tags: Vec::new(),
                 tier: None,
@@ -2708,9 +2745,10 @@ mod tests {
         core.update_item(
             host.clone(),
             Edit {
-                properties_json:
-                    serde_json::json!({ "body": format!("{embed} and [[Elsewhere]]") }).to_string(),
-                base_version: Some(version),
+                properties: object(
+                    serde_json::json!({ "body": format!("{embed} and [[Elsewhere]]") }),
+                ),
+                base_version: version,
                 source_id: None,
                 replace_properties: false,
                 r#type: None,
@@ -2775,7 +2813,7 @@ mod tests {
         assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));
         assert_eq!(crossed.written_at, EdgeEnd::Target);
         assert_eq!(
-            crossed.properties[0].definition_json,
+            text(&crossed.properties[0].definition),
             r#"{"type":"string"}"#
         );
         held.written_at = marfa_core::End::Source;
@@ -3063,11 +3101,28 @@ mod tests {
         );
     }
 
+    /// A JSON object from its text, as the tests below write theirs.
+    fn object(json: serde_json::Value) -> JsonObject {
+        match json {
+            serde_json::Value::Object(map) => map.into(),
+            other => panic!("{other} is not an object"),
+        }
+    }
+
+    fn parsed(json: &str) -> JsonObject {
+        object(serde_json::from_str(json).unwrap())
+    }
+
+    /// An object as compact JSON text, keys in order.
+    fn text(object: &JsonObject) -> String {
+        serde_json::Value::Object(object.clone().into_map().unwrap()).to_string()
+    }
+
     fn draft(r#type: &str, properties_json: &str) -> Draft {
         Draft {
             r#type: r#type.into(),
             id: None,
-            properties_json: properties_json.into(),
+            properties: parsed(properties_json),
             tags: Vec::new(),
             tier: None,
             source: None,
@@ -3079,9 +3134,9 @@ mod tests {
 
     fn edit(properties_json: &str, base_version: i64) -> Edit {
         Edit {
-            properties_json: properties_json.into(),
+            properties: parsed(properties_json),
             replace_properties: false,
-            base_version: Some(base_version),
+            base_version,
             source_id: None,
             r#type: None,
             tier: None,
@@ -3101,9 +3156,8 @@ mod tests {
             .unwrap()
             .item_id
             .unwrap();
-        let body = |write: &QueuedWrite| {
-            serde_json::from_str::<serde_json::Value>(&write.body_json).unwrap()
-        };
+        let body =
+            |write: &QueuedWrite| serde_json::Value::Object(write.body.clone().into_map().unwrap());
 
         let merged = core
             .update_item(note.clone(), edit(r#"{"title":"T"}"#, 0))
@@ -3111,7 +3165,7 @@ mod tests {
         assert_eq!(body(&merged).get("properties_mode"), None);
         let held = core.get(note.clone()).unwrap().unwrap();
         assert_eq!(
-            held.properties_json,
+            text(&held.properties),
             r#"{"body":"b","title":"T","notes":"n"}"#
         );
 
@@ -3126,7 +3180,7 @@ mod tests {
             .unwrap();
         assert_eq!(body(&replaced)["properties_mode"], "replace");
         assert_eq!(
-            core.get(note.clone()).unwrap().unwrap().properties_json,
+            text(&core.get(note.clone()).unwrap().unwrap().properties),
             r#"{"body":"b2"}"#,
             "a whole edit left the properties it did not name"
         );
@@ -3198,15 +3252,15 @@ mod tests {
                 source_id: first.clone(),
                 target_id: child.clone(),
                 edge_type: "parent-of".into(),
-                properties_json: "{}".into(),
+                properties: JsonObject::default(),
                 id: None,
             })
             .unwrap()
             .edge_id
             .unwrap();
         let move_to = |end: EdgeEnd, to: &str| EdgeEdit {
-            properties_json: "{}".into(),
-            base_version: Some(0),
+            properties: JsonObject::default(),
+            base_version: 0,
             moves: Some(EdgeMove { end, to: to.into() }),
         };
 
@@ -3214,7 +3268,7 @@ mod tests {
             .update_edge(edge.clone(), move_to(EdgeEnd::Source, &second))
             .unwrap()
             .expect("a move of an end was not queued");
-        let body: serde_json::Value = serde_json::from_str(&moved.body_json).unwrap();
+        let body = serde_json::Value::Object(moved.body.clone().into_map().unwrap());
         assert_eq!(body["source_id"], serde_json::json!(second));
         assert_eq!(body.get("target_id"), None);
         let parents: Vec<String> = core
@@ -3277,21 +3331,368 @@ mod tests {
         assert_eq!(listed[0].body.as_deref(), Some("Daily"));
     }
 
+    /// A copy with an app type that declares one field, so a property it
+    /// does not declare is one the app has never seen.
+    fn copy_with_entries() -> (tempfile::TempDir, std::path::PathBuf, Arc<Core>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let core = Core::open(path.display().to_string(), None, None).unwrap();
+        core.declare_types(vec![parsed(
+            r#"{"id":"app.test.entry","fields":{"title":{"type":"string"}}}"#,
+        )])
+        .unwrap();
+        (dir, path, core)
+    }
+
+    #[test]
+    fn properties_of_every_json_kind_cross_in_and_out_unchanged() {
+        let (_dir, _path, core) = copy_with_entries();
+        let properties = r#"{
+            "title": "caf\u00e9 \ud83d\ude00 \u2028 \n \"quoted\"",
+            "nothing": null, "yes": true, "no": false,
+            "small": -7, "beyond": 9007199254740993, "least": -9223372036854775808,
+            "ratio": 0.1, "whole": 2.0, "tiny": 1e-300,
+            "list": [1, [2, [3, {"deep": [null, "x"]}]]], "empty": {}, "none": [],
+            "z": 1, "a": 2, "10": 3, "2": 4
+        }"#;
+        let id = core
+            .create_item(draft("app.test.entry", properties))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let held = core.get(id.clone()).unwrap().unwrap();
+        assert_eq!(held.unreadable_properties, None);
+        // The copy keeps numbers and orders keys as the server does, which is
+        // JavaScript: a whole float is an integer, and integer-like keys come
+        // first, ascending.
+        let wanted = parsed(
+            r#"{
+            "2": 4, "10": 3,
+            "title": "caf\u00e9 \ud83d\ude00 \u2028 \n \"quoted\"",
+            "nothing": null, "yes": true, "no": false,
+            "small": -7, "beyond": 9007199254740993, "least": -9223372036854775808,
+            "ratio": 0.1, "whole": 2, "tiny": 1e-300,
+            "list": [1, [2, [3, {"deep": [null, "x"]}]]], "empty": {}, "none": [],
+            "z": 1, "a": 2
+        }"#,
+        );
+        assert_eq!(held.properties, wanted);
+        let member = |name: &str| {
+            held.properties
+                .members
+                .iter()
+                .find(|m| m.key == name)
+                .map(|m| m.value.clone())
+        };
+        assert_eq!(
+            member("beyond"),
+            Some(JsonValue::Integer(9_007_199_254_740_993))
+        );
+        assert_eq!(member("least"), Some(JsonValue::Integer(i64::MIN)));
+        assert_eq!(member("ratio"), Some(JsonValue::Number(0.1)));
+        assert_eq!(member("whole"), Some(JsonValue::Integer(2)));
+        assert_eq!(member("nothing"), Some(JsonValue::Null));
+        let listed = core
+            .list(
+                ListFilters::default(),
+                Sort {
+                    field: SortField::CreatedAt,
+                    direction: SortDirection::Ascending,
+                },
+            )
+            .unwrap();
+        assert_eq!(listed[0].properties, wanted);
+    }
+
+    #[test]
+    fn an_edit_keeps_every_property_it_does_not_name_including_ones_the_type_does_not_declare() {
+        let (_dir, _path, core) = copy_with_entries();
+        let id = core
+            .create_item(draft(
+                "app.test.entry",
+                r#"{"title":"t","unknown":{"nested":[1,2.5,"x"]},"also":null}"#,
+            ))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let version = core.get(id.clone()).unwrap().unwrap().version;
+        core.update_item(id.clone(), edit(r#"{"title":"T"}"#, version))
+            .unwrap();
+        assert_eq!(
+            text(&core.get(id.clone()).unwrap().unwrap().properties),
+            r#"{"title":"T","unknown":{"nested":[1,2.5,"x"]},"also":null}"#
+        );
+        // A whole edit clears what it leaves out, which is its meaning.
+        core.update_item(
+            id.clone(),
+            Edit {
+                replace_properties: true,
+                ..edit(r#"{"title":"U"}"#, version)
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            text(&core.get(id).unwrap().unwrap().properties),
+            r#"{"title":"U"}"#
+        );
+    }
+
+    #[test]
+    fn a_value_the_core_cannot_hold_is_refused_before_anything_is_queued() {
+        let (_dir, _path, core) = copy_with_entries();
+        let id = core
+            .create_item(draft("app.test.entry", r#"{"title":"t"}"#))
+            .unwrap()
+            .item_id
+            .unwrap();
+        let version = core.get(id.clone()).unwrap().unwrap().version;
+        let queued = core.queue().unwrap().len();
+        let member = |key: &str, value: JsonValue| JsonObject {
+            members: vec![JsonMember {
+                key: key.into(),
+                value,
+            }],
+        };
+        let twice = JsonObject {
+            members: vec![
+                JsonMember {
+                    key: "a".into(),
+                    value: JsonValue::Null,
+                },
+                JsonMember {
+                    key: "a".into(),
+                    value: JsonValue::Bool(true),
+                },
+            ],
+        };
+        for bad in [
+            member("rating", JsonValue::Number(f64::NAN)),
+            member(
+                "rating",
+                JsonValue::Array(vec![JsonValue::Number(f64::INFINITY)]),
+            ),
+            twice,
+        ] {
+            let created = core.create_item(Draft {
+                properties: bad.clone(),
+                ..draft("app.test.entry", "{}")
+            });
+            let updated = core.update_item(
+                id.clone(),
+                Edit {
+                    properties: bad.clone(),
+                    ..edit("{}", version)
+                },
+            );
+            let extension = core.write_extension(id.clone(), "acme.x".into(), bad.clone());
+            for refusal in [
+                created.map(|_| ()),
+                updated.map(|_| ()),
+                extension.map(|_| ()),
+            ] {
+                assert!(
+                    matches!(refusal, Err(MarfaError::Invalid { .. })),
+                    "{bad:?}"
+                );
+            }
+        }
+        assert_eq!(core.queue().unwrap().len(), queued);
+    }
+
+    #[test]
+    fn a_row_with_unreadable_properties_crosses_flagged_and_does_not_fail_a_list_or_a_search() {
+        let (_dir, path, core) = copy_with_entries();
+        let mut ids = Vec::new();
+        for title in ["kept zebra", "torn zebra", "bare zebra"] {
+            ids.push(
+                core.create_item(draft(
+                    "app.test.entry",
+                    &format!(r#"{{"title":"{title}"}}"#),
+                ))
+                .unwrap()
+                .item_id
+                .unwrap(),
+            );
+        }
+        {
+            let store = rusqlite::Connection::open(&path).unwrap();
+            for (id, damage) in [(&ids[1], "{\"title\":"), (&ids[2], "[1]")] {
+                store
+                    .execute(
+                        "UPDATE items SET properties = ?1 WHERE id = ?2",
+                        [damage, id.as_str()],
+                    )
+                    .unwrap();
+            }
+        }
+        let by_creation = Sort {
+            field: SortField::CreatedAt,
+            direction: SortDirection::Ascending,
+        };
+        let listed = core.list(ListFilters::default(), by_creation).unwrap();
+        assert_eq!(listed.len(), 3);
+        assert_eq!(listed[0].unreadable_properties, None);
+        assert_eq!(text(&listed[0].properties), r#"{"title":"kept zebra"}"#);
+        for damaged in &listed[1..] {
+            assert!(damaged.properties.members.is_empty());
+            assert!(damaged.unreadable_properties.is_some());
+            assert_eq!(damaged.title, None);
+            assert_eq!(
+                damaged.state,
+                ItemState::Active,
+                "the rest of the row is as held"
+            );
+        }
+        let hits = core
+            .search("zebra".into(), SearchFilters::default(), 10)
+            .unwrap();
+        assert_eq!(hits.len(), 3);
+        assert_eq!(
+            hits.iter()
+                .filter(|hit| hit.item.unreadable_properties.is_some())
+                .count(),
+            2
+        );
+        let one = core.get(ids[1].clone()).unwrap().unwrap();
+        assert!(one.unreadable_properties.is_some());
+        assert_eq!(core.status().unwrap().items, 3);
+    }
+
+    #[test]
+    fn an_edges_properties_cross_both_ways_and_a_damaged_edge_is_flagged_not_fatal() {
+        let (_dir, path, core) = copy_with_entries();
+        let item = |title: &str| {
+            core.create_item(draft(
+                "app.test.entry",
+                &format!(r#"{{"title":"{title}"}}"#),
+            ))
+            .unwrap()
+            .item_id
+            .unwrap()
+        };
+        let (reply, root, other) = (item("reply"), item("root"), item("other"));
+        let thread = core
+            .create_edge(EdgeDraft {
+                source_id: reply.clone(),
+                target_id: root.clone(),
+                edge_type: "in-thread".into(),
+                properties: parsed(r#"{"position":1}"#),
+                id: None,
+            })
+            .unwrap()
+            .edge_id
+            .unwrap();
+        let plain = core
+            .create_edge(EdgeDraft {
+                source_id: other.clone(),
+                target_id: root.clone(),
+                edge_type: "in-thread".into(),
+                properties: JsonObject::default(),
+                id: None,
+            })
+            .unwrap()
+            .edge_id
+            .unwrap();
+        let from = core.edges_from(reply.clone()).unwrap();
+        assert_eq!(text(&from[0].properties), r#"{"position":1}"#);
+        assert_eq!(from[0].unreadable_properties, None);
+
+        core.update_edge(
+            thread.clone(),
+            EdgeEdit {
+                properties: parsed(r#"{"position":2}"#),
+                base_version: 0,
+                moves: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            text(&core.edges_from(reply).unwrap()[0].properties),
+            r#"{"position":2}"#
+        );
+
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute("UPDATE edges SET properties = '{' WHERE id = ?1", [&plain])
+            .unwrap();
+        let to = core.edges_to(root).unwrap();
+        assert_eq!(to.len(), 2);
+        let damaged = to.iter().find(|edge| edge.id == plain).unwrap();
+        assert!(damaged.properties.members.is_empty());
+        assert!(damaged.unreadable_properties.is_some());
+        let sound = to.iter().find(|edge| edge.id == thread).unwrap();
+        assert_eq!(sound.unreadable_properties, None);
+        assert_eq!(core.edges_of_type("in-thread".into()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_queued_writes_answer_crosses_as_the_value_it_holds() {
+        let queued_with = |answer: Option<&str>| {
+            let mut write = marfa_core::QueuedWrite {
+                id: "q".into(),
+                kind: marfa_core::WriteKind::UpdateItem,
+                item_id: None,
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                idempotency_key: "k".into(),
+                depends_on: Vec::new(),
+                follows: None,
+                verdict: None,
+                reason: None,
+                answer: None,
+                refusal: None,
+                body: serde_json::json!({ "properties": { "title": "t" } }),
+                conflicted_copy_id: None,
+                refusals: 0,
+                queued_at: String::new(),
+                answered_at: None,
+            };
+            write.answer = answer.map(str::to_string);
+            super::queued(write).unwrap()
+        };
+        assert_eq!(queued_with(None).answer, None);
+        assert_eq!(
+            queued_with(Some(
+                r#"{"data":{"id":"i","version":4},"flags":[1,2.5,null]}"#
+            ))
+            .answer,
+            Some(JsonValue::from(
+                serde_json::json!({ "data": { "id": "i", "version": 4 }, "flags": [1, 2.5, null] })
+            ))
+        );
+        assert_eq!(
+            queued_with(Some("<html>Bad Gateway</html>")).answer,
+            Some(JsonValue::String("<html>Bad Gateway</html>".into()))
+        );
+        assert_eq!(
+            queued_with(None).body,
+            parsed(r#"{"properties":{"title":"t"}}"#)
+        );
+    }
+
     #[test]
     fn a_copy_declares_types_and_hands_them_back() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
         let core = Core::open(path, None, None).unwrap();
-        core.declare_types(vec![
-            r#"{"id":"app.recipe.entry","fields":{"title":{"type":"string","required":true}}}"#
-                .into(),
-        ])
+        core.declare_types(vec![parsed(
+            r#"{"id":"app.recipe.entry","fields":{"title":{"type":"string","required":true}}}"#,
+        )])
         .unwrap();
         let held = core.declared_types().unwrap();
         assert_eq!(held.len(), 1);
-        assert!(held[0].contains("app.recipe.entry"));
+        assert!(text(&held[0]).contains("app.recipe.entry"));
         assert!(matches!(
-            core.declare_types(vec!["not json".into()]),
+            core.declare_types(vec![JsonObject {
+                members: vec![JsonMember {
+                    key: "id".into(),
+                    value: JsonValue::Number(f64::INFINITY),
+                }],
+            }]),
             Err(MarfaError::Invalid { .. })
         ));
     }
@@ -3421,7 +3822,7 @@ mod tests {
             .create_item(Draft {
                 r#type: "core.note".into(),
                 id: None,
-                properties_json: r#"{"title":"saved"}"#.into(),
+                properties: parsed(r#"{"title":"saved"}"#),
                 tags: Vec::new(),
                 tier: None,
                 source: None,
