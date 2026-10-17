@@ -672,6 +672,12 @@ fn a_reading_handles_listeners_are_told_each_save_after_the_version_they_read() 
             FAST_SAVES,
         )
         .unwrap();
+    // The version it read when it joined is not a save.
+    thread::sleep(MS(100));
+    assert!(
+        first.changes.lock().unwrap().is_empty(),
+        "a listener was told a save before any was made"
+    );
     save(&writer, "one");
     first.wait_for_kind("store.saved", 1);
     let between = reader.data_version().unwrap();
