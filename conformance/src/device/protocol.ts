@@ -84,6 +84,9 @@ export interface Change {
   /** What the drain did, on `queue.drained` alone
    *  (`device/follow-drain-told`). */
   drain: DrainReport | null;
+  /** The store's data version, on `store.saved` alone
+   *  (`device/watch-saves`). */
+  data_version?: number;
 }
 
 /** What a held stream did before it was stopped. */

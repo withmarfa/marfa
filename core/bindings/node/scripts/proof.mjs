@@ -207,6 +207,43 @@ if (phase === "hydrate") {
   console.log(`followed: ${applied ? `${applied.event} ${applied.itemId} at ${applied.cursor}` : "nothing"}`);
   expect(applied?.event === "item.created", "the note the binary made did not arrive through follow");
   expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
+} else if (phase === "watch") {
+  // binding-proof.sh makes the note with the binary once this says it is ready.
+  /** @param {import("../index.js").Change[]} changes */
+  const made = (changes) =>
+    changes.some((change) => {
+      const item = change.kind === "applied" && change.itemId ? core.get(change.itemId) : null;
+      return item?.properties.title === "Made by the binary, watched";
+    });
+  /** @type {import("../index.js").Change[]} */
+  const first = [];
+  /** @type {import("../index.js").Change[]} */
+  const second = [];
+  /** @type {Array<unknown>} */
+  const ended = [];
+  const one = core.watch(
+    (change) => first.push(change),
+    (error) => ended.push(error),
+  );
+  const two = core.watch(
+    (change) => second.push(change),
+    (error) => ended.push(error),
+  );
+  // Takes the stream from the watch and gives it back, ending neither listener.
+  await core.hydrate(["core.note"], SliceTier.Feed);
+  console.log("ready");
+  const deadline = Date.now() + 30_000;
+  while (!(made(first) && made(second)) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  one.stop();
+  two.stop();
+  console.log(`watched: ${first.length} change(s) told to one listener, ${second.length} to the other`);
+  expect(made(first) && made(second), "the note the binary made did not reach both listeners");
+  expect(
+    ended.every((error) => error === null) && ended.length <= 2,
+    "a hydration or a stop ended a listener with an error",
+  );
 } else if (phase === "thumbnail") {
   // "Held before" was written before binding-proof.sh made the property a
   // thumbnail, so its value is not an image.
@@ -246,6 +283,6 @@ if (phase === "hydrate") {
     "a held value that is not an image was not refused as one, naming its item",
   );
 } else {
-  console.error("name a phase: hydrate, write, drain, follow or thumbnail");
+  console.error("name a phase: hydrate, write, drain, follow, watch or thumbnail");
   process.exit(2);
 }

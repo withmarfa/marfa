@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use clap::{Args, Subcommand};
 use marfa_core::{
@@ -76,6 +78,23 @@ pub enum DeviceCommand {
     Follow {
         /// Stop after this many seconds; without it, follow until
         /// interrupted. Either way it ends with its report.
+        #[arg(long = "for", value_name = "SECONDS")]
+        r#for: Option<u64>,
+    },
+    /// Hold the store's watch open and print a line for each change, as a
+    /// held stream of an app does: what `follow` prints, and, with
+    /// `--reader`, a line for each save another process makes.
+    ///
+    /// The watch is the one an app's listeners share, so a hydration or
+    /// catch-up an app calls would take its stream and give it back. This
+    /// process holds the store, so none can run meanwhile. When the watch
+    /// fails, it prints `watch.failed` and ends with that error, since nothing
+    /// in this process would start it again. Each time the server is reachable
+    /// again after it was lost, or after a drain left a write undelivered,
+    /// it drains the queue once where writes wait.
+    Watch {
+        /// Stop after this many seconds; without it, watch until
+        /// interrupted.
         #[arg(long = "for", value_name = "SECONDS")]
         r#for: Option<u64>,
     },
@@ -799,39 +818,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 if unwritten.is_some() {
                     return;
                 }
-                let written = output::line_of(change, json, || {
-                    format!(
-                        "{} {} (cursor {}){}",
-                        change.event,
-                        change
-                            .item_id
-                            .as_deref()
-                            .or(change.edge_id.as_deref())
-                            .unwrap_or("-"),
-                        change.cursor,
-                        match &change.event {
-                            marfa_core::ChangeEvent::ServerUnreachable(reason) => {
-                                format!(": {reason}")
-                            }
-                            marfa_core::ChangeEvent::QueueNotDrained(error) => {
-                                format!(": {error}")
-                            }
-                            marfa_core::ChangeEvent::QueueDrained(report) => format!(
-                                ": answered {}, held {}, undelivered {}{}",
-                                report.answered,
-                                report.held,
-                                report.undelivered,
-                                report
-                                    .stopped
-                                    .as_deref()
-                                    .or(report.unavailable.as_deref())
-                                    .map(|why| format!("; {why}"))
-                                    .unwrap_or_default()
-                            ),
-                            _ => String::new(),
-                        }
-                    )
-                });
+                let written = output::line_of(change, json, || change_line(change));
                 if let Err(error) = written {
                     unwritten = Some(error);
                     stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -859,39 +846,54 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             })
         }
         DeviceCommand::Changes { r#for } => {
-            let core = Store {
-                reader: true,
-                ..store
-            }
-            .open(None)?;
+            let core = Arc::new(
+                Store {
+                    reader: true,
+                    ..store
+                }
+                .open(None)?,
+            );
             // Once the store is open, so that an interrupt before then ends
             // the command as it always did.
             stop_on_interrupt();
             let stop = stop_after(r#for);
-            // Read before announcing, so a save landing just after is told.
-            let mut seen = core.data_version()?;
-            if json {
-                output::line_of(
-                    &serde_json::json!({ "watching": true, "data_version": seen }),
-                    json,
-                    String::new,
-                )?;
-            } else {
-                match r#for {
-                    Some(seconds) => eprintln!("watching for saves for {seconds}s"),
-                    None => eprintln!("watching for saves (interrupt to stop)"),
+            // The line is printed once the watch is joined, which read the
+            // version it tells saves after: a save made on reading the line is
+            // told.
+            watching(&core, stop, json, true, || {
+                let seen = core.data_version()?;
+                if json {
+                    output::line_of(
+                        &serde_json::json!({ "watching": true, "data_version": seen }),
+                        json,
+                        String::new,
+                    )
+                } else {
+                    match r#for {
+                        Some(seconds) => eprintln!("watching for saves for {seconds}s"),
+                        None => eprintln!("watching for saves (interrupt to stop)"),
+                    }
+                    Ok(())
                 }
+            })?;
+            crate::interrupt::ended_by_interrupt();
+            Ok(())
+        }
+        DeviceCommand::Watch { r#for } => {
+            stop_on_interrupt();
+            let core = Arc::new(store.open_with_server(named)?);
+            let stop = stop_after(r#for);
+            if !json
+                && matches!(
+                    core.status()?.hydration,
+                    marfa_core::Hydration::Never | marfa_core::Hydration::InProgress
+                )
+            {
+                eprintln!(
+                    "this copy is not hydrated, so the watch waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
+                );
             }
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
-                std::thread::sleep(CHANGES_POLL);
-                let now = core.data_version()?;
-                if now != seen {
-                    seen = now;
-                    output::line_of(&serde_json::json!({ "data_version": now }), json, || {
-                        format!("saved (data version {now})")
-                    })?;
-                }
-            }
+            watching(&core, stop, json, false, || Ok(()))?;
             crate::interrupt::ended_by_interrupt();
             Ok(())
         }
@@ -1549,7 +1551,126 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
     .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
 }
 
-const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+/// One line for a change: its event, the item or edge it was about, the
+/// cursor it left, and why or what, where it has more to say.
+fn change_line(change: &marfa_core::Change) -> String {
+    format!(
+        "{} {} (cursor {}){}",
+        change.event,
+        change
+            .item_id
+            .as_deref()
+            .or(change.edge_id.as_deref())
+            .unwrap_or("-"),
+        change.cursor,
+        match &change.event {
+            marfa_core::ChangeEvent::ServerUnreachable(reason) => format!(": {reason}"),
+            marfa_core::ChangeEvent::QueueNotDrained(error)
+            | marfa_core::ChangeEvent::WatchFailed(error) => format!(": {error}"),
+            marfa_core::ChangeEvent::QueueDrained(report) => format!(
+                ": answered {}, held {}, undelivered {}{}",
+                report.answered,
+                report.held,
+                report.undelivered,
+                report
+                    .stopped
+                    .as_deref()
+                    .or(report.unavailable.as_deref())
+                    .map(|why| format!("; {why}"))
+                    .unwrap_or_default()
+            ),
+            marfa_core::ChangeEvent::Saved(version) => format!(": data version {version}"),
+            _ => String::new(),
+        }
+    )
+}
+
+/// Prints each change a watch tells. A line that cannot be written, or a watch
+/// that fails, raises `stop` and leaves its error for the command to end with.
+struct Printing {
+    json: bool,
+    /// Prints a save as `saved (data version N)`, as `changes` always has.
+    saves: bool,
+    stop: &'static AtomicBool,
+    problem: Mutex<Option<CliError>>,
+    ended: std::sync::mpsc::Sender<()>,
+}
+
+impl Printing {
+    fn fail(&self, error: CliError) {
+        self.problem
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get_or_insert(error);
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl marfa_core::WatchListener for Printing {
+    fn changed(&self, change: &marfa_core::Change) {
+        let written = match &change.event {
+            marfa_core::ChangeEvent::WatchFailed(error) => {
+                let written = output::line_of(change, self.json, || change_line(change));
+                self.fail(error.clone().into());
+                written
+            }
+            marfa_core::ChangeEvent::Saved(version) if self.saves => output::line_of(
+                &serde_json::json!({ "data_version": version }),
+                self.json,
+                || format!("saved (data version {version})"),
+            ),
+            _ => output::line_of(change, self.json, || change_line(change)),
+        };
+        if let Err(error) = written {
+            self.fail(error);
+        }
+    }
+
+    fn ended(&self, error: Option<marfa_core::CoreError>) {
+        if let Some(error) = error {
+            self.fail(error.into());
+        }
+        let _ = self.ended.send(());
+    }
+}
+
+/// Watches the store until `stop` is raised, printing each change. `joined`
+/// runs once the watch is joined.
+fn watching(
+    core: &Arc<Core>,
+    stop: &'static AtomicBool,
+    json: bool,
+    saves: bool,
+    joined: impl FnOnce() -> Result<(), CliError>,
+) -> Result<(), CliError> {
+    let (ended, done) = std::sync::mpsc::channel();
+    let printing = Arc::new(Printing {
+        json,
+        saves,
+        stop,
+        problem: Mutex::new(None),
+        ended,
+    });
+    let listening = core.watch(false, printing.clone())?;
+    joined()?;
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(STOP_POLL);
+    }
+    // So that nothing is told after the command's last word.
+    drop(listening);
+    let _ = done.recv_timeout(std::time::Duration::from_secs(5));
+    match printing
+        .problem
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+    {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
 struct Store {
     db: Option<PathBuf>,

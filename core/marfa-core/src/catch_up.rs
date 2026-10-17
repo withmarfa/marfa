@@ -129,23 +129,29 @@ pub struct Change {
     pub cursor: String,
 }
 
-/// Written as text with the event's name; for an unreachable server or a
-/// queue not drained, why as its sentence; and for a queue drained, the
-/// drain's report.
+/// Written as text with the event's name; for an unreachable server, a queue
+/// not drained or a watch that failed, why as its sentence; for a queue
+/// drained, the drain's report; and for a save, the data version.
 impl Serialize for Change {
     fn serialize<S: serde::Serializer>(
         &self,
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        let mut change = serializer.serialize_struct("Change", 6)?;
+        let saved = match &self.event {
+            ChangeEvent::Saved(version) => Some(version),
+            _ => None,
+        };
+        let mut change = serializer.serialize_struct("Change", 6 + usize::from(saved.is_some()))?;
         change.serialize_field("event", self.event.as_str())?;
         change.serialize_field("item_id", &self.item_id)?;
         change.serialize_field("edge_id", &self.edge_id)?;
         change.serialize_field("cursor", &self.cursor)?;
         let reason = match &self.event {
             ChangeEvent::ServerUnreachable(reason) => Some(reason.to_string()),
-            ChangeEvent::QueueNotDrained(error) => Some(error.to_string()),
+            ChangeEvent::QueueNotDrained(error) | ChangeEvent::WatchFailed(error) => {
+                Some(error.to_string())
+            }
             _ => None,
         };
         change.serialize_field("reason", &reason)?;
@@ -154,13 +160,17 @@ impl Serialize for Change {
             _ => None,
         };
         change.serialize_field("drain", &drained)?;
+        if let Some(version) = saved {
+            change.serialize_field("data_version", version)?;
+        }
         change.end()
     }
 }
 
 /// What a `Change` tells. Written as text by its name: the applied event's
 /// type, or `catalog.changed`, `server.unreachable`, `server.reachable`,
-/// `queue.drained` or `queue.not_drained`.
+/// `queue.drained`, `queue.not_drained`, and, from a watch only,
+/// `store.saved` or `watch.failed`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChangeEvent {
     /// An event the stream applied, by the event's type.
@@ -177,6 +187,14 @@ pub enum ChangeEvent {
     /// The drain started once a stream was had again ended with this
     /// error. The answers it had recorded stay recorded.
     QueueNotDrained(CoreError),
+    /// Told by a watch of a reading handle: another process saved to the
+    /// store, which now has this data version (`Core::data_version`).
+    Saved(i64),
+    /// Told by a watch, once, when what feeds it fails with this error. A
+    /// follow that failed holds no stream until the next hydration or
+    /// catch-up; a reading handle's reads go on, and the first that works is
+    /// told as `Saved`.
+    WatchFailed(CoreError),
 }
 
 impl ChangeEvent {
@@ -188,6 +206,8 @@ impl ChangeEvent {
             ChangeEvent::ServerReachable => "server.reachable",
             ChangeEvent::QueueDrained(_) => "queue.drained",
             ChangeEvent::QueueNotDrained(_) => "queue.not_drained",
+            ChangeEvent::Saved(_) => "store.saved",
+            ChangeEvent::WatchFailed(_) => "watch.failed",
         }
     }
 }
@@ -727,32 +747,46 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     Err(CoreError::CopyExpired { reason })
 }
 
+/// How a follow starts, beyond the stop that ends it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FollowAs {
+    /// The caller was last told `server.unreachable`, so the first stream is
+    /// told `server.reachable`.
+    pub(crate) told_unreachable: bool,
+    /// The first stream is drained to, though no one was told the server was
+    /// lost.
+    pub(crate) owes_drain: bool,
+    /// It drains the queue each time it says `server.reachable`.
+    pub(crate) drains: bool,
+    pub(crate) pace: Pace,
+}
+
 /// `stop` is looked at at least every `PACE.stop_poll`, including while a
 /// stream is being asked for: that request runs on a thread holding only the
 /// transport, so it cannot keep the store once this has returned. The thread
 /// reading the last stream may hold its connection a while longer (`open`).
-/// `drains` says it drains the queue each time it says `server.reachable`.
-#[allow(clippy::too_many_arguments)]
+/// `on_contact` is called each time a request reaches the server, whatever the
+/// server answers.
 pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
-    told_unreachable: bool,
-    drains: bool,
+    how: FollowAs,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
+    on_contact: &mut dyn FnMut(),
 ) -> Result<FollowReport> {
+    let poll = how.pace.stop_poll;
     follow_paced(
         core,
         http,
         stop,
-        told_unreachable,
-        drains,
+        how,
         on_change,
         on_live,
-        &PACE,
+        on_contact,
         &mut |wait| {
-            wait_unless_stopped(stop, wait, PACE.stop_poll);
+            wait_unless_stopped(stop, wait, poll);
         },
     )
 }
@@ -762,13 +796,18 @@ fn follow_paced(
     core: &Core,
     http: Arc<Http>,
     stop: &AtomicBool,
-    told_unreachable: bool,
-    drains: bool,
+    how: FollowAs,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
-    pace: &Pace,
+    on_contact: &mut dyn FnMut(),
     pause: &mut dyn FnMut(Duration),
 ) -> Result<FollowReport> {
+    let FollowAs {
+        told_unreachable,
+        owes_drain,
+        drains,
+        ref pace,
+    } = how;
     start(core)?;
     let context = Context::capture(&*core.conn()?)?;
     let http = Arc::new(context.http(&http));
@@ -801,6 +840,7 @@ fn follow_paced(
         // reaches the server says so, and one that does says nothing, unless
         // its caller was last told the server could not be reached.
         let mut reachable: Option<bool> = told_unreachable.then_some(false);
+        let mut owes_drain = owes_drain;
         while !stop.load(Ordering::Relaxed) {
             on_live(false);
             recovery.tell(&report.cursor, on_change);
@@ -813,6 +853,9 @@ fn follow_paced(
             let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
                 break;
             };
+            if !matches!(&reached, Err(error) if error.is_environmental()) {
+                on_contact();
+            }
             let (instance, fetched, frames) = match reached {
                 Ok(reached) => reached,
                 Err(error) if error.is_environmental() => {
@@ -845,7 +888,10 @@ fn follow_paced(
                     cursor: report.cursor.clone(),
                 });
                 recovery.reachable();
+            } else if owes_drain {
+                recovery.reachable();
             }
+            owes_drain = false;
             reachable = Some(true);
             let mut moved = false;
             let catalog = adopt(core, &context, &fetched, &mut moved);
@@ -1486,11 +1532,15 @@ mod tests {
                 &core,
                 http,
                 &flag,
-                told_unreachable,
-                drains,
+                FollowAs {
+                    told_unreachable,
+                    owes_drain: false,
+                    drains,
+                    pace,
+                },
                 &mut on_change,
                 &mut |_| {},
-                &pace,
+                &mut || {},
                 &mut pause,
             );
             let _ = ended.send(result);
@@ -3639,11 +3689,15 @@ mod tests {
                 &core,
                 Arc::clone(core.http.as_ref().unwrap()),
                 &stop,
-                false,
-                true,
+                FollowAs {
+                    told_unreachable: false,
+                    owes_drain: false,
+                    drains: true,
+                    pace: QUICK,
+                },
                 &mut |_| {},
                 &mut |live| observed.push(live),
-                &QUICK,
+                &mut || {},
                 &mut |_| stop.store(true, Ordering::SeqCst),
             )
             .unwrap();

@@ -38,6 +38,20 @@ sleep 3
   --properties '{"title":"Made by the binary","body":"arrives through follow"}' >/dev/null
 wait "${node_follow}"
 
+echo "== watch, two listeners and a hydration, while the binary makes a note"
+node_proof watch >"${work}/watch.out" &
+node_watch=$!
+for _ in $(seq 1 150); do
+  grep -q '^ready$' "${work}/watch.out" 2>/dev/null && break
+  kill -0 "${node_watch}" 2>/dev/null || break
+  sleep 0.2
+done
+"${core}/target/debug/marfa" \
+  items create --type core.note --tier feed \
+  --properties '{"title":"Made by the binary, watched","body":"arrives through watch"}' >/dev/null
+wait "${node_watch}"
+cat "${work}/watch.out"
+
 echo "== thumbnail, read from the copy with no request"
 marfa() { "${core}/target/debug/marfa" "$@" >/dev/null; }
 # The server does not recheck a value written before its property became a

@@ -30,6 +30,10 @@ pub const META_CATALOG_VERSION: &str = "catalog_version";
 /// Set while the catalog the copy holds is its own, the types Marfa ships and
 /// the ones the app declared, and cleared by the first catalog a server gives.
 pub const META_LOCAL_CATALOG: &str = "local_catalog";
+/// Present while writes the server has not taken wait for a stream to be had
+/// again: set when the server was lost or a drain left a write undelivered,
+/// and cleared by a drain that left none or found no work.
+pub const META_DRAIN_OWED: &str = "drain_owed";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
@@ -285,6 +289,18 @@ pub fn meta_set(conn: &Connection, key: &str, value: &str) -> Result<(), CoreErr
         params![key, value],
     )?;
     Ok(())
+}
+
+pub fn drain_owed(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_DRAIN_OWED)?.is_some())
+}
+
+pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
+    match (owed, drain_owed(conn)?) {
+        (true, false) => meta_set(conn, META_DRAIN_OWED, "1"),
+        (false, true) => meta_delete(conn, META_DRAIN_OWED),
+        _ => Ok(()),
+    }
 }
 
 pub fn meta_delete(conn: &Connection, key: &str) -> Result<(), CoreError> {
