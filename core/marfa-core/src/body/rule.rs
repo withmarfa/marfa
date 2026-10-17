@@ -774,65 +774,75 @@ fn linking(conn: &Connection, id: &str) -> Result<Vec<String>> {
 /// link made which, and this is the last moment the copy can still tell.
 fn record_unrecorded(conn: &Connection, catalog: &Catalog, hosts: &[String]) -> Result<()> {
     for host in hosts {
-        let Some(item) = store::item_by_id(conn, host)? else {
-            continue;
-        };
-        let held = recorded(conn, host)?;
-        let body = body_of(catalog, &item);
-        let embeds = text::embeds(body);
-        let texts = text::links(body)
-            .into_iter()
-            .map(|raw| (Kind::Link, raw))
-            .chain(
-                embeds
-                    .iter()
-                    .map(|embed| (Kind::Embed, embed.raw().to_string())),
-            );
-        let mut open: Vec<(Kind, String)> = Vec::new();
-        for (kind, text) in texts {
-            if !answered(conn, &held, kind, host, &text)? {
-                open.push((kind, text));
-            }
+        match record_host(conn, catalog, host) {
+            // A row whose stored properties cannot be read, the host's or one
+            // its reading reaches, leaves that body unrecorded and fails no
+            // landing or hydration.
+            Err(error) if store::unreadable(&error) => {}
+            other => other?,
         }
-        if open.is_empty() {
-            continue;
+    }
+    Ok(())
+}
+
+fn record_host(conn: &Connection, catalog: &Catalog, host: &str) -> Result<()> {
+    let Some(item) = store::item_by_id(conn, host)? else {
+        return Ok(());
+    };
+    let held = recorded(conn, host)?;
+    let body = body_of(catalog, &item);
+    let embeds = text::embeds(body);
+    let texts = text::links(body)
+        .into_iter()
+        .map(|raw| (Kind::Link, raw))
+        .chain(
+            embeds
+                .iter()
+                .map(|embed| (Kind::Embed, embed.raw().to_string())),
+        );
+    let mut open: Vec<(Kind, String)> = Vec::new();
+    for (kind, text) in texts {
+        if !answered(conn, &held, kind, host, &text)? {
+            open.push((kind, text));
         }
-        // Read as held: before a hydration the copy may be one that cannot be
-        // kept current, and what it holds is still the last word on its names.
-        let read = read_against(
+    }
+    if open.is_empty() {
+        return Ok(());
+    }
+    // Read as held: before a hydration the copy may be one that cannot be
+    // kept current, and what it holds is still the last word on its names.
+    let read = read_against(
+        conn,
+        catalog,
+        host,
+        body,
+        &Recorded::new(),
+        Reading::Previous,
+        Others::held,
+    )?;
+    for (kind, text, other) in read.found {
+        if !open.contains(&(kind, text.clone())) || held_edges(conn, kind, host, &other)?.is_empty()
+        {
+            return Ok(());
+        }
+        // The write that left the body carrying the text still did, so a
+        // row this copy wrote keeps it.
+        let write_id = held
+            .get(&(kind.as_str(), text.clone()))
+            .and_then(|row| row.write_id.clone());
+        put_row(
             conn,
-            catalog,
-            host,
-            body,
-            &Recorded::new(),
-            Reading::Previous,
-            Others::held,
+            &Row {
+                item_id: host.to_string(),
+                kind,
+                text,
+                state: "resolved".into(),
+                other_id: Some(other),
+                reason: None,
+                held: None,
+                write_id,
+            },
         )?;
-        for (kind, text, other) in read.found {
-            if !open.contains(&(kind, text.clone()))
-                || held_edges(conn, kind, host, &other)?.is_empty()
-            {
-                continue;
-            }
-            // The write that left the body carrying the text still did, so a
-            // row this copy wrote keeps it.
-            let write_id = held
-                .get(&(kind.as_str(), text.clone()))
-                .and_then(|row| row.write_id.clone());
-            put_row(
-                conn,
-                &Row {
-                    item_id: host.clone(),
-                    kind,
-                    text,
-                    state: "resolved".into(),
-                    other_id: Some(other),
-                    reason: None,
-                    held: None,
-                    write_id,
-                },
-            )?;
-        }
     }
     Ok(())
 }
@@ -879,7 +889,12 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
             return Ok(());
         };
         if r#type == next.r#type && state == next.state {
-            let properties: serde_json::Map<String, Value> = serde_json::from_str(&properties)?;
+            // Stored text that is not one object names nothing the copy can
+            // read, so the write is taken as changing the item's names.
+            let properties = match serde_json::from_str(&properties) {
+                Ok(Value::Object(properties)) => properties,
+                _ => serde_json::Map::new(),
+            };
             if properties == next.properties {
                 return Ok(());
             }
@@ -941,7 +956,11 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
         LINK_EDGE => (Kind::Link, &edge.source_id, &edge.target_id),
         ATTACHMENT_EDGE => (Kind::Embed, &edge.target_id, &edge.source_id),
         PLACEMENT_EDGE => {
-            let held = store::edge_by_id(conn, &edge.id)?;
+            let held = store::edge_by_id_with(
+                conn,
+                &edge.id,
+                &mut store::Unreadable::Keep(Default::default()),
+            )?;
             let mut moved = vec![edge.source_id.as_str()];
             if let Some(held) = &held {
                 if held.source_id == edge.source_id
@@ -993,7 +1012,7 @@ fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> 
 /// Called before the copy takes an edge out, whoever took it: a placement
 /// that goes takes its path with it.
 pub(crate) fn edge_leaving(conn: &Connection, id: &str) -> Result<()> {
-    match store::edge_by_id(conn, id)? {
+    match store::edge_by_id_with(conn, id, &mut store::Unreadable::Keep(Default::default()))? {
         Some(held) if held.edge_type == PLACEMENT_EDGE => {
             item_changing(conn, &held.source_id, None)
         }
@@ -2568,6 +2587,60 @@ mod tests {
             vec![BodyTarget::Item { id: file }],
             "a second file of the embed's name gaining bytes left nothing recorded"
         );
+    }
+
+    /// A second host linking `plan`, whose stored properties are torn.
+    fn torn_host(core: &Core, plan: &str) {
+        remote_note(core, "torn", "Torn");
+        land_remote_edge(core, link_edge("torn", plan));
+        let conn = core.conn().unwrap();
+        conn.execute(
+            "UPDATE items SET properties = '{\"body\":' WHERE id = 'torn'",
+            [],
+        )
+        .unwrap();
+        // The witness: a refusing read of the row fails.
+        assert!(store::item_by_id(&conn, "torn").is_err());
+    }
+
+    #[test]
+    fn a_body_whose_row_cannot_be_read_fails_no_rename_of_an_item_it_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        torn_host(&core, &plan);
+        land_remote(&core, &plan, serde_json::json!({ "title": "Plan v2" }));
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_body_whose_row_cannot_be_read_fails_no_hydration() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (host, plan) = plan_from_another_device(&core, "[[Plan]]");
+        torn_host(&core, &plan);
+        before_rebuild(&core.conn().unwrap()).unwrap();
+        assert_eq!(recorded_texts(&core, &host), vec!["Plan".to_string()]);
+    }
+
+    #[test]
+    fn a_linked_item_whose_row_cannot_be_read_fails_no_landing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy(&dir);
+        let (_, plan) = plan_from_another_device(&core, "[[Plan]]");
+        core.conn()
+            .unwrap()
+            .execute("UPDATE items SET properties = '[1]' WHERE id = ?1", [&plan])
+            .unwrap();
+        let mut renamed = store::testing::note(&plan, "Plan v2", "", "2026-01-02T00:00:00Z");
+        renamed.version = 5;
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &renamed,
+            Some(&[]),
+            &Catalog::empty(),
+        )
+        .unwrap();
     }
 
     #[test]

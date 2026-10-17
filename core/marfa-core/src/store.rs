@@ -2694,6 +2694,14 @@ fn read_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<(Edge, Option<String>)
     Ok((edge, why))
 }
 
+const UNREADABLE_PROPERTIES: &str = "the properties of ";
+
+/// Whether a refusing read failed on a row whose stored properties are not
+/// one JSON object, rather than on the store.
+pub(crate) fn unreadable(error: &CoreError) -> bool {
+    matches!(error, CoreError::Store(message) if message.starts_with(UNREADABLE_PROPERTIES))
+}
+
 /// What a read does with a row whose stored properties are not one JSON
 /// object. The text is not echoed: it is the person's content.
 pub enum Unreadable {
@@ -2714,7 +2722,7 @@ impl Unreadable {
     fn note(&mut self, kind: &str, id: &str, why: String) -> Result<(), CoreError> {
         match self {
             Unreadable::Refuse => Err(CoreError::Store(format!(
-                "the properties of {kind} {id} cannot be read: {why}"
+                "{UNREADABLE_PROPERTIES}{kind} {id} cannot be read: {why}"
             ))),
             Unreadable::Keep(kept) => {
                 kept.insert(id.to_string(), why);
