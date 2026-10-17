@@ -857,21 +857,25 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             // the command as it always did.
             stop_on_interrupt();
             let stop = stop_after(r#for);
-            // Read before announcing, so that a save landing just after is told.
-            let seen = core.data_version()?;
-            if json {
-                output::line_of(
-                    &serde_json::json!({ "watching": true, "data_version": seen }),
-                    json,
-                    String::new,
-                )?;
-            } else {
-                match r#for {
-                    Some(seconds) => eprintln!("watching for saves for {seconds}s"),
-                    None => eprintln!("watching for saves (interrupt to stop)"),
+            // The line is printed once the watch is joined, which read the
+            // version it tells saves after: a save made on reading the line is
+            // told.
+            watching(&core, stop, json, true, || {
+                let seen = core.data_version()?;
+                if json {
+                    output::line_of(
+                        &serde_json::json!({ "watching": true, "data_version": seen }),
+                        json,
+                        String::new,
+                    )
+                } else {
+                    match r#for {
+                        Some(seconds) => eprintln!("watching for saves for {seconds}s"),
+                        None => eprintln!("watching for saves (interrupt to stop)"),
+                    }
+                    Ok(())
                 }
-            }
-            watching(&core, stop, json, true)?;
+            })?;
             crate::interrupt::ended_by_interrupt();
             Ok(())
         }
@@ -889,7 +893,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     "this copy is not hydrated, so the watch waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
                 );
             }
-            watching(&core, stop, json, false)?;
+            watching(&core, stop, json, false, || Ok(()))?;
             crate::interrupt::ended_by_interrupt();
             Ok(())
         }
@@ -1630,12 +1634,14 @@ impl marfa_core::WatchListener for Printing {
     }
 }
 
-/// Watches the store until `stop` is raised, printing each change.
+/// Watches the store until `stop` is raised, printing each change. `joined`
+/// runs once the watch is joined.
 fn watching(
     core: &Arc<Core>,
     stop: &'static AtomicBool,
     json: bool,
     saves: bool,
+    joined: impl FnOnce() -> Result<(), CliError>,
 ) -> Result<(), CliError> {
     let (ended, done) = std::sync::mpsc::channel();
     let printing = Arc::new(Printing {
@@ -1646,6 +1652,7 @@ fn watching(
         ended,
     });
     let listening = core.watch(false, printing.clone())?;
+    joined()?;
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(STOP_POLL);
     }
