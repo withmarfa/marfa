@@ -549,7 +549,7 @@ impl Folders {
                 }),
             });
         });
-        Ok(Arc::new(Subscription { stop }))
+        Ok(Subscription::raising(stop))
     }
 }
 

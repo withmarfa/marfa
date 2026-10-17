@@ -1465,7 +1465,7 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
 /// the main thread.
 #[derive(uniffi::Object)]
 pub struct Core {
-    inner: marfa_core::Core,
+    inner: Arc<marfa_core::Core>,
 }
 
 /// An item's thumbnail: the image's type and its bytes.
@@ -1503,6 +1503,13 @@ pub enum Change {
     /// The drain started once a stream was had again ended with `error`.
     /// The answers it had recorded stay recorded.
     QueueNotDrained { error: MarfaError, cursor: String },
+    /// Told by a watch of a reading handle: another process saved to the
+    /// store, which now has this data version.
+    Saved { data_version: i64, cursor: String },
+    /// Told by a watch, once, when what feeds it fails. A follow that failed
+    /// holds no stream until the next hydration or catch-up; a reading
+    /// handle's reads go on, and the first that works is told as `Saved`.
+    WatchFailed { reason: MarfaError, cursor: String },
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1531,39 +1538,80 @@ impl From<&marfa_core::Change> for Change {
                 error: error.clone().into(),
                 cursor,
             },
+            marfa_core::ChangeEvent::Saved(data_version) => Change::Saved {
+                data_version: *data_version,
+                cursor,
+            },
+            marfa_core::ChangeEvent::WatchFailed(reason) => Change::WatchFailed {
+                reason: reason.clone().into(),
+                cursor,
+            },
         }
     }
 }
 
-/// What an app hands `follow`: told of each change as it lands, on a thread
-/// of the core's, and once when the stream ends, with the error that ended
-/// it or none where it was stopped.
+/// What an app hands `follow` or `watch`: told of each change as it lands, on a
+/// thread of the core's, and once when the stream ends, with the error that
+/// ended it or none where it was stopped.
 #[uniffi::export(with_foreign)]
 pub trait ChangeListener: Send + Sync {
     fn changed(&self, change: Change);
     fn ended(&self, error: Option<MarfaError>);
 }
 
-/// A held stream or a folder's watch, stopped by `stop` or by letting it go.
-/// A follow ends within a quarter second of either; a watch within about a
-/// second, or once the pass under way is done. `ended` is called once it has.
+/// A held stream, a folder's watch, or a place in a store's watch, stopped by
+/// `stop` or by letting it go. A follow ends within a quarter second of either;
+/// a folder's watch within about a second, or once the pass under way is done.
+/// `ended` is called once it has.
 #[derive(uniffi::Object)]
 pub struct Subscription {
-    stop: Arc<AtomicBool>,
+    ending: Ending,
+}
+
+enum Ending {
+    Flag(Arc<AtomicBool>),
+    Listening(marfa_core::Listening),
+}
+
+impl Subscription {
+    fn raising(stop: Arc<AtomicBool>) -> Arc<Subscription> {
+        Arc::new(Subscription {
+            ending: Ending::Flag(stop),
+        })
+    }
 }
 
 #[uniffi::export]
 impl Subscription {
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        match &self.ending {
+            Ending::Flag(stop) => stop.store(true, Ordering::Relaxed),
+            Ending::Listening(listening) => listening.stop(),
+        }
     }
 }
 
 /// The thread holds the core, and with it the writer's claim on the store,
-/// so a subscription nobody holds any more must end it.
+/// so a subscription nobody holds any more must end it. A place in a watch
+/// leaves it when dropped.
 impl Drop for Subscription {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        if let Ending::Flag(stop) = &self.ending {
+            stop.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Hands a watch's changes to an app's listener.
+struct Telling(Arc<dyn ChangeListener>);
+
+impl marfa_core::WatchListener for Telling {
+    fn changed(&self, change: &marfa_core::Change) {
+        self.0.changed(change.into());
+    }
+
+    fn ended(&self, error: Option<marfa_core::CoreError>) {
+        self.0.ended(error.map(Into::into));
     }
 }
 
@@ -1574,7 +1622,7 @@ impl Core {
     #[uniffi::constructor]
     pub fn open_reader(path: String) -> Result<Arc<Self>, MarfaError> {
         Ok(Arc::new(Core {
-            inner: marfa_core::Core::open_reader(path)?,
+            inner: Arc::new(marfa_core::Core::open_reader(path)?),
         }))
     }
 
@@ -1609,7 +1657,43 @@ impl Core {
             drop(self);
             listener.ended(ended.err().map(Into::into));
         });
-        Arc::new(Subscription { stop })
+        Subscription::raising(stop)
+    }
+
+    /// Adds `listener` to this store's watch, and starts it if it was idle.
+    /// However many listeners there are, one source runs: a writer with a
+    /// server holds the event stream and tells what `follow` tells, and a
+    /// reading handle tells `Saved` each time another process saves. A
+    /// hydration or catch-up takes the stream for its duration and gives it
+    /// back, and no listener is told of the gap.
+    ///
+    /// A listener hears what changes after it joins, and is first told the
+    /// outage or failure that holds then. `told_unreachable` says the app was
+    /// last told `ServerUnreachable` by an earlier watch, so it is told
+    /// `ServerReachable` once the server is reached, and not
+    /// `ServerUnreachable` again before. A request that reaches the server
+    /// tells `ServerReachable` to a listener that was told it did not:
+    /// the follow's, a hydration's or catch-up's that succeeded, or a drain's
+    /// that answered a write. A follow that fails ends no listener: each is
+    /// told `WatchFailed` once, and no stream is held until the next
+    /// hydration or catch-up. The first stream the watch has after the server
+    /// was lost, or after a drain left a write undelivered, is drained to
+    /// once, and the drain is told as `follow` tells it.
+    ///
+    /// Throws `NoServer` for a writer with no server. `changed` must return
+    /// promptly, and a hydration or catch-up called from inside it throws
+    /// `Invalid`.
+    pub fn watch(
+        self: Arc<Self>,
+        told_unreachable: bool,
+        listener: Arc<dyn ChangeListener>,
+    ) -> Result<Arc<Subscription>, MarfaError> {
+        let listening = self
+            .inner
+            .watch(told_unreachable, Arc::new(Telling(listener)))?;
+        Ok(Arc::new(Subscription {
+            ending: Ending::Listening(listening),
+        }))
     }
 
     /// Opens the file at `path`, creating it when absent. `url` and `key`
@@ -1630,7 +1714,7 @@ impl Core {
             }
         };
         Ok(Arc::new(Core {
-            inner: marfa_core::Core::open(path, server)?,
+            inner: Arc::new(marfa_core::Core::open(path, server)?),
         }))
     }
 
@@ -3099,6 +3183,97 @@ mod tests {
             ended.recv_timeout(std::time::Duration::from_secs(2)),
             Ok(None)
         );
+    }
+
+    #[test]
+    fn a_watch_keeps_its_listener_through_a_hydration_that_takes_its_stream() {
+        let server = quiet();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let (changes, _heard) = std::sync::mpsc::channel();
+        let (told, ended) = std::sync::mpsc::channel();
+        let subscription = Arc::clone(&core)
+            .watch(
+                false,
+                Arc::new(Heard {
+                    changes,
+                    ended: told,
+                }),
+            )
+            .unwrap();
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.streams.load(Ordering::SeqCst) == 0 {
+            assert!(
+                std::time::Instant::now() < until,
+                "the watch never held a stream once the copy was hydrated"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .expect("a hydration was refused while a watch held the stream");
+        assert!(
+            ended
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "a hydration ended the listener of a watch"
+        );
+        drop(subscription);
+        assert_eq!(
+            ended.recv_timeout(std::time::Duration::from_secs(2)),
+            Ok(None)
+        );
+    }
+
+    #[test]
+    fn a_watch_of_a_reading_handle_tells_each_save_and_a_writer_with_no_server_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let writer = Core::open(path.clone(), None, None).unwrap();
+        let (changes, _heard) = std::sync::mpsc::channel();
+        let (told, _ended) = std::sync::mpsc::channel();
+        assert!(matches!(
+            Arc::clone(&writer).watch(
+                false,
+                Arc::new(Heard {
+                    changes,
+                    ended: told
+                })
+            ),
+            Err(MarfaError::NoServer { .. })
+        ));
+        let reader = Core::open_reader(path).unwrap();
+        let (changes, heard) = std::sync::mpsc::channel();
+        let (told, _ended) = std::sync::mpsc::channel();
+        let _subscription = Arc::clone(&reader)
+            .watch(
+                false,
+                Arc::new(Heard {
+                    changes,
+                    ended: told,
+                }),
+            )
+            .unwrap();
+        let before = reader.data_version().unwrap();
+        writer
+            .create_item(Draft {
+                r#type: "core.note".into(),
+                id: None,
+                properties: parsed(r#"{"title":"saved","body":"b"}"#),
+                tags: Vec::new(),
+                tier: None,
+                source: None,
+                source_id: None,
+                occurred_at: None,
+                base_version: None,
+            })
+            .unwrap();
+        match heard.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(Change::Saved { data_version, .. }) => assert_ne!(data_version, before),
+            other => panic!("the writer saved and the watch told {other:?}"),
+        }
     }
 
     /// A JSON object from its text, as the tests below write theirs.
