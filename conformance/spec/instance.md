@@ -1014,7 +1014,7 @@ If the clock is asked to move back, then the server MUST refuse and keep the tim
 
 When the server starts, the server MUST hold no fault.
 
-**Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`.
+**Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`, `compliance/write-faults.test.ts › does not outlive it: the write it was aimed at lands, and the fault is not listed`.
 
 ## Settings refused at boot
 

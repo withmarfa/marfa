@@ -29,6 +29,7 @@ import {
   transactionControl,
 } from "./transaction-control.js";
 import * as clock from "../../clock.js";
+import { commitFailure, takeStatementFault } from "./injected-failure.js";
 
 /**
  * The database's DDL, generated from `schema.ts` by
@@ -322,6 +323,11 @@ function contention(budgetMs: number): MarfaError {
   );
 }
 
+/** The refusal a write that never got the lock is answered with, as one whose retries ran out. */
+export function lockNotFree(): MarfaError {
+  return contention(busyBudgetMs);
+}
+
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = busyBudgetMs,
@@ -396,14 +402,22 @@ function waitingForTheLock(url: string): {
     },
     execute: (stmtOrSql: InStatement | string, args?: InArgs) =>
       untilNotBusy(() =>
-        one(() =>
-          typeof stmtOrSql === "string"
+        one(() => {
+          const injected = takeStatementFault();
+          if (injected) return Promise.reject(injected.error);
+          return typeof stmtOrSql === "string"
             ? client.execute(stmtOrSql, args)
-            : client.execute(stmtOrSql),
-        ),
+            : client.execute(stmtOrSql);
+        }),
       ),
     batch: (stmts, mode) =>
-      untilNotBusy(() => one(() => client.batch(stmts, mode))),
+      untilNotBusy(() =>
+        one(() => {
+          const injected = takeStatementFault();
+          if (injected) return Promise.reject(injected.error);
+          return client.batch(stmts, mode);
+        }),
+      ),
     migrate: (stmts) => untilNotBusy(() => one(() => client.migrate(stmts))),
     transaction: (mode: TransactionMode = "write") =>
       untilNotBusy(() => transactions.begin(mode)),
@@ -675,7 +689,17 @@ function transactionConnections(url: string): {
           control.participant?.prepare();
         }
         attempted = true;
+        const injected =
+          statement === "COMMIT" ? control.commitFault : undefined;
+        if (injected === "refused" || injected === "full") {
+          // SQLite may end a transaction itself when its commit fails for
+          // want of room or of I/O. The rollback after that finds none to
+          // end, and the outcome stays unknown.
+          await conn.execute("ROLLBACK");
+          throw commitFailure(injected);
+        }
         await conn.execute(statement);
+        if (injected === "ack-lost") throw commitFailure(injected);
         if (mode === "read") await conn.execute("PRAGMA query_only = OFF");
         control.outcome = statement === "COMMIT" ? "committed" : "rolled_back";
         if (statement === "COMMIT") control.participant?.committed();
@@ -741,6 +765,11 @@ function transactionConnections(url: string): {
       if (!open) throw closedError();
       control.assertUsable();
       try {
+        const injected = takeStatementFault();
+        if (injected) {
+          if (injected.endsTransaction) await conn.execute("ROLLBACK");
+          throw injected.error;
+        }
         return typeof stmtOrSql === "string"
           ? await conn.execute(stmtOrSql, args)
           : await conn.execute(stmtOrSql);

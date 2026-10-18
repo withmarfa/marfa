@@ -1515,7 +1515,7 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
   if (s.MARFA_TEST_HOOKS && s.NODE_ENV === "production") {
     refuse(
       "MARFA_TEST_HOOKS",
-      "must not be true in production: the test hooks move the server's clock and hold its jobs",
+      "must not be true in production: the test hooks can move the server's clock, pause work, and inject failures",
     );
   }
   if (s.MARFA_TEST_CLOCK_OFFSET_MS > 0 && !s.MARFA_TEST_HOOKS) {

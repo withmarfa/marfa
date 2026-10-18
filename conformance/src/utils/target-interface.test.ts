@@ -97,12 +97,30 @@ describe("a fault", () => {
     await server.setFault("hold:version-thinning:item");
     await server.setFault("deadline:trash-purge=250");
     expect(await server.faults()).toEqual([
-      { name: "hold:version-thinning:item", arg: null, waiting: 0 },
-      { name: "deadline:trash-purge", arg: "250", waiting: 0 },
+      { name: "hold:version-thinning:item", arg: null, waiting: 0, fired: 0 },
+      { name: "deadline:trash-purge", arg: "250", waiting: 0, fired: 0 },
     ]);
     await expect(server.setFault("hold:nowhere")).rejects.toThrow(
       /no hold point/,
     );
+    await expect(server.setFault("fail:nowhere")).rejects.toThrow(
+      /no fail point/,
+    );
+    await expect(server.setFault("fail:lock=0")).rejects.toThrow(/from 1/);
+    await expect(server.setFault("fail:commit=items.bulk@0")).rejects.toThrow(
+      /<action>@<n>/,
+    );
+    await expect(
+      server.setFault("fail:housekeeping:no-such-job"),
+    ).rejects.toThrow(/no housekeeping job/);
+    await server.setFault("fail:commit=items.bulk@2");
+    expect(await server.faults()).toContainEqual({
+      name: "fail:commit",
+      arg: "items.bulk@2",
+      waiting: 0,
+      fired: 0,
+    });
+    await server.clearFault("fail:commit");
     await expect(server.setFault("deadline:trash-purge")).rejects.toThrow(
       /milliseconds/,
     );

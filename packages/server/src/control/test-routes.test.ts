@@ -137,7 +137,7 @@ describe("the fault routes", () => {
     });
     await Promise.resolve();
     expect(activeFaults()).toEqual([
-      { name: "hold:version-thinning:item", arg: null, waiting: 1 },
+      { name: "hold:version-thinning:item", arg: null, waiting: 1, fired: 0 },
     ]);
     expect(released).toBe(false);
     const cleared = await app.request("/_control/test/faults", {
@@ -166,6 +166,10 @@ describe("the fault routes", () => {
       { name: "deadline:trash-purge", arg: "0" },
       { name: "deadline:trash-purge", arg: "soon" },
       { name: "fail:disk" },
+      { name: "fail:lock", arg: "0" },
+      { name: "fail:lock", arg: "items.bulk@2" },
+      { name: "fail:commit", arg: "items.bulk@0" },
+      { name: "fail:housekeeping:no-such-job" },
       {},
     ]) {
       const refused = await app.request("/_control/test/faults", {
@@ -179,6 +183,9 @@ describe("the fault routes", () => {
     for (const body of [
       { name: "hold:housekeeping:trash-purge" },
       { name: "deadline:trash-purge", arg: "100" },
+      { name: "fail:lock", arg: "2" },
+      { name: "fail:commit", arg: "items.bulk@2" },
+      { name: "fail:housekeeping:trash-purge" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",

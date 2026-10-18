@@ -549,7 +549,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 **Reason:** a `5xx` tells the caller nothing was written, so it sends the change again. No idempotency key catches it, because an operation that takes one releases it on a `5xx` and the bulk operations take none.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is never answered with a 5xx: a single write whose commit answer is lost answers 201 and is stored once`, `compliance/write-faults.test.ts › is never answered with a 5xx: a page entry whose commit answer is lost is reported created, and the page answers 200`, `compliance/write-faults.test.ts › is never answered with a 5xx: an edge entry whose commit answer is lost is reported created`, `compliance/write-faults.test.ts › is never answered with a 5xx: an atomic page whose commit answer is lost answers 200 and is stored once`.
 
 ### `events/sweep-purge-announced`
 
@@ -1401,7 +1401,7 @@ If the server refuses or duplicates a redelivery, then the server MUST NOT recor
 
 If the server cannot record a redelivery's audit entry, then the server MUST leave the failed delivery unchanged.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › leaves the failed delivery unchanged, queues nothing and records nothing, and a retry is accepted`.
 
 ### `events/history-dead-letter-kept`
 
@@ -1533,7 +1533,7 @@ If the server cannot record a write's audit entry, then the server MUST roll the
 
 **Reason:** a change nobody can account for is worse than a refused one.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is rolled back with its events, answers 500, and leaves the write after it to land`, `compliance/write-faults.test.ts › rolls back an entry of a page under atomic: false and reports it errored, while the entries around it land`.
 
 ### `events/audit-no-secrets`
 

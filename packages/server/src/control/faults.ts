@@ -2,61 +2,170 @@
  * The faults a conformance harness sets on a running server, held in memory.
  * They are set and cleared only through the routes in `test-routes.ts`, which
  * exist only under `MARFA_TEST_HOOKS`, so on every other server the table
- * stays empty and each fault point below returns at once.
+ * stays empty and each fault point below returns at once, after one read of
+ * the table's size.
  *
- * A fault is named for where it acts:
+ * A fault is named for what it does and where it acts, and every point a
+ * fault may name is declared once, in {@link POINTS}:
  *
  * - `hold:<point>` makes the server wait at the point until the fault is
- *   cleared. The points are `housekeeping:<job>`, the start of a run of that
- *   job, and `version-thinning:item`, between choosing to thin an item and
- *   removing anything from it.
+ *   cleared.
+ * - `fail:<point>` makes the server fail at the point, once: on the nth time
+ *   the point is reached after the fault was set (the first, unless the
+ *   argument says another). The fault stays in the table afterwards with its
+ *   `fired` count, so a fixture can tell that it acted, and is cleared like
+ *   any other. A write point may name the audit action of the write it
+ *   counts, as `items.bulk@2`, so a request that makes other writes first
+ *   does not shift the count.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
  *
- * The routes refuse a name that answers to no point, and a job the scheduler
- * has not registered, so a typo cannot pass for an armed fault.
+ * The routes refuse a name that answers to no point, an argument the point
+ * does not take, and a job the scheduler has not registered, so a typo cannot
+ * pass for an armed fault.
  *
  * Nothing persists: a restart starts with no fault.
  */
 
-/** The shape a fault point may take. */
-const HOLD_POINT = /^(?:housekeeping:[a-z][a-z0-9-]*|version-thinning:item)$/;
-const DEADLINE_JOB = /^[a-z][a-z0-9-]*$/;
+/** What follows `=` in the name of a fault, by the point it is set on. */
+type ArgShape =
+  /** No argument. */
+  | "none"
+  /** `<n>`: the nth time the point is reached. */
+  | "nth"
+  /** `<n>`, `<action>` or `<action>@<n>`: the nth write that records the audit action. */
+  | "write";
+
+interface Point {
+  /** The text after `hold:` or `fail:`; `<job>` stands for a housekeeping job's name. */
+  name: string;
+  arg: ArgShape;
+}
+
+/** Every point a fault may name. */
+export const POINTS: {
+  hold: readonly Point[];
+  fail: readonly Point[];
+} = {
+  hold: [
+    { name: "housekeeping:<job>", arg: "none" },
+    { name: "version-thinning:item", arg: "none" },
+  ],
+  fail: [
+    { name: "lock", arg: "nth" },
+    { name: "audit", arg: "write" },
+    { name: "commit", arg: "write" },
+    { name: "commit-full", arg: "write" },
+    { name: "commit-ack", arg: "write" },
+    { name: "inbound-receipt", arg: "nth" },
+    { name: "inbound-cleanup", arg: "nth" },
+    { name: "export-read", arg: "nth" },
+    { name: "housekeeping:<job>", arg: "nth" },
+    { name: "job-row", arg: "nth" },
+  ],
+};
+
+/**
+ * Housekeeping jobs that run no database statement, so a `fail` fault on one
+ * could only be counted and never act.
+ */
+const JOBS_WITHOUT_STATEMENTS: readonly string[] = ["heartbeat"];
+
+const JOB_SLOT = "<job>";
+const JOB_NAME = /^[a-z][a-z0-9-]*$/;
+const ACTION = /^[a-z][a-z0-9_.-]*$/;
 /** The longest delay a timer takes. */
 const MAX_DEADLINE_MS = 2_147_483_647;
+const MAX_NTH = 1_000_000;
 
 export interface ActiveFault {
   name: string;
   arg: string | null;
   /** How many callers are waiting at a `hold` fault now. */
   waiting: number;
+  /** How many times a `fail` fault has acted. */
+  fired: number;
+}
+
+/** Which reach of a `fail` point acts. */
+interface Target {
+  action: string | undefined;
+  nth: number;
 }
 
 interface Entry {
   arg: string | null;
   release: Set<() => void>;
+  /** For a `fail` fault: how it is aimed, and how many reaches it has counted. */
+  target: Target | undefined;
+  seen: number;
+  fired: number;
 }
 
 const faults = new Map<string, Entry>();
 
-function shapeProblem(name: string, arg: string | null): string | undefined {
-  if (name.startsWith("hold:")) {
-    if (!HOLD_POINT.test(name.slice(5)))
-      return `no hold point is named ${name.slice(5)}`;
-    return arg === null ? undefined : "a hold fault takes no argument";
+/** The point a name addresses, and the job it names if it names one. */
+function declared(
+  kind: "hold" | "fail",
+  text: string,
+): { point: Point; job: string | undefined } | undefined {
+  for (const point of POINTS[kind]) {
+    if (!point.name.endsWith(JOB_SLOT)) {
+      if (point.name === text) return { point, job: undefined };
+    } else {
+      const stem = point.name.slice(0, -JOB_SLOT.length);
+      if (text.startsWith(stem) && JOB_NAME.test(text.slice(stem.length)))
+        return { point, job: text.slice(stem.length) };
+    }
   }
-  if (name.startsWith("deadline:")) {
-    if (!DEADLINE_JOB.test(name.slice(9)))
-      return `${name.slice(9)} is not a job name`;
+  return undefined;
+}
+
+function nth(text: string): number | undefined {
+  if (!/^[1-9][0-9]*$/.test(text)) return undefined;
+  const value = Number(text);
+  return value <= MAX_NTH ? value : undefined;
+}
+
+/** How a `fail` fault is aimed, or why its argument is refused. */
+function aim(point: Point, arg: string | null): Target | string {
+  if (arg === null) return { action: undefined, nth: 1 };
+  if (point.arg === "none") return `${point.name} takes no argument`;
+  const whole = nth(arg);
+  if (whole !== undefined) return { action: undefined, nth: whole };
+  if (point.arg !== "write")
+    return `${point.name} takes the number of the time it acts, from 1`;
+  const at = arg.lastIndexOf("@");
+  const action = at < 0 ? arg : arg.slice(0, at);
+  const count = at < 0 ? 1 : nth(arg.slice(at + 1));
+  if (!ACTION.test(action) || count === undefined)
+    return `${point.name} takes <n>, <action> or <action>@<n>`;
+  return { action, nth: count };
+}
+
+function shapeProblem(name: string, arg: string | null): string | undefined {
+  const colon = name.indexOf(":");
+  const kind = colon < 0 ? name : name.slice(0, colon);
+  const rest = colon < 0 ? "" : name.slice(colon + 1);
+  if (kind === "hold" || kind === "fail") {
+    const found = declared(kind, rest);
+    if (found === undefined) return `no ${kind} point is named ${rest}`;
+    if (kind === "hold")
+      return arg === null ? undefined : "a hold fault takes no argument";
+    const target = aim(found.point, arg);
+    return typeof target === "string" ? target : undefined;
+  }
+  if (kind === "deadline") {
+    if (!JOB_NAME.test(rest)) return `${rest} is not a job name`;
     const ms = arg === null ? Number.NaN : Number(arg);
     if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
       return "a deadline fault takes a whole number of milliseconds from 1";
     return undefined;
   }
-  return "a fault is named hold:<point> or deadline:<job>";
+  return "a fault is named hold:<point>, fail:<point> or deadline:<job>";
 }
 
 /**
- * Why a fault name or argument is refused, or `undefined` when it is armed.
+ * Why a fault name or argument is refused, or `undefined` when it is valid.
  * `jobs` are the housekeeping jobs the scheduler has registered: a fault on
  * any other job would never act.
  */
@@ -67,13 +176,19 @@ export function faultProblem(
 ): string | undefined {
   const problem = shapeProblem(name, arg);
   if (problem !== undefined) return problem;
-  const job = name.startsWith("deadline:")
-    ? name.slice(9)
-    : name.startsWith("hold:housekeeping:")
-      ? name.slice(18)
-      : undefined;
+  const colon = name.indexOf(":");
+  const kind = name.slice(0, colon);
+  const rest = name.slice(colon + 1);
+  const job =
+    kind === "deadline" ? rest : declared(kind as "hold" | "fail", rest)?.job;
   if (job !== undefined && !jobs.includes(job))
     return `no housekeeping job is named ${job}`;
+  if (
+    kind === "fail" &&
+    job !== undefined &&
+    JOBS_WITHOUT_STATEMENTS.includes(job)
+  )
+    return `the ${job} job runs no database statement to fail`;
   return undefined;
 }
 
@@ -81,9 +196,25 @@ export function faultProblem(
 export function setFault(name: string, arg: string | null): void {
   const problem = shapeProblem(name, arg);
   if (problem !== undefined) throw new RangeError(problem);
+  const point = name.startsWith("fail:")
+    ? declared("fail", name.slice(5))?.point
+    : undefined;
+  const target = point === undefined ? undefined : aim(point, arg);
+  const aimed = typeof target === "object" ? target : undefined;
   const existing = faults.get(name);
-  if (existing) existing.arg = arg;
-  else faults.set(name, { arg, release: new Set() });
+  if (existing) {
+    existing.arg = arg;
+    existing.target = aimed;
+    existing.seen = 0;
+    existing.fired = 0;
+  } else
+    faults.set(name, {
+      arg,
+      release: new Set(),
+      target: aimed,
+      seen: 0,
+      fired: 0,
+    });
 }
 
 /** Clears one fault, or all when `name` is left out, and lets every waiter go. */
@@ -100,7 +231,53 @@ export function activeFaults(): ActiveFault[] {
     name,
     arg: entry.arg,
     waiting: entry.release.size,
+    fired: entry.fired,
   }));
+}
+
+/** Whether any fault is set. A server without the hooks never has one. */
+export function faultsArmed(): boolean {
+  return faults.size > 0;
+}
+
+/**
+ * Whether `fail:<point>` acts now. Each call counts one reach of the point
+ * for a fault set on it, and the fault acts on the reach it is aimed at, and
+ * on no other. A fault aimed at an audit action counts only the reaches made
+ * with that action. A reach made with `counted` false does not add to
+ * `fired`; the caller does that with {@link recordFired} when the failure
+ * happens.
+ */
+export function failAt(
+  point: string,
+  action?: string,
+  counted = true,
+): boolean {
+  if (faults.size === 0) return false;
+  const entry = faults.get(`fail:${point}`);
+  if (entry?.target === undefined) return false;
+  if (entry.target.action !== undefined && entry.target.action !== action)
+    return false;
+  entry.seen += 1;
+  if (entry.seen !== entry.target.nth) return false;
+  if (counted) entry.fired += 1;
+  return true;
+}
+
+/**
+ * Takes back the reach of a statement fault whose scope ran no statement, so
+ * the fault waits for a reach that can fail instead of passing for one that
+ * did. The count of what acted is {@link recordFired}'s.
+ */
+export function forgetReach(point: string): void {
+  const entry = faults.get(`fail:${point}`);
+  if (entry !== undefined && entry.seen > 0) entry.seen -= 1;
+}
+
+/** See {@link forgetReach}. */
+export function recordFired(point: string): void {
+  const entry = faults.get(`fail:${point}`);
+  if (entry !== undefined) entry.fired += 1;
 }
 
 /**

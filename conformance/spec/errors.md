@@ -374,7 +374,7 @@ If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets t
 
 **Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › after an earlier entry has committed is reported errored with write_contention in a 200 answer, and the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page`.
 
 ## A volume with no room
 
@@ -394,7 +394,7 @@ If a volume turns away the commit of a write, then the server MUST carry `write_
 
 **Reason:** a commit that fails may have landed before it failed, so the answer cannot promise that nothing was kept.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › answers 507 insufficient_storage with write_outcome unknown, and the write that follows lands`.
 
 ### `errors/storage-full-declared`
 
@@ -536,7 +536,7 @@ If the server cannot confirm whether an entry of a `POST /items/bulk` or `POST /
 
 **Reason:** `items/bulk-outcome-unknown` and `edges/bulk-outcome-unknown` state the rest of the entry's answer, which the caller reads to reconcile that entry before it retries it.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
 
 ## The limits of a stream and of a job
 
@@ -654,13 +654,13 @@ When an event stream logs a warning because a database statement failed while it
 
 When the server logs a fault in which a database statement failed and that ended a response body after the response began, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/fault-reports-detached.test.ts › logs a database failure after the response began with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-background`
 
 When the server logs a fault in which a database statement failed in work no request was waiting on, the server MUST carry in its log `Database operation failed` and the SQLite result code, and none of the statement, the driver's own message or the values the statement was bound to.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/fault-reports-detached.test.ts › logs a database failure in a scheduled run with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-health`
 
