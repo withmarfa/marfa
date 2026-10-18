@@ -46,6 +46,7 @@ import type { AppConfig } from "./config.js";
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { reportableError } from "./error-text.js";
 import * as clock from "./clock.js";
+import { realTimeExporter } from "./otel/real-time-exporter.js";
 
 declare global {
   /**
@@ -183,10 +184,12 @@ async function start(): Promise<void> {
       new PiiRedactionSpanProcessor(),
       new ErrorBucketFilterSpanProcessor(
         new BatchSpanProcessor(
-          new OTLPTraceExporter({
-            url: tracesEndpoint,
-            headers: otel.tracesHeaders,
-          }),
+          realTimeExporter(
+            new OTLPTraceExporter({
+              url: tracesEndpoint,
+              headers: otel.tracesHeaders,
+            }),
+          ),
           { maxQueueSize: BATCH_QUEUE_SIZE },
         ),
         sampleRatio,
@@ -222,10 +225,12 @@ async function start(): Promise<void> {
       // loose signature and yields a processor with no exporter, so logs
       // batch and are then dropped without a word.
       new BatchLogRecordProcessor({
-        exporter: new OTLPLogExporter({
-          url: logsEndpoint,
-          headers: otel.logsHeaders,
-        }),
+        exporter: realTimeExporter(
+          new OTLPLogExporter({
+            url: logsEndpoint,
+            headers: otel.logsHeaders,
+          }),
+        ),
       }),
     ],
   });
@@ -234,22 +239,27 @@ async function start(): Promise<void> {
   // ---- Exceptions ----
   if (reportExceptions) {
     const { PostHog } = await import("posthog-node");
-    const client = new PostHog(posthogToken, {
-      host: posthogHost,
-      // The address an event arrives from is the server's own, so a
-      // location looked up from it describes the host, not a person.
-      disableGeoip: true,
-    });
+    const client = clock.withRealTime(
+      () =>
+        new PostHog(posthogToken, {
+          host: posthogHost,
+          // The address an event arrives from is the server's own, so a
+          // location looked up from it describes the host, not a person.
+          disableGeoip: true,
+        }),
+    );
     exceptionClient = client;
     globalThis.__marfaReportException = (err, properties) => {
       // No distinct id: the event is the instance's, and the client then
       // sends it without creating a person.
-      client.captureException(reportableError(err), undefined, {
-        ...staticAttributes,
-        ...(instanceId === undefined || instanceChosen
-          ? {}
-          : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
-        ...properties,
+      clock.withRealTime(() => {
+        client.captureException(reportableError(err), undefined, {
+          ...staticAttributes,
+          ...(instanceId === undefined || instanceChosen
+            ? {}
+            : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+          ...properties,
+        });
       });
     };
   }
@@ -259,7 +269,7 @@ async function start(): Promise<void> {
     await Promise.allSettled([
       tracerProvider.shutdown(),
       loggerProvider.shutdown(),
-      exceptionClient?.shutdown(),
+      clock.withRealTime(() => exceptionClient?.shutdown()),
     ]);
   };
 
