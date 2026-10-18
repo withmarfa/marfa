@@ -488,6 +488,7 @@ export class BindingDevice {
   readonly hooks = {
     /** Makes the engine wait at `point` when it reaches it. */
     hold: async (point: string): Promise<void> => {
+      this.armed.add(point);
       await this.control("hook", "hold", point);
     },
     /** Lets go of what waits at `point`, and stops holding it. */
@@ -535,7 +536,14 @@ export class BindingDevice {
 
   /** Ends every subscription, then the host. Safe to call twice. */
   async close(): Promise<void> {
-    if (this.gone === undefined) {
+    if (this.gone !== undefined) return;
+    // The deadline starts first: a subscription held at a point, or a call
+    // that never answers, must not keep the host alive.
+    const killed = setTimeout(() => {
+      this.child.kill("SIGKILL");
+    }, CLOSE_WAIT_MS);
+    try {
+      await this.releaseHolds();
       const subscriptions = [...this.subscriptions.values()];
       await Promise.all(
         subscriptions.map(async (subscription) => {
@@ -543,12 +551,19 @@ export class BindingDevice {
         }),
       );
       this.child.send({ op: "exit", id: -1 }, () => {});
-      const killed = setTimeout(() => {
-        this.child.kill("SIGKILL");
-      }, CLOSE_WAIT_MS);
       await this.exited;
+    } finally {
       clearTimeout(killed);
     }
+  }
+
+  /** The points a fixture armed, let go of at close. */
+  private readonly armed = new Set<string>();
+
+  private async releaseHolds(): Promise<void> {
+    await Promise.all(
+      [...this.armed].map((point) => this.hooks.release(point).catch(() => {})),
+    );
   }
 }
 

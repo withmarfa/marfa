@@ -41,6 +41,11 @@ pub(crate) fn wait(stop: &AtomicBool, wait: Duration, poll: Duration) {
 #[cfg(debug_assertions)]
 pub use manual::{Waiting, advance, set_manual, waits};
 
+/// Held by a test that reads or sets the process-wide clock, so no other such
+/// test sees it change.
+#[cfg(test)]
+static GLOBAL_CLOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,6 +58,9 @@ mod tests {
 
     #[test]
     fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
+        let _alone = GLOBAL_CLOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let stop = Arc::new(AtomicBool::new(false));
         let (ended, done) = mpsc::channel();
         let flag = Arc::clone(&stop);
@@ -367,6 +375,17 @@ mod manual {
         /// others hold a clock of their own.
         #[test]
         fn the_engine_waits_by_the_manual_clock_while_one_is_set_and_by_the_system_clock_after() {
+            /// Puts the system clock back however the test ends.
+            struct Restore;
+            impl Drop for Restore {
+                fn drop(&mut self) {
+                    set_manual(false);
+                }
+            }
+            let _alone = crate::clock::GLOBAL_CLOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _restore = Restore;
             let stop = Arc::new(AtomicBool::new(false));
             set_manual(true);
             let waiting = {
