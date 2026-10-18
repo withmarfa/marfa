@@ -1,6 +1,7 @@
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
 import { withoutFailedQueries } from "../error-text.js";
 import * as clock from "../clock.js";
+import { runInBackground } from "../background-context.js";
 
 /**
  * Fire-and-forget error webhook notifications with per-error-type debouncing.
@@ -82,36 +83,38 @@ export function notifyError(
   forgetExpired(now);
   debounceMap.set(errorKey, now);
 
-  // Telegram sendMessage API — format as a readable text message
-  if (isTelegramUrl(webhookUrl)) {
-    const time = new Date(notification.timestamp)
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d+Z$/, " UTC");
-    const where = notification.instance
-      ? `${notification.instance}, ${notification.environment}`
-      : notification.environment;
-    const text = [
-      `\u26a0\ufe0f *Marfa 500 Error* (${where})`,
-      `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
-      notification.error,
-      `Request: \`${notification.request_id}\``,
-    ].join("\n");
-    void fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, parse_mode: "Markdown" }),
-      signal: AbortSignal.timeout(timeoutMs),
-    }).catch(() => undefined);
-  } else {
-    // Generic webhook — POST JSON payload
-    void fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(notification),
-      signal: AbortSignal.timeout(timeoutMs),
-    }).catch(() => {
-      // Silently swallow — webhook failures must not cascade
-    });
-  }
+  runInBackground(() => {
+    // Telegram sendMessage API — format as a readable text message
+    if (isTelegramUrl(webhookUrl)) {
+      const time = new Date(notification.timestamp)
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d+Z$/, " UTC");
+      const where = notification.instance
+        ? `${notification.instance}, ${notification.environment}`
+        : notification.environment;
+      const text = [
+        `\u26a0\ufe0f *Marfa 500 Error* (${where})`,
+        `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
+        notification.error,
+        `Request: \`${notification.request_id}\``,
+      ].join("\n");
+      void fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, parse_mode: "Markdown" }),
+        signal: AbortSignal.timeout(timeoutMs),
+      }).catch(() => undefined);
+    } else {
+      // Generic webhook — POST JSON payload
+      void fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(notification),
+        signal: AbortSignal.timeout(timeoutMs),
+      }).catch(() => {
+        // Silently swallow — webhook failures must not cascade
+      });
+    }
+  });
 }

@@ -4,6 +4,10 @@ import type {
   BulkActionJobStore,
   Storage,
 } from "../storage/interface.js";
+import {
+  validateRequestAuthority,
+  withRequestAuthority,
+} from "../auth/request-authority.js";
 import { BulkActionWorker } from "./worker.js";
 
 /**
@@ -365,5 +369,45 @@ describe("BulkActionWorker.wake", () => {
     worker.wake();
     await vi.advanceTimersByTimeAsync(1000);
     expect(stub.ticks()).toBe(before);
+  });
+});
+
+describe("BulkActionWorker and the request that woke it", () => {
+  it("runs its jobs outside the authority of that request, whose credential may be revoked since", async () => {
+    const stub = makeStubStorage();
+    let completed = false;
+    (stub.storage.bulkActionJobs as Partial<BulkActionJobStore>).completeOwned =
+      async () => {
+        // A write commit asks the authority of the request it runs under.
+        await validateRequestAuthority();
+        completed = true;
+        return true;
+      };
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 60_000,
+      maxPollIntervalMs: 60_000,
+    });
+    try {
+      await worker.start();
+      let asked = false;
+      stub.enqueueJob();
+      await withRequestAuthority(
+        () => {
+          asked = true;
+          return Promise.reject(new Error("the credential was revoked"));
+        },
+        () => {
+          worker.wake();
+          return Promise.resolve();
+        },
+      );
+      await vi.waitFor(() => {
+        expect(completed).toBe(true);
+      });
+      expect(asked).toBe(false);
+    } finally {
+      await worker.stop();
+    }
   });
 });

@@ -29,6 +29,7 @@ import {
 } from "../storage/sqlite/transaction-control.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { runInBackground } from "../background-context.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -200,9 +201,11 @@ export class BulkActionWorker {
 
   private scheduleNext(delayMs: number): void {
     if (this.stopped) return;
-    this.timer = setTimeout(() => {
-      void this.tick();
-    }, delayMs);
+    this.timer = runInBackground(() =>
+      setTimeout(() => {
+        void this.tick();
+      }, delayMs),
+    );
   }
 
   private async tick(): Promise<void> {

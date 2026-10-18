@@ -1,3 +1,4 @@
+import { runInBackground } from "../background-context.js";
 import { reportableError } from "../error-text.js";
 
 /**
@@ -19,7 +20,7 @@ export class WriteTracker {
    * therefore always safe.
    */
   track(write: () => Promise<void>): Promise<void> {
-    const settled = (async () => {
+    const settled = runInBackground(async () => {
       try {
         await write();
       } catch (err) {
@@ -32,7 +33,7 @@ export class WriteTracker {
           reportableError(err),
         );
       }
-    })();
+    });
     this.pending.add(settled);
     void settled.finally(() => {
       this.pending.delete(settled);
