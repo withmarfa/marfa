@@ -505,6 +505,53 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /**
+   * A command that prints its whole report on standard output and ends with
+   * the environment's exit 3 where it left work undone, or the credential's
+   * exit 5 where a refused credential stopped it, a drain's report among
+   * them (`queue-and-verdicts/command-exit-undelivered`). The report is the
+   * outcome either way, and its `exit` says which; any other failure is a
+   * refusal, read from standard error as ever.
+   */
+  async rootReport<T>(args: string[]): Promise<Outcome<T & { exit: number }>> {
+    const result = await this.process(["--json", ...args, ...this.server()]);
+    const text = result.stdout.trim();
+    if (
+      result.code === 0 ||
+      ((result.code === 3 || result.code === 5) && text.startsWith("{"))
+    ) {
+      return {
+        ok: true,
+        value: { ...(JSON.parse(text) as T), exit: result.code },
+      };
+    }
+    if (result.stderr.trim() === "") {
+      throw new Error(
+        `the device exited ${String(result.code)} saying nothing, so there is no refusal to read`,
+      );
+    }
+    return { ok: false, refusal: classify(result.stderr, result.code) };
+  }
+
+  /** `rootReport`, printed for a person. */
+  async rootReportText(
+    args: string[],
+  ): Promise<Outcome<{ text: string; exit: number }>> {
+    const result = await this.process([...args, ...this.server()]);
+    if (
+      result.code === 0 ||
+      ((result.code === 3 || result.code === 5) && result.stdout.trim() !== "")
+    ) {
+      return { ok: true, value: { text: result.stdout, exit: result.code } };
+    }
+    if (result.stderr.trim() === "") {
+      throw new Error(
+        `the device exited ${String(result.code)} saying nothing, so there is no refusal to read`,
+      );
+    }
+    return { ok: false, refusal: classify(result.stderr, result.code) };
+  }
+
+  /**
    * Starts a command and leaves it running, for the rules that are about two
    * processes at once.
    *
@@ -998,6 +1045,8 @@ export interface ScanReport {
   updated: number;
   renamed: number;
   unchanged: number;
+  /** Files as they were whose write the server has not answered. */
+  waiting: number;
   missing: number;
   deleted: number;
   /** The paths of those, each found in no folder on the machine
@@ -1198,6 +1247,10 @@ export interface PushReport {
   };
   /** `null` where a failed catch-up left no copy to pull from. */
   pull: PullReport | null;
+  /** The exit the command ended with: 0; 3 where it left a write
+   *  undelivered or could not catch up; 5 where a refused credential stopped
+   *  it. Not part of the report; the adapter adds it. */
+  exit: number;
 }
 
 /** What `folders push --send-only` reports (`folders/send-only-report-sent`). */
@@ -1209,6 +1262,8 @@ export interface SendOnlyReport {
   settings: SettingsFileReport;
   scan: ScanReport;
   drain: PushReport["drain"];
+  /** The exit the command ended with, added by the adapter. */
+  exit: number;
 }
 
 /** A file the folder keeps whose item its search no longer matches (`folders/unmatched-list`). */
@@ -1286,6 +1341,7 @@ export class CliFolder {
       first_sync: boolean;
       deleted: number;
       moved: number;
+      unsure: Array<{ path: string; reason: string }>;
       removed: number;
     }>
   > {
@@ -1341,7 +1397,6 @@ export class CliFolder {
       this.dir,
       ...this.server(),
     ]);
-      unsure: Array<{ path: string; reason: string }>;
   }
 
   async scan(): Promise<Outcome<ScanReport>> {
@@ -1358,28 +1413,28 @@ export class CliFolder {
   }
 
   async push(): Promise<Outcome<PushReport>> {
-    return this.run<PushReport>([
-      "folders",
-      "push",
-      this.dir,
-      ...this.server(),
-    ]);
+    return this.device().rootReport<PushReport>(["folders", "push", this.dir]);
   }
 
   /** A push that sends what the folder holds and pulls nothing. */
   async pushSendOnly(): Promise<Outcome<SendOnlyReport>> {
-    return this.run<SendOnlyReport>([
+    return this.device().rootReport<SendOnlyReport>([
       "folders",
       "push",
       this.dir,
       "--send-only",
-      ...this.server(),
     ]);
   }
 
   /** A send-only push, printed for a person. */
   async pushSendOnlyText(): Promise<Outcome<string>> {
-    return this.device().rootText(["folders", "push", this.dir, "--send-only"]);
+    const said = await this.device().rootReportText([
+      "folders",
+      "push",
+      this.dir,
+      "--send-only",
+    ]);
+    return said.ok ? { ok: true, value: said.value.text } : said;
   }
 
   /** The files the folder keeps whose items its search no longer matches. */
@@ -1440,7 +1495,13 @@ export class CliFolder {
 
   /** A push, printed for a person. */
   async pushText(): Promise<Outcome<string>> {
-    return this.device().rootText(["folders", "push", this.dir]);
+    const said = await this.pushTextWithExit();
+    return said.ok ? { ok: true, value: said.value.text } : said;
+  }
+
+  /** A push, printed for a person, with the exit it ended with. */
+  async pushTextWithExit(): Promise<Outcome<{ text: string; exit: number }>> {
+    return this.device().rootReportText(["folders", "push", this.dir]);
   }
 
   private server(): string[] {

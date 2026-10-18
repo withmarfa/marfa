@@ -3294,7 +3294,7 @@ marfa folders pull [OPTIONS] <DIR>
 
 ### marfa folders push
 
-Scan, drain, catch up, pull, and send the placements the pull queued: everything a folder does, once.
+Scan, drain, catch up, pull, and send the placements the pull queued: everything a folder does, once. Where the server rate-limits the writes and names a wait, it waits that long and sends the rest. Exits 3 where a write is left unsent or the catch-up failed, and 5 where the server refused the credential.
 
 ```text
 marfa folders push [OPTIONS] <DIR>

@@ -4880,9 +4880,71 @@ If a folder sync's first drain stops because the server refuses the credential, 
 
 ### `folders/push-undelivered`
 
-If a folder sync's first drain leaves a write undelivered, then a device MUST NOT drain again after that sync's pull.
+If a folder sync's first drain leaves a write undelivered and reports no `retry_after_seconds`, then a device MUST NOT drain again after that sync's pull.
 
 **Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+
+### `folders/push-waits-retry-after`
+
+If a folder sync's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST wait that long and drain again, for as long as a drain answers a write.
+
+**Reason:** A queue larger than one rate-limit window allows would otherwise take one command for each window. A drain that answers no write is the end: a server that keeps refusing is not asked for ever.
+
+**Tests:** `device/folders.test.ts › waits out the Retry-After a rate limit names, and sends the rest in the same push`.
+
+### `folders/push-waits-retry-after-send-only`
+
+If a send-only run's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST wait that long and drain again, for as long as a drain answers a write.
+
+**Tests:** `device/folders-send-only.test.ts › waits out the Retry-After a rate limit names, and sends the rest in the same run`.
+
+### `folders/push-exit-undelivered`
+
+When a folder push ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.
+
+**Reason:** A script or a person cannot tell a push that sent everything from one that left writes queued by its summary alone.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`, `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+
+### `folders/push-exit-send-only`
+
+When a send-only run ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.
+
+**Tests:** `device/folders-send-only.test.ts › keeps its writes queued where the server cannot be reached, and sends them at the next run`.
+
+### `folders/push-exit-credential`
+
+When a folder push or a send-only run ends with its drain stopped by a refused credential, the CLI MUST exit 5.
+
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain a refused credential stopped`.
+
+### `folders/push-exit-catchup-failed`
+
+When a folder push's catch-up fails environmentally, the CLI MUST exit 3.
+
+**Tests:** `device/folders.test.ts › pulls at a push that cannot reach the server, and says the catch-up failed`.
+
+### `folders/scan-waiting`
+
+When a folder scan finds a file whose bytes are as they were bound and whose write the server has not answered, a device MUST count it in the report's `waiting` and not in `unchanged`.
+
+**Reason:** A file whose write the server never took is not agreed with the server, and a summary that called it unchanged hides the writes still to send.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
+
+### `folders/scan-waiting-said`
+
+When a folder scan counts a file `waiting`, the CLI MUST say how many in its text report.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
+
+### `folders/not-a-folder-refused`
+
+If a folder command that works a folder is given a directory no folder follows, then the CLI MUST refuse it `invalid` with exit 1, and work nothing.
+
+**Reason:** A script that runs `folders push` on a path it believes is a folder must be able to tell that nothing was sent.
+
+**Tests:** `device/folders.test.ts › ends every command on a directory that is not a folder with the refused exit`.
 
 ### `folders/push-placement-retry`
 

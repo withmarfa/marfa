@@ -439,7 +439,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             owner::setup(command, &setup_remote, &out)
         }
         Command::Device(args) => return device::run(args, &named, cli.json),
-        Command::Folders { command } => folders::run(command, &named, cli.json),
+        Command::Folders { command } => return folders::run(command, &named, cli.json),
         Command::Status => status::run(&remote()?, &out),
         Command::Metrics => metrics::run(&remote()?, &out),
         Command::Whoami => whoami::run(&remote()?, &out),

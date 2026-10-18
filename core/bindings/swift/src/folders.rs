@@ -721,7 +721,7 @@ fn pass_of(
             created: scan.created as u64,
             updated: scan.updated as u64,
             renamed: scan.renamed as u64,
-            unchanged: scan.unchanged as u64,
+            unchanged: (scan.unchanged + scan.waiting) as u64,
             missing: scan.missing as u64,
             deleted: scan.deleted as u64,
             skipped: scan.skipped as u64,

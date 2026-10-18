@@ -13,7 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -385,6 +385,51 @@ describe("what a folder is", () => {
       } finally {
         await server.stop();
       }
+    }
+  });
+
+  it("ends every command on a directory that is not a folder with the refused exit", () => {
+    const base = mkdtempSync(
+      join(realpathSync(tmpdir()), "marfa-not-followed-"),
+    );
+    const dir = join(base, "notes");
+    mkdirSync(dir);
+    const env = {
+      ...process.env,
+      MARFA_FOLDER_REGISTRY: join(base, "folders.json"),
+    };
+    for (const command of [
+      ["push"],
+      ["push", "--send-only"],
+      ["pull"],
+      ["status"],
+      ["scan"],
+      ["confirm"],
+      ["restore"],
+      ["hydrate"],
+      ["unmatched"],
+      ["remove"],
+      ["watch", "--for", "1"],
+    ]) {
+      const [name, ...flags] = command;
+      const ran = spawnSync(
+        requireBinary(),
+        [
+          "folders",
+          name!,
+          dir,
+          ...flags,
+          "--url",
+          "http://127.0.0.1:9",
+          "--key",
+          KEY,
+        ],
+        { env, encoding: "utf8" },
+      );
+      expect(
+        [command.join(" "), ran.status, ran.stderr.includes("is not a folder")],
+        `a directory that is not a folder was worked, or its refusal ended with another exit: ${ran.stderr}`,
+      ).toEqual([command.join(" "), 1, true]);
     }
   });
 
@@ -2775,6 +2820,10 @@ describe("files and items", () => {
     ).toBe(true);
     if (!offline.ok) return;
     expect(offline.value.catch_up.failed).toMatch(/network/);
+    expect(
+      offline.value.exit,
+      "a push that could not catch up ended 0, so nothing told a script to try again",
+    ).toBe(3);
     expect(offline.value.pull?.written).toBe(1);
     expect(read(harness, "offline.md")).toContain("as it was");
 
@@ -2937,6 +2986,7 @@ describe("files and items", () => {
     if (!pushed.ok) return;
     // The witness: the first drain met the refusal and the pull wrote a file.
     expect(pushed.value.drain.stopped).toBeTruthy();
+    expect(pushed.value.exit).toBe(5);
     expect(pushed.value.pull?.written).toBe(1);
     expect(
       postedEdges(harness),
@@ -2981,6 +3031,7 @@ describe("files and items", () => {
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
       if (!pushed.ok) return;
       expect(pushed.value.drain.undelivered).toBeGreaterThan(0);
+      expect(pushed.value.exit).toBe(3);
       expect(pushed.value.drain.unavailable).toBeNull();
       expect(pushed.value.drain.stopped).toBeNull();
       expect(pushed.value.pull?.written).toBe(1);
@@ -2994,6 +3045,106 @@ describe("files and items", () => {
     const next = await harness.folder.push();
     expect(next.ok, JSON.stringify(next)).toBe(true);
     expect(placedPaths(edges)).toContain("Elsewhere.md");
+  });
+
+  it("waits out the Retry-After a rate limit names, and sends the rest in the same push", async () => {
+    harness = await folderHarness("push-waits-out-rate-limit");
+    const attempts: number[] = [];
+    scriptFolderWrites(harness, {
+      creating: (answer) => {
+        attempts.push(Date.now());
+        // The second create meets the limit once.
+        return attempts.length === 2 ? answers.rateLimited() : answer;
+      },
+    });
+    for (const title of ["One", "Two", "Three"]) {
+      put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+    }
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      [pushed.value.drain.undelivered, pushed.value.exit],
+      "the push stopped at the rate limit and left the rest for another push",
+    ).toEqual([0, 0]);
+    // The create the limit refused is sent again, so one title is asked twice.
+    expect([...new Set(sentTitles(harness))].sort()).toEqual([
+      "One",
+      "Three",
+      "Two",
+    ]);
+    expect(attempts).toHaveLength(4);
+    expect(
+      attempts[2]! - attempts[1]!,
+      "the push sent again before the wait the rate limit named",
+    ).toBeGreaterThanOrEqual(1900);
+  });
+
+  it("ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting", async () => {
+    harness = await folderHarness("push-rate-limit-undelivered");
+    scriptFolderWrites(harness, { creating: () => answers.rateLimited() });
+    for (const title of ["One", "Two"]) {
+      put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+    }
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect(first.value.scan.created).toBe(2);
+    expect(
+      [first.value.drain.undelivered, first.value.exit],
+      "a push that left writes undelivered ended 0",
+    ).toEqual([2, 3]);
+
+    const second = await harness.folder.push();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    if (!second.ok) return;
+    expect(
+      [
+        second.value.scan.unchanged,
+        second.value.scan.waiting,
+        second.value.drain.undelivered,
+        second.value.exit,
+      ],
+      "files whose writes the server never took were counted unchanged",
+    ).toEqual([0, 2, 2, 3]);
+
+    const said = await harness.folder.pushTextWithExit();
+    expect(said.ok, JSON.stringify(said)).toBe(true);
+    if (!said.ok) return;
+    expect(said.value.exit).toBe(3);
+    expect(said.value.text).toContain("0 unchanged");
+    expect(said.value.text).toContain("2 queued earlier and not delivered yet");
+    expect(said.value.text).toContain("2 write(s) not delivered");
+    expect(said.value.text).toContain("the server asked for 2s");
+  });
+
+  it("sends again when the Retry-After a rate limit named is over, without waiting for a change", async () => {
+    harness = await folderHarness("watch-waits-out-rate-limit");
+    const attempts: number[] = [];
+    scriptFolderWrites(harness, {
+      creating: (answer) => {
+        attempts.push(Date.now());
+        return attempts.length === 1 ? answers.rateLimited() : answer;
+      },
+    });
+    put(harness, "One.md", "---\ntitle: One\n---\nOne\n");
+    const watching = harness.folder.watch();
+    try {
+      // Without the wait, the next pass is the full pass a minute on.
+      await vi.waitFor(
+        () => expect(attempts, watching.stderr).toHaveLength(2),
+        {
+          timeout: 20_000,
+          interval: 100,
+        },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      attempts[1]! - attempts[0]!,
+      "the watch sent again before the wait the rate limit named",
+    ).toBeGreaterThanOrEqual(1900);
   });
 
   it("reports a placement the server refuses in the push's second drain, and does not send it again", async () => {

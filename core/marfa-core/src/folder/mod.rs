@@ -150,7 +150,11 @@ pub struct ScanReport {
     pub created: usize,
     pub updated: usize,
     pub renamed: usize,
+    /// Files whose bytes are as they were and have no write waiting.
     pub unchanged: usize,
+    /// Files whose bytes are as they were but whose item's create or edit
+    /// the server has not answered yet.
+    pub waiting: usize,
     pub missing: usize,
     pub deleted: usize,
     pub trashed: Vec<String>,
@@ -1532,6 +1536,13 @@ impl Folder {
             .iter()
             .map(|bound| (bound.path.as_str(), bound))
             .collect();
+        // Items whose own create or edit the server has not taken, whose
+        // files a scan must not call unchanged.
+        let unanswered: HashSet<String> = crate::store::waiting_writes(&*self.core.conn()?)?
+            .into_iter()
+            .filter(|write| matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem))
+            .filter_map(|write| write.item_id)
+            .collect();
         // Each file's size and time, taken before its read, so a change made
         // during the read differs from what is recorded.
         let mut stats: Vec<(String, String)> = Vec::new();
@@ -1628,7 +1639,16 @@ impl Folder {
                 unchanged.remove(&keys[*at]);
             }
         }
-        report.unchanged += unchanged.len();
+        let waiting = unchanged
+            .iter()
+            .filter(|key| {
+                by_path
+                    .get(key.as_str())
+                    .is_some_and(|bound| unanswered.contains(&bound.item_id))
+            })
+            .count();
+        report.waiting += waiting;
+        report.unchanged += unchanged.len() - waiting;
         // A file already a file item is read whatever the search says, so one
         // no longer embedded, or moved, is followed rather than journaled.
         let files_bound: Vec<&state::Bound> = snapshot
@@ -1954,6 +1974,7 @@ impl Folder {
                     bound: Some(bound),
                 }) if bound.path == file.key => {
                     if bound.content_hash == file.hash && !local_properties_refusal(&bound) {
+                        let waiting = unanswered.contains(&item_id);
                         // A permission changed alone leaves the bytes as they
                         // were.
                         if let Some(runs) = file.executable
@@ -1987,7 +2008,11 @@ impl Folder {
                                 },
                             )?;
                         }
-                        report.unchanged += 1;
+                        if waiting {
+                            report.waiting += 1;
+                        } else {
+                            report.unchanged += 1;
+                        }
                         continue;
                     }
                     if self.queue_update(
