@@ -311,14 +311,8 @@ impl Folder {
             // swept in a folder that went quiet after a delete.
             // No pass runs while the server's rate limit lasts, since a write
             // sent before it ends is refused again: changes on disk wait
-            // unscanned and nothing is pulled. When it ends a pass is due at
-            // once, not at the next change or full pass.
-            let rate_limit_over = match send_again_at {
-                Some(at) if Instant::now() < at => continue,
-                Some(_) => true,
-                None => false,
-            };
-            if !gate.due(Instant::now()) && !rate_limit_over {
+            // unscanned and nothing is pulled.
+            if send_again_at.is_some_and(|at| Instant::now() < at) || !gate.due(Instant::now()) {
                 continue;
             }
             let full = full_due(last_full, Instant::now());
@@ -553,8 +547,7 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
 }
 
 /// How long the server asked the watch to leave its writes alone, where a
-/// pass left some undelivered: no pass runs until it is over, and one then
-/// runs at once.
+/// pass left some undelivered: no pass runs until it is over.
 fn rate_limit_wait(drain: &crate::DrainReport) -> Option<Duration> {
     if drain.stopped.is_some() || drain.undelivered == 0 {
         return None;
@@ -949,6 +942,7 @@ mod tests {
     fn a_pass_that_left_writes_under_a_rate_limit_is_followed_when_it_ends() {
         let mut limited = drained().report;
         limited.undelivered = 4;
+        limited.unavailable = Some("the server asked to be left alone".into());
         limited.retry_after_seconds = Some(3);
         assert_eq!(rate_limit_wait(&limited), Some(Duration::from_secs(3)));
         let mut sent = limited.clone();

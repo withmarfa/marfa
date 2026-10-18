@@ -4880,23 +4880,31 @@ If a folder sync's first drain stops because the server refuses the credential, 
 
 ### `folders/push-undelivered`
 
-If a folder sync's first drain leaves a write undelivered and reports no `retry_after_seconds`, then a device MUST NOT drain again after that sync's pull.
+If a folder sync's first drain leaves a write undelivered, then a device MUST NOT drain again after that sync's pull.
 
-**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`, `device/folders.test.ts › leaves the writes a rate limit refused for the next push, without waiting`.
 
-### `folders/push-waits-retry-after`
+### `folders/push-rate-limit-no-wait`
 
-If a folder sync's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST wait that long and drain again, for as long as a drain answers a write.
+If a folder sync's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST end the sync without waiting for that time, and keep the write queued.
 
-**Reason:** A queue larger than one rate-limit window allows would otherwise take one command for each window. A drain that answers no write is the end: a server that keeps refusing is not asked for ever.
+**Reason:** A sync holds the folder's writer for as long as it runs, so a sync that waited out the server would keep every other command from the folder for a time the server sets, and could not be interrupted. The caller, or a watch, tries again.
 
-**Tests:** `device/folders.test.ts › waits out the Retry-After a rate limit names, and sends the rest in the same push`.
+**Tests:** `device/folders.test.ts › leaves the writes a rate limit refused for the next push, without waiting`.
 
-### `folders/push-waits-retry-after-send-only`
+### `folders/push-rate-limit-no-wait-send-only`
 
-If a send-only run's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST wait that long and drain again, for as long as a drain answers a write.
+If a send-only run's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST end the run without waiting for that time, and keep the write queued.
 
-**Tests:** `device/folders-send-only.test.ts › waits out the Retry-After a rate limit names, and sends the rest in the same run`.
+**Tests:** `device/folders-send-only.test.ts › leaves the write a rate limit refused for the next run, without waiting`.
+
+### `folders/watch-rate-limit-pause`
+
+When a folder watch's pass leaves a write undelivered and its drain reports `retry_after_seconds`, a device MUST NOT start another pass of that watch until that time has passed.
+
+**Reason:** A write sent before the time has passed is refused again, and spends the key's rate limit.
+
+**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`.
 
 ### `folders/push-exit-undelivered`
 

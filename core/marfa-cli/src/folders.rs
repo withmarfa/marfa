@@ -90,10 +90,8 @@ pub enum FoldersCommand {
         dir: PathBuf,
     },
     /// Scan, drain, catch up, pull, and send the placements the pull queued:
-    /// everything a folder does, once. Where the server rate-limits the writes
-    /// and names a wait, it waits that long and sends the rest. Exits 3 where a
-    /// write is left unsent or the catch-up failed, and 5 where the server
-    /// refused the credential.
+    /// everything a folder does, once. Exits 3 where a write is left unsent or
+    /// the catch-up failed, and 5 where the server refused the credential.
     Push {
         /// The folder.
         dir: PathBuf,

@@ -432,9 +432,7 @@ impl Folders {
     /// up with the server and writes out what its search matches. A folder
     /// whose first sync waits to be confirmed is only read, and `Waiting`
     /// says what the sync will do. Asks a watch that holds the folder to let
-    /// it go, as `add` does. Blocks while the server's rate limit lasts, up
-    /// to 300 seconds for each wait the server names, and holds the folder
-    /// meanwhile.
+    /// it go, as `add` does.
     pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
         let synced = match working(&dir, self.server.clone())?.sync()? {
             marfa_core::Synced::Done(synced) => *synced,

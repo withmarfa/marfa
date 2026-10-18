@@ -46,9 +46,6 @@ impl Folder {
     /// the end of one.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
-    /// Blocks while the server's rate limit lasts: where a drain leaves
-    /// writes undelivered and names a wait, it sleeps that long, up to 300
-    /// seconds, and drains again, for as long as each drain answers a write.
     pub fn sync(&self) -> Result<Synced> {
         let result = self.sync_observed();
         match &result {
@@ -97,7 +94,7 @@ impl Folder {
     /// the directory and removes none. A copy that never hydrated hydrates
     /// first, which writes only the store. A later `sync` pulls what this
     /// left. Refused while the first sync waits to be confirmed, before
-    /// anything is sent. Blocks for the server's rate limit as `sync` does.
+    /// anything is sent.
     pub fn send_only(&self) -> Result<SendReport> {
         self.refuse_while_waiting()?;
         let result = self.send_only_observed();
@@ -121,7 +118,6 @@ impl Folder {
         let settings = self.send_settings_edit()?;
         let scan = self.scan_keeping_files()?;
         let drain = self.drain()?;
-        let drain = self.wait_out(drain)?;
         Ok(SendReport {
             hydrated,
             settings,
@@ -138,26 +134,6 @@ impl Folder {
         }
         self.sync_confirmed()
             .map(|report| Synced::Done(Box::new(report)))
-    }
-
-    /// Where the server rate-limited the sync's writes and named when to
-    /// try again, waits that long and drains again, for as long as each wait
-    /// lets the server answer a write, so one sync sends a queue larger than
-    /// one rate-limit window allows. The drain it returns is the whole of
-    /// them, with the wait and the writes the last pass left.
-    fn wait_out(&self, mut drained: Drained) -> Result<Drained> {
-        while let Some(wait) = asked_to_wait(&drained.report) {
-            std::thread::sleep(wait);
-            let more = self.drain()?;
-            let sent = more.report.answered > 0;
-            let retry_after = more.report.retry_after_seconds;
-            drained.absorb(more);
-            drained.report.retry_after_seconds = retry_after;
-            if !sent {
-                break;
-            }
-        }
-        Ok(drained)
     }
 
     fn sync_confirmed(&self) -> Result<SyncReport> {
@@ -183,7 +159,6 @@ impl Folder {
         {
             drain.absorb(self.drain()?);
         }
-        let drain = self.wait_out(drain)?;
         Ok(SyncReport {
             hydrated,
             settings,
@@ -330,16 +305,6 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         })
 }
 
-/// How long the server asked a sync to wait before its writes are tried
-/// again, where a drain left some undelivered under a credential it did not
-/// refuse.
-fn asked_to_wait(drain: &crate::DrainReport) -> Option<Duration> {
-    if drain.stopped.is_some() || drain.undelivered == 0 {
-        return None;
-    }
-    drain.retry_after_seconds.map(Duration::from_secs)
-}
-
 /// Not where the first drain or the catch-up shows the server cannot take
 /// writes (unreachable, credential refused, a write left undelivered): the
 /// report says why, and the placements wait for the next sync.
@@ -385,34 +350,5 @@ mod tests {
             ..drained()
         };
         assert!(!sends_again(true, &undelivered));
-    }
-    #[test]
-    fn a_sync_waits_only_where_the_server_named_a_wait_for_writes_it_left() {
-        let limited = crate::DrainReport {
-            undelivered: 3,
-            unavailable: Some("the server asked to be left alone".into()),
-            retry_after_seconds: Some(2),
-            ..drained()
-        };
-        assert_eq!(asked_to_wait(&limited), Some(Duration::from_secs(2)));
-        let nothing_left = crate::DrainReport {
-            undelivered: 0,
-            ..limited.clone()
-        };
-        assert_eq!(asked_to_wait(&nothing_left), None);
-        let unnamed = crate::DrainReport {
-            retry_after_seconds: None,
-            ..limited.clone()
-        };
-        assert_eq!(
-            asked_to_wait(&unnamed),
-            None,
-            "a failure that named no wait"
-        );
-        let refused = crate::DrainReport {
-            stopped: Some("the server refused the credential".into()),
-            ..limited
-        };
-        assert_eq!(asked_to_wait(&refused), None);
     }
 }

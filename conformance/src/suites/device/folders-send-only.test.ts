@@ -254,13 +254,13 @@ describe("a push that only sends", () => {
     expect(sentUpdates(harness)).toEqual([]);
     expect(existsSync(join(harness.dir, "Server note.md"))).toBe(false);
   });
-  it("waits out the Retry-After a rate limit names, and sends the rest in the same run", async () => {
+  it("leaves the write a rate limit refused for the next run, without waiting", async () => {
     harness = await folderHarness("send-only-rate-limit", { rows });
-    const attempts: number[] = [];
+    let attempts = 0;
     scriptFolderWrites(harness, {
       creating: (answer) => {
-        attempts.push(Date.now());
-        return attempts.length === 1 ? answers.rateLimited() : answer;
+        attempts += 1;
+        return attempts === 1 ? answers.rateLimited() : answer;
       },
     });
     put(harness, "mine.md", typed("Mine"));
@@ -268,13 +268,14 @@ describe("a push that only sends", () => {
     expect(sent.ok, JSON.stringify(sent)).toBe(true);
     if (!sent.ok) return;
     expect(
-      [sent.value.drain.undelivered, sent.value.exit],
-      "the run stopped at the rate limit and left the write for another run",
-    ).toEqual([0, 0]);
-    expect(attempts).toHaveLength(2);
-    expect(
-      attempts[1]! - attempts[0]!,
-      "the run sent again before the wait the rate limit named",
-    ).toBeGreaterThanOrEqual(1900);
+      [attempts, sent.value.drain.undelivered, sent.value.exit],
+      "the run waited out the rate limit and drained again",
+    ).toEqual([1, 1, 3]);
+    const again = await harness.folder.pushSendOnly();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([attempts, again.value.drain.undelivered, again.value.exit]).toEqual(
+      [2, 0, 0],
+    );
   });
 });

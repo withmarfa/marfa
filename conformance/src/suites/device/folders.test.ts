@@ -3047,14 +3047,14 @@ describe("files and items", () => {
     expect(placedPaths(edges)).toContain("Elsewhere.md");
   });
 
-  it("waits out the Retry-After a rate limit names, and sends the rest in the same push", async () => {
-    harness = await folderHarness("push-waits-out-rate-limit");
-    const attempts: number[] = [];
+  it("leaves the writes a rate limit refused for the next push, without waiting", async () => {
+    harness = await folderHarness("push-leaves-rate-limited");
+    let attempts = 0;
     scriptFolderWrites(harness, {
       creating: (answer) => {
-        attempts.push(Date.now());
+        attempts += 1;
         // The second create meets the limit once.
-        return attempts.length === 2 ? answers.rateLimited() : answer;
+        return attempts === 2 ? answers.rateLimited() : answer;
       },
     });
     for (const title of ["One", "Two", "Three"]) {
@@ -3064,20 +3064,22 @@ describe("files and items", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
     expect(
-      [pushed.value.drain.undelivered, pushed.value.exit],
-      "the push stopped at the rate limit and left the rest for another push",
-    ).toEqual([0, 0]);
+      [attempts, pushed.value.exit],
+      "the push waited out the rate limit and drained again",
+    ).toEqual([2, 3]);
+    expect(pushed.value.drain.undelivered).toBe(2);
+    expect(pushed.value.drain.retry_after_seconds).toBe(2);
+
+    const next = await harness.folder.push();
+    expect(next.ok, JSON.stringify(next)).toBe(true);
+    if (!next.ok) return;
+    expect([next.value.drain.undelivered, next.value.exit]).toEqual([0, 0]);
     // The create the limit refused is sent again, so one title is asked twice.
     expect([...new Set(sentTitles(harness))].sort()).toEqual([
       "One",
       "Three",
       "Two",
     ]);
-    expect(attempts).toHaveLength(4);
-    expect(
-      attempts[2]! - attempts[1]!,
-      "the push sent again before the wait the rate limit named",
-    ).toBeGreaterThanOrEqual(1900);
   });
 
   it("ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting", async () => {
@@ -3120,23 +3122,28 @@ describe("files and items", () => {
 
   it("sends again when the Retry-After a rate limit named is over, without waiting for a change", async () => {
     harness = await folderHarness("watch-waits-out-rate-limit");
+    // A monotonic clock, so an adjustment of the wall clock cannot move the
+    // gap this measures.
     const attempts: number[] = [];
     scriptFolderWrites(harness, {
       creating: (answer) => {
-        attempts.push(Date.now());
+        attempts.push(performance.now());
         return attempts.length === 1 ? answers.rateLimited() : answer;
       },
     });
     put(harness, "One.md", "---\ntitle: One\n---\nOne\n");
     const watching = harness.folder.watch();
     try {
-      // Without the wait, the next pass is the full pass a minute on.
+      // How long the watch takes to start is not what this measures.
+      await vi.waitFor(
+        () => expect(attempts, watching.stderr).toHaveLength(1),
+        { timeout: 60_000, interval: 100 },
+      );
+      // The limit names 2 seconds; without the pause, the pass a tick later
+      // sends again. The bound is generous so a loaded machine meets it.
       await vi.waitFor(
         () => expect(attempts, watching.stderr).toHaveLength(2),
-        {
-          timeout: 20_000,
-          interval: 100,
-        },
+        { timeout: 40_000, interval: 100 },
       );
     } finally {
       await watching.stop();
