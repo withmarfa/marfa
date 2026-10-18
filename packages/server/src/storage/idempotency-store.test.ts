@@ -611,8 +611,12 @@ describe("retention has one owner", () => {
     // Read from the source because the property is about which
     // housekeeping job the call sits in, and both delete rows on the same
     // cadence: a behavioral test cannot tell one from the other.
-    const start = registrations.indexOf('name: "event-log-cleanup"');
-    const end = registrations.indexOf('name: "audit-cleanup"');
+    const start = registrations.indexOf(
+      'name: HOUSEKEEPING_JOBS["event-log-cleanup"].name',
+    );
+    const end = registrations.indexOf(
+      'name: HOUSEKEEPING_JOBS["audit-cleanup"].name',
+    );
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const cleanup = registrations.slice(start, end);
@@ -629,7 +633,9 @@ describe("retention has one owner", () => {
   it("registers no housekeeping job of its own", () => {
     // The witness that this is where a registration would be: the sweep
     // it rides is registered here.
-    expect(registrations).toContain('name: "event-log-cleanup"');
+    expect(registrations).toContain(
+      'name: HOUSEKEEPING_JOBS["event-log-cleanup"].name',
+    );
     expect(registrations).not.toContain("idempotency-cleanup");
   });
 });

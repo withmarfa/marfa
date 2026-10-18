@@ -13,6 +13,7 @@ import {
   createUnclaimedTestApp,
   type UnclaimedTestApp,
 } from "../test-utils.js";
+import { HOUSEKEEPING_JOBS } from "./metadata.js";
 import { registerHousekeepingJobs } from "./registrations.js";
 import { DEFAULT_RUN_DEADLINE_MS, Housekeeping } from "./scheduler.js";
 
@@ -94,6 +95,9 @@ describe("the housekeeping registrations", () => {
     const { names: withReceiver } = await namesUnder({
       heartbeatUrl: "http://127.0.0.1:1/heartbeat",
     });
+    expect([...withReceiver].sort()).toEqual(
+      Object.keys(HOUSEKEEPING_JOBS).sort(),
+    );
     expect(withReceiver).toContain("heartbeat");
     expect(withReceiver.filter((name) => name !== "heartbeat")).toEqual(names);
   });
