@@ -1643,6 +1643,11 @@ function otlpSignalUrl(
   return `${general.endsWith("/") ? general : `${general}/`}${path}`;
 }
 
+/** The first value that says something: not unset and not empty. */
+function firstNamed(...values: (string | undefined)[]): string | undefined {
+  return values.find((value) => value !== undefined && value !== "");
+}
+
 /**
  * What `OTEL_RESOURCE_ATTRIBUTES` names, less `service.name`, which is the
  * service name, and less an empty value for the environment, which names
@@ -1672,9 +1677,10 @@ function otelSettings(
   if (general === undefined) return undefined;
   return {
     serviceName:
-      s.OTEL_SERVICE_NAME ||
-      s.OTEL_RESOURCE_ATTRIBUTES["service.name"] ||
-      "marfa-server",
+      firstNamed(
+        s.OTEL_SERVICE_NAME,
+        s.OTEL_RESOURCE_ATTRIBUTES["service.name"],
+      ) ?? "marfa-server",
     resourceAttributes: namedAttributes(s.OTEL_RESOURCE_ATTRIBUTES),
     tracesEndpoint: otlpSignalUrl(
       s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
@@ -1829,9 +1835,10 @@ export function loadConfig(
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
     deploymentEnvironment:
-      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"] ||
-      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"] ||
-      DEFAULT_DEPLOYMENT_ENVIRONMENT,
+      firstNamed(
+        s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"],
+        s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"],
+      ) ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
     errorWebhookUrl: s.ERROR_WEBHOOK_URL,
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
     trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,
