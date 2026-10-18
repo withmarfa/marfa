@@ -446,7 +446,7 @@ When a request that carries a credential the instance does not hold sends `GET /
 
 ## Upgrading
 
-Until the first public release nothing upgrades a database in place (`search-and-filters/restore-version`). An owner who runs a build over a database another build wrote is told so before anything is changed.
+Until the first public release nothing upgrades a database in place (`search-and-filters/restore-version`). If a database has an incompatible declared schema, a retired registry table or a retired setting, the server refuses to start and tells the owner why before changing the database file.
 
 ### `instance/upgrade-refuses-retired-tables`
 
@@ -978,7 +978,7 @@ When every setting is inside its rule, one at the edge of its rule and a pair at
 
 If a setting is outside the rule the table gives it, then the server MUST exit with status 1 instead of starting.
 
-**Reason:** status 78 is for a database another build wrote, so a supervisor can tell a stop that editing the settings will mend from one that exporting and restoring will.
+**Reason:** status 78 is for an incompatible database, so a supervisor can tell a stop that editing the settings will mend from one that exporting and restoring will.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› names every setting that is outside its rule in one refusal`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`, `› refuses to start with status 1, naming %s, when each setting is inside its own rule and the two disagree`.
 

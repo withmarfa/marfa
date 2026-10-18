@@ -1,6 +1,7 @@
 /**
  * The exit status of a server that will not open the database it was
- * pointed at, because another build wrote it. It is `EX_CONFIG` from
+ * pointed at, because its structure or stored settings are incompatible
+ * with this build. It is `EX_CONFIG` from
  * `sysexits.h`: the instance's configuration, a file it names, is what is
  * wrong, and starting again will not change that. `deploy/entrypoint.sh`
  * reads this number to tell such a stop from a crash.
