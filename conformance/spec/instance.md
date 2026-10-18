@@ -996,7 +996,7 @@ When the server starts, the server MUST hold no fault.
 
 ## Telemetry
 
-These rules hold where telemetry is on, which `OTEL_EXPORTER_OTLP_ENDPOINT` does.
+Telemetry is on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and these rules hold where it is.
 
 ### `instance/telemetry-instance-id`
 

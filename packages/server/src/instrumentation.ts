@@ -27,10 +27,12 @@
  * instance's own id, the `instance_id` that `GET /` answers. The id lives in
  * the database, which opens after this preload, so the attribute is a
  * promise the server settles once it has read the id (`index.ts`), and the
- * exporters hold each batch until it has. A server that stops before that
- * settles it empty, so what was queued still leaves, unnamed. The instance's
- * configured name is not an attribute: it can change while the server runs,
- * which a resource, fixed at start, cannot follow, and it can be personal.
+ * exporters hold each batch until it has. A shutdown that runs first settles
+ * it empty, so what was queued still leaves, unnamed; the server's own
+ * shutdown comes only after the id is read, and a boot that fails exits
+ * without a flush. The instance's configured name is not an attribute: it can
+ * change while the server runs, which a resource, fixed at start, cannot
+ * follow, and it can be personal.
  *
  * Exceptions are a third, separate pipeline, gated on `MARFA_POSTHOG_HOST`
  * and `MARFA_POSTHOG_PROJECT_TOKEN`, and on the endpoint being set. PostHog's
