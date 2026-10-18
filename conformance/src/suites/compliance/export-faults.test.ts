@@ -9,7 +9,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { blobFolder, clientsFor } from "../../utils/own-blob-server.js";
+import {
+  blobFolder,
+  clientsFor,
+  DISK_ONLY,
+} from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -21,6 +25,9 @@ import { waitFor } from "../../utils/wait.js";
  *
  * The archive carries two blobs of bytes that cannot be compressed, so a
  * complete read is the witness that the archive is whole when nothing fails.
+ * The server attaches only its disk: a blob whose read fails before its bytes
+ * begin is read from another store that holds it, where there is one
+ * (`search-and-filters/archive-blob-any-store`).
  */
 const BLOB_BYTES = 1024 * 1024;
 const ITEMS = 60;
@@ -30,7 +37,7 @@ let working: MarfaClient;
 const hashes: string[] = [];
 
 beforeAll(async () => {
-  server = await bootFreshServer("export-faults");
+  server = await bootFreshServer("export-faults", DISK_ONLY);
   ({ working } = clientsFor(server));
   for (let blob = 0; blob < 2; blob++) {
     const upload = await working.uploadBlob(
