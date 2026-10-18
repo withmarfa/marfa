@@ -1447,9 +1447,9 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 ### `events/address-name-refused`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that resolves to any address that is not public, then the server MUST answer `400 validation_error`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
 
-**Reason:** a subscription that no attempt could deliver, such as one to a name on a Tailscale or home network, is better refused when it is registered than found later in the delivery log. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well.
+**Reason:** a subscription the server would refuse to deliver to at every attempt is better refused when it is registered than found later in the delivery log. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well. A receiver reached by a name on a Tailscale or home network resolves to a carrier-grade NAT or private address, so this is the refusal such a person meets first. A lookup that does not finish is `events/address-name-unresolved`, and the check at each attempt (`events/address-name-unsent`) still has the final say.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
 
@@ -1463,9 +1463,9 @@ Where the instance does not allow private addresses, if the server answers `400 
 
 ### `events/address-name-unresolved`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, then the server MUST answer `201`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, whose lookup does not finish within the registration limit of 3 seconds, or whose lookup the server does not make because it is already making two for registrations, then the server MUST answer `201`.
 
-**Reason:** the receiver may not exist yet, and a lookup that fails at registration says nothing about the one that delivery makes. The attempt looks again and records `The receiver could not be reached.` if it still fails.
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A lookup cannot be cancelled and holds a thread the server shares, so the number running at once is bounded, and the check at each attempt (`events/address-name-unsent`) still has the final say. The attempt records `The receiver could not be reached.` if it still fails.
 
 **Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
 
@@ -1483,7 +1483,7 @@ Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` n
 
 ### `events/address-name-update`
 
-Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` names a `url` whose host is a name that resolves to any address that is not public, then the server MUST answer `400 validation_error`.
+Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses to point a subscription at an address that is not public, leaving the stored url`.
 

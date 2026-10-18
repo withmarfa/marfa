@@ -107,6 +107,16 @@ export function refuseWebhookUrl(
 /** How long registration waits for a name to resolve before leaving it to delivery. */
 export const REGISTRATION_LOOKUP_TIMEOUT_MS = 3_000;
 
+/**
+ * The most lookups registration runs at once. A lookup cannot be cancelled
+ * and holds one of the four threads the process shares with its file and
+ * database work until the resolver answers, so a name that never answers
+ * would otherwise let a few requests take them all. A lookup that finds the
+ * limit reached is not made, and the delivery guard decides.
+ */
+export const MAX_REGISTRATION_LOOKUPS = 2;
+let registrationLookups = 0;
+
 async function systemResolve(hostname: string): Promise<string[]> {
   return (await dnsLookupAll(hostname, { all: true })).map((a) => a.address);
 }
@@ -118,11 +128,11 @@ async function systemResolve(hostname: string): Promise<string[]> {
  * public ones, so such a subscription could never be delivered to.
  *
  * Only a definite answer refuses. A name that does not resolve, answers
- * nothing or takes longer than `timeoutMs` is stored: the receiver may not
- * exist yet, a resolver that fails here proves nothing about the one
- * delivery uses, and the guard that holds is the delivery's, which looks
- * again at every attempt. A host written as an address is
- * `refuseWebhookUrl`'s.
+ * nothing, takes longer than `timeoutMs`, or finds `MAX_REGISTRATION_LOOKUPS`
+ * already running is stored: the receiver may not exist yet, a resolver that
+ * fails here proves nothing about the one delivery uses, and the guard that
+ * holds is the delivery's, which looks again at every attempt. A host written
+ * as an address is `refuseWebhookUrl`'s.
  *
  * Answers the reason, or null where the URL may be stored. Call it only
  * where private addresses are not allowed.
@@ -143,11 +153,20 @@ export async function refuseNonPublicHost(
   if (literalAddress(url) !== null) return null;
   const resolve = options.resolve ?? systemResolve;
   const timeoutMs = options.timeoutMs ?? REGISTRATION_LOOKUP_TIMEOUT_MS;
+  if (registrationLookups >= MAX_REGISTRATION_LOOKUPS) return null;
+  registrationLookups += 1;
+  // The place is given back when the resolver answers, not when the wait
+  // ends, since the thread is busy until then.
+  const lookup = new Promise<string[]>((answer) => {
+    answer(resolve(url.hostname));
+  }).finally(() => {
+    registrationLookups -= 1;
+  });
   let timer: NodeJS.Timeout | undefined;
   let addresses: string[];
   try {
     addresses = await Promise.race([
-      resolve(url.hostname),
+      lookup,
       new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           reject(new Error("lookup timed out"));

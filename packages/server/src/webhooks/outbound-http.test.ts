@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import {
   DELIVERY_FAILURE,
   createWebhookHttpClient,
+  MAX_REGISTRATION_LOOKUPS,
   isPublicAddress,
   refuseNonPublicHost,
   refuseWebhookUrl,
@@ -130,6 +131,18 @@ describe("refuseWebhookUrl", () => {
   });
 });
 
+/** A resolver that answers when the test says so, which a wait may outlast. */
+function hungLookup(): {
+  resolve: () => Promise<string[]>;
+  answer: (addresses: string[]) => void;
+} {
+  let answer!: (addresses: string[]) => void;
+  const promise = new Promise<string[]>((resolve) => {
+    answer = resolve;
+  });
+  return { resolve: () => promise, answer };
+}
+
 describe("refuseNonPublicHost", () => {
   const resolvingTo =
     (...addresses: string[]) =>
@@ -186,11 +199,12 @@ describe("refuseNonPublicHost", () => {
   });
 
   it("takes a name it cannot resolve, leaving delivery to look again", async () => {
+    const hung = hungLookup();
     for (const resolve of [
       () => Promise.reject(new Error("ENOTFOUND")),
       () => Promise.resolve([]),
-      // Never answers.
-      () => new Promise<string[]>(() => undefined),
+      // Answers, but past the limit, and with an address that would refuse.
+      hung.resolve,
     ]) {
       expect(
         await refuseNonPublicHost("https://receiver.example/hook", {
@@ -199,6 +213,48 @@ describe("refuseNonPublicHost", () => {
         }),
       ).toBeNull();
     }
+    hung.answer(["10.0.0.5"]);
+  });
+
+  it("makes at most MAX_REGISTRATION_LOOKUPS at once, accepting a name it does not look up, and gives the places back when the resolvers answer", async () => {
+    const private_ = () => Promise.resolve(["10.0.0.5"]);
+    // The witness: with a place free, the same resolver refuses.
+    expect(
+      await refuseNonPublicHost("https://receiver.example/hook", {
+        resolve: private_,
+      }),
+    ).not.toBeNull();
+
+    // Names that never answer take every place, though each wait ends.
+    const hung = Array.from({ length: MAX_REGISTRATION_LOOKUPS }, hungLookup);
+    for (const lookup of hung) {
+      expect(
+        await refuseNonPublicHost("https://receiver.example/hook", {
+          resolve: lookup.resolve,
+          timeoutMs: 10,
+        }),
+      ).toBeNull();
+    }
+    let asked = 0;
+    const counted = () => {
+      asked += 1;
+      return private_();
+    };
+    expect(
+      await refuseNonPublicHost("https://receiver.example/hook", {
+        resolve: counted,
+      }),
+    ).toBeNull();
+    expect(asked).toBe(0);
+
+    for (const lookup of hung) lookup.answer([]);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      await refuseNonPublicHost("https://receiver.example/hook", {
+        resolve: counted,
+      }),
+    ).not.toBeNull();
+    expect(asked).toBe(1);
   });
 
   it("leaves an address written out to refuseWebhookUrl, and asks no resolver", async () => {
