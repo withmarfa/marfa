@@ -165,6 +165,15 @@ impl From<CoreError> for CliError {
                 status,
                 location,
             },
+            // The credential that held a stream ended: every command ends
+            // as a request with that credential would, so `marfa login` is
+            // the way on and a retry is not.
+            CoreError::StreamIncomplete { reason } if reason == "credential_ended" => {
+                Self::Core(CoreError::Unauthorized {
+                    code: "unauthorized".into(),
+                    message: "the credential that holds this stream ended".into(),
+                })
+            }
             other => Self::Core(other),
         }
     }
@@ -538,6 +547,21 @@ mod tests {
             retry_after_seconds: None,
             details: None,
         }
+    }
+
+    #[test]
+    fn a_stream_the_credential_ended_is_refused_as_a_credential_for_every_command() {
+        let ended = CliError::from(CoreError::StreamIncomplete {
+            reason: "credential_ended".into(),
+        });
+        assert_eq!(ended.code(), "unauthorized");
+        assert_eq!(ended.exit(), Exit::Credential);
+        // The witness: any other reason is the environment's.
+        let behind = CliError::from(CoreError::StreamIncomplete {
+            reason: "reader_behind".into(),
+        });
+        assert_eq!(behind.code(), "stream_incomplete");
+        assert_eq!(behind.exit(), Exit::Environment);
     }
 
     #[test]

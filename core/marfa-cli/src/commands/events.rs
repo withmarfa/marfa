@@ -166,16 +166,7 @@ fn terminal_refusal(frame: &Frame) -> Option<CliError> {
             text("requested"),
             text("min_retained_id")
         ))),
-        // A stream held by a credential that ended is refused as a request
-        // with that credential would be, so `marfa login` is the way on and
-        // a retry is not.
-        "stream_incomplete" if text("reason") == "credential_ended" => {
-            Some(CliError::Core(marfa_core::CoreError::Unauthorized {
-                code: "unauthorized".into(),
-                message: "the credential that holds this stream ended".into(),
-            }))
-        }
-        "stream_incomplete" => Some(CliError::Core(marfa_core::CoreError::StreamIncomplete {
+        "stream_incomplete" => Some(CliError::from(marfa_core::CoreError::StreamIncomplete {
             reason: data
                 .get("reason")
                 .and_then(Value::as_str)
