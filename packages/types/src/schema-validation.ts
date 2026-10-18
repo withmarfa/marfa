@@ -92,16 +92,16 @@ const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
   };
 
 /**
- * The property names full-text search indexes whatever their field type. A
- * thumbnail may not take one, because its base64 would then be searchable.
- */
-/**
  * The most days `retention_policy.feed_days` may name: the largest window
  * an instance setting takes (`MAX_RETENTION_DAYS`), which keeps the cutoff
  * a job computes inside the range of a date.
  */
 export const MAX_FEED_DAYS = 36_500;
 
+/**
+ * The property names full-text search indexes whatever their field type. A
+ * thumbnail may not take one, because its base64 would then be searchable.
+ */
 export const ALWAYS_SEARCHED_FIELDS = [
   "title",
   "body",

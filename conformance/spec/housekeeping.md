@@ -406,7 +406,7 @@ The server MUST leave a feed item that is already in the bin where it is when th
 
 The server MUST NOT move an item to the bin by the `feed-expiry` job after it has been brought back from the bin, by a restore or by a transition to `active`.
 
-**Reason:** an expiry that a person undid by restoring would otherwise repeat at every run and could never be kept. A restored item stays until a person deletes it or promotes it; moving it to the library is the way to keep it for good.
+**Reason:** an expiry that a person undid by restoring would otherwise repeat at every run, and the item could never be kept.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › does not move an item again that was brought back from the bin, by restore or by transition`.
 
