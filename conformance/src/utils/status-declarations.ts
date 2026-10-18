@@ -149,7 +149,9 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/passkey/verify-registration": [200, 400, 401, 403, 409, 500],
   "GET /auth/passkey/generate-authenticate-options": [200, 403],
   "POST /auth/passkey/verify-authentication": [200, 400, 401, 403, 500],
-  "GET /auth/oauth2/authorize": [200, 302],
+  // Refuses owner-only email writes before redirecting:
+  // instance-claim/profile-email-write-scope.
+  "GET /auth/oauth2/authorize": [200, 302, 400],
   "GET /auth/authorize": [200, 302, 400, 404],
   "POST /auth/authorize/decision": [200, 302, 400, 403, 500],
   "GET /auth/error": [200],

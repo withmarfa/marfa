@@ -90,7 +90,7 @@ impl Leaf {
     fn variants(&self) -> Vec<(Vec<String>, bool)> {
         // Each flag alone, with each value the parser names, or, where
         // it takes any text, with the first of these the command accepts.
-        const TEXTS: [&str; 5] = ["x", "{}", "x=x", "1", "2026-01-01T00:00:00Z"];
+        const TEXTS: [&str; 6] = ["x", "{}", "x=x", "name=read", "1", "2026-01-01T00:00:00Z"];
         let mut variants: Vec<(Vec<String>, bool)> = vec![(Vec::new(), false)];
         for flag in &self.flags {
             if flag.values.is_empty() && !flag.spelling.contains('<') {
@@ -166,6 +166,7 @@ fn socket_only(words: &[String]) -> bool {
         || words == ["setup", "open"]
         || words == ["owner", "recover"]
         || words.starts_with(&["owner".into(), "passkeys".into()])
+        || words == ["owner", "update"]
 }
 
 /// Where a command has no use: what is not a request to the server, what
@@ -260,6 +261,15 @@ fn command_line(
         match error.kind() {
             ErrorKind::MissingRequiredArgument => {
                 for name in named(ContextKind::InvalidArg) {
+                    let name = if name.starts_with("<--") {
+                        name.split('|')
+                            .next()
+                            .unwrap()
+                            .trim_start_matches('<')
+                            .to_string()
+                    } else {
+                        name
+                    };
                     given.push((name, 0, None));
                 }
             }
@@ -384,6 +394,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             "owner passkeys remove",
             "owner passkeys add",
             "owner recover",
+            "owner update",
         ]
     );
     for leaf in commands {
@@ -662,6 +673,8 @@ const MISSED: &[&str] = &[
     "listOwnerPasskeys",
     "updateOwnerPasskey",
     "removeOwnerPasskey",
+    // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
+    "updateOwner",
     // `setup claim`: secret input is driven by the child-process fixture above.
     "createOwner",
 ];

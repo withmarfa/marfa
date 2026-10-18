@@ -26,7 +26,7 @@ const READS: Record<string, string> = {
   WebhookStore: "checkpoint listAfter list get count",
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
-    "getClient listLiveGrantClients getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey findDeviceCodeRequest",
+    "getClient listLiveGrantClients getPriorConsent validateAccessToken getAccessTokenById findAuthorizationCodeGrantKey findRefreshTokenGrantKey findGrantItemId findDeviceCodeGrantKey findDeviceCodeRequest findTokenGrantScopes",
   AuditStore: "has list",
   EventLogStore: "getAfter getNonFanoutEnd getMinRetainedId getMaxId",
   SettingsStore: "get",
@@ -68,6 +68,7 @@ const WRITES: Record<string, string> = {
   SettingsStore: "set claim release",
   EdgeStore: "createRaw updateProperties delete deleteBySource deleteByTarget",
   AuthSessionStore: "deleteExpired",
+  OwnerStore: "update",
   RateLimitStore: "incrementWindow incrementWindows cleanup clearSignIn",
   BulkActionJobStore:
     "create claimNext beginChunk checkpointChunk completeOwned failOwned cancel recoverStale gcExpired",

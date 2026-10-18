@@ -262,6 +262,43 @@ marfa owner recover [OPTIONS]
 | --- | --- |
 | `--stdin` | Read a JSON object containing password from standard input instead of a hidden prompt. |
 
+### marfa owner update
+
+Change the owner's email or display name (private socket required).
+
+```text
+marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>>
+```
+
+| Option | Description |
+| --- | --- |
+| `--email <EMAIL>` | The email address the owner uses to sign in. |
+| `--name <NAME>` | The owner's display name. |
+
+## profile
+
+The owner's name and avatar, changed with a key or app's profile write permission.
+
+### marfa profile
+
+```text
+marfa profile [OPTIONS] <COMMAND>
+```
+
+### marfa profile update
+
+Change the owner's name or avatar with profile write permission for each field.
+
+```text
+marfa profile update [OPTIONS] <--name <NAME>|--avatar <AVATAR>|--clear-avatar>
+```
+
+| Option | Description |
+| --- | --- |
+| `--name <NAME>` | The owner's new display name. |
+| `--avatar <AVATAR>` | An HTTP or HTTPS avatar URL. Marfa does not fetch it. |
+| `--clear-avatar` | Clear the avatar URL. |
+
 ## sign-ins
 
 Sign-ins: every browser, app and key that can reach the server. A key or an app's token is refused; use --socket.

@@ -37,6 +37,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/auth-asset-cache-browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
+  "routes/profile-browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/passkeys-browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/web-page-browser.test.ts":

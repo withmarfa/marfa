@@ -162,7 +162,17 @@ impl PermissionMapArgs {
             ),
         ] {
             if !values.is_empty() {
-                body.insert(key.into(), Value::Object(pairs(values, flag)?));
+                let map = pairs(values, flag)?;
+                if key == "profile_permissions"
+                    && map.iter().any(|(field, level)| {
+                        !matches!(field.as_str(), "*" | "name" | "email" | "avatar")
+                            || !matches!(level.as_str(), Some("read" | "write"))
+                            || (field == "email" && level != "read")
+                    })
+                {
+                    return Err(CliError::Invalid("profile permissions accept *, name, email, or avatar at read or write; email accepts only read".into()));
+                }
+                body.insert(key.into(), Value::Object(map));
             }
         }
         if let Some(text) = &self.enforcement_override {

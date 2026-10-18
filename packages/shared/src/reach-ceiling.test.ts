@@ -116,8 +116,8 @@ describe("firstReachBeyondMap on the leveled axes", () => {
       firstReachBeyondMap("metadata", { types: "read" }, { types: "write" }),
     ).toBe("types");
     expect(
-      firstReachBeyondMap("profile", { "*": "read" }, { handle: "write" }),
-    ).toBe("handle");
+      firstReachBeyondMap("profile", { "*": "read" }, { name: "write" }),
+    ).toBe("name");
   });
 
   it("passes what the held map covers", () => {
@@ -128,7 +128,7 @@ describe("firstReachBeyondMap on the leveled axes", () => {
       firstReachBeyondMap("metadata", { "*": "write" }, { types: "write" }),
     ).toBe(null);
     expect(
-      firstReachBeyondMap("profile", { "*": "write" }, { handle: "read" }),
+      firstReachBeyondMap("profile", { "*": "write" }, { name: "read" }),
     ).toBe(null);
   });
 
@@ -136,9 +136,7 @@ describe("firstReachBeyondMap on the leveled axes", () => {
     expect(firstReachBeyondMap("edge", {}, { references: "read" })).toBe(
       "references",
     );
-    expect(firstReachBeyondMap("profile", {}, { handle: "read" })).toBe(
-      "handle",
-    );
+    expect(firstReachBeyondMap("profile", {}, { name: "read" })).toBe("name");
   });
 
   it("keeps each axis to itself", () => {

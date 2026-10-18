@@ -815,6 +815,7 @@ const invocations: Record<string, () => string[]> = {
   "folders health": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
+  "profile update": () => ["--name", "Profile"],
   "sign-ins list": () => [],
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
@@ -837,7 +838,9 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {};
 
+/** Table commands that require private machine authority rather than a key. */
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
+  "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
   "owner passkeys list": () => [],
   "owner passkeys rename": () => [ID, "--name", "Studio"],
   "owner passkeys remove": () => [ID],
@@ -1078,6 +1081,85 @@ describe("every command holds the server to the contract", () => {
       }
     } finally {
       await socket.stop();
+    }
+  });
+
+  it("holds owner update to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const body = {
+      id: "owner",
+      email: "a@cyzr.me",
+      name: "Owner",
+      created_at: WHEN,
+    };
+    socket.answer = body;
+    try {
+      for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+        socket.contract = contract;
+        socket.asked = [];
+        const outcome = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          "owner",
+          "update",
+          ...PRIVATE_SOCKET_TABLE["owner update"]!(),
+        ]);
+        const label = `owner update on contract ${String(contract)}: ${outcome.stderr}`;
+        expect(socket.asked, label).toEqual(["PATCH /owner"]);
+        if (contract === BUILT_FOR) {
+          expect(outcome.code, label).toBe(0);
+          expect(JSON.parse(outcome.stdout), label).toEqual(body);
+        } else {
+          expect(outcome.code, label).toBe(1);
+          expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+          expect(outcome.stdout, label).toBe("");
+          expect(outcome.stderr, label).toContain("may have taken effect");
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
+  it("holds profile update to the contract through its ordinary credential", async () => {
+    for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+      server = await ScriptedServer.start();
+      server.contract = contract;
+      server.answer("PATCH", "/profile", {
+        kind: "json",
+        status: 200,
+        body: { ok: true },
+      });
+      const outcome = await marfa([
+        "--json",
+        "--url",
+        server.url,
+        "--key",
+        KEY,
+        "profile",
+        "update",
+        ...invocations["profile update"]!(),
+      ]);
+      const label = `profile update on contract ${String(contract)}: ${outcome.stderr}`;
+      expect(sent(server), label).toEqual(["PATCH /profile"]);
+      expect(server.requests[0]?.headers.authorization, label).toBe(
+        `Bearer ${KEY}`,
+      );
+      expect(JSON.parse(server.requests[0]!.body), label).toEqual({
+        name: "Profile",
+      });
+      if (contract === BUILT_FOR) {
+        expect(outcome.code, label).toBe(0);
+        expect(JSON.parse(outcome.stdout), label).toEqual({ ok: true });
+      } else {
+        expect(outcome.code, label).toBe(1);
+        expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+        expect(outcome.stdout, label).toBe("");
+        expect(outcome.stderr, label).toContain("may have taken effect");
+      }
+      await server.stop();
+      server = undefined;
     }
   });
 

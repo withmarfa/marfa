@@ -67,7 +67,7 @@ async function seedAppKey(): Promise<string> {
     type_permissions: { "core.note": "read" },
     permissions: ["webhooks.manage"],
     extension_permissions: { "com.notes": "read" },
-    profile_permissions: { display_name: "read" },
+    profile_permissions: { name: "read" },
   });
   return id;
 }
@@ -181,11 +181,11 @@ describe("editing a key an app made", () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: editorKey,
-      body: { profile_permissions: { handle: "write" } },
+      body: { profile_permissions: { avatar: "write" } },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("handle");
+    expect(body.error.message).toContain("avatar");
   });
 
   it("refuses a source it does not already claim, and allows dropping one it does", async () => {

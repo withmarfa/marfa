@@ -1,4 +1,6 @@
 import { ownerPasskeyRoutes } from "./owner-passkeys.js";
+import { OwnerUpdateSchema } from "../profile-fields.js";
+import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { getCookie, deleteCookie } from "hono/cookie";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
@@ -56,6 +58,39 @@ const getOwnerRoute = createRoute({
     403: failure(
       ["forbidden"],
       "This operation requires direct owner or local authority.",
+    ),
+    404: failure(["owner_not_found"], "The owner is unavailable."),
+  },
+});
+const updateOwnerRoute = createRoute({
+  operationId: "updateOwner",
+  method: "patch",
+  path: "/",
+  tags: ["Access"],
+  summary: "Update the owner",
+  security: [{ ownerSession: [] }],
+  middleware: directAuthorityOnly,
+  description:
+    "Updates the owner's email or name and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: OwnerUpdateSchema } },
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: OwnerSchema } },
+      description: "The updated owner.",
+    },
+    400: failure(
+      ["validation_error", "missing_required_field"],
+      "The body is empty, has an unknown field, or a field is invalid.",
+    ),
+    401: failure(["unauthorized"], "Sign in as the owner."),
+    403: failure(
+      ["forbidden"],
+      "The request needs private machine authority or direct owner authentication within five minutes.",
     ),
     404: failure(["owner_not_found"], "The owner is unavailable."),
   },
@@ -337,6 +372,30 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         ErrorCode.OWNER_NOT_FOUND,
         "The claimed owner's account is unavailable.",
       );
+    return c.json(ownerWire(owner), 200);
+  });
+  router.openapi(updateOwnerRoute, async (c) => {
+    requireRecentOwnerAuthentication(c);
+    const body = c.req.valid("json");
+    const owner = await runAuditedTransaction(
+      storage,
+      async () => {
+        const updated = await storage.owner?.update(body);
+        if (!updated)
+          throw new MarfaError(
+            ErrorCode.OWNER_NOT_FOUND,
+            "The owner is unavailable.",
+          );
+        return updated;
+      },
+      {
+        action: "owner.update",
+        resource_type: "auth_user",
+        key_id: authorityId(c),
+        client_ip: c.get("clientIp") ?? null,
+        details: { fields: Object.keys(body) },
+      },
+    );
     return c.json(ownerWire(owner), 200);
   });
   router.openapi(listSignInsRoute, async (c) => {

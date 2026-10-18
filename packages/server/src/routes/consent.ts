@@ -362,7 +362,31 @@ function buildGroups(
  * states the operation once at the end like any other group whose members
  * agree.
  */
+export function profileWriteDescription(
+  scope: ParsedScope,
+): string | undefined {
+  if (scope.kind !== "profile" || scope.operation !== "write") return undefined;
+  return scope.profileRow === "name"
+    ? "Read and change your name."
+    : scope.profileRow === "avatar"
+      ? "Read and change your avatar."
+      : "Read your name, email address and avatar; change only your name and avatar.";
+}
+
 function summarize(group: ScopeGroup): string {
+  const wholeProfile = group.rows.find(
+    ({ scope }) =>
+      scope.kind === "profile" &&
+      scope.operation === "write" &&
+      scope.profileRow === undefined,
+  );
+  const profileDescription =
+    wholeProfile && profileWriteDescription(wholeProfile.scope);
+  if (
+    profileDescription &&
+    group.rows.every(({ scope }) => scope.kind === "profile")
+  )
+    return profileDescription;
   // Asked of every scope the group holds, including the ones the collapse
   // below drops and the ones no chain finds a word for: a group reaching
   // things that do not exist yet does so whether or not this sentence ends
@@ -521,7 +545,8 @@ function summarize(group: ScopeGroup): string {
   // brand keeps its capital wherever it lands, and "Notes, Tasks and Files"
   // is a list of names that reads correctly as it stands.
   const sentence = `${list.charAt(0).toUpperCase()}${list.slice(1)}.`;
-  return shared === undefined ? sentence : `${sentence} ${shared}`;
+  const summary = shared === undefined ? sentence : `${sentence} ${shared}`;
+  return profileDescription ? `${summary} ${profileDescription}` : summary;
 }
 
 /**

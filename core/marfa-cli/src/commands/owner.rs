@@ -16,6 +16,19 @@ pub enum OwnerCommand {
     },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
+    /// Change the owner's email or display name (private socket required).
+    Update(OwnerUpdateArgs),
+}
+
+#[derive(Debug, Args)]
+#[group(required = true)]
+pub struct OwnerUpdateArgs {
+    /// The email address the owner uses to sign in.
+    #[arg(long)]
+    email: Option<String>,
+    /// The owner's display name.
+    #[arg(long)]
+    name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -86,6 +99,17 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
     match command {
         OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
+        OwnerCommand::Update(args) => {
+            require_local(remote)?;
+            let mut body = serde_json::Map::new();
+            if let Some(email) = args.email {
+                body.insert("email".into(), json!(email));
+            }
+            if let Some(name) = args.name {
+                body.insert("name".into(), json!(name));
+            }
+            out.value(&remote.json(&Request::patch(&["owner"]).json(Value::Object(body)))?)
+        }
         OwnerCommand::Recover(args) => {
             require_local(remote)?;
             let body = input(args.stdin)?;

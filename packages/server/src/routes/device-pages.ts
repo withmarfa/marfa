@@ -23,7 +23,7 @@ import {
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
-import { labelFor } from "./consent.js";
+import { labelFor, profileWriteDescription } from "./consent.js";
 import {
   escapeHtml,
   confirmIcon,
@@ -316,7 +316,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       scope.kind !== "oidc"
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
-    const reach = reachLine(scope, matched);
+    const reach = profileWriteDescription(scope) ?? reachLine(scope, matched);
     const detail = reach
       ? `<span class="rmeta">${escapeHtml(reach)}</span>`
       : "";

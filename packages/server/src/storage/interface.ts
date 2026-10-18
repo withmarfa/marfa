@@ -1944,6 +1944,11 @@ export interface OauthProviderStore {
    * null if the token doesn't exist (e.g.
    * already deleted by a prior chain-revocation pass).
    */
+  /** Scope carried by the credential being redeemed, before provider persistence starts. */
+  findTokenGrantScopes(
+    kind: "authorization_code" | "refresh_token" | "device_code",
+    digest: string,
+  ): Promise<string[] | null>;
   findRefreshTokenGrantKey(tokenHash: string): Promise<{
     clientId: string;
     userId: string;
@@ -2625,6 +2630,12 @@ export interface OwnerRecord {
 export interface OwnerStore {
   /** The owner, or `null` on an instance that has none yet. */
   find(): Promise<OwnerRecord | null>;
+  /** Update fields on the claimed owner's existing authentication row. */
+  update(input: {
+    email?: string;
+    name?: string;
+    avatar?: string | null;
+  }): Promise<OwnerRecord | null>;
 }
 
 /**

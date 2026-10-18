@@ -659,6 +659,7 @@ export function parseScope(scope: string): ParsedScope | null {
   if (profileRowMatch) {
     const profileRow = profileRowMatch[1] ?? "";
     const operation = profileRowMatch[2] as "read" | "write";
+    if (profileRow === "email" && operation === "write") return null;
     return {
       typePattern: `${PROFILE_ROOT}.${profileRow}`,
       operation,
@@ -1010,8 +1011,8 @@ export function scopesToProfilePermissions(
 
 /**
  * Checks whether a profile_permissions map covers the required verb on a row.
- * The wildcard `*`, granted by a bare `profile:<verb>`, matches any row
- * including one added to the category later. `write` implies `read`.
+ * The wildcard `*`, granted by a bare `profile:<verb>`, reads every row.
+ * `write` implies `read` and permits changes only to name and avatar.
  *
  * **`read` is a level here rather than a baseline**, which is the difference
  * from an item-type axis and the whole reason this category is leveled: a
@@ -1022,6 +1023,9 @@ export function profilePermissionCovers(
   row: string,
   requiredOp: "read" | "write",
 ): boolean {
+  if (!(PROFILE_ROWS as readonly string[]).includes(row) && row !== "*")
+    return false;
+  if (row === "email" && requiredOp === "write") return false;
   if (!perms) return false;
   const specific = perms[row];
   if (specific === "write" || (specific === "read" && requiredOp === "read")) {
@@ -1270,17 +1274,16 @@ export function grantCoversScope(
       );
     }
     case "profile": {
-      // A bare `profile:<verb>` requirement names no row and asks about the
-      // whole category, including rows added to it later. Rows are a closed
-      // dot-free set by grammar, so the category form is the only breadth
-      // this axis has — the same shape as metadata above.
+      const operation = need.operation;
       const perms = scopesToProfilePermissions(held);
-      return grantCoversPattern(
-        need.profileRow ?? GLOBAL_TYPE_WILDCARD,
-        need.operation,
-        Object.keys(perms),
-        (key) =>
-          effectiveLevel((op) => profilePermissionCovers(perms, key, op)),
+      if (need.profileRow)
+        return profilePermissionCovers(perms, need.profileRow, need.operation);
+      return PROFILE_ROWS.every((row) =>
+        profilePermissionCovers(
+          perms,
+          row,
+          row === "email" ? "read" : operation,
+        ),
       );
     }
     default: {
@@ -1350,10 +1353,30 @@ export function firstReachBeyondMap(
 ): string | null {
   const heldMap = held ?? {};
   const requestedMap = requested ?? {};
+  if (axis === "profile") {
+    for (const row of PROFILE_ROWS) {
+      for (const operation of ["write", "read"] as const) {
+        if (
+          profilePermissionCovers(
+            requestedMap as Record<string, ProfilePermission>,
+            row,
+            operation,
+          ) &&
+          !profilePermissionCovers(
+            heldMap as Record<string, ProfilePermission>,
+            row,
+            operation,
+          )
+        )
+          return row;
+      }
+    }
+    return null;
+  }
 
   // The axis's own resolver, so the ceiling is measured by whatever the
   // request path runs rather than by a second reading of the same map. The
-  // three leveled axes carry no `none` in their types; one arriving from a
+  // other leveled axes carry no `none` in their types; one arriving from a
   // hand-made row resolves as covering nothing, which refuses rather than
   // admits.
   const resolverFor =
@@ -1376,14 +1399,6 @@ export function firstReachBeyondMap(
           return effectiveLevel((op) =>
             metadataPermissionCovers(
               map as Record<string, MetadataPermission>,
-              key,
-              op,
-            ),
-          );
-        case "profile":
-          return effectiveLevel((op) =>
-            profilePermissionCovers(
-              map as Record<string, ProfilePermission>,
               key,
               op,
             ),

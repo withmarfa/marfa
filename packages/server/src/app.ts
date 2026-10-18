@@ -1,3 +1,4 @@
+import { profileRoutes } from "./routes/profile.js";
 import {
   instanceDescriptionRoute,
   InstanceDescriptionSchema,
@@ -818,6 +819,7 @@ export function createApp(
   // served exactly when that surface is.
   if (auth) {
     app.route("/owner", ownerRoutes(storage, auth));
+    app.route("/profile", profileRoutes(storage));
     app.route("/setup", setupRoutes(storage, auth));
     if (options.localAuthority)
       app.route("/_control", controlRoutes(storage, auth, config.authBaseUrl));

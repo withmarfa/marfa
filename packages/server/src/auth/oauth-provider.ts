@@ -1,3 +1,4 @@
+import { refuseProfileEmailWrite } from "./profile-scope.js";
 import { credentialRequest } from "./credential-adapter.js";
 import { MAX_REGISTERED_REDIRECT_URIS } from "../middleware/body-cap.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -202,10 +203,11 @@ export function buildAllowedScopes(
     // promise the grammar cannot keep.
     `${PROFILE_ROOT}:read`,
     `${PROFILE_ROOT}:write`,
-    ...PROFILE_ROWS.flatMap((row) => [
-      `${PROFILE_ROOT}.${row}:read`,
-      `${PROFILE_ROOT}.${row}:write`,
-    ]),
+    ...PROFILE_ROWS.flatMap((row) =>
+      row === "email"
+        ? [`${PROFILE_ROOT}.${row}:read`]
+        : [`${PROFILE_ROOT}.${row}:read`, `${PROFILE_ROOT}.${row}:write`],
+    ),
     // The permission family: authority over one administrative surface,
     // which is handed over by being named and consented to and by nothing
     // else. Nothing inherits it, and no door admits without it.
@@ -666,6 +668,53 @@ export function buildOauthProjectionPlugin(opts: {
       ],
       before: [
         {
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+          handler: createAuthMiddleware(async (ctx: HookCtxLite) => {
+            const grant = requestedGrantType(ctx);
+            if (
+              !refreshHasher ||
+              ![
+                "authorization_code",
+                "refresh_token",
+                DEVICE_CODE_GRANT_TYPE,
+              ].includes(grant ?? "")
+            )
+              return;
+            const kind =
+              grant === DEVICE_CODE_GRANT_TYPE
+                ? "device_code"
+                : (grant as "authorization_code" | "refresh_token");
+            const held =
+              ctx.body?.[kind === "authorization_code" ? "code" : kind];
+            if (typeof held !== "string") return;
+            const bare =
+              kind === "refresh_token" && held.startsWith(REFRESH_TOKEN_PREFIX)
+                ? held.slice(REFRESH_TOKEN_PREFIX.length)
+                : held;
+            refuseProfileEmailWrite(
+              await storage.oauthProvider?.findTokenGrantScopes(
+                kind,
+                refreshHasher(bare),
+              ),
+            );
+          }),
+        },
+        {
+          matcher: (ctx: HookCtxLite) =>
+            [
+              "/oauth2/register",
+              "/oauth2/authorize",
+              "/oauth2/consent",
+              "/oauth2/token",
+              "/device/code",
+            ].includes(ctx.path ?? ""),
+          handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            refuseProfileEmailWrite(ctx.body?.scope);
+            refuseProfileEmailWrite(ctx.query?.scope);
+            return Promise.resolve();
+          }),
+        },
+        {
           // Assertion authentication needs a replay store the instance does
           // not have. Scope settlement also runs before the provider writes.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
@@ -890,6 +939,7 @@ export function validateDeviceScope(
   storage: Storage,
 ): (clientId: string, scope: string | undefined) => Promise<void> {
   return async (clientId, scope) => {
+    refuseProfileEmailWrite(scope);
     if (!scope?.trim())
       throw new APIError("BAD_REQUEST", {
         error: "invalid_scope",
@@ -1359,6 +1409,7 @@ async function narrowAuthorizeScopes(
     typeof rawScope === "string"
       ? rawScope.split(" ").filter((s) => s.length > 0)
       : [];
+  refuseProfileEmailWrite(requested.length > 0 ? requested : ceiling);
   if (requested.length === 0) {
     // No scope named. With no stored ceiling the plugin already defaults to
     // the live allowlist; with one, spell out the request the omission

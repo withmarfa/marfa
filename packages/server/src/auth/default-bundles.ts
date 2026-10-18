@@ -232,7 +232,7 @@ export function buildDefaultPermissionBundles(
       // in the discovery document beside the scope list, so it has to name
       // what the four scopes read and nothing less: `profile` returns `name`
       // and `picture`, `email` the address, and `profile:read` the rest of
-      // the record that `GET /profile/me` answers with. It fell behind the
+      // the profile fields that the category scopes read. It fell behind the
       // scopes once before, saying "name and email" beside three of them.
       description:
         "Your name, picture, email address, username, bio and timezone.",

@@ -32,6 +32,7 @@ import {
   resolveExtensionPermission,
   grantCoversScope,
   GLOBAL_TYPE_WILDCARD,
+  profilePermissionCovers,
   typeMatchesPattern,
   type ApiKey,
   type EdgePermission,
@@ -141,6 +142,17 @@ function resolveRequestedLevel(
   key: string,
 ): string {
   const map = requested ?? {};
+  if (axis === "profile") {
+    // Profile wildcards combine with explicit entries, and email is read-only.
+    // Report the same effective operation that produced the refusal witness.
+    return profilePermissionCovers(
+      map as Record<string, ProfilePermission>,
+      key,
+      "write",
+    )
+      ? "write"
+      : "read";
+  }
   const exact = map[key];
   if (exact !== undefined && exact !== "none") return exact;
   // Reached through a wildcard rather than named. `write` is the honest
