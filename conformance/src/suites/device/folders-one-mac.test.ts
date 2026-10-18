@@ -2856,6 +2856,57 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(sentTitles(a).slice(before)).toEqual(["Wide"]);
   });
 
+  it("keeps a file moved to another folder and saved again as UTF-16", async () => {
+    const moved = "01a00000-0000-7000-8000-000000001851";
+    const gone = "01a00000-0000-7000-8000-000000001852";
+    const { a, b } = await onOneMac(
+      "move-utf16",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    // Saved again by an editor, so neither the file's identity nor its bytes
+    // are the ones this folder knew; only its id says where it came from.
+    const text = readFileSync(join(a.dir, "Moved.md"), "utf8");
+    expect(text).toContain(`marfa_id: ${moved}`);
+    rmSync(join(a.dir, "Moved.md"));
+    rmSync(join(a.dir, "Gone.md"));
+    const target = join(b.dir, "Moved.md");
+    const wide = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from(text, "utf16le"),
+    ]);
+    writeFileSync(target, wide);
+
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    // The witness: the file this folder lost for good is deleted.
+    expect(deletesOf(a.server, gone)).toBe(1);
+    expect(
+      [deletesOf(a.server, moved), swept.value.scan.moved_away],
+      "a file moved and saved as UTF-16 was taken for deleted",
+    ).toEqual([0, 1]);
+
+    const held = await b.folder.push();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    expect(
+      held.value.scan.flagged.filter((file) => file.path === "Moved.md"),
+      "the other folder did not hold the file that is not text on its own",
+    ).toHaveLength(1);
+    expect(sentTitles(b)).toEqual([]);
+    expect(readFileSync(target)).toEqual(wide);
+  });
+
   it("keeps a file a crash cut off taking in where it was, and journals no delete", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-00000000fa45",

@@ -281,16 +281,22 @@ fn id_of_file(mut file: std::fs::File) -> Option<String> {
 /// Read only the frontmatter, preserving an I/O failure as uncertainty. A
 /// line that is not UTF-8 is read as the folder's own scan reads it, with its
 /// ASCII id line intact, so bytes that are not text hold no id and are not
-/// an I/O failure.
+/// an I/O failure. A file that opens with a UTF-16 byte-order mark is read as
+/// UTF-16, so a moved file saved again that way still shows where it came
+/// from.
 fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
-    let mut lines = BufReader::new(reader);
-    let mut next = || -> std::io::Result<Option<String>> {
-        let mut line = Vec::new();
-        if lines.read_until(b'\n', &mut line)? == 0 {
-            return Ok(None);
-        }
-        let line = String::from_utf8_lossy(&line);
-        Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+    let mut reader = BufReader::new(reader);
+    let wide: Option<fn([u8; 2]) -> u16> = match reader.fill_buf()? {
+        [0xff, 0xfe, ..] => Some(u16::from_le_bytes),
+        [0xfe, 0xff, ..] => Some(u16::from_be_bytes),
+        _ => None,
+    };
+    if wide.is_some() {
+        reader.consume(2);
+    }
+    let mut next = || match wide {
+        Some(unit) => wide_line(&mut reader, unit),
+        None => narrow_line(&mut reader),
     };
     let Some(line) = next()? else {
         return Ok(None);
@@ -309,6 +315,46 @@ fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+fn narrow_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    if reader.read_until(b'\n', &mut line)? == 0 {
+        return Ok(None);
+    }
+    let line = String::from_utf8_lossy(&line);
+    Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+}
+
+/// A line of UTF-16 code units, each read by `unit`; a byte left over at the
+/// end is no code unit and is dropped.
+fn wide_line(
+    reader: &mut impl BufRead,
+    unit: fn([u8; 2]) -> u16,
+) -> std::io::Result<Option<String>> {
+    let mut units = Vec::new();
+    let mut pair = [0u8; 2];
+    let mut ended = false;
+    loop {
+        match reader.read_exact(&mut pair) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                ended = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+        let read = unit(pair);
+        if read == u16::from(b'\n') {
+            break;
+        }
+        units.push(read);
+    }
+    if ended && units.is_empty() {
+        return Ok(None);
+    }
+    let line = String::from_utf16_lossy(&units);
+    Ok(Some(line.trim_end_matches('\r').to_string()))
 }
 
 pub(super) enum Look {
@@ -657,6 +703,15 @@ mod tests {
             utf16.extend(unit.to_le_bytes());
         }
         std::fs::write(root.join("utf16.md"), &utf16).unwrap();
+        let mut big_endian: Vec<u8> = vec![0xfe, 0xff];
+        for unit in "---\r\nmarfa_id: \"n8\"\r\n---\r\nb\u{e9}\u{1f600}\n".encode_utf16() {
+            big_endian.extend(unit.to_be_bytes());
+        }
+        std::fs::write(root.join("utf16be.md"), &big_endian).unwrap();
+        // With no mark there is nothing to say the bytes are UTF-16.
+        std::fs::write(root.join("bare.md"), &utf16[2..]).unwrap();
+        // Cut off inside a code unit.
+        std::fs::write(root.join("cut.md"), &utf16[..7]).unwrap();
         std::fs::write(
             root.join("latin1.md"),
             b"---\nmarfa_id: n2\ntitle: caf\xe9\n---\nbody\n",
@@ -671,7 +726,7 @@ mod tests {
             bound: OnceCell::new(),
         };
         let walked = peer.walked();
-        assert_eq!(walked.files.len(), 2);
+        assert_eq!(walked.files.len(), 5);
         assert_eq!(
             walked.partial, None,
             "a file whose bytes are not text made the whole folder unreadable"
@@ -683,7 +738,14 @@ mod tests {
                 .find(|file| file.key == key)
                 .and_then(|file| file.id.as_deref())
         };
-        assert_eq!(id("utf16.md"), None);
+        assert_eq!(
+            id("utf16.md"),
+            Some("n9"),
+            "a file saved as UTF-16 hid the id that shows where it moved from"
+        );
+        assert_eq!(id("utf16be.md"), Some("n8"));
+        assert_eq!(id("bare.md"), None);
+        assert_eq!(id("cut.md"), None);
         assert_eq!(id("latin1.md"), Some("n2"));
     }
 

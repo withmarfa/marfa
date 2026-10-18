@@ -3904,6 +3904,14 @@ When a scan identifies a missing folder file as moved to another registered fold
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
+### `folders/moved-carried-id-utf16`
+
+When a file in another registered folder starts with a UTF-16 byte-order mark, a device MUST read the file's carried ID as UTF-16 text.
+
+**Reason:** An editor that saves a moved file again as UTF-16 changes both its identity and its bytes, so its carried ID is all that shows where it came from. Read as UTF-8, the move is taken for a deletion and the item is deleted on the server.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file moved to another folder and saved again as UTF-16`.
+
 ### `folders/peer-owned-bytes-not-move`
 
 When another folder’s equal bytes belong to a different item, a device MUST NOT identify that file as the missing file’s move.
