@@ -1,5 +1,5 @@
 import type { MiddlewareHandler } from "hono";
-import { CONTRACT_HEADER, CONTRACT_VERSION } from "../contract.js";
+import { CONTRACT_HEADER, servedContractVersion } from "../contract.js";
 
 /**
  * Names the contract version on the way out, after everything inside it has
@@ -9,7 +9,7 @@ import { CONTRACT_HEADER, CONTRACT_VERSION } from "../contract.js";
  * middleware prepares before `next()` never reach.
  */
 export function contractHeader(): MiddlewareHandler {
-  const contract = String(CONTRACT_VERSION);
+  const contract = String(servedContractVersion());
   return async (c, next) => {
     await next();
     c.res.headers.set(CONTRACT_HEADER, contract);

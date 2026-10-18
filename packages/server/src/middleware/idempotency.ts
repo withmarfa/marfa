@@ -13,7 +13,7 @@ import { isJsonContentType } from "./json-content-type.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { CONTRACT_VERSION } from "../contract.js";
+import { servedContractVersion } from "../contract.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 
@@ -342,7 +342,7 @@ export function idempotencyMiddleware(opts: {
   /** The contract the answers are shaped for; a test names another. */
   contract?: number;
 }): MiddlewareHandler<AppEnv> {
-  const { storage, errorHandler, contract = CONTRACT_VERSION } = opts;
+  const { storage, errorHandler, contract = servedContractVersion() } = opts;
 
   return createMiddleware<AppEnv>(async (c, next) => {
     const key = c.req.header(HEADER);

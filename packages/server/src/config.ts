@@ -13,6 +13,9 @@ import {
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 import { MAX_CLOCK_OFFSET_MS } from "./clock.js";
+
+/** The largest `MARFA_TEST_CONTRACT_VERSION`. */
+const MAX_CONTRACT_VERSION = 2_147_483_647;
 import { errorMessage } from "./error-text.js";
 
 /**
@@ -96,6 +99,10 @@ export interface AppConfig {
   /** `MARFA_TEST_CLOCK_OFFSET_MS`: how far ahead of the system clock the
    *  server's clock starts, so a restart keeps the time the harness moved to. */
   testClockOffsetMs?: number;
+  /** `MARFA_TEST_CONTRACT_VERSION`: the contract version the server speaks
+   *  instead of the build's, so a harness can show what a change of contract
+   *  does to what the server kept. Unset speaks the build's. */
+  testContractVersion?: number;
   /** The disk store: where every upload lands. Always present. */
   blobPath: string;
   /** Ordinary JSON body cap, excluding the doors with separate caps in
@@ -1003,6 +1010,12 @@ const settingsShape = {
     "How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.",
     { min: 0, max: MAX_CLOCK_OFFSET_MS, unit: "ms" },
   ),
+  MARFA_TEST_CONTRACT_VERSION: setting<number | undefined>(
+    wholeNumber(0, MAX_CONTRACT_VERSION),
+    () => undefined,
+    "The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.",
+    { defaultNote: "The build's contract version" },
+  ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
     "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
@@ -1568,6 +1581,9 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
   if (s.MARFA_TEST_CLOCK_OFFSET_MS > 0 && !s.MARFA_TEST_HOOKS) {
     refuse("MARFA_TEST_CLOCK_OFFSET_MS", "needs MARFA_TEST_HOOKS to be true");
   }
+  if (s.MARFA_TEST_CONTRACT_VERSION !== undefined && !s.MARFA_TEST_HOOKS) {
+    refuse("MARFA_TEST_CONTRACT_VERSION", "needs MARFA_TEST_HOOKS to be true");
+  }
   // Windows are tested in order, so one shorter than the window before it
   // is swallowed by that window: the setting would silently do nothing.
   if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
@@ -1827,6 +1843,7 @@ export function loadConfig(
     controlOnly: s.MARFA_CONTROL_ONLY,
     testHooks: s.MARFA_TEST_HOOKS,
     testClockOffsetMs: s.MARFA_TEST_CLOCK_OFFSET_MS,
+    testContractVersion: s.MARFA_TEST_CONTRACT_VERSION,
     blobPath: s.BLOB_PATH,
     maxRequestBytes: s.MARFA_MAX_REQUEST_BYTES,
     maxBulkRequestBytes: s.MARFA_MAX_BULK_REQUEST_BYTES,

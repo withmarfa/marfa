@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advanceClock,
   clockOffsetMs,
+  installDateShim,
   MAX_CLOCK_OFFSET_MS,
   monotonicMs,
   now,
@@ -65,6 +66,35 @@ describe("clock", () => {
     expect(clockOffsetMs()).toBe(MAX_CLOCK_OFFSET_MS - 10);
     // The witness: the largest step that stays within it is taken.
     expect(advanceClock(10)).toBe(MAX_CLOCK_OFFSET_MS);
+  });
+
+  it("makes Date follow the clock once the shim is installed, and counts the offset once", () => {
+    const system = () => performance.timeOrigin + performance.now();
+    advanceClock(86_400_000);
+    installDateShim();
+    const near = (a: number, b: number) => Math.abs(a - b) < 100;
+    // The offset is counted once: the system clock plus it, not plus it twice.
+    expect(near(Date.now(), system() + 86_400_000)).toBe(true);
+    expect(near(nowMs(), system() + 86_400_000)).toBe(true);
+    expect(near(new Date().getTime(), nowMs())).toBe(true);
+    // The string a call to Date() gives is whole seconds.
+    expect(Math.abs(Date.parse(Date()) - nowMs())).toBeLessThan(1_500);
+    advanceClock(3_600_000);
+    expect(near(Date.now(), system() + 90_000_000)).toBe(true);
+    expect(near(nowMs(), system() + 90_000_000)).toBe(true);
+    // A date with an argument, and the rest of what Date offers, are the system's.
+    expect(new Date(0).getTime()).toBe(0);
+    expect(new Date("2030-01-01T00:00:00Z").toISOString()).toBe(
+      "2030-01-01T00:00:00.000Z",
+    );
+    expect(Date.UTC(2030, 0, 1)).toBe(1_893_456_000_000);
+    expect(new Date() instanceof Date).toBe(true);
+    expect(new Date().constructor).toBe(Date);
+    class Later extends Date {}
+    expect(new Later() instanceof Date).toBe(true);
+    expect(near(new Later().getTime(), nowMs())).toBe(true);
+    resetClockForTests();
+    expect(near(Date.now(), system())).toBe(true);
   });
 
   it("takes the offset a restarted server inherits", () => {

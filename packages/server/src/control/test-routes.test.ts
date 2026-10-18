@@ -169,6 +169,9 @@ describe("the fault routes", () => {
       { name: "deadline:trash-purge" },
       { name: "deadline:trash-purge", arg: "0" },
       { name: "deadline:trash-purge", arg: "soon" },
+      { name: "unfold-deadline" },
+      { name: "unfold-deadline", arg: "0" },
+      { name: "unfold-deadline", arg: "soon" },
       { name: "fail:disk" },
       { name: "fail:lock", arg: "0" },
       { name: "fail:lock", arg: "items.bulk@2" },
@@ -193,6 +196,7 @@ describe("the fault routes", () => {
       { name: "hold:stream-drain" },
       { name: "hold:read-snapshot" },
       { name: "fail:stream-credential", arg: "3" },
+      { name: "unfold-deadline", arg: "1" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",

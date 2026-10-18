@@ -395,6 +395,27 @@ describe("test hooks", () => {
   });
 });
 
+describe("the contract version a test server speaks", () => {
+  const hooked = { MARFA_TEST_HOOKS: "true" };
+
+  it("is the build's unless stated, and stated only with the hooks on", () => {
+    expect(loadConfig({}).testContractVersion).toBeUndefined();
+    expect(
+      loadConfig({ ...hooked, MARFA_TEST_CONTRACT_VERSION: "1" })
+        .testContractVersion,
+    ).toBe(1);
+    expect(refusal({ MARFA_TEST_CONTRACT_VERSION: "1" })).toContain(
+      "MARFA_TEST_CONTRACT_VERSION needs MARFA_TEST_HOOKS to be true",
+    );
+    for (const value of ["-1", "1.5", "one", "2147483648"]) {
+      expect(
+        refusal({ ...hooked, MARFA_TEST_CONTRACT_VERSION: value }),
+        value,
+      ).toContain("MARFA_TEST_CONTRACT_VERSION");
+    }
+  });
+});
+
 describe("OpenTelemetry settings", () => {
   const exporting = (extra: Record<string, string>) => loadConfig(extra).otel;
 

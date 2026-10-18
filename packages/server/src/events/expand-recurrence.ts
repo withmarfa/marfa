@@ -25,6 +25,7 @@ import {
   RECURRENCE_WORK_LIMIT,
 } from "@withmarfa/shared";
 import type { CompiledSchedule } from "@withmarfa/shared";
+import { unfoldDeadlineFault } from "../control/faults.js";
 
 export interface RecurrenceSeries {
   /** Item id of the series. */
@@ -134,7 +135,7 @@ export function expandSeries(
 
   const meter = new RecurrenceMeter(
     limits.iterations ?? MAX_EXPANSION_ITERATIONS,
-    limits.timeMs ?? RECURRENCE_TIME_LIMIT_MS,
+    limits.timeMs ?? unfoldDeadlineFault() ?? RECURRENCE_TIME_LIMIT_MS,
   );
   let starts: number[];
   try {

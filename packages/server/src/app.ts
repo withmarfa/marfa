@@ -112,7 +112,7 @@ import {
   REGISTRATION_BODY_CAP,
 } from "./middleware/body-cap.js";
 import { jsonDepthLimit } from "./middleware/json-depth.js";
-import { CONTRACT_VERSION } from "./contract.js";
+import { servedContractVersion } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
 import {
   idempotencyMiddleware,
@@ -485,7 +485,7 @@ export function createApp(
         release: config.releaseVersion,
       }),
       instance_id: instanceId,
-      contract: CONTRACT_VERSION,
+      contract: servedContractVersion(),
       features,
     };
     return c.json(description);
@@ -935,7 +935,10 @@ export function createApp(
   const openapiDocument = finalizeOpenAPISpec(
     app.getOpenAPI31Document({
       openapi: "3.1.0",
-      info: OPENAPI_DOCUMENT_INFO,
+      info: {
+        ...OPENAPI_DOCUMENT_INFO,
+        version: String(servedContractVersion()),
+      },
       tags: PUBLIC_TAGS,
     }),
   );

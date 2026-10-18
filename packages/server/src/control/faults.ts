@@ -22,6 +22,7 @@
  *   space on the volume (`database` or `blobs`) from now until the fault is
  *   cleared or set again. Setting it again while a body streams in is how
  *   a volume fills as the bytes arrive.
+ * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
  *
  * The routes refuse a name that answers to no point, an argument the point
  * does not take, and a job the scheduler has not registered, so a typo cannot
@@ -194,7 +195,13 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "a free fault takes a whole number of bytes";
     return undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, deadline:<job> or free:<volume>";
+  if (name === "unfold-deadline") {
+    const ms = arg === null ? Number.NaN : Number(arg);
+    if (!Number.isSafeInteger(ms) || ms < 1 || ms > MAX_DEADLINE_MS)
+      return "an unfold-deadline fault takes a whole number of milliseconds from 1";
+    return undefined;
+  }
+  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume> or unfold-deadline";
 }
 
 /**
@@ -363,5 +370,11 @@ export function deadlineFault(job: string): number | undefined {
 export function freeFault(volume: Volume): number | undefined {
   if (faults.size === 0) return undefined;
   const arg = faults.get(`free:${volume}`)?.arg;
+  return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** The time `unfold-deadline` allows one series to unfold, if it is armed. */
+export function unfoldDeadlineFault(): number | undefined {
+  const arg = faults.get("unfold-deadline")?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
 }

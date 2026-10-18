@@ -8,7 +8,19 @@
  * server was started with `MARFA_TEST_HOOKS` and the test hooks move it.
  * It only moves forward: ids, versions and cursors assume time does not go
  * back. Timers and `monotonicMs()` stay on real time.
+ *
+ * Code the server does not own, the sign-in library above all, reads
+ * `Date` for itself. {@link installDateShim} makes the global `Date` follow
+ * the same offset, and only a server started with the test hooks installs it.
  */
+
+const SystemDate = Date;
+let installed = false;
+
+/** The system clock: the live `Date` until the shim replaces it. */
+function systemNow(): number {
+  return installed ? SystemDate.now() : Date.now();
+}
 
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
 const MAX_INSTANT_MS = 8_640_000_000_000_000;
@@ -24,7 +36,7 @@ let offsetMs = 0;
 
 /** The current time in milliseconds since the epoch. */
 export function nowMs(): number {
-  return Date.now() + offsetMs;
+  return systemNow() + offsetMs;
 }
 
 /** The current time as a `Date`. */
@@ -61,7 +73,7 @@ export function advanceClock(ms: number): number {
       `the clock cannot be more than ${String(MAX_CLOCK_OFFSET_MS)} ms ahead`,
     );
   }
-  if (Date.now() + offsetMs + ms > MAX_INSTANT_MS) {
+  if (systemNow() + offsetMs + ms > MAX_INSTANT_MS) {
     throw new RangeError("the clock cannot move past the last instant");
   }
   offsetMs += ms;
@@ -78,7 +90,47 @@ export function setClockOffset(ms: number): void {
   advanceClock(ms);
 }
 
+/**
+ * Makes the global `Date` read the clock: `Date.now()`, `new Date()` with no
+ * argument and a call to `Date()` answer the time the server reads, and
+ * everything else on `Date` is the system's. Called once at boot, before the
+ * sign-in library is created, and only on a server started with the test
+ * hooks, so the library's session, token and link times move with the clock.
+ * `nowMs()` reads the system clock directly, so the offset is counted once.
+ */
+export function installDateShim(): void {
+  if (installed) return;
+  const shifted = (): number => systemNow() + offsetMs;
+  const shim = new Proxy(SystemDate, {
+    construct: (target, args: unknown[], newTarget): object =>
+      Reflect.construct(
+        target,
+        args.length === 0 ? [shifted()] : args,
+        newTarget,
+      ) as object,
+    apply: (target) => new target(shifted()).toString(),
+    get: (target, property): unknown =>
+      property === "now" ? shifted : Reflect.get(target, property, target),
+  });
+  // So that `new Date().constructor === Date` still holds.
+  Object.defineProperty(SystemDate.prototype, "constructor", {
+    value: shim,
+    writable: true,
+    configurable: true,
+  });
+  globalThis.Date = shim;
+  installed = true;
+}
+
 /** Puts the clock back on the system clock, for a test's own isolation. */
 export function resetClockForTests(): void {
   offsetMs = 0;
+  if (!installed) return;
+  Object.defineProperty(SystemDate.prototype, "constructor", {
+    value: SystemDate,
+    writable: true,
+    configurable: true,
+  });
+  globalThis.Date = SystemDate;
+  installed = false;
 }
