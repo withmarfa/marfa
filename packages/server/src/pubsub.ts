@@ -8,6 +8,7 @@ import {
   afterCommit,
   onCommitDeliveryUncertain,
 } from "./storage/commit-hooks.js";
+import { holdArmed, holdAt } from "./control/faults.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -321,6 +322,11 @@ function inAnnouncementOrder(task: () => void | Promise<void>): void {
 
 function emitInOrder(emit: () => void): void {
   if (announcementsPending > 0) inAnnouncementOrder(emit);
+  else if (holdArmed("announce"))
+    inAnnouncementOrder(async () => {
+      await holdAt("announce");
+      emit();
+    });
   else emit();
 }
 

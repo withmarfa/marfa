@@ -40,6 +40,15 @@ export function injectedDatabaseError(
       );
 }
 
+/**
+ * Fails a read of the database as the driver fails one when `fail:<point>`
+ * acts on this reach. For a read made outside a statement scope, such as the
+ * one a read snapshot makes. Call it only while a fault is set.
+ */
+export function failRead(point: string): void {
+  if (failAt(point)) throw injectedDatabaseError("SQLITE_IOERR");
+}
+
 interface Scope {
   spent: boolean;
   point: string;

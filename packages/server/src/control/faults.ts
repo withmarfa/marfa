@@ -55,6 +55,12 @@ export const POINTS: {
     { name: "version-thinning:item", arg: "none" },
     { name: "blob-orphans:purge", arg: "none" },
     { name: "restore:before-commit", arg: "none" },
+    { name: "stream-open", arg: "none" },
+    { name: "stream-head", arg: "none" },
+    { name: "stream-replay", arg: "none" },
+    { name: "stream-drain", arg: "none" },
+    { name: "announce", arg: "none" },
+    { name: "read-snapshot", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -71,6 +77,9 @@ export const POINTS: {
     { name: "blob-delete", arg: "nth" },
     { name: "housekeeping:<job>", arg: "nth" },
     { name: "job-row", arg: "nth" },
+    { name: "stream-head", arg: "nth" },
+    { name: "stream-replay", arg: "nth" },
+    { name: "stream-credential", arg: "nth" },
   ],
 };
 
@@ -264,6 +273,15 @@ export function activeFaults(): ActiveFault[] {
 /** Whether any fault is set. A server without the hooks never has one. */
 export function faultsArmed(): boolean {
   return faults.size > 0;
+}
+
+/**
+ * Whether `hold:<point>` is armed. For a caller that would otherwise add an
+ * await or a queued task of its own to reach {@link holdAt}, so that a fault
+ * set on another point does not change the order of its work.
+ */
+export function holdArmed(point: string): boolean {
+  return faults.size > 0 && faults.has(`hold:${point}`);
 }
 
 /**

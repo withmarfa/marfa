@@ -5,6 +5,7 @@ import type { AppEnv } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { shapedError } from "./error-handler.js";
 import type { Storage } from "../storage/interface.js";
+import { holdArmed, holdAt } from "../control/faults.js";
 import {
   READ_VIEW_HEADER,
   READ_VIEW_PATTERN,
@@ -102,6 +103,7 @@ export function copyReadBoundary(
             : undefined,
         );
         c.set("readViewAuthority", authority);
+        if (holdArmed("read-snapshot")) await holdAt("read-snapshot");
         await next();
         const error = shapedError(c.error);
         const attributed =
