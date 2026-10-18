@@ -18,19 +18,22 @@
 // since nothing declares a parent of `acme` yet `acme.*` plainly means Acme's
 // types.
 //
-// PERMISSION PATTERNS resolve names only. That asymmetry is deliberate and is
-// explained at `typePatternToSql`: a permission map is ranked by longest-prefix
-// precedence, and there is no defensible way to rank a name match against a
-// declared one, so expanding grants put the list query and the single-item gate
-// into disagreement in the fail-open direction.
+// PERMISSION PATTERNS resolve names only, deliberately. A permission map is
+// ranked by specificity (`patternRank`), and there is no defensible way to rank
+// a name match against a declared one. The concrete failure was a map of
+// `{"user.*": "none", "core.note.*": "read"}` against a type named under
+// `user` that declares `core.note` as its parent: the deny won at the
+// single-item gate, which resolves names, while an expanded grant won in the
+// list query, so a row the credential was denied came back in a listing and
+// answered as missing by id. Names are also what the grant was written
+// against: whoever wrote `user.*: none` meant the namespace.
+//
+// The SQL forms of both rules live in the server's `storage/filter-sql.ts`.
 //
 // Resolving the declared half needs the registry, which holds the
 // instance's own registrations beside the shipped set.
 
-import {
-  declaredDescendantsOutsideNamespace,
-  isSubtypeOf,
-} from "./type-registry.js";
+import { isSubtypeOf } from "./type-registry.js";
 
 /** Matches every type, including the reserved namespaces. */
 export const GLOBAL_TYPE_WILDCARD = "*";
@@ -87,121 +90,10 @@ export function typeMatchesAnyPattern(
 }
 
 /**
- * Splits a pattern into the two clauses a SQL predicate needs: an exact
- * identifier to compare, and an escaped LIKE pattern for descendants.
- * Keeping the decomposition here is what stops every query builder that
- * needs it from re-deriving, and re-getting-wrong, the parent-inclusion
- * rule.
- *
- * **Permission patterns resolve by name only, deliberately.** Only the read
- * filter below consults declared parentage. Expanding a grant through the
- * registry looked symmetrical and is not: a permission map is resolved by
- * longest-prefix precedence, and the two hierarchies give no way to rank a
- * name match against a declared one. The concrete failure was a map of
- * `{"user.*": "none", "core.note.*": "read"}` against a type named under
- * `user` that declares `core.note` as its parent — the deny won at the
- * single-item gate, which resolves names, while the expanded grant won in the
- * list query, so a row the credential was explicitly denied came back in a
- * listing and 403'd when fetched by id. Names are also what the grant was
- * written against: whoever wrote `user.*: none` meant the namespace.
- *
- * - `*`               → `{ global: true }`
- * - `core.media.*`    → `{ exact: "core.media", descendantPattern: "core.media.%" }`
- * - `core.note`       → `{ exact: "core.note" }`
- */
-interface TypePatternSql {
-  /** The pattern matches every type; emit no predicate at all. */
-  global: boolean;
-  /** Identifier to compare with equality, when the pattern has one. */
-  exact: string | null;
-  /** Descendant matcher for `LIKE ... ESCAPE '\\'`. */
-  descendantPattern: string | null;
-  /**
-   * Declared descendants the name-based clauses above cannot reach, for an
-   * `IN (...)` term. Always empty on a permission pattern, which resolves
-   * names alone and emits exactly the predicate it always did.
-   */
-  extraTypes: string[];
-}
-
-/** The types that declare their way under `root` from outside its name. */
-function declaredExtras(root: string): string[] {
-  return declaredDescendantsOutsideNamespace(root);
-}
-
-function escapeLikeLiteral(value: string): string {
-  return value
-    .replaceAll("\\", "\\\\")
-    .replaceAll("%", "\\%")
-    .replaceAll("_", "\\_");
-}
-
-export function typePatternToSql(pattern: string): TypePatternSql {
-  if (pattern === GLOBAL_TYPE_WILDCARD) {
-    return {
-      global: true,
-      exact: null,
-      descendantPattern: null,
-      extraTypes: [],
-    };
-  }
-  const root = subtreeWildcardRoot(pattern);
-  if (root === null) {
-    // A bare identifier is an exact grant here; widening it to a subtree would
-    // hand a narrowly-scoped credential everything under the type.
-    return {
-      global: false,
-      exact: pattern,
-      descendantPattern: null,
-      extraTypes: [],
-    };
-  }
-  return {
-    global: false,
-    exact: root,
-    descendantPattern: `${escapeLikeLiteral(root)}.%`,
-    extraTypes: [],
-  };
-}
-
-/**
- * The SQL decomposition for a *read filter* (`?type=`), where a bare
- * identifier already selects its subtree: `core.entity` has always returned
- * `core.entity.person` too. Both spellings therefore produce both clauses.
- *
- * Deliberately separate from `typePatternToSql`, which serves permission
- * grants — there a bare `core.note` is an exact grant and must NOT reach
- * descendants, or a credential scoped to one type would silently read the
- * whole subtree. Same input strings, opposite defaults, so they cannot share
- * one function.
- *
- * - `*`               → `{ global: true }`
- * - `core.entity`     → `{ exact: "core.entity", descendantPattern: "core.entity.%" }`
- * - `core.entity.*`   → identical to the line above
- */
-export function typeSubtreeToSql(type: string): TypePatternSql {
-  if (type === GLOBAL_TYPE_WILDCARD) {
-    return {
-      global: true,
-      exact: null,
-      descendantPattern: null,
-      extraTypes: [],
-    };
-  }
-  const root = subtreeWildcardRoot(type) ?? type;
-  return {
-    global: false,
-    exact: root,
-    descendantPattern: `${escapeLikeLiteral(root)}.%`,
-    extraTypes: declaredExtras(root),
-  };
-}
-
-/**
  * Whether a type answers one entry of a `?type=` READ FILTER, for a caller
  * holding a type in hand rather than a query.
  *
- * The JavaScript twin of {@link typeSubtreeToSql}, written to the same three
+ * The JavaScript twin of the server's `typeSubtreeSql`, written to the same three
  * clauses so a streamed answer and a queried one cannot disagree about the
  * same filter: the global wildcard, the subtree root and everything under
  * its name, and the types that declare their way there from outside it. The
@@ -224,9 +116,8 @@ export function typeSubtreeToSql(type: string): TypePatternSql {
  * at all; only a type named outside the filter's namespace pays the walk, and
  * only that type can raise the unresolvable-chain error the walk throws.
  *
- * Deliberately NOT the rule for permission patterns, which resolve names only
- * — see `typePatternToSql` for why expanding a grant through declared
- * parentage puts the list query and the single-item gate into disagreement.
+ * Deliberately NOT the rule for permission patterns, which resolve names only;
+ * the header of this file says why.
  */
 export function typeAnswersSubtreeFilter(
   type: string,
@@ -250,7 +141,7 @@ export function typeAnswersSubtreeFilter(
  * anonymous reads, and nothing else. Every authenticated caller arrives with a
  * real list, because its permission map is the whole of what it may reach. An
  * empty array is the opposite: nothing is visible. `excluded` subtracts from
- * `allowed` under the ranking `resolveTypePermission` uses, which is why the
+ * `allowed` under `patternRank`, the ranking `resolveTypePermission` uses, which is why the
  * two travel together: a caller that took the permitted list alone would fail
  * open, and that is the defect this shape exists to make unrepresentable
  * rather than to guard against.
@@ -269,7 +160,7 @@ export interface TypeFilter {
  * subtracts from a grant *less* specific than itself. `{"user.secret":
  * "read", "user.*": "none"}` grants `user.secret`, because the exact key wins,
  * and a compiler that subtracted every exclusion from every grant would get
- * that backwards. Ranking once here is what keeps three SQL compilers and one
+ * that backwards. Ranking once here is what keeps the SQL compiler and the
  * JavaScript predicate from each having their own opinion about it.
  */
 interface TypeFilterTerm {
@@ -278,16 +169,40 @@ interface TypeFilterTerm {
 }
 
 /**
- * Specificity, in `resolveTypePermission`'s order. An exact identifier is
- * unbounded rather than merely long: that function returns on an exact key
- * before it looks at any wildcard, so no subtree root can outrank one however
- * deep it is.
+ * How specific a map entry is: the global wildcard last, a subtree wildcard by
+ * the length of its root, an exact identifier above every wildcard however
+ * deep. Two entries that both cover one type never tie: two roots of one
+ * length that both prefix a type are the same root.
+ *
+ * The one ranking. `typeFilterTerms` (and through it every SQL compiler and
+ * `matchesTypeFilter`) and `resolveTypePermission` all rank with it.
  */
-function patternRank(pattern: string): number {
+export function patternRank(pattern: string): number {
   if (pattern === GLOBAL_TYPE_WILDCARD) return -1;
   const root = subtreeWildcardRoot(pattern);
   if (root === null) return Number.POSITIVE_INFINITY;
   return root.length;
+}
+
+/**
+ * The entry of a permission map that decides a type: the most specific of the
+ * patterns that cover it, or `undefined` when none does.
+ */
+export function decidingPattern(
+  type: string,
+  patterns: Iterable<string>,
+): string | undefined {
+  let deciding: string | undefined;
+  let rank = Number.NEGATIVE_INFINITY;
+  for (const pattern of patterns) {
+    if (!typeMatchesPattern(type, pattern)) continue;
+    const candidate = patternRank(pattern);
+    if (candidate > rank) {
+      deciding = pattern;
+      rank = candidate;
+    }
+  }
+  return deciding;
 }
 
 /**
@@ -329,7 +244,7 @@ export function typeFilterTerms(
 }
 
 /**
- * The same decision as the SQL compilers, for callers that hold a type in hand
+ * The same decision as the SQL compiler, for callers that hold a type in hand
  * rather than a query — the SSE stream, which filters events in JavaScript
  * because there is no query to attach a predicate to.
  *

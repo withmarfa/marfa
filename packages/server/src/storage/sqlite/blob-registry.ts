@@ -36,7 +36,7 @@ import {
   versions,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
-import { allowedTypesCondition } from "./item-store.js";
+import { typeFilterSql } from "../filter-sql.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { collectBlobHashes } from "../blob-utils.js";
 import { scanPendingPropertyPatches } from "./bulk-action-job-store.js";
@@ -83,10 +83,10 @@ export class SqliteBlobRegistry implements BlobRegistry {
   }
 
   async readableThrough(hash: string, reach: BlobReach): Promise<boolean> {
-    const admitted = allowedTypesCondition(
-      [...reach.allowedTypes],
-      [...reach.excludedTypes],
-    );
+    const admitted = typeFilterSql(items.type, {
+      allowed: [...reach.allowedTypes],
+      excluded: [...reach.excludedTypes],
+    });
     const viaItem = await this.db
       .select({ one: sql<number>`1` })
       .from(item_blob_references)

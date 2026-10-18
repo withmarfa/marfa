@@ -487,7 +487,7 @@ export function eventRoutes(
       const afterId = parseCursor(c.req.header("Last-Event-ID"));
       // The SSE stream is the one type filter with no query to hang a
       // predicate on, so it asks `matchesTypeFilter` — written over the same
-      // ranking the SQL compilers use, so a streamed answer and a queried one
+      // ranking the SQL compiler uses, so a streamed answer and a queried one
       // cannot disagree about the same grant.
       const typeFilter = getTypeFilter(c);
 

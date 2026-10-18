@@ -2,9 +2,9 @@ import type { TypePermission } from "./types.js";
 import { RESERVED_ROOT_NAMES } from "./scope-roots.js";
 import {
   GLOBAL_TYPE_WILDCARD,
+  decidingPattern,
   subtreeWildcardRoot,
   typeMatchesAnyPattern,
-  typeMatchesPattern,
 } from "./type-patterns.js";
 
 // A full datetime, a date-only value (2026-03-15) or a year-month (2026-03)
@@ -192,49 +192,16 @@ export function matchesTypePattern(type: string, patterns: string[]): boolean {
 /**
  * Resolves the effective permission for a type against a permissions map.
  * Resolution order: exact match, then longest matching subtree wildcard, then
- * the global wildcard, then implicit `none`. Subtree wildcards are
- * parent-inclusive, so `core.media.*` also resolves `core.media`.
+ * the global wildcard, then implicit `none` (`decidingPattern`, which the list
+ * filters rank with too). Subtree wildcards are parent-inclusive, so
+ * `core.media.*` also resolves `core.media`.
  */
 export function resolveTypePermission(
   type: string,
   permissions: Record<string, TypePermission>,
 ): TypePermission {
-  // Exact match takes priority
-  const exact = Object.hasOwn(permissions, type)
-    ? permissions[type]
-    : undefined;
-  if (exact !== undefined) {
-    return exact;
-  }
-
-  // Find the longest matching wildcard prefix
-  let bestMatch: TypePermission | undefined;
-  let bestLength = 0;
-
-  for (const [pattern, permission] of Object.entries(permissions)) {
-    if (pattern === GLOBAL_TYPE_WILDCARD) {
-      // Global wildcard — use only if nothing more specific matches
-      if (bestLength === 0) {
-        bestMatch = permission;
-      }
-      continue;
-    }
-
-    // The root is what ranks two matching wildcards; whether the pattern
-    // matches at all is `typeMatchesPattern`'s question and is asked of it.
-    // Written out here, the parent-inclusion rule was a second copy of a rule
-    // that already has one home, and `type-patterns.ts` records what it costs
-    // when two copies of a matching rule disagree.
-    const root = subtreeWildcardRoot(pattern);
-    if (root === null) continue;
-    if (!typeMatchesPattern(type, pattern)) continue;
-    if (root.length > bestLength) {
-      bestMatch = permission;
-      bestLength = root.length;
-    }
-  }
-
-  return bestMatch ?? "none";
+  const deciding = decidingPattern(type, Object.keys(permissions));
+  return (deciding === undefined ? undefined : permissions[deciding]) ?? "none";
 }
 
 // ---------------------------------------------------------------------------

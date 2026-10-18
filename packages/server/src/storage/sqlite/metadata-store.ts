@@ -1,7 +1,6 @@
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, inArray, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import {
-  typePatternToSql,
-  typeFilterTerms,
   GLOBAL_TYPE_WILDCARD,
   MarfaError,
   ErrorCode,
@@ -17,7 +16,7 @@ import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
-import { sourceFilterToRawSql, subtreeBounds } from "../filter-sql.js";
+import { sourceFilterToSql, typeFilterSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncExtensionBlobReferences } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM, distinctTags } from "../../tag-limits.js";
@@ -49,73 +48,35 @@ export class SqliteMetadataStore implements MetadataStore {
       filters.allowedTypes !== undefined &&
       filters.allowedTypes.length > 0 &&
       !filters.allowedTypes.includes(GLOBAL_TYPE_WILDCARD);
-    const conditions: string[] = [
-      namesTypes ? "+i.state = 'active'" : "i.state = 'active'",
+    const i = alias(items, "i");
+    const conditions: SQL[] = [
+      namesTypes ? sql`+${i.state} = 'active'` : sql`${i.state} = 'active'`,
     ];
-    const params: unknown[] = [];
-    const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
-    // and every other read surface reads it that way. Dropping the clause
-    // for an empty list would return the whole tag vocabulary with counts,
-    // which names what exists even when no item behind it is readable.
-    //
-    // **A global wildcard skips the clause only when nothing is excluded
-    // beside it**: an exclusion under a wildcard is what narrows a grant, so
-    // dropping the clause for the wildcard alone would widen it back.
-    const unrestricted =
-      filters.allowedTypes?.includes(GLOBAL_TYPE_WILDCARD) === true &&
-      excludedTypes.length === 0;
-    if (filters.allowedTypes && !unrestricted) {
-      const clauseFor = (pattern: string): string => {
-        const { global, exact, descendantPattern } = typePatternToSql(pattern);
-        if (global) return "1=1";
-        if (!exact) return "1=0";
-        if (!descendantPattern) {
-          params.push(exact);
-          return "i.type = ?";
-        }
-        const { from, before } = subtreeBounds(exact);
-        params.push(exact, from, before);
-        return "(i.type = ? OR (i.type >= ? AND i.type < ?))";
-      };
-      const typeClauses = typeFilterTerms(
-        filters.allowedTypes,
-        excludedTypes,
-      ).map(({ pattern, minus }) => {
-        const granted = clauseFor(pattern);
-        if (minus.length === 0) return granted;
-        return `(${granted} AND NOT (${minus.map(clauseFor).join(" OR ")}))`;
-      });
-      conditions.push(
-        typeClauses.length > 0 ? `(${typeClauses.join(" OR ")})` : "1=0",
-      );
-    }
-    const sourceLever = sourceFilterToRawSql(filters.source_filter, "i");
-    if (sourceLever) {
-      conditions.push(`(${sourceLever.clause})`);
-      params.push(...sourceLever.params);
-    }
-    const where = conditions.join(" AND ");
-    const sqlText = `
+    // and every other read surface reads it that way: the compiler answers
+    // `1=0` for it. Dropping the clause would return the whole tag
+    // vocabulary with counts, which names what exists even when no item
+    // behind it is readable.
+    const readable = typeFilterSql(i.type, {
+      allowed: filters.allowedTypes,
+      excluded: filters.excludedTypes ?? [],
+    });
+    if (readable) conditions.push(readable);
+    const sourceLever = sourceFilterToSql(
+      filters.source_filter,
+      i.type,
+      i.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
+    const statement = sql`
       SELECT je.value AS tag, COUNT(*) AS count
       FROM metadata m
       JOIN items i ON i.id = m.item_id, json_each(m.tags) je
-      WHERE ${where}
+      WHERE ${sql.join(conditions, sql` AND `)}
       GROUP BY je.value
       ORDER BY count DESC, tag ASC
     `;
-    // Stitch `?`-split fragments with drizzle parameter binding for each
-    // inline value (drizzle's `sql.raw` does not bind, so we can't pass a
-    // pre-formatted string with `?`s through it).
-    const fragments = sqlText.split("?");
-    const builder = sql.empty();
-    for (let i = 0; i < fragments.length; i++) {
-      builder.append(sql.raw(fragments[i] ?? ""));
-      if (i < fragments.length - 1) {
-        builder.append(sql`${params[i]}`);
-      }
-    }
-    const rows = await this.db.all<{ tag: string; count: number }>(builder);
+    const rows = await this.db.all<{ tag: string; count: number }>(statement);
     return rows;
   }
 

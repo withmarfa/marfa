@@ -31,13 +31,14 @@ import type {
   EdgeTypeSchema,
   PlatformTypeFamily,
   SeededPlatformType,
+  TypeFilter,
   TypeOrigin,
   TypeSchema,
 } from "@withmarfa/shared";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { HousekeepingReport } from "../housekeeping/scheduler.js";
 import type { ConflictMode } from "./conflict.js";
-import type { ReadableSources, SourceFilterSettings } from "./filter-sql.js";
+import type { SourceFilterSettings } from "./filter-sql.js";
 
 // ---------------------------------------------------------------------------
 // Filter types
@@ -136,7 +137,7 @@ export interface ItemFilters {
   tags?: string[];
   filter?: string;
   /** The types whose edges a `backref` term counts; omitted, every edge. */
-  readable_sources?: ReadableSources;
+  readable_sources?: TypeFilter;
   allowed_types?: string[];
   /** Patterns the permission map withholds, subtracted from `allowed_types`
    *  under the specificity ranking `resolveTypePermission` uses. A `"none"`
@@ -248,7 +249,7 @@ export interface SearchFilters {
   tags?: string[];
   filter?: string;
   /** The types whose edges a `backref` term counts; omitted, every edge. */
-  readable_sources?: ReadableSources;
+  readable_sources?: TypeFilter;
   /** Exclusive lower bound on the item's own time — `occurred_at`,
    *  falling back to `created_at` — exactly as `ItemFilters` reads it.
    *  Search advertises parity with `GET /items` in its own description,
