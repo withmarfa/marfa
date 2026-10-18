@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advanceClock,
   clockOffsetMs,
+  MAX_CLOCK_OFFSET_MS,
   monotonicMs,
   now,
   nowMs,
@@ -52,6 +53,14 @@ describe("clock", () => {
     expect(() => advanceClock(Number.POSITIVE_INFINITY)).toThrow(RangeError);
     expect(() => advanceClock(8_640_000_000_000_000)).toThrow(RangeError);
     expect(clockOffsetMs()).toBe(0);
+  });
+
+  it("refuses a step that would carry the offset past what a restart accepts", () => {
+    advanceClock(MAX_CLOCK_OFFSET_MS - 10);
+    expect(() => advanceClock(11)).toThrow(RangeError);
+    expect(clockOffsetMs()).toBe(MAX_CLOCK_OFFSET_MS - 10);
+    // The witness: the largest step that stays within it is taken.
+    expect(advanceClock(10)).toBe(MAX_CLOCK_OFFSET_MS);
   });
 
   it("takes the offset a restarted server inherits", () => {

@@ -338,6 +338,9 @@ interface Started {
   authSecret: string;
 }
 
+/** The largest `MARFA_TEST_CLOCK_OFFSET_MS` (`spec/instance.md`). */
+const MAX_CLOCK_OFFSET_MS = 3_153_600_000_000;
+
 /** The offset the last `clock advance` left, in ms; zero when none did. */
 function readClockOffset(file: string): number {
   if (!existsSync(file)) return 0;
@@ -882,6 +885,14 @@ async function hook(
 
 /** Moves the clock forward and keeps the offset for the next boot. */
 async function advanceClock(state: string, ms: number): Promise<void> {
+  // The server refuses a start whose offset is above its setting's largest
+  // value, so a move that would get there is refused before it is made.
+  const total = readClockOffset(paths(state).clock) + ms;
+  if (total > MAX_CLOCK_OFFSET_MS) {
+    throw new Error(
+      `the clock cannot be more than ${String(MAX_CLOCK_OFFSET_MS)} ms ahead; this move would make it ${String(total)}`,
+    );
+  }
   const moved = await hook(state, "/_control/test/clock", {
     method: "POST",
     body: { advance_ms: ms },

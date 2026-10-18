@@ -11,6 +11,7 @@ import {
   parseTrustedProxyHeader,
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
+import { MAX_CLOCK_OFFSET_MS } from "./clock.js";
 import { errorMessage } from "./error-text.js";
 
 /**
@@ -915,7 +916,7 @@ const settingsShape = {
   MARFA_TEST_CLOCK_OFFSET_MS: count(
     0,
     "How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.",
-    { min: 0, max: 3_153_600_000_000, unit: "ms" },
+    { min: 0, max: MAX_CLOCK_OFFSET_MS, unit: "ms" },
   ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
