@@ -195,13 +195,20 @@ export function matchesTypePattern(type: string, patterns: string[]): boolean {
  * the global wildcard, then implicit `none` (`decidingPattern`, which the list
  * filters rank with too). Subtree wildcards are parent-inclusive, so
  * `core.media.*` also resolves `core.media`.
+ *
+ * A stored level other than `read` or `write` resolves to `none`: the map
+ * is read from storage through an unchecked cast, and the SQL compiler
+ * excludes such a pattern, so a point check that granted it would answer
+ * by id what every listing hides.
  */
 export function resolveTypePermission(
   type: string,
   permissions: Record<string, TypePermission>,
 ): TypePermission {
   const deciding = decidingPattern(type, Object.keys(permissions));
-  return (deciding === undefined ? undefined : permissions[deciding]) ?? "none";
+  const level: unknown =
+    deciding === undefined ? undefined : permissions[deciding];
+  return level === "read" || level === "write" ? level : "none";
 }
 
 // ---------------------------------------------------------------------------

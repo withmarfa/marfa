@@ -192,6 +192,18 @@ describe("matchesTypePattern", () => {
 });
 
 describe("resolveTypePermission", () => {
+  it("resolves a stored level that is not read, write or none to none, so the deciding pattern withholds the type", () => {
+    const stored = {
+      "*": "write",
+      "core.note": "admin",
+      "core.task": "",
+    } as unknown as Record<string, "read" | "write" | "none">;
+    expect(resolveTypePermission("core.note", stored)).toBe("none");
+    expect(resolveTypePermission("core.task", stored)).toBe("none");
+    // The witness: the wildcard still grants what it decides.
+    expect(resolveTypePermission("core.event", stored)).toBe("write");
+  });
+
   it("returns exact match permission", () => {
     expect(
       resolveTypePermission("core.note", {
