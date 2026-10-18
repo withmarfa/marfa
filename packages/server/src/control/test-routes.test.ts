@@ -11,6 +11,12 @@ let instanceId: string;
 beforeAll(async () => {
   ctx = await createTestContext();
   instanceId = await ensureInstanceId(ctx.storage.settings);
+  ctx.housekeeping.register({
+    name: "trash-purge",
+    intervalMs: 3_600_000,
+    firstRunDelayMs: 3_600_000,
+    run: () => Promise.resolve(null),
+  });
 });
 
 afterAll(async () => {
@@ -154,6 +160,8 @@ describe("the fault routes", () => {
       { name: "hold:housekeeping:Not A Job" },
       { name: "hold:somewhere-else" },
       { name: "hold:version-thinning:item", arg: "5" },
+      { name: "hold:housekeeping:no-such-job" },
+      { name: "deadline:no-such-job", arg: "100" },
       { name: "deadline:trash-purge" },
       { name: "deadline:trash-purge", arg: "0" },
       { name: "deadline:trash-purge", arg: "soon" },
@@ -167,6 +175,17 @@ describe("the fault routes", () => {
       expect(refused.status, JSON.stringify(body)).toBe(400);
     }
     expect(activeFaults()).toEqual([]);
+    // The witness: the same shapes name a registered job and are armed.
+    for (const body of [
+      { name: "hold:housekeeping:trash-purge" },
+      { name: "deadline:trash-purge", arg: "100" },
+    ]) {
+      const armed = await app.request("/_control/test/faults", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+      expect(armed.status, JSON.stringify(body)).toBe(200);
+    }
   });
 
   it("clear one fault by name and leave the rest armed", async () => {

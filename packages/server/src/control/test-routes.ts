@@ -19,7 +19,7 @@ function body(c: { req: { json(): Promise<unknown> } }): Promise<unknown> {
  * the public listener. The target interface in `conformance/README.md` names
  * them as the adapter's means.
  */
-export function testRoutes() {
+export function testRoutes(jobNames: () => readonly string[]) {
   const app = new Hono();
   app.get("/clock", (c) =>
     c.json({ offset_ms: clockOffsetMs(), now: now().toISOString() }),
@@ -53,7 +53,7 @@ export function testRoutes() {
         "Provide the fault's name and, where it takes one, its arg",
       );
     const arg = input.data.arg ?? null;
-    const problem = faultProblem(input.data.name, arg);
+    const problem = faultProblem(input.data.name, arg, jobNames());
     if (problem !== undefined)
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, problem);
     setFault(input.data.name, arg);

@@ -12,10 +12,13 @@
  *   removing anything from it.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
  *
+ * The routes refuse a name that answers to no point, and a job the scheduler
+ * has not registered, so a typo cannot pass for an armed fault.
+ *
  * Nothing persists: a restart starts with no fault.
  */
 
-/** What a fault point may be named. A typo is refused rather than armed. */
+/** The shape a fault point may take. */
 const HOLD_POINT = /^(?:housekeeping:[a-z][a-z0-9-]*|version-thinning:item)$/;
 const DEADLINE_JOB = /^[a-z][a-z0-9-]*$/;
 /** The longest delay a timer takes. */
@@ -35,11 +38,7 @@ interface Entry {
 
 const faults = new Map<string, Entry>();
 
-/** Why a fault name or argument is refused, or `undefined` when it is armed. */
-export function faultProblem(
-  name: string,
-  arg: string | null,
-): string | undefined {
+function shapeProblem(name: string, arg: string | null): string | undefined {
   if (name.startsWith("hold:")) {
     if (!HOLD_POINT.test(name.slice(5)))
       return `no hold point is named ${name.slice(5)}`;
@@ -56,9 +55,31 @@ export function faultProblem(
   return "a fault is named hold:<point> or deadline:<job>";
 }
 
-/** Arms a fault. Setting a name again replaces its argument and keeps its waiters. */
+/**
+ * Why a fault name or argument is refused, or `undefined` when it is armed.
+ * `jobs` are the housekeeping jobs the scheduler has registered: a fault on
+ * any other job would never act.
+ */
+export function faultProblem(
+  name: string,
+  arg: string | null,
+  jobs: readonly string[],
+): string | undefined {
+  const problem = shapeProblem(name, arg);
+  if (problem !== undefined) return problem;
+  const job = name.startsWith("deadline:")
+    ? name.slice(9)
+    : name.startsWith("hold:housekeeping:")
+      ? name.slice(18)
+      : undefined;
+  if (job !== undefined && !jobs.includes(job))
+    return `no housekeeping job is named ${job}`;
+  return undefined;
+}
+
+/** Arms a fault of a valid shape; the routes check the job. Setting a name again replaces its argument and keeps its waiters. */
 export function setFault(name: string, arg: string | null): void {
-  const problem = faultProblem(name, arg);
+  const problem = shapeProblem(name, arg);
   if (problem !== undefined) throw new RangeError(problem);
   const existing = faults.get(name);
   if (existing) existing.arg = arg;
@@ -84,19 +105,24 @@ export function activeFaults(): ActiveFault[] {
 
 /**
  * Runs `step` at once, or after the fault is cleared when `hold:<point>` is
- * armed. Nothing is deferred when no fault holds the point, so a server
- * without the hooks starts `step` in the same turn it always did.
+ * armed. `step` is told whether it was held, so a caller can refuse to start
+ * work a shutdown released. Nothing is deferred when no fault holds the
+ * point, so a server without the hooks starts `step` in the same turn it
+ * always did.
  */
-export function atPoint<T>(point: string, step: () => Promise<T>): Promise<T> {
+export function atPoint<T>(
+  point: string,
+  step: (held: boolean) => Promise<T>,
+): Promise<T> {
   const entry = faults.get(`hold:${point}`);
-  if (entry === undefined) return step();
+  if (entry === undefined) return step(false);
   return new Promise<void>((resolve) => {
     const release = () => {
       entry.release.delete(release);
       resolve();
     };
     entry.release.add(release);
-  }).then(step);
+  }).then(() => step(true));
 }
 
 /** Waits here while `hold:<point>` is armed; returns at once otherwise. */

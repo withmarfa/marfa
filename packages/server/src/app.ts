@@ -832,7 +832,10 @@ export function createApp(
   // The harness's clock and fault routes: on the private socket alone, and
   // only when the instance was started for testing.
   if (options.localAuthority && config.testHooks)
-    app.route("/_control/test", testRoutes());
+    app.route(
+      "/_control/test",
+      testRoutes(() => housekeeping.names()),
+    );
   app.route("/export", exportRoutes(storage, blobs, instanceId));
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
