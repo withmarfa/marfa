@@ -1,6 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { LibsqlError } from "@libsql/client";
-import { failAt, faultsArmed } from "../../control/faults.js";
+import {
+  failAt,
+  faultsArmed,
+  forgetReach,
+  recordFired,
+} from "../../control/faults.js";
 import type { TransactionControl } from "./transaction-control.js";
 import type { AuditLogEntry, Storage } from "../interface.js";
 
@@ -37,6 +42,7 @@ export function injectedDatabaseError(
 
 interface Scope {
   spent: boolean;
+  point: string;
   /** The database ends the statement's transaction as it fails, as it may for a full or failing disk. */
   endsTransaction: boolean;
 }
@@ -56,13 +62,21 @@ export function withStatementFault<T>(
   action?: string,
   options: { endsTransaction?: boolean } = {},
 ): Promise<T> {
-  if (!failAt(point, action)) return work();
+  if (!failAt(point, action, false)) return work();
   // Awaited inside the scope: the query layer's builders run the statement
   // when they are awaited, which would otherwise be after the scope ended.
-  return scope.run(
-    { spent: false, endsTransaction: options.endsTransaction ?? false },
-    async () => await work(),
-  );
+  const state: Scope = {
+    spent: false,
+    point,
+    endsTransaction: options.endsTransaction ?? false,
+  };
+  return scope.run(state, async () => {
+    try {
+      return await work();
+    } finally {
+      if (!state.spent) forgetReach(point);
+    }
+  });
 }
 
 /** The failure the statement about to run must raise, if its caller is inside {@link withStatementFault} and the fault has not acted yet. */
@@ -72,6 +86,7 @@ export function takeStatementFault():
   const pending = scope.getStore();
   if (pending === undefined || pending.spent) return undefined;
   pending.spent = true;
+  recordFired(pending.point);
   return {
     error: injectedDatabaseError("SQLITE_IOERR"),
     endsTransaction: pending.endsTransaction,

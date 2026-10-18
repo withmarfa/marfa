@@ -119,18 +119,23 @@ describe("a fault that ends a job's write partway through a chunk", () => {
     expect(acted?.fired).toBe(1);
 
     const written = await idsWith("written");
-    const failed = errors.map((entry) => entry.id);
-    // The chunk's rows are reported, none of them written, and nothing else is
-    // (items/job-chunk-fault): the rows written before the failed one went
-    // with the chunk's transaction.
-    expect(failed).toHaveLength(chunk);
-    expect(new Set(failed).size).toBe(failed.length);
-    expect(failed.filter((id) => written.includes(id))).toEqual([]);
-    // The chunks after it were written (items/job-chunk-continues).
+    const everyone = await idsWith(tag);
+    const unwritten = everyone.filter((id) => !written.includes(id));
+    // The job's counters cover the whole chunk (items/job-chunk-fault): the
+    // rows written before the failed one went with the chunk's transaction,
+    // so every row of the chunk is counted as failed, and the chunks after it
+    // were written (items/job-chunk-continues).
+    expect(unwritten).toHaveLength(chunk);
     expect(written).toHaveLength(rows - chunk);
     expect(job.matched).toBe(rows);
-    expect(job.succeeded).toBe(written.length);
-    expect(job.errored).toBe(failed.length);
+    expect(job.errored).toBe(chunk);
+    expect(job.succeeded).toBe(rows - chunk);
+    // The errors the job lists are a sample, which the server may cut short,
+    // so each one only has to name a row of the failed chunk, once.
+    const failed = errors.map((entry) => entry.id);
+    expect(failed.length).toBeGreaterThan(0);
+    expect(new Set(failed).size).toBe(failed.length);
+    for (const id of failed) expect(unwritten).toContain(id);
 
     // The cause is the fault's own, in the form every report takes: the
     // database failure and its code, and nothing of the statement or the values

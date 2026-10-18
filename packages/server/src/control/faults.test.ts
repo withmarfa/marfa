@@ -5,6 +5,8 @@ import {
   clearFaults,
   deadlineFault,
   failAt,
+  forgetReach,
+  recordFired,
   faultProblem,
   faultsArmed,
   POINTS,
@@ -187,6 +189,19 @@ describe("a fail fault", () => {
     expect(faultsArmed()).toBe(false);
     expect(failAt("audit")).toBe(false);
     expect(deadlineFault("trash-purge")).toBeUndefined();
+  });
+
+  it("counts a statement fault only when a statement failed, and waits for a reach that can", () => {
+    arm("fail:export-read");
+    // A scope that ran no statement: reached, not counted, taken back.
+    expect(failAt("export-read", undefined, false)).toBe(true);
+    forgetReach("export-read");
+    expect(activeFaults()[0]).toMatchObject({ fired: 0 });
+    // The next reach is the first again, and counts when a statement fails.
+    expect(failAt("export-read", undefined, false)).toBe(true);
+    recordFired("export-read");
+    expect(activeFaults()[0]).toMatchObject({ fired: 1 });
+    expect(failAt("export-read", undefined, false)).toBe(false);
   });
 
   it("costs one read of the table when nothing is set", () => {

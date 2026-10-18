@@ -34,8 +34,9 @@ import { ERROR_CODES, ErrorCode, MarfaError } from "@withmarfa/shared";
 import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import { blobProof } from "../routes/_blob-reach.js";
 import { writeItem } from "../storage/item-write.js";
+import { faultsArmed } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
-import type { ItemUpdate } from "../storage/item-write.js";
+import type { ItemUpdate, ItemWrite } from "../storage/item-write.js";
 import type { LiveCredential } from "../auth/live-credential.js";
 
 export interface ChunkOutcome {
@@ -68,6 +69,9 @@ export interface RunChunkContext {
    *  is on the door it called. */
   credential: LiveCredential;
 }
+
+/** How a row fault ends the chunk: the database ends its transaction. */
+const ENDS_TRANSACTION = { endsTransaction: true } as const;
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
   const { input } = ctx;
@@ -117,18 +121,17 @@ async function runTransitionChunk({
         // Each row is a savepoint of the chunk's transaction, its events
         // with it, so one that fails leaves nothing behind and the rest
         // still land.
-        const result = await withStatementFault(
-          "job-row",
-          () =>
-            writeItem(
-              storage,
-              { kind: "credential", key: credential.key },
-              { op: "transition", id, state: input.state },
-              { fanout: fansOutFor(input) },
-            ),
-          undefined,
-          { endsTransaction: true },
-        );
+        const actor = { kind: "credential", key: credential.key } as const;
+        const write: ItemWrite = { op: "transition", id, state: input.state };
+        const options = { fanout: fansOutFor(input) };
+        const result = await (faultsArmed()
+          ? withStatementFault(
+              "job-row",
+              () => writeItem(storage, actor, write, options),
+              undefined,
+              ENDS_TRANSACTION,
+            )
+          : writeItem(storage, actor, write, options));
         for (const item of [...result.broughtBack, ...result.trashed]) {
           carriedInChunk.add(item.id);
         }
@@ -159,18 +162,17 @@ async function runPurgeChunk({
         // and as a savepoint of it: a row restored since the job was queued
         // is one the person took back and is refused, and a row whose purge
         // fails part-way leaves nothing behind, its events included.
-        const result = await withStatementFault(
-          "job-row",
-          () =>
-            writeItem(
-              storage,
-              { kind: "credential", key: credential.key },
-              { op: "purge", id },
-              { fanout: fansOutFor(input) },
-            ),
-          undefined,
-          { endsTransaction: true },
-        );
+        const actor = { kind: "credential", key: credential.key } as const;
+        const write: ItemWrite = { op: "purge", id };
+        const options = { fanout: fansOutFor(input) };
+        const result = await (faultsArmed()
+          ? withStatementFault(
+              "job-row",
+              () => writeItem(storage, actor, write, options),
+              undefined,
+              ENDS_TRANSACTION,
+            )
+          : writeItem(storage, actor, write, options));
         if (result.outcome !== "moved") continue;
         collectBlobHashes(result.item.properties, blob_hashes);
         succeeded.push(id);
@@ -202,45 +204,44 @@ async function runUpdateTagsChunk({
         // A savepoint per row, holding the row's gate, its tag writes and
         // the event that announces them, so the gate is asked of the row as
         // it stands when it is written and a row that fails leaves nothing.
-        await withStatementFault(
-          "job-row",
-          () =>
-            storage.runInTransaction(async () => {
-              const row = await storage.items.getIncludingTrashed(id);
-              if (!row || !mayReadType(credential.key, row.type)) {
-                throw new MarfaError(
-                  ErrorCode.ITEM_NOT_FOUND,
-                  "Item not found",
-                );
-              }
-              checkTypeAccess(credential.key, row.type, "write");
-              let metadata: Metadata | undefined;
-              if (add.length > 0) {
-                metadata = await storage.metadata.addTags(id, add);
-              }
-              for (const tag of remove) {
-                // Announced whether or not the tag was there to remove. That is
-                // deliberate: the doors report on the request rather than on
-                // the diff, a caller cannot tell the two apart from the
-                // response either, and comparing before and after per tag
-                // would cost a read per row to suppress an event a subscriber
-                // treats as idempotent anyway.
-                metadata = await storage.metadata.removeTag(id, tag);
-              }
-              if (!metadata) return;
-              // The row as the tag write left it, its modification time moved.
-              // Read past the bin: the filter takes `state: "trashed"`, and a
-              // row trashed after the job was queued is announced like any other.
-              await publish({
-                type: "metadata_changed",
-                item: (await storage.items.getIncludingTrashed(id)) ?? row,
-                metadata,
-                enableFanout: fansOutFor(input),
-              });
-            }),
-          undefined,
-          { endsTransaction: true },
-        );
+        const tagRow = async () => {
+          const row = await storage.items.getIncludingTrashed(id);
+          if (!row || !mayReadType(credential.key, row.type)) {
+            throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+          }
+          checkTypeAccess(credential.key, row.type, "write");
+          let metadata: Metadata | undefined;
+          if (add.length > 0) {
+            metadata = await storage.metadata.addTags(id, add);
+          }
+          for (const tag of remove) {
+            // Announced whether or not the tag was there to remove. That is
+            // deliberate: the doors report on the request rather than on
+            // the diff, a caller cannot tell the two apart from the
+            // response either, and comparing before and after per tag
+            // would cost a read per row to suppress an event a subscriber
+            // treats as idempotent anyway.
+            metadata = await storage.metadata.removeTag(id, tag);
+          }
+          if (!metadata) return;
+          // The row as the tag write left it, its modification time moved.
+          // Read past the bin: the filter takes `state: "trashed"`, and a
+          // row trashed after the job was queued is announced like any other.
+          await publish({
+            type: "metadata_changed",
+            item: (await storage.items.getIncludingTrashed(id)) ?? row,
+            metadata,
+            enableFanout: fansOutFor(input),
+          });
+        };
+        await (faultsArmed()
+          ? withStatementFault(
+              "job-row",
+              () => storage.runInTransaction(tagRow),
+              undefined,
+              ENDS_TRANSACTION,
+            )
+          : storage.runInTransaction(tagRow));
         succeeded.push(id);
       } catch (err) {
         storage.assertTransactionUsable();
@@ -311,18 +312,17 @@ async function runUpdateChunk(
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        const result = await withStatementFault(
-          "job-row",
-          () =>
-            writeItem(
-              storage,
-              { kind: "credential", key: credential.key },
-              { op: "update", id, ...change },
-              { fanout: fansOutFor(input) },
-            ),
-          undefined,
-          { endsTransaction: true },
-        );
+        const actor = { kind: "credential", key: credential.key } as const;
+        const write: ItemWrite = { op: "update", id, ...change };
+        const options = { fanout: fansOutFor(input) };
+        const result = await (faultsArmed()
+          ? withStatementFault(
+              "job-row",
+              () => writeItem(storage, actor, write, options),
+              undefined,
+              ENDS_TRANSACTION,
+            )
+          : writeItem(storage, actor, write, options));
         if (result.outcome === "updated") {
           succeeded.push(id);
         } else {

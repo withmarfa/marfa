@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { clearFaults, setFault } from "../control/faults.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  runBulkActionAsync,
+  type TestContext,
+} from "../test-utils.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
 
 const spies = vi.hoisted(() => ({ audit: vi.fn(), scope: vi.fn() }));
@@ -55,3 +60,41 @@ it("takes the fault path once a fault is set, which is the witness for the absen
   await write();
   expect(spies.audit).toHaveBeenCalledTimes(1);
 });
+
+const ACTIONS: [string, Record<string, unknown>][] = [
+  ["update_tags", { add: ["hooks-off-added"] }],
+  ["update_tier", { tier: "feed" }],
+  ["update_properties", { patch: { body: "patched" } }],
+  ["update_occurred_at", { occurred_at: "2024-01-01T00:00:00.000Z" }],
+  ["transition", { state: "archived" }],
+  ["purge", { confirm: "PURGE" }],
+];
+
+async function jobFor(action: string, extra: Record<string, unknown>) {
+  const made = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type: "core.note", properties: { body: "row" }, tags: [action] },
+  });
+  expect(made.status).toBe(201);
+  const ran = await runBulkActionAsync(
+    ctx,
+    { action, filter: { tags: [action] }, ...extra },
+    ctx.workingKey,
+  );
+  expect(ran.initialStatus).toBe(202);
+  return ran.job!;
+}
+
+it.each(ACTIONS)(
+  "writes the rows of %s by the original code with no fault set, and through the fault scope once one is",
+  async (action, extra) => {
+    const job = await jobFor(action, extra);
+    expect(job.status).toBe("completed");
+    expect(spies.scope).not.toHaveBeenCalled();
+
+    // The witness: with a fault set the same rows are written inside a scope.
+    setFault("fail:job-row", null);
+    await jobFor(action, extra);
+    expect(spies.scope).toHaveBeenCalled();
+  },
+);

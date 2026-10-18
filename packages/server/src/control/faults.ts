@@ -244,9 +244,15 @@ export function faultsArmed(): boolean {
  * Whether `fail:<point>` acts now. Each call counts one reach of the point
  * for a fault set on it, and the fault acts on the reach it is aimed at, and
  * on no other. A fault aimed at an audit action counts only the reaches made
- * with that action.
+ * with that action. A reach made with `counted` false does not add to
+ * `fired`; the caller does that with {@link recordFired} when the failure
+ * happens.
  */
-export function failAt(point: string, action?: string): boolean {
+export function failAt(
+  point: string,
+  action?: string,
+  counted = true,
+): boolean {
   if (faults.size === 0) return false;
   const entry = faults.get(`fail:${point}`);
   if (entry?.target === undefined) return false;
@@ -254,8 +260,24 @@ export function failAt(point: string, action?: string): boolean {
     return false;
   entry.seen += 1;
   if (entry.seen !== entry.target.nth) return false;
-  entry.fired += 1;
+  if (counted) entry.fired += 1;
   return true;
+}
+
+/**
+ * Takes back the reach of a statement fault whose scope ran no statement, so
+ * the fault waits for a reach that can fail instead of passing for one that
+ * did. The count of what acted is {@link recordFired}'s.
+ */
+export function forgetReach(point: string): void {
+  const entry = faults.get(`fail:${point}`);
+  if (entry !== undefined && entry.seen > 0) entry.seen -= 1;
+}
+
+/** See {@link forgetReach}. */
+export function recordFired(point: string): void {
+  const entry = faults.get(`fail:${point}`);
+  if (entry !== undefined) entry.fired += 1;
 }
 
 /**
