@@ -2011,7 +2011,7 @@ fn reindex(conn: &Connection) -> Result<(), CoreError> {
         })?
         .collect::<Result<_, _>>()?;
     for (seq, id, type_id, state, properties) in held {
-        let properties: Map<String, Value> = serde_json::from_str(&properties)?;
+        let (properties, _) = split_properties(&properties);
         index_row(
             conn,
             seq,
@@ -4199,6 +4199,141 @@ mod tests {
             None,
             "the entry written again put a row in the bin into the index"
         );
+    }
+
+    #[test]
+    fn reindex_contains_malformed_properties() {
+        check_unreadable_reindex(r#"{"title":"#);
+    }
+
+    #[test]
+    fn reindex_contains_nonobject_properties() {
+        for damaged in ["[1]", "null", "7", "true", r#""text""#] {
+            check_unreadable_reindex(damaged);
+        }
+    }
+
+    fn check_unreadable_reindex(damaged: &str) {
+        let conn = conn();
+        let catalog = |cover: &str| {
+            let mut ty = wire_type("acme.photo", None, Some("title"));
+            ty.rest
+                .insert("fields".into(), json!({"cover": {"type": cover}}));
+            WireCatalog {
+                types: vec![ty],
+                edge_types: vec![],
+            }
+        };
+        replace_catalog(&conn, &catalog("string")).unwrap();
+        let indexing = crate::catalog::Catalog::load(&conn)
+            .unwrap()
+            .indexing("acme.photo");
+        for (id, state) in [
+            ("damaged", "active"),
+            ("healthy", "active"),
+            ("binned", "trashed"),
+        ] {
+            let row = wire_item(
+                id,
+                "acme.photo",
+                state,
+                "2026-01-01T00:00:00Z",
+                json!({
+                    "title": "staletitle",
+                    "body": "stalebody",
+                    "description": "staledescription",
+                    "name": "stalename",
+                    "cover": "stalecover",
+                }),
+            );
+            upsert_item(&conn, &row, Some(&["genuinetag".into()]), &indexing).unwrap();
+        }
+        let matches = |query: &str| -> Vec<String> {
+            conn.prepare(
+                "SELECT items.id FROM items_fts
+                 JOIN items ON items.seq = items_fts.rowid
+                 WHERE items_fts MATCH ?1 ORDER BY items.id",
+            )
+            .unwrap()
+            .query_map([query], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+        };
+        for query in [
+            "staletitle",
+            "stalebody",
+            "staledescription",
+            "stalename",
+            "stalecover",
+            "genuinetag",
+        ] {
+            assert_eq!(matches(query), ["damaged", "healthy"], "{query}");
+        }
+        conn.execute(
+            "UPDATE items SET properties = ?1 WHERE id IN ('damaged', 'binned')",
+            [damaged],
+        )
+        .unwrap();
+        assert!(items_by_ids(&conn, &["damaged".into()]).is_err());
+        let mut unreadable = Unreadable::Keep(HashMap::new());
+        items_by_ids_with(&conn, &["damaged".into()], &mut unreadable).unwrap();
+        let why = unreadable.why("damaged").unwrap();
+        let version = catalog_version(&conn).unwrap();
+
+        assert!(
+            replace_catalog(&conn, &catalog("thumbnail")).unwrap(),
+            "{damaged}"
+        );
+
+        assert_ne!(catalog_version(&conn).unwrap(), version);
+        for query in ["staletitle", "stalebody", "staledescription", "stalename"] {
+            assert_eq!(matches(query), ["healthy"], "{damaged}: {query}");
+        }
+        assert!(
+            matches("stalecover").is_empty(),
+            "the healthy row was not reindexed"
+        );
+        assert_eq!(matches("genuinetag"), ["damaged", "healthy"]);
+        let raw: String = conn
+            .query_row(
+                "SELECT properties FROM items WHERE id = 'damaged'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, damaged);
+        let mut unreadable = Unreadable::Keep(HashMap::new());
+        let held = items_by_ids_with(&conn, &["damaged".into()], &mut unreadable).unwrap();
+        assert!(held[0].properties.is_empty());
+        assert_eq!(unreadable.why("damaged"), Some(why));
+        assert!(items_by_ids(&conn, &["damaged".into()]).is_err());
+    }
+
+    #[test]
+    fn reindex_database_errors_still_roll_back_a_catalog_replacement() {
+        let conn = conn();
+        let original = WireCatalog {
+            types: vec![wire_type("core.note", None, Some("title"))],
+            edge_types: vec![],
+        };
+        replace_catalog(&conn, &original).unwrap();
+        upsert_item(
+            &conn,
+            &note("held", "held", "body", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &Indexing::default(),
+        )
+        .unwrap();
+        let held = type_rows(&conn).unwrap();
+        let version = catalog_version(&conn).unwrap();
+        let mut changed = original;
+        changed.types[0].label = Some("Changed".into());
+        conn.execute_batch("DROP TABLE items_fts").unwrap();
+        let failure = replace_catalog(&conn, &changed).unwrap_err();
+        assert!(matches!(failure, CoreError::Store(_)), "{failure:?}");
+        assert_eq!(type_rows(&conn).unwrap(), held);
+        assert_eq!(catalog_version(&conn).unwrap(), version);
     }
 
     /// Every value distinct: the helpers repeat a timestamp, which would hide

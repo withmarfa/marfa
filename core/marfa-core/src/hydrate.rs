@@ -833,6 +833,101 @@ mod tests {
     }
 
     #[test]
+    fn a_hydration_with_a_changed_catalog_repairs_unreadable_properties() {
+        for damaged in [r#"{"title":"#, "[1]"] {
+            let server = Scripted::start();
+            let core = copy(&server);
+            {
+                let conn = core.conn().unwrap();
+                store::replace_catalog(
+                    &conn,
+                    &crate::wire::WireCatalog {
+                        types: vec![store::testing::wire_type("core.note", None, Some("title"))],
+                        edge_types: vec![],
+                    },
+                )
+                .unwrap();
+                store::put_server_item(
+                    &conn,
+                    &store::testing::note("damaged", "original", "body", "2026-01-01T00:00:00Z"),
+                    Some(&[]),
+                    &crate::catalog::Catalog::load(&conn).unwrap(),
+                )
+                .unwrap();
+                conn.execute(
+                    "UPDATE items SET properties = ?1 WHERE id = 'damaged'",
+                    [damaged],
+                )
+                .unwrap();
+            }
+            let before = store::catalog_version(&core.conn().unwrap()).unwrap();
+            assert!(
+                core.get_kept("damaged")
+                    .unwrap()
+                    .unwrap()
+                    .1
+                    .unreadable_properties
+                    .is_some()
+            );
+            server.on(
+                "/types",
+                vec![scripted::certified(scripted::types(&[
+                    ("core.note", None),
+                    ("user.late", Some("core.note")),
+                ]))],
+            );
+            let payload: Value = serde_json::from_str(&scripted::item_payload(
+                "item.updated",
+                "damaged",
+                "core.note",
+                2,
+            ))
+            .unwrap();
+            let page = json!({
+                "data": [{
+                    "item": payload["item"],
+                    "metadata": payload["metadata"],
+                    "listed": true,
+                }],
+                "next_cursor": null,
+            });
+            server.on(
+                "/items",
+                vec![scripted::certified(scripted::json(200, &page.to_string()))],
+            );
+            server.on(
+                "/events",
+                vec![
+                    scripted::stream(
+                        vec![scripted::copy_marker("stream_cursor", "10")],
+                        Then::End,
+                    ),
+                    scripted::stream(
+                        vec![
+                            scripted::copy_marker("stream_cursor", "10"),
+                            scripted::copy_marker("stream_live", "10"),
+                        ],
+                        Then::End,
+                    ),
+                ],
+            );
+
+            assert_eq!(hydrate(&core).unwrap().items, 1);
+
+            assert_ne!(
+                store::catalog_version(&core.conn().unwrap()).unwrap(),
+                before
+            );
+            assert!(core.item_type("user.late").is_ok());
+            let repaired = core.get_shown("damaged").unwrap().unwrap();
+            assert_eq!(repaired.0.properties["title"], "damaged");
+            assert_eq!(repaired.0.version, 2);
+            assert_eq!(repaired.1.unreadable_properties, None);
+            assert!(!server.seen("/items").is_empty());
+        }
+    }
+
+    #[test]
     fn a_hydration_reads_pinned_rows_a_hundred_to_a_request_under_its_read_view() {
         let server = Scripted::start();
         let (core, pinned) = pinned_copy(&server, 250);
