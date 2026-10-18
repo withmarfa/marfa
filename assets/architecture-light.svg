@@ -47,11 +47,10 @@
   <line x1="660.0" y1="144" x2="660.0" y2="162" stroke="#59636e" stroke-width="1.5" marker-end="url(#head)"/>
   <line x1="840.0" y1="144" x2="840.0" y2="162" stroke="#59636e" stroke-width="1.5" marker-end="url(#head)"/>
   <!-- Server -->
-  <rect x="16" y="344" width="928" height="156" rx="12" fill="#8c959f" fill-opacity="0.08" stroke="#2563eb" stroke-width="1.5"/>
-  <path d="M16 356 a12 12 0 0 1 12 -12 h904 a12 12 0 0 1 12 12 v32 h-928 z" fill="#2563eb" fill-opacity="0.12"/>
-  <line x1="16" y1="388" x2="944" y2="388" stroke="#2563eb" stroke-width="1.5"/>
-  <text x="480.0" y="372" font-size="16" font-weight="700" fill="#2563eb" text-anchor="middle">HTTP API</text>
-  <text x="36" y="426" font-size="18" font-weight="700" fill="#1f2328" text-anchor="start">Marfa server</text>
+  <rect x="16" y="344" width="928" height="156" rx="12" fill="#8c959f" fill-opacity="0.08" stroke="#8c959f" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <line x1="16" y1="388" x2="944" y2="388" stroke="#d0d7de" stroke-width="1.5"/>
+  <text x="480.0" y="372" font-size="17" font-weight="700" fill="#1f2328" text-anchor="middle">HTTP API</text>
+  <text x="36" y="426" font-size="17" font-weight="700" fill="#1f2328" text-anchor="start">Marfa server</text>
   <text x="36" y="450" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">One owner's instance: the source of truth</text>
   <text x="36" y="470" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">that every copy follows</text>
   <rect x="576" y="408" width="168.0" height="76" rx="8" fill="#ffffff" stroke="#d0d7de" stroke-width="1.5"/>
