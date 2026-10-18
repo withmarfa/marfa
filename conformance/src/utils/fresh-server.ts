@@ -12,6 +12,18 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
+import {
+  groupOf,
+  readExit,
+  signalGroup,
+  stopWithSignal,
+  STOP_GRACE_MS,
+  waitUntilGone,
+  type ServerExit,
+  type StopSignal,
+} from "./server-process.js";
+
+export type { ServerExit, StopSignal };
 
 /**
  * A server of the fixture's own, booted from this checkout into a state
@@ -70,13 +82,40 @@ export interface FreshServer {
   restart(
     arg?: (() => void | Promise<void>) | RestartOptions,
   ): Promise<ServerExit>;
+  /**
+   * Moves the server's clock forward by `ms`, through the target interface's
+   * `clock advance`. Resolves with the output of the command; rejects when
+   * the target refuses the step, as it does a negative one. The offset
+   * survives `restart`, and the clock does not come back until `stop`.
+   */
+  advanceClock(ms: number): Promise<string>;
+  /**
+   * Arms a fault, through `fault set`: `hold:<point>` waits at a point until
+   * cleared, and `deadline:<job>=<ms>` shortens a job's run deadline. The
+   * fault is cleared by `clearFault`, by `restart`, and by `stop`, so none
+   * outlives the fixture that set it.
+   */
+  setFault(spec: string): Promise<void>;
+  /** Clears one fault, or every fault when no name is given. */
+  clearFault(name?: string): Promise<void>;
+  /** The faults armed now, and how many callers wait at each hold. */
+  faults(): Promise<ArmedFault[]>;
+  /**
+   * Waits until `count` callers wait at the `hold:` fault named, as
+   * `faults()` reports. Rejects after `timeoutMs` (60 seconds by default).
+   */
+  waitForHold(name: string, count?: number, timeoutMs?: number): Promise<void>;
   /** Stops the server and removes its state. Safe to call twice. */
   stop(): Promise<void>;
 }
 
-/** The signals a fixture stops a server with: the two a stop answers to, and
- *  the one a crash is. */
-export type StopSignal = "SIGTERM" | "SIGINT" | "SIGKILL";
+/** A fault the target has armed. */
+export interface ArmedFault {
+  name: string;
+  arg: string | null;
+  /** Callers waiting at a `hold:` fault now. */
+  waiting: number;
+}
 
 export interface RestartOptions {
   signal?: StopSignal;
@@ -85,19 +124,6 @@ export interface RestartOptions {
    *  with: a data directory started again under another setting. The boot
    *  after this one is back to the first. */
   env?: Record<string, string>;
-}
-
-/**
- * How a server ended. `code` is the exit status and `signal` the signal that
- * ended it, one of them null. A server killed with `SIGKILL` takes its
- * supervisor with it and leaves no status, so it reads `code` null and
- * `signal` `SIGKILL`. `ms` is the time from the last signal this fixture sent
- * to the end, `0` when none was sent.
- */
-export interface ServerExit {
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  ms: number;
 }
 
 /** A SHA-256 of each file SQLite keeps for one database, `absent` for a
@@ -110,7 +136,7 @@ export interface DatabaseFiles {
 
 /** A boot that ended instead of serving. */
 export interface RefusedBoot extends ServerExit {
-  /** Everything the server wrote to its log. */
+  /** Everything the server wrote: its log, then what it printed to stderr. */
   output: string;
   stateDir: string;
   sqlitePath: string;
@@ -156,78 +182,6 @@ export async function stopFreshServers(): Promise<void> {
   if (failures.length > 1) {
     throw new AggregateError(failures, "fixture servers failed to stop");
   }
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** The grace a stopped server gets before it is killed outright. */
-const STOP_GRACE_MS = 20_000;
-
-/** The process group a state directory's pid file names. The server runs as
- *  its own group, so the group is what is signaled. */
-function groupOf(state: string): number {
-  const pid = Number(readFileSync(join(state, "server.pid"), "utf8").trim());
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw new Error(`the pid file under ${state} names no process`);
-  }
-  return pid;
-}
-
-function signalGroup(group: number, name: NodeJS.Signals): void {
-  try {
-    process.kill(-group, name);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-  }
-}
-
-/** Waits for the group to end; false when it is still there at `deadline`. */
-async function waitUntilGone(
-  group: number,
-  deadline: number,
-): Promise<boolean> {
-  while (processAlive(group) && Date.now() < deadline) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
-  }
-  return !processAlive(group);
-}
-
-/** What the supervisor recorded of the server's end, once the group is gone. */
-function readExit(
-  state: string,
-  signaledAt: number | undefined,
-  killed: boolean,
-): ServerExit {
-  const file = join(state, "server.exit");
-  if (!existsSync(file)) {
-    if (!killed) {
-      throw new Error(
-        `the server under ${state} ended and left no exit record`,
-      );
-    }
-    return {
-      code: null,
-      signal: "SIGKILL",
-      ms: Date.now() - (signaledAt ?? Date.now()),
-    };
-  }
-  const record = JSON.parse(readFileSync(file, "utf8")) as {
-    code: number | null;
-    signal: NodeJS.Signals | null;
-    at: number;
-  };
-  return {
-    code: record.code,
-    signal: record.signal,
-    ms: Math.max(0, record.at - (signaledAt ?? record.at)),
-  };
 }
 
 /** Not blocking: a worker held for a boot cannot retire its pooled
@@ -284,23 +238,31 @@ async function mintWorkingKey(
 }
 
 /**
- * The environment a fixture's server is booted with: the script's own, with
+ * The environment the adapter script is started in: the caller's own, with
  * the port left to the kernel and the limiter and enrichment pinned off.
+ * The settings a fixture names reach the target as `--env` arguments, which
+ * win over these pins.
  */
-function serverEnv(extraEnv: Record<string, string>): NodeJS.ProcessEnv {
+function serverEnv(): NodeJS.ProcessEnv {
   return {
     // The script pins the port to `PORT` when one is set, and the run's
     // own server may already hold it. The limiter is pinned off for the
     // same kind of reason and in the same place: a fixture that does not
     // ask for it should not inherit one from whoever started the run.
-    // `extraEnv` comes last, so a fixture that does ask still wins.
     ...process.env,
     PORT: "",
     RATE_LIMIT_ENABLED: "false",
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
-    ...extraEnv,
   };
+}
+
+/** `--env K=V` for each setting, the way the target interface names them. */
+function envArgs(settings: Record<string, string>): string[] {
+  return Object.entries(settings).flatMap(([name, value]) => [
+    "--env",
+    `${name}=${value}`,
+  ]);
 }
 
 function tsxBinary(): string {
@@ -312,6 +274,18 @@ function tsxBinary(): string {
 }
 
 const SERVER_SCRIPT = resolve(conformanceRoot, "scripts/marfa-server.ts");
+
+/**
+ * Everything a server booted into `state` wrote: its log, the JSON lines on
+ * its stdout, then what it printed to stderr. A fixture that holds the server
+ * to what it must not log reads both, because the server warns on stderr.
+ */
+export function serverOutput(state: string): string {
+  return ["server.log", "server.stderr"]
+    .map((name) => join(state, name))
+    .map((path) => (existsSync(path) ? readFileSync(path, "utf8") : ""))
+    .join("");
+}
 
 /** Before `down`, which clears the log with the rest of the state. The run's
  *  server boots from the same checkout, so what this one answered is held to
@@ -339,12 +313,28 @@ export async function bootFreshServer(
 ): Promise<FreshServer> {
   const tsx = tsxBinary();
   const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
-  const run = (command: "up" | "down", more: Record<string, string> = {}) =>
+  const run = (
+    command: "up" | "down" | "restart",
+    more: Record<string, string> = {},
+    ...options: string[]
+  ) =>
     runScript(
       tsx,
-      [SERVER_SCRIPT, command, "--state", state],
-      serverEnv({ ...extraEnv, ...more }),
+      [
+        SERVER_SCRIPT,
+        command,
+        "--state",
+        state,
+        ...envArgs({ ...extraEnv, ...more }),
+        ...options,
+      ],
+      serverEnv(),
     );
+  /** One of the adapter's commands that takes no setting. */
+  const adapter = (...words: string[]) =>
+    runScript(tsx, [SERVER_SCRIPT, ...words, "--state", state], serverEnv());
+  /** Whether a fault may be armed, so `stop` clears it before it stops. */
+  let armed = false;
 
   const booting = run("up");
   let stopping: Promise<void> | undefined;
@@ -353,6 +343,9 @@ export async function bootFreshServer(
       // `down` finds the server through the pid file `up` writes, so one
       // still booting is waited for rather than left to come up after.
       await booting;
+      // A held run would keep the server from stopping, and a fault is the
+      // fixture's own: none outlives it.
+      if (armed) await adapter("fault", "clear").catch(() => undefined);
       keepStatusLog(state);
       const down = await run("down");
       if (down.status !== 0) {
@@ -409,6 +402,16 @@ export async function bootFreshServer(
     }
     return readExit(state, signaledAt, false);
   };
+  const listArmedFaults = async (): Promise<ArmedFault[]> => {
+    const listed = await adapter("fault", "list");
+    const line = listed.output
+      .split("\n")
+      .find((candidate) => candidate.startsWith("{"));
+    if (listed.status !== 0 || line === undefined) {
+      throw new Error(`the target did not list its faults:\n${listed.output}`);
+    }
+    return (JSON.parse(line) as { faults: ArmedFault[] }).faults;
+  };
   const server: FreshServer = {
     apiUrl,
     managementKey,
@@ -423,25 +426,29 @@ export async function bootFreshServer(
       const options: RestartOptions =
         typeof arg === "function" ? { whileStopped: arg } : (arg ?? {});
       const name = options.signal ?? "SIGTERM";
-      const group = groupOf(state);
-      signal(name);
-      let killed = name === "SIGKILL";
-      if (!(await waitUntilGone(group, Date.now() + STOP_GRACE_MS))) {
-        // Not ended by the signal asked for: killed, and said so, so a
-        // fixture about a clean stop sees a stop that was not one.
-        signalGroup(group, "SIGKILL");
-        killed = true;
-        if (!(await waitUntilGone(group, Date.now() + STOP_GRACE_MS))) {
-          throw new Error(`process ${String(group)} survived SIGKILL`);
+      // The new process starts with no fault armed.
+      armed = false;
+      let ended: ServerExit;
+      let again: { status: number | null; output: string };
+      if (options.whileStopped === undefined) {
+        again = await run("restart", options.env, "--signal", name.slice(3));
+        const previous = /previous exit (\{.*\})/.exec(again.output);
+        if (again.status !== 0 || previous === null) {
+          throw new Error(
+            `could not restart the server in ${state}:\n${again.output}`,
+          );
         }
-      }
-      const ended = readExit(state, signaledAt, killed);
-      await options.whileStopped?.();
-      const again = await run("up", options.env);
-      if (again.status !== 0) {
-        throw new Error(
-          `could not boot the server again into ${state}:\n${again.output}`,
-        );
+        ended = JSON.parse(previous[1]!) as ServerExit;
+      } else {
+        signaledAt = Date.now();
+        ended = await stopWithSignal(state, name);
+        await options.whileStopped();
+        again = await run("up", options.env);
+        if (again.status !== 0) {
+          throw new Error(
+            `could not boot the server again into ${state}:\n${again.output}`,
+          );
+        }
       }
       const after = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
       if (!after.MARFA_API_URL || !after.MARFA_MANAGEMENT_KEY) {
@@ -461,6 +468,45 @@ export async function bootFreshServer(
         );
       }
       return ended;
+    },
+    async advanceClock(ms) {
+      const moved = await adapter("clock", "advance", String(ms));
+      if (moved.status !== 0) {
+        throw new Error(
+          `the target did not move its clock by ${String(ms)} ms:\n${moved.output}`,
+        );
+      }
+      return moved.output;
+    },
+    async setFault(spec) {
+      const set = await adapter("fault", "set", spec);
+      if (set.status !== 0) {
+        throw new Error(`the target refused the fault ${spec}:\n${set.output}`);
+      }
+      armed = true;
+    },
+    async clearFault(name) {
+      const cleared = await adapter("fault", "clear", ...(name ? [name] : []));
+      if (cleared.status !== 0) {
+        throw new Error(`the target did not clear a fault:\n${cleared.output}`);
+      }
+    },
+    faults: listArmedFaults,
+    async waitForHold(name, count = 1, timeoutMs = 60_000) {
+      const deadline = Date.now() + timeoutMs;
+      let seen = 0;
+      for (;;) {
+        seen =
+          (await listArmedFaults()).find((fault) => fault.name === name)
+            ?.waiting ?? 0;
+        if (seen >= count) return;
+        if (Date.now() > deadline) {
+          throw new Error(
+            `${String(seen)} of ${String(count)} callers waited at ${name} after ${String(timeoutMs)}ms`,
+          );
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 100));
+      }
     },
     stop,
   };
@@ -541,8 +587,9 @@ export async function bootRefused(
         ...(options.nodeEnv === undefined
           ? []
           : ["--node-env", options.nodeEnv]),
+        ...envArgs(options.extraEnv ?? {}),
       ],
-      serverEnv(options.extraEnv ?? {}),
+      serverEnv(),
     );
     if (refused.status !== 0) {
       throw new Error(
@@ -552,7 +599,7 @@ export async function bootRefused(
     const ended = readExit(state, undefined, false);
     return {
       ...ended,
-      output: redactSetupProof(readFileSync(join(state, "server.log"), "utf8")),
+      output: redactSetupProof(serverOutput(state)),
       stateDir: state,
       sqlitePath,
       before,

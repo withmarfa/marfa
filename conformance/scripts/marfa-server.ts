@@ -6,21 +6,39 @@ import { tmpdir } from "node:os";
  * key, and write the env file the run sources. The restore drill imports
  * `bootServer` and `stopServer` to boot the same way, twice.
  *
- *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>]
+ *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
  * The port is `--port`, else `PORT`, else one the kernel says is free. The
  * default is what matters: two boots on one machine, from two worktrees or
- * two agents, never collide.
+ * two agents, never collide. Each `--env K=V` is a setting for the boot
+ * (`conformance/README.md` lists the ones a fixture may pass), and wins over
+ * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
- *   tsx scripts/marfa-server.ts refused [--state <dir>]
+ *   tsx scripts/marfa-server.ts refused [--state <dir>] [--env K=V ...]
+ *   tsx scripts/marfa-server.ts restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...]
+ *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>
+ *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
  *
  * `refused` boots the same server on a state directory and waits for it to end
  * instead of for `/health`: for a boot that is meant to be refused.
  *
- * The state directory holds the SQLite file, the blob folder, the server log,
- * the pid, the exit record and the env file. It defaults to `.marfa-state` in
- * the working directory. `down` stops the server and then removes them, so the
+ * `restart` stops the server with the signal (`TERM` by default), prints how
+ * it ended as `[marfa-server] previous exit {"code":..,"signal":..,"ms":..}`,
+ * and boots it again on the same data. The URL may change and the env file is
+ * rewritten.
+ *
+ * `clock advance` moves the server's clock forward. The server refuses a
+ * negative step. The adapter keeps the offset in the state directory and
+ * passes it back on the next boot, so a restarted server does not go back in
+ * time. `fault set` arms a named fault, `fault clear` removes one or all, and
+ * `fault list` prints `{"faults":[{"name":..,"arg":..,"waiting":..}]}`. A
+ * server starts with no fault.
+ *
+ * The state directory holds the SQLite file, the blob folder, the server log
+ * (what the server wrote to stdout, which is JSON lines only), what it wrote
+ * to stderr, the pid, the exit record, the clock offset and the env file. It
+ * defaults to `.marfa-state` in the working directory. `down` stops the server and then removes them, so the
  * next `up` is a fresh instance: a database that outlives the bucket it was
  * pointed at registers a second object store on the next boot. The directory
  * itself stays, because `garage/` sits inside it and is the garage script's.
@@ -61,6 +79,11 @@ import {
   type SharedOwnerSession,
 } from "../src/client/owner-session.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
+import {
+  STOP_SIGNALS,
+  stopWithSignal,
+  type StopSignal,
+} from "../src/utils/server-process.js";
 
 const HEALTH_BUDGET_MS = 180_000;
 const HEALTH_POLL_MS = 250;
@@ -81,10 +104,14 @@ const RUN_SERVER = resolve(
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 interface Args {
-  command: "up" | "down" | "status" | "refused";
+  command: "up" | "down" | "status" | "refused" | "restart" | "clock" | "fault";
   state: string;
   port?: number;
   nodeEnv?: string;
+  env: Record<string, string>;
+  signal: StopSignal;
+  /** What follows the options: the subcommand of `clock` and `fault`. */
+  words: string[];
 }
 
 /** What a boot needs: the state directory, and a port when one is wanted. */
@@ -101,21 +128,37 @@ export interface BootOptions {
    * stand-in.
    */
   nodeEnv?: string;
+  /**
+   * Settings for this boot, by name. They win over the script's defaults
+   * and over the environment the script was started in.
+   */
+  env?: Record<string, string>;
 }
+
+const COMMANDS = [
+  "up",
+  "down",
+  "status",
+  "refused",
+  "restart",
+  "clock",
+  "fault",
+] as const;
 
 function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
-  if (
-    command !== "up" &&
-    command !== "down" &&
-    command !== "status" &&
-    command !== "refused"
-  ) {
+  if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up [--state <dir>] [--port <n>] | down [--state <dir>] | status [--state <dir>] | refused [--state <dir>]",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms> | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
     );
   }
-  const args: Args = { command, state: resolve(".marfa-state") };
+  const args: Args = {
+    command: command as Args["command"],
+    state: resolve(".marfa-state"),
+    env: {},
+    signal: "SIGTERM",
+    words: [],
+  };
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i];
     if (arg === "--state") {
@@ -127,6 +170,23 @@ function parseArgs(argv: string[]): Args {
       }
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
+    } else if (arg === "--env") {
+      const pair = rest[++i] ?? "";
+      const eq = pair.indexOf("=");
+      if (eq <= 0) throw new Error("--env needs K=V");
+      args.env[pair.slice(0, eq)] = pair.slice(eq + 1);
+    } else if (arg === "--signal") {
+      const name = `SIG${(rest[++i] ?? "").toUpperCase()}`;
+      const signal = STOP_SIGNALS.find((known) => known === name);
+      if (signal === undefined)
+        throw new Error("--signal needs TERM, INT or KILL");
+      args.signal = signal;
+    } else if (
+      (args.command === "clock" || args.command === "fault") &&
+      arg !== undefined &&
+      !arg.startsWith("--")
+    ) {
+      args.words.push(arg);
     } else {
       throw new Error(`unexpected argument: ${arg ?? ""}`);
     }
@@ -137,6 +197,8 @@ function parseArgs(argv: string[]): Args {
 function paths(state: string) {
   return {
     log: resolve(state, "server.log"),
+    stderr: resolve(state, "server.stderr"),
+    clock: resolve(state, "clock-offset"),
     pid: resolve(state, "server.pid"),
     exit: resolve(state, "server.exit"),
     db: resolve(state, "marfa.db"),
@@ -210,13 +272,21 @@ function alive(pid: number): boolean {
   }
 }
 
-/** The tail of the server's log, with the one-time secret taken out. */
-function logTail(log: string): string {
-  return existsSync(log)
-    ? redactSetupProof(
-        readFileSync(log, "utf8").split("\n").slice(-40).join("\n"),
-      )
-    : "(no log written)";
+/**
+ * The tail of the server's output, with the one-time secret taken out: its
+ * log (stdout) and, when it wrote any, what it printed to stderr.
+ */
+function logTail(p: ReturnType<typeof paths>): string {
+  const tail = (path: string) =>
+    existsSync(path)
+      ? redactSetupProof(
+          readFileSync(path, "utf8").split("\n").slice(-40).join("\n"),
+        )
+      : "";
+  const out = tail(p.log);
+  const err = tail(p.stderr);
+  if (out === "" && err === "") return "(no log written)";
+  return err === "" ? out : `${out}\n--- stderr ---\n${err}`;
 }
 
 /** How the server ended, as the supervisor recorded it. */
@@ -239,7 +309,7 @@ async function waitForHealth(
   while (Date.now() < deadline) {
     if (ended()) {
       throw new Error(
-        `the server ended before it answered ${url}/health: ${describeExit(p.exit)}. Log tail:\n${logTail(p.log)}`,
+        `the server ended before it answered ${url}/health: ${describeExit(p.exit)}. Log tail:\n${logTail(p)}`,
       );
     }
     try {
@@ -253,7 +323,7 @@ async function waitForHealth(
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
   throw new Error(
-    `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${logTail(p.log)}`,
+    `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${logTail(p)}`,
   );
 }
 
@@ -266,6 +336,13 @@ interface Started {
   ended: () => boolean;
   controlSocket: string;
   authSecret: string;
+}
+
+/** The offset the last `clock advance` left, in ms; zero when none did. */
+function readClockOffset(file: string): number {
+  if (!existsSync(file)) return 0;
+  const offset = Number(readFileSync(file, "utf8").trim());
+  return Number.isSafeInteger(offset) && offset > 0 ? offset : 0;
 }
 
 async function startServer(args: BootOptions): Promise<Started> {
@@ -370,9 +447,23 @@ async function startServer(args: BootOptions): Promise<Started> {
       else env[name] = process.env[name];
     }
   }
+  // The test hooks are the adapter's means of moving the clock and holding a
+  // job, so every boot has them but one told to run as production, which the
+  // server would refuse for them.
+  const hooks = args.nodeEnv !== "production";
+  env.MARFA_TEST_HOOKS = String(hooks);
+  delete env.MARFA_TEST_CLOCK_OFFSET_MS;
+  const offset = hooks ? readClockOffset(p.clock) : 0;
+  if (offset > 0) env.MARFA_TEST_CLOCK_OFFSET_MS = String(offset);
+  // What the caller names wins over every default above.
+  Object.assign(env, args.env);
 
   rmSync(p.exit, { force: true });
+  // Stdout holds the server's JSON log lines and nothing else, which is what
+  // `check:statuses` reads. Whatever else the process prints, a Node warning
+  // or a trace, goes to its own file.
   const logFd = openSync(p.log, "a");
+  const errFd = openSync(p.stderr, "a");
   // The supervisor leads the group and the server joins it, so the group's
   // id is still the pid file's and a signal to the group still reaches the
   // server; what the supervisor adds is the server's exit status.
@@ -391,10 +482,11 @@ async function startServer(args: BootOptions): Promise<Started> {
       cwd: resolve(REPO_ROOT, "packages/server"),
       env,
       detached: true,
-      stdio: ["ignore", logFd, logFd],
+      stdio: ["ignore", logFd, errFd],
     },
   );
   closeSync(logFd);
+  closeSync(errFd);
   if (child.pid === undefined) {
     cleanupControlDirectory(args.state);
     throw new Error("failed to spawn the server");
@@ -429,7 +521,7 @@ export async function bootControlServer(
   while (Date.now() < deadline) {
     if (started.ended()) {
       throw new Error(
-        `Control-only server ended: ${logTail(paths(args.state).log)}`,
+        `Control-only server ended: ${logTail(paths(args.state))}`,
       );
     }
     try {
@@ -442,7 +534,7 @@ export async function bootControlServer(
     await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS));
   }
   throw new Error(
-    `Control-only server did not start: ${logTail(paths(args.state).log)}`,
+    `Control-only server did not start: ${logTail(paths(args.state))}`,
   );
 }
 
@@ -582,7 +674,7 @@ export async function bootRefused(args: BootOptions): Promise<void> {
   if (!ended()) {
     await stopServer(args);
     throw new Error(
-      `the server did not end within ${String(REFUSAL_BUDGET_MS)}ms, so the boot was not refused. Log tail:\n${logTail(p.log)}`,
+      `the server did not end within ${String(REFUSAL_BUDGET_MS)}ms, so the boot was not refused. Log tail:\n${logTail(p)}`,
     );
   }
   child.unref();
@@ -684,6 +776,8 @@ function clearState(state: string): void {
     p.ownerSession,
     `${p.ownerSession}.lock`,
     p.log,
+    p.stderr,
+    p.clock,
     p.exit,
     p.blobs,
     p.statusLogs,
@@ -737,6 +831,117 @@ function status(args: Args): void {
   process.exitCode = running ? 0 : 1;
 }
 
+/**
+ * Stops the server with `signal` and boots it again on the same data. How the
+ * old process ended is printed first, because the boot removes its exit
+ * record.
+ */
+export async function restartServer(
+  args: BootOptions,
+  signal: StopSignal,
+): Promise<void> {
+  const ended = await stopWithSignal(args.state, signal);
+  console.log(`[marfa-server] previous exit ${JSON.stringify(ended)}`);
+  await bootServer(args);
+}
+
+/** The private socket of the server running from a state directory. */
+function controlSocketOf(state: string): string {
+  const p = paths(state);
+  const socket = existsSync(p.env)
+    ? parseEnvFile(readFileSync(p.env, "utf8")).MARFA_CONTROL_SOCKET
+    : undefined;
+  if (!socket) {
+    throw new Error(`no server has been booted from ${state}; run up first`);
+  }
+  return socket;
+}
+
+/** Asks the test hooks on the private socket, and says what they refused. */
+async function hook(
+  state: string,
+  path: string,
+  init: { method?: string; body?: unknown } = {},
+): Promise<Record<string, unknown>> {
+  let answer;
+  try {
+    answer = await controlRequest(controlSocketOf(state), path, init);
+  } catch (error) {
+    throw new Error(
+      `the server under ${state} did not answer on its private socket: ${String(error)}`,
+    );
+  }
+  if (answer.status !== 200) {
+    const refusal = answer.body.error as { message?: unknown } | undefined;
+    throw new Error(
+      `${path} answered ${String(answer.status)}${typeof refusal?.message === "string" ? `: ${refusal.message}` : ""}`,
+    );
+  }
+  return answer.body;
+}
+
+/** Moves the clock forward and keeps the offset for the next boot. */
+async function advanceClock(state: string, ms: number): Promise<void> {
+  const moved = await hook(state, "/_control/test/clock", {
+    method: "POST",
+    body: { advance_ms: ms },
+  });
+  const offset = moved.offset_ms;
+  if (typeof offset !== "number") {
+    throw new Error("the clock route answered no offset");
+  }
+  writeFileSync(paths(state).clock, `${String(offset)}\n`);
+  console.log(
+    `[marfa-server] clock advanced by ${String(ms)} ms; offset ${String(offset)} ms; now ${String(moved.now)}`,
+  );
+}
+
+async function setFault(state: string, spec: string): Promise<void> {
+  const eq = spec.indexOf("=");
+  const name = eq < 0 ? spec : spec.slice(0, eq);
+  const arg = eq < 0 ? null : spec.slice(eq + 1);
+  await hook(state, "/_control/test/faults", {
+    method: "PUT",
+    body: { name, arg },
+  });
+  console.log(`[marfa-server] fault set: ${spec}`);
+}
+
+async function clearFault(state: string, name?: string): Promise<void> {
+  await hook(
+    state,
+    `/_control/test/faults${name === undefined ? "" : `?name=${encodeURIComponent(name)}`}`,
+    { method: "DELETE" },
+  );
+  console.log(`[marfa-server] fault cleared: ${name ?? "all"}`);
+}
+
+/** What is armed, and how many callers wait at each hold. */
+async function listFaults(state: string): Promise<string> {
+  return JSON.stringify(await hook(state, "/_control/test/faults"));
+}
+
+async function runHooks(args: Args): Promise<void> {
+  const [verb, operand] = args.words;
+  if (args.command === "clock") {
+    const ms = Number(operand);
+    if (verb !== "advance" || operand === undefined || !Number.isFinite(ms)) {
+      throw new Error("usage: clock [--state <dir>] advance <ms>");
+    }
+    await advanceClock(args.state, ms);
+  } else if (verb === "set" && operand !== undefined) {
+    await setFault(args.state, operand);
+  } else if (verb === "clear") {
+    await clearFault(args.state, operand);
+  } else if (verb === "list") {
+    console.log(await listFaults(args.state));
+  } else {
+    throw new Error(
+      "usage: fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
+    );
+  }
+}
+
 // The command runs only when this file is the program, so the drill can
 // import the two functions without booting anything.
 if (
@@ -744,11 +949,27 @@ if (
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   const args = parseArgs(process.argv.slice(2));
-  if (args.command === "up") await bootServer(args);
-  else if (args.command === "refused") await bootRefused(args);
-  else if (args.command === "down") {
-    await stopServer(args);
-    await refuseToClearUnderALiveServer(args.state);
-    clearState(args.state);
-  } else status(args);
+  const boot: BootOptions = {
+    state: args.state,
+    port: args.port,
+    nodeEnv: args.nodeEnv,
+    env: args.env,
+  };
+  try {
+    if (args.command === "up") await bootServer(boot);
+    else if (args.command === "refused") await bootRefused(boot);
+    else if (args.command === "restart") await restartServer(boot, args.signal);
+    else if (args.command === "clock" || args.command === "fault") {
+      await runHooks(args);
+    } else if (args.command === "down") {
+      await stopServer(args);
+      await refuseToClearUnderALiveServer(args.state);
+      clearState(args.state);
+    } else status(args);
+  } catch (error) {
+    console.error(
+      `[marfa-server] ${error instanceof Error ? error.message : String(error)}`,
+    );
+    process.exitCode = 1;
+  }
 }

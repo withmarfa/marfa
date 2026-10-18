@@ -86,7 +86,7 @@ to the byte, then removes what it wrote to the bucket. The report goes to
 the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
 production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
-SQLite file, the disk store, the server log, the pid and the env file; pass
+SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
 
 `pnpm marfa:down` stops the server and removes its instance state, so every `up` is
@@ -133,12 +133,120 @@ corrupts a copy under it.
 Each load suite seeds its own corpus under its own credential, measures, and
 deletes what it created.
 
+## Target interface
+
+The harness reaches the server under test through one adapter command,
+`scripts/marfa-server.ts`, and never through the server's files. A second
+implementation is judged by the same fixtures when it supplies an adapter with
+the same commands and output.
+
+Every command takes `--state <dir>`, the directory that holds the instance's
+data, log and env file. The default is `.marfa-state` in the working directory.
+
+| Command                                                          | What it does                                                                                                                                                                                        |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                        |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                  |
+| `down`                                                           | Stops the target and removes its data.                                                                                                                                                              |
+| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                             |
+| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory. |
+| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..}]}`, where `waiting` counts the callers held at a `hold` fault.                                            |
+
+### The env file
+
+`up` and `restart` write `<state>/env`, one `KEY=value` per line:
+`MARFA_API_URL`, `MARFA_API_KEY`, `MARFA_MANAGEMENT_KEY`, `MARFA_CONTROL_SOCKET`,
+`MARFA_OWNER_COOKIE`, `MARFA_OWNER_SESSION_FILE`, `MARFA_FIXTURE_AUTH_SECRET`,
+`MARFA_BLOB_PATH` and `MARFA_STATUS_LOGS`. The file is private to the test
+account.
+
+### Settings
+
+`--env K=V` names a setting for one boot. Any setting in the table of
+[`spec/instance.md`](spec/instance.md) may be passed, and a value outside its
+rule is refused as that chapter says. The adapter sets these itself, and a
+value passed for one replaces its own:
+
+- The port, the paths of the database, the disk store and the private socket,
+  `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL`.
+- Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
+  webhook delivery to private addresses allowed, so the fixtures can use a
+  receiver on the loopback address.
+- `MARFA_TEST_HOOKS` true, except for a boot told to run as `production`
+  (`--node-env production`), which would be refused for it.
+
+### The clock
+
+`clock advance` adds to an offset. The clock only moves forward, because ids,
+versions and cursors assume time does not go back. The adapter keeps the offset
+in the state directory and passes it back as `MARFA_TEST_CLOCK_OFFSET_MS`
+when the target is restarted, so a restarted target does not go back in time.
+
+Timers stay on real time: a job's deadline and a stream's heartbeat do not
+follow the clock. A fixture moves the clock and then runs the job it tests with
+`POST /housekeeping/{name}/run`. The clock does not reach time inside the
+sign-in library, and no fixture may depend on moving it.
+
+### Faults
+
+A fault is named for where it acts, lives in the target's memory, and is gone
+when the target starts. `FreshServer.stop()` clears the faults a fixture set.
+
+| Name                         | What it does                                                                                                     |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `hold:housekeeping:<job>`    | A run of the job waits at its start until the fault is cleared.                                                  |
+| `hold:version-thinning:item` | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item. |
+| `deadline:<job>=<ms>`        | Shortens the run deadline of the job.                                                                            |
+
+A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
+the target does not fake them.
+
+### Who can reach the hooks
+
+The clock and fault routes (`/_control/test/clock` and `/_control/test/faults`)
+exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+`true`. They are never on the HTTP listener, and the server refuses to start with
+the setting under `NODE_ENV=production`, which the released image sets. It logs
+a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
+these rules.
+
+### The request log
+
+The status gate, `pnpm check:statuses`, reads the target's stdout. The target
+writes JSON objects, one per line, and nothing else to stdout. Anything else
+the process prints, a Node warning or a stack trace, goes to stderr, which the
+adapter keeps in `<state>/server.stderr` and the gate does not read.
+
+A line with a string `level` and a string `message` is a log record, and the
+gate skips it. Any other line is a request record, with the fields of `LogEntry`
+in `packages/server/src/middleware/logger.ts`:
+
+| Field         | Type    | Notes                                                                         |
+| ------------- | ------- | ----------------------------------------------------------------------------- |
+| `timestamp`   | string  | ISO 8601.                                                                     |
+| `request_id`  | string  |                                                                               |
+| `method`      | string  |                                                                               |
+| `transport`   | string  | `http` for the public listener, `local_socket` for the private socket.        |
+| `path`        | string  | The concrete path.                                                            |
+| `route`       | string  | The route template, as the document spells it. Absent when no route answered. |
+| `status`      | integer |                                                                               |
+| `duration_ms` | number  |                                                                               |
+| `key_id`      | string  | Present when a key made the request.                                          |
+| `error_code`  | string  | Present on a refusal that has a code.                                         |
+
+The gate fails on a line that is not JSON, is not an object, or is a request
+record missing `method`, `path`, `status` or `transport`. It names the file and
+line and shows the start of the line. A request that no log line reaches is a
+request nothing checked, so an unreadable line is a failure and not noise.
+
 ## Test suites
 
 `package.json` carries the full list, and `pnpm test:conformance` is what the
-gate runs. `pnpm test:generators` is the offline lane and needs no server: the
+gate runs. `pnpm test:generators` is the offline lane and needs no running target: the
 generators, everything under `src/utils/`, and the `*.decision.test.ts`
-verdicts the suites gate on. Among `src/utils/`, `schema-coverage.test.ts`
+verdicts the suites gate on. `src/utils/target-interface.test.ts` boots a
+server of its own to hold the adapter to the interface above. Among `src/utils/`, `schema-coverage.test.ts`
 reads the specification against itself, and `spec-citations.test.ts` holds
 every reference to it in the repository to a rule that exists, by ID.
 `pnpm test:changed` at the repository root always runs `src/utils/` and the
