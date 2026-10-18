@@ -14,8 +14,8 @@ import { fileOf, requireBinary } from "./harness.js";
 /**
  * A file queued under one key and sent under the key that replaced it
  * (`queue-and-verdicts/upload-sent-as-writer`), against a real server and the
- * real binary: the server lends a file's bytes only to a write made by the
- * credential that sent them (`blobs/proof-file-refused`).
+ * real binary: the server refuses a file write from a credential that neither
+ * sent its bytes nor may read them (`blobs/proof-file-refused`).
  */
 
 let client: MarfaClient;

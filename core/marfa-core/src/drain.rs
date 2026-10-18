@@ -521,7 +521,7 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
 }
 
 /// The server credits an upload to the credential that sent it, and refuses
-/// a file write whose bytes the writing credential never sent
+/// a file write whose bytes the writing credential neither sent nor may read
 /// (`blobs/proof-file-refused`). So once the copy sends with another
 /// credential, each taken upload a write still waits on is sent again, ahead
 /// of that write, where the copy still holds its bytes. A renewed app token
