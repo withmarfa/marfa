@@ -143,15 +143,15 @@ the same commands and output.
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.
 
-| Command                                                          | What it does                                                                                                                                                                                        |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                        |
-| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                  |
-| `down`                                                           | Stops the target and removes its data.                                                                                                                                                              |
-| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                             |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory. |
-| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                |
-| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..}]}`, where `waiting` counts the callers held at a `hold` fault.                                            |
+| Command                                                          | What it does                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                       |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                 |
+| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                             |
+| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                            |
+| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                |
+| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                               |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted. |
 
 ### The env file
 
@@ -201,6 +201,12 @@ which the move has put out of step with it.
 
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
+A name is `hold:<point>`, `fail:<point>` or `deadline:<job>`, and the points
+are the ones below: the target refuses any other name, an argument a point does
+not take, and a job it has not registered. A refused fault is never armed, so a
+typo cannot pass for one. A fault set again under the same name starts again.
+
+A `hold` fault makes the target wait at the point until the fault is cleared.
 
 | Name                         | What it does                                                                                                     |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -208,9 +214,38 @@ when the target starts. `FreshServer.stop()` clears the faults a fixture set.
 | `hold:version-thinning:item` | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item. |
 | `deadline:<job>=<ms>`        | Shortens the run deadline of the job.                                                                            |
 
-A fault that names a housekeeping job the target has not registered is refused,
-as is a name that answers to no point. A refused fault is never armed, so a
-typo cannot pass for one.
+A `fail` fault makes the target fail at the point, once. It acts on the nth
+time the point is reached after the fault was set, the first unless the
+argument says another: `fail:lock=3` acts on the third write. It then stays
+listed with the number of times it acted (`fired`), so a fixture can tell that
+it acted, and a fault that never acted is not mistaken for a pass. A fault
+that has acted does not act again until it is set again.
+
+A _write_ is one change made for a caller: a request that changes stored
+state, or one entry of a page sent with `atomic: false`. An atomic page is one
+write. A write that records an audit entry names it by the entry's `action`
+(`events.md`, "The audit log"), and a write point may take that action in its
+argument as `<action>`, for the first such write, or `<action>@<n>`, so a
+request that makes other writes first does not shift the count: a
+`POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,
+and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
+without an action counts every write.
+
+| Name                            | Reached                                                                                          | What it does                                                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fail:lock[=<n>]`               | At the start of each write, before it does any work.                                             | The write meets the write lock held by something else for longer than the target waits for it, and is refused as `write_contention`. Nothing of the write is done.                                                                                              |
+| `fail:audit[=<write>]`          | When a write records its audit entry.                                                            | The statement that stores the entry fails with `SQLITE_IOERR`, as a database fails a statement, so the write and its events roll back. The failure carries the statement and the values it was bound to, as a real one does.                                    |
+| `fail:commit[=<write>]`         | When a write that recorded its audit entry commits.                                              | The database refuses the commit with `SQLITE_IOERR` and has ended the transaction, so the target cannot prove whether the commit landed. Nothing did land. The write's outcome is unknown, and the audit entry, which the target reads to settle it, is absent. |
+| `fail:commit-full[=<write>]`    | The same.                                                                                        | As `fail:commit`, refused with `SQLITE_FULL`, the volume having no room.                                                                                                                                                                                        |
+| `fail:commit-ack[=<write>]`     | The same.                                                                                        | The commit lands and the database reports an error for it with `SQLITE_IOERR`, as when its answer is lost. The write's audit entry is stored, which the target reads to settle the outcome as committed.                                                        |
+| `fail:inbound-receipt[=<n>]`    | Before each of the two statements that store an inbound receipt, its metadata and then its body. | The statement fails with `SQLITE_IOERR`, carrying its values as `fail:audit` does, and the receipt is not stored.                                                                                                                                               |
+| `fail:inbound-cleanup[=<n>]`    | After a run of `inbound-delivery-cleanup` has removed the deliveries it chose.                   | The run's next statement fails with `SQLITE_IOERR`, so its removal rolls back.                                                                                                                                                                                  |
+| `fail:export-read[=<n>]`        | Before each page of items that `GET /export` reads.                                              | The page's read fails with `SQLITE_IOERR`. The response has begun by then.                                                                                                                                                                                      |
+| `fail:housekeeping:<job>[=<n>]` | At the start of each run of the job, scheduled or asked for.                                     | The run's first statement fails with `SQLITE_IOERR`.                                                                                                                                                                                                            |
+
+`<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
+cannot fail a point as described says so by refusing its name, and the fixtures
+that need it fail rather than skip.
 
 A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
 the target does not fake them.

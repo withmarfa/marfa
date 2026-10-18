@@ -841,13 +841,13 @@ If the server cannot confirm whether an entry of a `POST /edges/bulk` page under
 
 **Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page (`items/bulk-outcome-unknown`).
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
 
 ### `edges/bulk-outcome-unknown-continues`
 
 When the server reports a `POST /edges/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
 
 ## Edges written with an item
 

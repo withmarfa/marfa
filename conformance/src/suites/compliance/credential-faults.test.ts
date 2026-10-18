@@ -25,7 +25,9 @@ import type { SseEvent } from "../../utils/sse.js";
  * browser sign-out, a key's mint, update and revoke, a consent and a grant's
  * withdrawal. The fault is a table moved aside, or a trigger that refuses a
  * delete, in the database of a server of the fixture's own, removed before
- * the change is asked again.
+ * the change is asked again; or, where the change is one the audit log must
+ * account for, the target's `fail:audit` and `fail:commit` faults, which fail
+ * the change's audit entry or its commit once.
  */
 let server: FreshServer;
 let origin: string;
@@ -60,6 +62,23 @@ function clearsSession(response: Response): boolean {
   return response.headers
     .getSetCookie()
     .some((c) => /session_token=;|session_token=.*max-age=0/i.test(c));
+}
+
+/**
+ * Runs `during` with the fault set, which fails once, and checks that it
+ * acted: a fault aimed at an action no write recorded would let a change
+ * through and pass for a refusal that never came.
+ */
+async function failing<T>(fault: string, during: () => Promise<T>): Promise<T> {
+  await server.setFault(fault);
+  try {
+    return await during();
+  } finally {
+    const name = fault.split("=")[0]!;
+    const acted = (await server.faults()).find((f) => f.name === name)?.fired;
+    await server.clearFault();
+    expect(acted, `${fault} acted`).toBe(1);
+  }
 }
 
 /** Runs `during` with `table` moved aside, and puts it back. */
@@ -117,7 +136,7 @@ describe("a browser sign-out", () => {
 
   it("whose end cannot be audited answers 500 and leaves the session signed in, and a retry signs out", async () => {
     const cookie = await signIn(server, origin);
-    const refused = await without("audit_log", () => signOut(cookie));
+    const refused = await failing("fail:audit", () => signOut(cookie));
     expect(refused.status).toBe(500);
     expect(clearsSession(refused)).toBe(false);
     expect(await signedIn(cookie)).toBe(true);
@@ -141,15 +160,19 @@ describe("a key change", () => {
     });
     expect(target.status).toBe(201);
 
-    const [minted, updated, revoked] = await without("audit_log", async () => [
-      await management.createKey({
+    const minted = await failing("fail:audit=key.create", () =>
+      management.createKey({
         label: "faulted-mint",
         source: "faulted-mint",
         permissions: ["audit.read"],
       }),
-      await management.updateKey(target.data.id, { label: "faulted-renamed" }),
-      await management.revokeKey(target.data.id),
-    ]);
+    );
+    const updated = await failing("fail:audit=key.update", () =>
+      management.updateKey(target.data.id, { label: "faulted-renamed" }),
+    );
+    const revoked = await failing("fail:audit=key.revoke", () =>
+      management.revokeKey(target.data.id),
+    );
     for (const refused of [minted, updated, revoked]) {
       expect(refused.status).toBe(500);
     }
@@ -261,7 +284,7 @@ describe("a consent", () => {
         ),
       );
       expect(consent?.pathname).toBe("/auth/authorize");
-      const refused = await without("audit_log", () =>
+      const refused = await failing("fail:audit", () =>
         accept(cookie, consent!),
       );
       expect(refused.status).toBe(500);
@@ -307,7 +330,7 @@ describe("a grant's withdrawal", () => {
       (event.data as { item?: { id?: string } })?.item?.id === grant;
     await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
       await new Promise((r) => setTimeout(r, 250));
-      const refused = await without("audit_log", withdraw);
+      const refused = await failing("fail:audit", withdraw);
       expect(refused.status).toBe(500);
       const marker = await sentinel();
       const { events } = await collectUntil(
@@ -335,5 +358,86 @@ describe("a grant's withdrawal", () => {
       );
       expect(await itemsStatus(server, issued.access_token!)).toBe(401);
     });
+  });
+});
+
+/** Whether an answer sets any cookie at all. */
+function setsCookie(response: Response): boolean {
+  return response.headers.getSetCookie().length > 0;
+}
+
+describe("a credential change whose outcome is unknown", () => {
+  it("withholds a key's success answer and its plaintext, and a retry mints it", async () => {
+    const management = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.managementKey,
+    });
+    const mint = (label: string) =>
+      management.createKey({
+        label,
+        source: label,
+        permissions: ["audit.read"],
+      });
+
+    const unknown = await failing("fail:commit=key.create", () =>
+      mint("unknown-mint"),
+    );
+    expect(unknown.status).toBe(500);
+    expect(JSON.stringify([unknown.data, unknown.error])).not.toContain(
+      '"key"',
+    );
+
+    // The witness: without the fault the same mint answers with the plaintext.
+    const retried = await mint("unknown-mint");
+    expect(retried.status).toBe(201);
+    expect(retried.data.key).toEqual(expect.any(String));
+  });
+
+  it("withholds the redirect of an authorization code, and a retry of the consent gets one", async () => {
+    const cookie = await signIn(server, origin);
+    const app = await registerApp(server, NOTES);
+    const consent = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, NOTES, pkce()),
+        cookie,
+      ),
+    );
+    expect(consent?.pathname).toBe("/auth/authorize");
+
+    const unknown = await failing("fail:commit", () =>
+      accept(cookie, consent!),
+    );
+    expect(unknown.status).toBe(500);
+    expect(unknown.headers.get("location")).toBeNull();
+    expect(setsCookie(unknown)).toBe(false);
+
+    // The witness: the redirect a consent that did commit gives carries the
+    // code.
+    const again = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, NOTES, pkce()),
+        cookie,
+      ),
+    );
+    expect(again?.pathname).toBe("/auth/authorize");
+    const accepted = await accept(cookie, again!);
+    expect(accepted.status).toBe(302);
+    expect(accepted.headers.get("location")).toMatch(/[?&]code=/);
+  });
+
+  it("withholds a sign-out's cookie change, and a retry clears the cookie", async () => {
+    const cookie = await signIn(server, origin);
+    const unknown = await failing("fail:commit", () => signOut(cookie));
+    expect(unknown.status).toBe(500);
+    expect(clearsSession(unknown)).toBe(false);
+    expect(setsCookie(unknown)).toBe(false);
+
+    const retried = await signOut(cookie);
+    expect(retried.status).toBe(200);
+    expect(clearsSession(retried)).toBe(true);
   });
 });

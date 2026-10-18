@@ -2527,4 +2527,4 @@ While the outcome of a change to a credential is unknown, the server MUST withho
 
 **Reason:** An unanswered commit is not proof of a rollback.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/credential-faults.test.ts › withholds a key's success answer and its plaintext, and a retry mints it`, `compliance/credential-faults.test.ts › withholds the redirect of an authorization code, and a retry of the consent gets one`, `compliance/credential-faults.test.ts › withholds a sign-out's cookie change, and a retry clears the cookie`.

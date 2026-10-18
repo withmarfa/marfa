@@ -32,7 +32,7 @@ import { tmpdir } from "node:os";
  * negative step. The adapter keeps the offset in the state directory and
  * passes it back on the next boot, so a restarted server does not go back in
  * time. `fault set` arms a named fault, `fault clear` removes one or all, and
- * `fault list` prints `{"faults":[{"name":..,"arg":..,"waiting":..}]}`. A
+ * `fault list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`. A
  * server starts with no fault.
  *
  * The state directory holds the SQLite file, the blob folder, the server log

@@ -1306,13 +1306,13 @@ If the server cannot confirm whether an entry of a page under `atomic: false` co
 
 **Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is the first entry of the page as well as a later one, and the page still answers 200`.
 
 ### `items/bulk-outcome-unknown-continues`
 
 When the server reports a `POST /items/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is the first entry of the page as well as a later one, and the page still answers 200`.
 
 ### `items/bulk-reason`
 
@@ -1558,13 +1558,13 @@ When a job reports an item in its `errors`, the server MUST go on to the job's n
 
 If a fault ends a job's write partway through a chunk of items, then the server MUST report the chunk's unwritten items in the job's `errors` with the fault's own cause.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/job-chunk-faults.test.ts › reports the chunk's unwritten items in the job's errors with the fault's own cause, and goes on to the next chunk`.
 
 ### `items/job-chunk-continues`
 
 When a fault ends a job's write partway through a chunk of items, the server MUST go on to the job's next chunk.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/job-chunk-faults.test.ts › reports the chunk's unwritten items in the job's errors with the fault's own cause, and goes on to the next chunk`.
 
 ### `items/job-resumes`
 
