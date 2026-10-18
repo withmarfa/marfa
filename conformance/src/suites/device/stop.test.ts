@@ -120,8 +120,7 @@ describe("stopping a hydration", () => {
           interval: 25,
         });
         hydrating.interrupt();
-        // Give the signal waiter its delivery window before releasing the failure.
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        await hydrating.stopRaised();
         expect(hydrating.exitCode(), hydrating.stderr).toBeNull();
         release();
         await vi.waitFor(() => expect(hydrating.exitCode()).not.toBeNull(), {
@@ -201,6 +200,7 @@ describe("stopping a hydration", () => {
         { timeout: 10_000, interval: 25 },
       );
       hydrating.interrupt();
+      await hydrating.stopRaised();
       release();
       await hydrating.exited();
       expect(hydrating.exitCode(), hydrating.stderr).toBe(UNFINISHED);
@@ -268,8 +268,7 @@ describe("stopping a catch-up", () => {
         interval: 25,
       });
       catching.interrupt();
-      // Give the signal waiter its delivery window before releasing the 503.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await catching.stopRaised();
       expect(catching.exitCode(), catching.stderr).toBeNull();
       release();
       await vi.waitFor(() => expect(catching.exitCode()).not.toBeNull(), {
@@ -543,6 +542,7 @@ describe("stopping a call that cannot be stopped at once", () => {
         { timeout: 10_000, interval: 25 },
       );
       hydrating.interrupt();
+      await hydrating.stopRaised();
       await new Promise((resolve) => setTimeout(resolve, 500));
       expect(
         hydrating.exitCode(),

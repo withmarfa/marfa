@@ -66,8 +66,13 @@ function classify(stderr: string, exitCode: number | null): Refusal {
     : { code: "unclassified", raw };
 }
 
+/** What a debug build says on stderr once it has set its stop, where `stop-notice` is a fault it was given. */
+const STOP_NOTICE = "marfa-test: stop raised";
+const STOP_NOTICE_WAIT_MS = 10_000;
+
 /** A device command left running, for the one-writer rule. */
 export interface HeldCommand {
+  /** What it has printed to stderr, less the line that says a stop was raised. */
   readonly stderr: string;
   /** What it has printed so far, for a command that reports as it runs. */
   readonly stdout: string;
@@ -80,6 +85,14 @@ export interface HeldCommand {
   exited: () => Promise<void>;
   /** What Ctrl-C at a terminal sends it. */
   interrupt: () => void;
+  /**
+   * Resolves once the command has set its stop, which Ctrl-C only asks for: a
+   * thread in the command takes the signal and sets it a moment later. A
+   * fixture that releases a held answer straight after `interrupt` can win
+   * that race, so it waits for this. Rejects if the command ends first, as it
+   * does for a binary that is not a debug build, which never says so.
+   */
+  stopRaised: () => Promise<void>;
   /** Closes the pipe it prints to, as a reader that went away would. */
   closeStdout: () => void;
   stop: () => Promise<void>;
@@ -513,6 +526,14 @@ export class CliDevice implements DeviceUnderTest {
     at: "device" | "root" | "text" = "device",
     env: NodeJS.ProcessEnv = {},
   ): HeldCommand {
+    // Asks a debug build to say when it has set its stop (`stopRaised`), on
+    // top of any fault the fixture sets.
+    const faults = [
+      env.MARFA_TEST_FAULT ?? this.env().MARFA_TEST_FAULT,
+      "stop-notice",
+    ]
+      .filter((one) => one !== undefined && one !== "")
+      .join(",");
     const child = spawn(
       this.options.binary,
       [
@@ -521,26 +542,54 @@ export class CliDevice implements DeviceUnderTest {
         ...this.server(),
       ],
       {
-        env: { ...this.env(), ...env },
+        env: { ...this.env(), ...env, MARFA_TEST_FAULT: faults },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
     let stderr = "";
     let stdout = "";
+    let raised = false;
+    let notice: () => void = () => {};
+    let noNotice: (reason: Error) => void = () => {};
+    const stopRaised = new Promise<void>((resolve, reject) => {
+      notice = resolve;
+      noNotice = reject;
+    });
+    // Nothing waits on it unless a fixture asks, so a rejection nobody reads
+    // must not fail the run.
+    stopRaised.catch(() => {});
+    // The notice is matched only as a whole line, so a line is held back until
+    // its newline arrives.
+    let partial = "";
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      const lines = (partial + chunk.toString()).split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line === STOP_NOTICE) {
+          raised = true;
+          notice();
+        } else {
+          stderr += line + "\n";
+        }
+      }
     });
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
     const exited = new Promise<void>((resolve) => {
       child.once("close", () => {
+        if (!raised)
+          noNotice(
+            new Error(
+              "the command ended without saying it had raised its stop; a binary that is not a debug build never does",
+            ),
+          );
         resolve();
       });
     });
     return {
       get stderr() {
-        return stderr;
+        return stderr + partial;
       },
       get stdout() {
         return stdout;
@@ -555,6 +604,23 @@ export class CliDevice implements DeviceUnderTest {
       exited: () => exited,
       interrupt: () => {
         child.kill("SIGINT");
+      },
+      stopRaised: () => {
+        let timer: NodeJS.Timeout | undefined;
+        const late = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `the command did not say it had raised its stop within ${STOP_NOTICE_WAIT_MS} ms`,
+                ),
+              ),
+            STOP_NOTICE_WAIT_MS,
+          );
+        });
+        return Promise.race([stopRaised, late]).finally(() =>
+          clearTimeout(timer),
+        );
       },
       closeStdout: () => {
         child.stdout.destroy();

@@ -22,6 +22,11 @@ static TERMINATED: AtomicBool = AtomicBool::new(false);
 /// The status a shell gives a process that died of Ctrl-C.
 pub const INTERRUPTED: u8 = crate::error::Exit::Interrupted as u8;
 
+/// What a debug build with the `stop-notice` fault writes to stderr once the
+/// stop is set, so a fixture can hold a request open until the command has
+/// the stop to notice. A release build never writes it.
+const STOP_NOTICE: &str = "marfa-test: stop raised";
+
 pub fn stop() -> &'static AtomicBool {
     &STOP
 }
@@ -151,6 +156,10 @@ pub fn stop_on_interrupt() {
             None => return,
         }
         STOP.store(true, Ordering::Relaxed);
+        if marfa_core::fault::named("stop-notice").is_some() {
+            use std::io::Write;
+            let _ = std::io::stderr().write_all(format!("{STOP_NOTICE}\n").as_bytes());
+        }
         while let Some(signal) = wait() {
             if signal == libc::SIGINT {
                 // SAFETY: ends the process without running anything else.

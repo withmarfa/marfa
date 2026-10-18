@@ -12,7 +12,8 @@ mod directory_vfs;
 mod directory_vfs;
 mod drain;
 mod error;
-mod fault;
+/// Public so the binary can name a fault of its own.
+pub mod fault;
 mod filter;
 pub mod folder;
 mod folder_settings;
