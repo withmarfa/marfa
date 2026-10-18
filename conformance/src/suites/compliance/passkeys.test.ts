@@ -244,6 +244,26 @@ describe("owner passkeys", () => {
     expect(unknown.body).toMatchObject({
       error: { code: "passkey_not_found" },
     });
+    const missingRename = await fetch(server.url + "/owner/passkeys/missing", {
+      method: "PATCH",
+      headers: {
+        origin: server.url,
+        cookie: ownerCookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Missing passkey" }),
+    });
+    expect(missingRename.status).toBe(404);
+    const missingRenameBody = await missingRename.json();
+    expect(missingRenameBody).toMatchObject({
+      error: { code: "passkey_not_found" },
+    });
+    await expectMatchesSchema(
+      "PATCH",
+      "/owner/passkeys/{id}",
+      404,
+      missingRenameBody,
+    );
     const link = await controlRequest(
       server.controlSocket,
       "/_control/owner/passkeys/add-url",
