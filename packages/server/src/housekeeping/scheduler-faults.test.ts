@@ -52,7 +52,7 @@ describe("the scheduler's fault points", () => {
     await pause(100);
     expect(runs.count).toBe(0);
     expect(activeFaults()).toEqual([
-      { name: "hold:housekeeping:probe", arg: null, waiting: 1 },
+      { name: "hold:housekeeping:probe", arg: null, waiting: 1, fired: 0 },
     ]);
     clearFaults("hold:housekeeping:probe");
     expect(await run).toMatchObject({

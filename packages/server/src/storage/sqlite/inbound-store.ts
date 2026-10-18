@@ -25,6 +25,7 @@ import {
 import type { DrizzleDb } from "./connection.js";
 import { notRevokedOrExpired } from "./key-store.js";
 import * as clock from "../../clock.js";
+import { withStatementFault } from "./injected-failure.js";
 
 type EndpointRow = typeof inboundEndpoints.$inferSelect;
 type DeliveryRow = typeof inboundDeliveries.$inferSelect;
@@ -237,18 +238,22 @@ export class SqliteInboundStore implements InboundStore {
         )
       `);
       if (capacity[0]?.fits !== 1) return { kind: "capacity" };
-      await tx
-        .insert(inboundDeliveries)
-        .values({
-          ...metadata,
-          headers: JSON.stringify(input.headers),
-          stored_bytes: storedBytes,
-        })
-        .run();
-      await tx
-        .insert(inboundDeliveryBodies)
-        .values({ delivery_id: id, body: input.body })
-        .run();
+      await withStatementFault("inbound-receipt", () =>
+        tx
+          .insert(inboundDeliveries)
+          .values({
+            ...metadata,
+            headers: JSON.stringify(input.headers),
+            stored_bytes: storedBytes,
+          })
+          .run(),
+      );
+      await withStatementFault("inbound-receipt", () =>
+        tx
+          .insert(inboundDeliveryBodies)
+          .values({ delivery_id: id, body: input.body })
+          .run(),
+      );
       return { kind: "accepted", id };
     });
   }
@@ -403,15 +408,17 @@ export class SqliteInboundStore implements InboundStore {
           .where(inArray(inboundDeliveries.id, ids))
           .run();
       }
-      const remaining = await tx.all<{ present: number }>(sql`
-        SELECT 1 AS present FROM (
-          SELECT id FROM inbound_deliveries
-          WHERE handled_at IS NOT NULL AND handled_at < ${handledCutoff}
-          UNION ALL
-          SELECT id FROM inbound_deliveries
-          WHERE handled_at IS NULL AND received_at < ${pendingCutoff}
-        ) LIMIT 1
-      `);
+      const remaining = await withStatementFault("inbound-cleanup", () =>
+        tx.all<{ present: number }>(sql`
+          SELECT 1 AS present FROM (
+            SELECT id FROM inbound_deliveries
+            WHERE handled_at IS NOT NULL AND handled_at < ${handledCutoff}
+            UNION ALL
+            SELECT id FROM inbound_deliveries
+            WHERE handled_at IS NULL AND received_at < ${pendingCutoff}
+          ) LIMIT 1
+        `),
+      );
       return { deleted: ids.length, remaining: remaining.length > 0 };
     });
   }

@@ -10,6 +10,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import { HeldLock } from "../../utils/held-lock.js";
 import {
   connect,
@@ -36,6 +37,7 @@ async function expectMatchesSchema(
 }
 
 let server: FreshServer;
+let clock: ReturnType<typeof movedClock>;
 let origin: string;
 let number = 0;
 const report = {
@@ -73,6 +75,7 @@ beforeAll(async () => {
   server = await bootFreshServer("folder-status", {
     SQLITE_BUSY_BUDGET_MS: "3000",
   });
+  clock = movedClock(server);
   origin = await issuerOrigin(server);
   document = (await (
     await fetch(`${server.apiUrl}/openapi.json`)
@@ -105,12 +108,14 @@ async function folder(): Promise<string> {
 }
 async function key(
   type_permissions: Record<string, string> = { "system.folder": "read" },
+  expires_at?: string,
 ): Promise<{ id: string; key: string }> {
   number++;
   const r = await call("POST", "/keys", {
     label: "Sync reports",
     source: `folder-status-${number}`,
     type_permissions,
+    ...(expires_at === undefined ? {} : { expires_at }),
   });
   expect(r.status).toBe(201);
   return (await r.json()) as { id: string; key: string };
@@ -331,17 +336,18 @@ describe("folder sync reports", () => {
   it("retains revoked and expired key reports immediately as history and excludes them from totals", async () => {
     const id = await folder();
     const revoked = await key();
-    const expired = await key();
+    // Expires in a minute of the server's clock. The move below is two
+    // minutes, short enough that the sign-in tokens other cases make stay
+    // within their lifetime.
+    const expired = await key(
+      undefined,
+      new Date(clock.now() + MINUTE_MS).toISOString(),
+    );
     await put(id, report, revoked.key);
     await put(id, report, expired.key);
     expect((await get(id)).totals.pending_uploads).toBe(4);
     expect((await call("DELETE", `/keys/${revoked.id}`)).status).toBe(200);
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare("UPDATE api_keys SET expires_at=? WHERE id=?").run(
-        "2000-01-01T00:00:00.000Z",
-        expired.id,
-      );
-    });
+    await clock.advance(2 * MINUTE_MS);
     const status = await get(id);
     expect(status.sign_ins).toHaveLength(2);
     expect(status.sign_ins.every((g) => !g.current)).toBe(true);

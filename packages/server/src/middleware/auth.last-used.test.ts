@@ -12,7 +12,6 @@ import {
   _clearOAuthLastUsedCacheForTesting,
   authMiddleware,
   hashApiKey,
-  stampOAuthGrantLastUsed,
   stampOAuthGrantLastUsedByGrantKey,
 } from "./auth.js";
 
@@ -194,14 +193,12 @@ describe("in-process last-used windows", () => {
     expect(update).toHaveBeenCalledTimes(3);
   });
 
-  it.each(["id", "grant key", "bearer"] as const)(
+  it.each(["grant key", "bearer"] as const)(
     "stamps OAuth by %s at zero and keeps its window independent of wall time",
     async (path) => {
       const c = credentialApp();
       const stamp = async () => {
-        if (path === "id")
-          await stampOAuthGrantLastUsed(c.storage, "connection");
-        else if (path === "grant key")
+        if (path === "grant key")
           await stampOAuthGrantLastUsedByGrantKey(c.storage, GRANT);
         else expect((await c.request("marfa_at_test")).status).toBe(200);
       };
@@ -220,38 +217,32 @@ describe("in-process last-used windows", () => {
       elapsed += 1;
       await stamp();
       expect(c.updateLastUsedAt).toHaveBeenCalledTimes(2);
-      if (path !== "id") expect(c.findGrantItemId).toHaveBeenCalledTimes(2);
+      expect(c.findGrantItemId).toHaveBeenCalledTimes(2);
     },
   );
 
-  it.each(["id", "grant key"] as const)(
-    "contains pending and failed OAuth writes by %s without repeated attempts inside the window",
-    async (path) => {
-      const c = credentialApp();
-      const pending = deferred();
-      c.updateLastUsedAt.mockReturnValueOnce(pending.promise);
-      const stamp = () =>
-        path === "id"
-          ? stampOAuthGrantLastUsed(c.storage, "connection")
-          : stampOAuthGrantLastUsedByGrantKey(c.storage, GRANT);
-      const first = stamp();
-      await vi.waitFor(() => {
-        expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
-      });
-      await stamp();
+  it("contains pending and failed OAuth writes by grant key without repeated attempts inside the window", async () => {
+    const c = credentialApp();
+    const pending = deferred();
+    c.updateLastUsedAt.mockReturnValueOnce(pending.promise);
+    const stamp = () => stampOAuthGrantLastUsedByGrantKey(c.storage, GRANT);
+    const first = stamp();
+    await vi.waitFor(() => {
       expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
-      pending.reject(new Error("offline"));
-      await expect(first).resolves.toBeUndefined();
-      await stamp();
-      expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
-      elapsed = WINDOW;
-      await stamp();
-      expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
-      elapsed += 1;
-      await stamp();
-      expect(c.updateLastUsedAt).toHaveBeenCalledTimes(2);
-    },
-  );
+    });
+    await stamp();
+    expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
+    pending.reject(new Error("offline"));
+    await expect(first).resolves.toBeUndefined();
+    await stamp();
+    expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
+    elapsed = WINDOW;
+    await stamp();
+    expect(c.updateLastUsedAt).toHaveBeenCalledTimes(1);
+    elapsed += 1;
+    await stamp();
+    expect(c.updateLastUsedAt).toHaveBeenCalledTimes(2);
+  });
 
   it("contains a missing or failed grant lookup until its elapsed window expires", async () => {
     const c = credentialApp();
@@ -276,7 +267,7 @@ describe("in-process last-used windows", () => {
     );
   });
 
-  it.each(["API key", "OAuth ID", "OAuth grant key"] as const)(
+  it.each(["API key", "OAuth grant key"] as const)(
     "keeps %s stamps aligned with the real SQLite floor at the exact hour and one millisecond later",
     async (path) => {
       const directory = await mkdtemp(join(tmpdir(), "marfa-last-used-"));
@@ -320,10 +311,7 @@ describe("in-process last-used windows", () => {
           expect(await storage.oauthProvider!.findGrantItemId(GRANT)).toBe(
             item.id,
           );
-          stamp = () =>
-            path === "OAuth ID"
-              ? stampOAuthGrantLastUsed(storage, item.id)
-              : stampOAuthGrantLastUsedByGrantKey(storage, GRANT);
+          stamp = () => stampOAuthGrantLastUsedByGrantKey(storage, GRANT);
           recorded = async () =>
             (await storage.items.get(item.id))?.properties.last_used_at as
               string | undefined;

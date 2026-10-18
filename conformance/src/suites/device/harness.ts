@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { v7 as uuidv7 } from "uuid";
+import { BindingDevice } from "../../device/binding-adapter.js";
 import {
   CliDevice,
   CliFolder,
@@ -81,37 +82,73 @@ export function requireBinary(): string {
       "MARFA_DEVICE_BIN is unset. Build the binary (`cargo build -p marfa-cli` under core/) and point this at it; the conformance job does both.",
     );
   }
-  refuseIfStale(binary);
+  refuseIfStale({
+    artifact: binary,
+    name: "MARFA_DEVICE_BIN",
+    crates: ["marfa-core", "marfa-cli"],
+    rebuild: "`cargo build -p marfa-cli` under core/",
+  });
   return binary;
 }
 
 /**
- * Refuses a binary older than the source it was built from.
+ * The built Node module the binding fixtures drive, a debug build: they hold
+ * the engine at a point and move the clock it waits by, which a release
+ * build leaves out.
+ */
+export function requireModule(): string {
+  const module = process.env.MARFA_DEVICE_MODULE;
+  if (module === undefined || module === "") {
+    throw new Error(
+      "MARFA_DEVICE_MODULE is unset. Build the module (`pnpm --ignore-workspace install && pnpm --ignore-workspace run build:debug` under core/bindings/node/) and point this at the marfa-core.*.node file it writes there; the conformance job does both.",
+    );
+  }
+  refuseIfStale({
+    artifact: module,
+    name: "MARFA_DEVICE_MODULE",
+    // The module is compiled from the binding's crate and the engine, and
+    // not from the command's.
+    crates: ["marfa-core", "bindings/node"],
+    rebuild:
+      "`pnpm --ignore-workspace run build:debug` under core/bindings/node/",
+  });
+  return module;
+}
+
+/**
+ * Refuses an artifact older than the source it was built from.
  *
  * **This suite tests an artifact, not a checkout.** Nothing in the local
  * chain rebuilds it, so a run after an edit exercises the previous build.
  * The false alarm that costs an hour is the mild direction; the dangerous
  * one is the false pass, where a change that breaks the device is measured
- * against a binary that predates it and reads as green.
+ * against a build that predates it and reads as green.
  */
-function refuseIfStale(binary: string): void {
+function refuseIfStale(options: {
+  artifact: string;
+  name: string;
+  /** The crates under `core/` it is compiled from, and no others. */
+  crates: string[];
+  rebuild: string;
+}): void {
+  const { artifact, name, crates, rebuild } = options;
   let built: number;
   try {
-    built = statSync(binary).mtimeMs;
+    built = statSync(artifact).mtimeMs;
   } catch {
     throw new Error(
-      `MARFA_DEVICE_BIN points at ${binary}, which does not exist. Build it with \`cargo build -p marfa-cli\` under core/.`,
+      `${name} points at ${artifact}, which does not exist. Build it with ${rebuild}.`,
     );
   }
   const core = resolve(
     fileURLToPath(new URL(".", import.meta.url)),
     "../../../../core",
   );
-  // The sources the binary is compiled from, and no others. A binding beside
-  // these crates, or a test under a crate's `tests/`, is not in the binary,
-  // so counting it would refuse a binary that `cargo build -p marfa-cli` has
-  // no reason to relink.
-  const sources = ["marfa-core", "marfa-cli"]
+  // A binding beside these crates, or a test under a crate's `tests/`, is not
+  // in the binary, so counting it would refuse a binary that
+  // `cargo build -p marfa-cli` has no reason to relink. The module is the
+  // other way about, and names the binding.
+  const sources = crates
     .map((crate) => join(core, crate, "src"))
     .filter((source) => existsSync(source));
   let newest = 0;
@@ -140,9 +177,9 @@ function refuseIfStale(binary: string): void {
   for (const source of sources) walk(source);
   if (newest > built) {
     throw new Error(
-      `the device binary is older than the source it is built from — ${newestPath} changed after ` +
-        `${binary} was built, so this run would measure the previous build and report it as this one. ` +
-        "Run `cargo build -p marfa-cli` under core/ and try again.",
+      `${name} is older than the source it is built from — ${newestPath} changed after ` +
+        `${artifact} was built, so this run would measure the previous build and report it as this one. ` +
+        `Run ${rebuild} and try again.`,
     );
   }
 }
@@ -176,6 +213,47 @@ export async function startHarness(label: string): Promise<Harness> {
       if (unscripted.length > 0) {
         throw new Error(
           `the device went to a door no answer was scripted for, and read the 501 as a refusal: ${unscripted.join(", ")}`,
+        );
+      }
+    },
+  };
+}
+
+/** A binding and the server it talks to, both under the fixture's control. */
+export interface BindingHarness {
+  server: ScriptedServer;
+  device: BindingDevice;
+  stop: () => Promise<void>;
+}
+
+/**
+ * The device as a binding: the module `MARFA_DEVICE_MODULE` names, in a
+ * process of its own (`binding-adapter.ts`), against a scripted server. Like
+ * the command's harness it reports a door nobody scripted when it stops.
+ */
+export async function startBindingHarness(
+  label: string,
+): Promise<BindingHarness> {
+  const module = requireModule();
+  const server = await ScriptedServer.start();
+  const device = await BindingDevice.start({
+    module,
+    store: newStore(label),
+    url: server.url,
+    key: KEY,
+  });
+  return {
+    server,
+    device,
+    stop: async () => {
+      const unscripted = [...server.unmatchedRequests];
+      // The device first: it may hold a stream or a request the server would
+      // otherwise wait on.
+      await device.close();
+      await server.stop();
+      if (unscripted.length > 0) {
+        throw new Error(
+          `the binding went to a door no answer was scripted for, and read the 501 as a refusal: ${unscripted.join(", ")}`,
         );
       }
     },

@@ -469,6 +469,50 @@ describe("the receiving door", () => {
     expect(unknown.headers.get("X-Error-Code")).toBe("not_found");
   });
 
+  it("leaves out the identity headers a Tailscale proxy adds, and stores every other header", async () => {
+    const connector = await register(ctx);
+    const made = await endpoint(ctx, connector);
+    const proxied = [
+      "Tailscale-User-Login",
+      "owner@example.test",
+      "Tailscale-User-Name",
+      "An Owner",
+      "tailscale-user-profile-pic",
+      "https://example.test/pic.png",
+      "TAILSCALE-APP-CAPABILITIES",
+      "{}",
+    ];
+    // Both ways a receipt's headers are read: as they arrived, and as the
+    // router folded them.
+    const arrived = await post(ctx, made.path, "one", {}, [
+      "Content-Type",
+      "application/json",
+      ...proxied,
+      // A name that only mentions Tailscale is a sender's own.
+      "X-Tailscale-Note",
+      "kept",
+    ]);
+    expect(arrived.status).toBe(202);
+    const folded = await post(ctx, made.path, "two", {
+      "Content-Type": "application/json",
+      "Tailscale-User-Login": "owner@example.test",
+      "Tailscale-User-Name": "An Owner",
+      "X-Tailscale-Note": "kept",
+    });
+    expect(folded.status).toBe(202);
+
+    const stored = (await deliveries(ctx, connector)).data;
+    expect(stored).toHaveLength(2);
+    expect(stored[0]?.headers).toEqual([
+      ["Content-Type", "application/json"],
+      ["X-Tailscale-Note", "kept"],
+    ]);
+    expect(stored[1]?.headers).toEqual([
+      ["content-type", "application/json"],
+      ["x-tailscale-note", "kept"],
+    ]);
+  });
+
   it("ignores a Marfa key on a receipt and stores the header like any other", async () => {
     const connector = await register(ctx);
     const made = await endpoint(ctx, connector);

@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Describe the instance
-         * @description Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
+         * @description Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2203,6 +2203,8 @@ export interface components {
             name: string;
             /** @description The build the instance runs. */
             version: string;
+            /** @description The release the build was made as, such as `0.0.14`. Absent for a build that is not a release. */
+            release?: string;
             /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
             instance_id: string;
             /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */
@@ -3770,7 +3772,7 @@ export interface components {
             method: string;
             /** @description The query string as the sender sent it, without the `?`; empty if there was none. */
             query: string;
-            /** @description `[name, value]` pairs in the order and case they arrived. */
+            /** @description `[name, value]` pairs in the order and case they arrived, without any header whose name begins with `Tailscale-`. */
             headers: [
                 string,
                 string
@@ -23996,7 +23998,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
                     events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
@@ -24504,7 +24506,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url?: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
                     events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];

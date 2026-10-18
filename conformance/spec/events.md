@@ -271,7 +271,7 @@ When the server retires events from the log, the server MUST retire an event onl
 
 **Reason:** a hole in the middle of the log would let a cursor look valid while the events after it were gone.
 
-**Tests:** `compliance/event-retention.test.ts › retires the oldest events together, never leaving a hole`.
+**Tests:** `compliance/event-retention.test.ts › retires the oldest events together, keeping every event from the oldest one within the window`, `› never leaves a hole: an event past the window that stands above one within it is kept`.
 
 ### `events/retention-keeps-newest`
 
@@ -549,7 +549,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 **Reason:** a `5xx` tells the caller nothing was written, so it sends the change again. No idempotency key catches it, because an operation that takes one releases it on a `5xx` and the bulk operations take none.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is never answered with a 5xx: a single write whose commit answer is lost answers 201 and is stored once`, `compliance/write-faults.test.ts › is never answered with a 5xx: a page entry whose commit answer is lost is reported created, and the page answers 200`, `compliance/write-faults.test.ts › is never answered with a 5xx: an edge entry whose commit answer is lost is reported created`, `compliance/write-faults.test.ts › is never answered with a 5xx: an atomic page whose commit answer is lost answers 200 and is stored once`.
 
 ### `events/sweep-purge-announced`
 
@@ -1401,7 +1401,7 @@ If the server refuses or duplicates a redelivery, then the server MUST NOT recor
 
 If the server cannot record a redelivery's audit entry, then the server MUST leave the failed delivery unchanged.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › leaves the failed delivery unchanged, queues nothing and records nothing, and a retry is accepted`.
 
 ### `events/history-dead-letter-kept`
 
@@ -1445,6 +1445,38 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address`.
 
+### `events/address-name-refused`
+
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
+
+**Reason:** a subscription the server would refuse to deliver to at every attempt is better refused when it is registered than found later in the delivery log. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well. A receiver reached by a name on a Tailscale or home network resolves to a carrier-grade NAT or private address, so this is the refusal such a person meets first. A lookup that does not finish is `events/address-name-unresolved`, and the check at each attempt (`events/address-name-unsent`) still has the final say.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
+
+### `events/address-refusal-setting`
+
+Where the instance does not allow private addresses, if the server answers `400 validation_error` to a `url` for an address that is not public, then the server MUST name `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` in the error's `message`.
+
+**Reason:** the caller reading the refusal is often the person who runs the instance, and the setting is the one thing that changes the answer.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
+
+### `events/address-name-unresolved`
+
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, whose lookup does not finish within the registration limit of 3 seconds, or whose lookup the server does not make because it is already making two for registrations, then the server MUST answer `201`.
+
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A lookup cannot be cancelled and holds a thread the server shares, so the number running at once is bounded, and the check at each attempt (`events/address-name-unsent`) still has the final say. The attempt records `The receiver could not be reached.` if it still fails.
+
+**Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
+
+### `events/address-ipv6-global`
+
+Where the instance does not allow private addresses, the server MUST treat an IPv6 address as public only if it lies in `2000::/3`, after an IPv4 address written as IPv6 has been read as the IPv4 address it carries.
+
+**Reason:** `2000::/3` is the block assigned to hosts on the internet. Any other block is reserved, local or a translation prefix, so a rule that named the blocks to refuse would accept whatever it did not name.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one`.
+
 ### `events/address-mapped`
 
 Where the instance does not allow private addresses, the server MUST judge an IPv4 address written as IPv6 as the IPv4 address it carries.
@@ -1457,19 +1489,33 @@ Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` n
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses to point a subscription at an address that is not public, leaving the stored url`.
 
+### `events/address-name-update`
+
+Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses to point a subscription at an address that is not public, leaving the stored url`.
+
 ### `events/address-name-unsent`
 
 Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST NOT contact it.
 
 **Reason:** a name that resolved to a public address at registration can resolve to a private one later.
 
-**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
 ### `events/address-name-recorded`
 
 Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves to any address that is not public, then the server MUST record `The receiver's address is not public.` as the delivery's `error`.
 
-**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
+
+### `events/address-name-dead-letter`
+
+Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST record the delivery `dead_letter` at that attempt.
+
+**Reason:** the refusal is the instance's own rule, not the receiver's answer, so a later attempt would meet it again and the delivery would show `pending` for hours while it did. A redelivery sends it again once the name or the setting has changed.
+
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
 ### `events/address-resolved-once`
 
@@ -1533,7 +1579,7 @@ If the server cannot record a write's audit entry, then the server MUST roll the
 
 **Reason:** a change nobody can account for is worse than a refused one.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/write-faults.test.ts › is rolled back with its events, answers 500, and leaves the write after it to land`, `compliance/write-faults.test.ts › rolls back an entry of a page under atomic: false and reports it errored, while the entries around it land`.
 
 ### `events/audit-no-secrets`
 

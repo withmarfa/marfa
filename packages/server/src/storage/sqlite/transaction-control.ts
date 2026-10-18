@@ -1,5 +1,6 @@
 import type { RegistrySnapshot } from "@withmarfa/shared";
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { CommitFault } from "./injected-failure.js";
 import {
   errorMessage,
   reportableError,
@@ -33,6 +34,8 @@ export class TransactionControl {
   begun = false;
   outcome: TransactionOutcome = "active";
   callbackCause: unknown;
+  /** How a conformance fault makes this transaction's commit fail; set only under the test hooks. */
+  commitFault?: CommitFault;
   private failure: TransactionFailure | undefined;
   private settled: Exclude<TransactionOutcome, "active"> | undefined;
   private readonly settlementCallbacks: ((

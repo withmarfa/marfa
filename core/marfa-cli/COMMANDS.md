@@ -57,7 +57,8 @@ A command sends one trace to an OpenTelemetry collector when the environment nam
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers to send, as comma-separated `key=value` pairs with percent-encoded values. The traces variable overrides the other for a header both name. |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
-| `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. |
+| `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off. |
 | `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN` and an OTLP endpoint. |
 | `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST` and an OTLP endpoint. |
@@ -240,7 +241,7 @@ marfa owner passkeys remove [OPTIONS] <ID>
 
 ### marfa owner passkeys add
 
-Open the owner's passkey page through a fresh browser sign-in (private socket required).
+Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
 
 ```text
 marfa owner passkeys add [OPTIONS]
@@ -1769,7 +1770,7 @@ marfa audit [OPTIONS]
 
 ## events
 
-The event stream, one frame per line.
+The event stream, one frame per line. It ends with an error and a non-zero exit when the stream closes on `cursor_ahead`, `catchup_too_old` or `stream_incomplete`.
 
 ### marfa events
 
@@ -1782,7 +1783,7 @@ marfa events [OPTIONS]
 | `--type <TYPE>` | A type identifier to narrow to, repeatable up to ten; subtypes are included. |
 | `--edges <EDGES>` | Whether edge events ride along: `all` (the default) or `none`. One of `all`, `none`. |
 | `--from <CURSOR>` | Resume from this cursor, replaying what the log holds after it. |
-| `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until interrupted. |
+| `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends. |
 
 ## housekeeping
 

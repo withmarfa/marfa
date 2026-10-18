@@ -226,12 +226,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // which the offline lane's own test reads too.
   [/^deploy\/Dockerfile$/, ["restore-drill", "image"]],
   [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE, "image"]],
-  // The image copies the entrypoint and the ignore file into its build, and
-  // `ci/entrypoint.test.ts` runs the entrypoint.
-  [
-    /^deploy\/(entrypoint\.sh|Dockerfile\.dockerignore)$/,
-    ["workspace", "image"],
-  ],
+  // The image copies the entrypoint and the ignore file into its build;
+  // `ci/entrypoint.test.ts` and the drill's backup fixtures run the
+  // entrypoint.
+  [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill", "image"]],
+  [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
   // The control socket's tests and the global setup and test settings they
@@ -275,6 +274,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [
     /^conformance\/src\/suites\/compliance\//,
     ["workspace", "conformance-offline", "conformance-compliance"],
+  ],
+  // The image's replica fixtures run in the drill's job.
+  [
+    /^conformance\/src\/suites\/backup\//,
+    ["workspace", "conformance-offline", "restore-drill"],
   ],
   [
     /^conformance\/src\/suites\/(correctness|sync)\//,
@@ -337,9 +341,17 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/bindings\/swift\//, ["core-checks", "core", "swift-package"]],
   // The Node module's JavaScript side is built and tested only by the live job.
   [/^core\/bindings\/node\/(test|scripts)\//, ["core"]],
+  // The device fixtures drive a debug build of the module, which `napi build`
+  // makes from the manifest and the lockfile that pins the command, and from
+  // the crate.
   [
-    /^core\/bindings\/node\/(index\.js|index\.d\.ts|package\.json|pnpm-lock\.yaml|tsconfig\.json)$/,
-    ["core"],
+    /^core\/bindings\/node\/(package\.json|pnpm-lock\.yaml)$/,
+    ["core", "conformance-device"],
+  ],
+  [/^core\/bindings\/node\/(index\.js|index\.d\.ts|tsconfig\.json)$/, ["core"]],
+  [
+    /^core\/bindings\/node\/(src\/|Cargo\.toml$|build\.rs$)/,
+    ["core-checks", "core-checks-linux", "core", "conformance-device"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // A crate's tests are not in the binary.

@@ -10,7 +10,9 @@ import type { FreshServer } from "./fresh-server.js";
  * did not ask for.
  */
 
-export const DAY_MS = 24 * 60 * 60 * 1000;
+export const MINUTE_MS = 60 * 1000;
+export const HOUR_MS = 60 * MINUTE_MS;
+export const DAY_MS = 24 * HOUR_MS;
 
 /** An interval no clock a fixture reaches gets past. */
 const NEVER_MS = "3153600000000";
@@ -117,4 +119,36 @@ export function movedClock(server: FreshServer): {
     },
     now: () => Date.now() + offset,
   };
+}
+
+/** Something done at a time, given as how long before the end of the
+ *  timeline it happens. */
+export interface Moment {
+  before: number;
+  run(): Promise<void>;
+}
+
+/**
+ * Plays a history out on a server whose clock only goes forward: each moment
+ * is run once the clock stands `before` ms short of the end, the earliest
+ * first, and the clock is then moved to the end, the instant the job under
+ * test runs. A moment's `before` is the age it has at the end, so a fixture
+ * writes the ages it means rather than the steps between them.
+ *
+ * Real time passes between steps and the clock follows it, so each age is a
+ * little more than the one written. A fixture that stamps a record "at" a
+ * retention relies on that: it is past the retention when the job runs.
+ */
+export async function playOut(
+  clock: ReturnType<typeof movedClock>,
+  moments: readonly Moment[],
+): Promise<void> {
+  const ordered = [...moments].sort((a, b) => b.before - a.before);
+  let at = ordered[0]?.before ?? 0;
+  for (const moment of ordered) {
+    if (at > moment.before) await clock.advance(at - moment.before);
+    at = moment.before;
+    await moment.run();
+  }
+  if (at > 0) await clock.advance(at);
 }

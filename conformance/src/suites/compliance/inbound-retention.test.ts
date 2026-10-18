@@ -8,35 +8,46 @@ import {
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
+import {
+  DAY_MS,
+  HOUR_MS,
+  movedClock,
+  type Moment,
+  playOut,
+  QUIET_SCHEDULE,
+  quiet,
+} from "../../utils/moved-clock.js";
 
 /**
  * How long a delivery is kept: a handled one for seven days after it was
  * handled and a pending one for thirty after it arrived, unless the instance
  * says otherwise, and the pass that removes what is past them. The age of a
- * delivery is a clock a fixture cannot wait out, so a server of its own is
- * stopped, its stored times are set back, and it is started again; the pass
- * is then run through the operator rather than waited for.
+ * delivery is a clock a fixture cannot wait out, so each case receives and
+ * handles its deliveries as the server's clock moves forward through the
+ * target interface, to the instant the pass is run through the operator
+ * rather than waited for.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-
 let server: FreshServer;
+let clock: ReturnType<typeof movedClock>;
 let serial = 0;
 
-beforeAll(async () => {
-  server = await bootFreshServer("inbound-retention", {
-    // Far enough off that no pass but the ones this file asks for runs.
-    MARFA_INBOUND_CLEANUP_INTERVAL_MS: "3153600000000",
-    // Room for a body past the 32 MiB a pass removes at most.
-    MARFA_INBOUND_MAX_BYTES: String(40 * 1024 * 1024),
-  });
-  // The first run puts the job's next one at the end of that interval, where
-  // its first run would otherwise be thirty seconds after the boot.
-  const first = await operator().runHousekeeping("inbound-delivery-cleanup");
-  expect(first.status).toBe(200);
-  expect(first.data.result).toEqual({ deleted: 0, remaining: false });
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+beforeAll(
+  async () => {
+    server = await bootFreshServer("inbound-retention", {
+      // Far enough off that no pass but the ones this file asks for runs, as
+      // the clock moves.
+      ...QUIET_SCHEDULE,
+      // Room for a body past the 32 MiB a pass removes at most.
+      MARFA_INBOUND_MAX_BYTES: String(40 * 1024 * 1024),
+    });
+    clock = movedClock(server);
+    // The first run puts the job's next one at the end of that interval, where
+    // its first run would otherwise be thirty seconds after the boot.
+    await quiet(server, ["inbound-delivery-cleanup"]);
+  },
+  2 * FRESH_SERVER_TIMEOUT_MS + 60_000,
+);
 
 afterAll(async () => {
   await server.stop();
@@ -54,7 +65,6 @@ function minter(): MarfaClient {
 }
 
 interface World {
-  /** On the server's address as it is now, which a restart changes. */
   readonly client: MarfaClient;
   id: string;
   source: string;
@@ -89,11 +99,13 @@ async function world(
     default_tier: "library",
   });
   expect(minted.status).toBe(201);
-  const current = () =>
-    new MarfaClient({ baseUrl: server.apiUrl, apiKey: minted.data.key });
-  const registered = await current().registerConnector({ name: label });
+  const current = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: minted.data.key,
+  });
+  const registered = await current.registerConnector({ name: label });
   expect(registered.status).toBe(201);
-  const made = await current().createInboundEndpoint(
+  const made = await current.createInboundEndpoint(
     registered.data.id,
     duplicateHeader === undefined ? {} : { duplicate_header: duplicateHeader },
   );
@@ -104,7 +116,7 @@ async function world(
     const found: InboundDeliveryRow[] = [];
     let cursor: string | undefined;
     do {
-      const page = await current().listInboundDeliveries(id, {
+      const page = await current.listInboundDeliveries(id, {
         state: "any",
         limit: 200,
         cursor,
@@ -116,9 +128,7 @@ async function world(
     return found;
   };
   return {
-    get client() {
-      return current();
-    },
+    client: current,
     id,
     source: registered.data.source,
     path: made.data.path,
@@ -153,7 +163,7 @@ async function world(
       );
     },
     async handle(delivery) {
-      const marked = await current().markInboundDeliveriesHandled(id, {
+      const marked = await current.markInboundDeliveriesHandled(id, {
         ids: [delivery],
         outcome: "processed",
       });
@@ -165,36 +175,6 @@ async function world(
         .sort();
     },
   };
-}
-
-/** Sets stored times back while the server is stopped, and starts it again. */
-async function setBack(
-  rows: { id: string; received?: number; handled?: number }[],
-): Promise<void> {
-  await server.restart({
-    whileStopped: () => {
-      const now = Date.now();
-      withInstanceDatabase(server.sqlitePath, (db) => {
-        const stamp = (ageMs: number) => new Date(now - ageMs).toISOString();
-        const received = db.prepare(
-          "UPDATE inbound_deliveries SET received_at = ? WHERE id = ?",
-        );
-        const handled = db.prepare(
-          "UPDATE inbound_deliveries SET handled_at = ? WHERE id = ? AND handled_at IS NOT NULL",
-        );
-        db.exec("BEGIN");
-        for (const row of rows) {
-          if (row.received !== undefined) {
-            received.run(stamp(row.received), row.id);
-          }
-          if (row.handled !== undefined) {
-            handled.run(stamp(row.handled), row.id);
-          }
-        }
-        db.exec("COMMIT");
-      });
-    },
-  });
 }
 
 async function sweep() {
@@ -222,32 +202,42 @@ async function configured(
 describe("the pass that removes deliveries past their retention", () => {
   it("removes handled deliveries seven days after they were handled and pending ones thirty days after they arrived, and keeps the rest", async () => {
     const w = await world();
-    const handledIn = await w.deliver("handled inside");
-    const handledAt = await w.deliver("handled at");
-    const handledOut = await w.deliver("handled past");
-    const handledNow = await w.deliver("handled now, arrived long ago");
-    const pendingIn = await w.deliver("pending inside");
-    const pendingAt = await w.deliver("pending at");
-    const pendingOut = await w.deliver("pending past");
-    const pendingEight = await w.deliver("pending eight days");
-    for (const id of [handledIn, handledAt, handledOut, handledNow]) {
-      await w.handle(id);
-    }
-    expect(await w.kept()).toHaveLength(8);
-
+    const ids: Record<string, string> = {};
+    const received = (name: string, before: number): Moment => ({
+      before,
+      run: async () => {
+        ids[name] = await w.deliver(name);
+      },
+    });
+    const handled = (name: string, before: number): Moment => ({
+      before,
+      run: () => w.handle(ids[name]!),
+    });
     // Stamped at the retention itself, a delivery is past it by the time the
-    // pass runs, and an hour inside it is not.
-    await setBack([
-      { id: handledIn, received: 100 * DAY_MS, handled: 7 * DAY_MS - HOUR_MS },
-      { id: handledAt, received: 100 * DAY_MS, handled: 7 * DAY_MS },
-      { id: handledOut, received: 100 * DAY_MS, handled: 7 * DAY_MS + HOUR_MS },
-      { id: handledNow, received: 100 * DAY_MS, handled: 60_000 },
-      { id: pendingIn, received: 30 * DAY_MS - HOUR_MS },
-      { id: pendingAt, received: 30 * DAY_MS },
-      { id: pendingOut, received: 30 * DAY_MS + HOUR_MS },
+    // pass runs, and an hour inside it is not. The handled ones arrived long
+    // ago, so their age is the handling's alone.
+    const handledNames = [
+      "handled inside",
+      "handled at",
+      "handled past",
+      "handled now, arrived long ago",
+    ];
+    await playOut(clock, [
+      ...handledNames.map((name) => received(name, 100 * DAY_MS)),
+      handled("handled inside", 7 * DAY_MS - HOUR_MS),
+      handled("handled at", 7 * DAY_MS),
+      handled("handled past", 7 * DAY_MS + HOUR_MS),
+      handled("handled now, arrived long ago", 60_000),
+      received("pending inside", 30 * DAY_MS - HOUR_MS),
+      received("pending at", 30 * DAY_MS),
+      received("pending past", 30 * DAY_MS + HOUR_MS),
       // Past what a handled delivery is kept, inside what a pending one is.
-      { id: pendingEight, received: 8 * DAY_MS },
+      received("pending eight days", 8 * DAY_MS),
     ]);
+    const handledAt = ids["handled at"]!;
+    const handledIn = ids["handled inside"]!;
+    const pendingOut = ids["pending past"]!;
+    const pendingEight = ids["pending eight days"]!;
     expect(await w.kept()).toHaveLength(8);
 
     expect(await sweep()).toEqual({ deleted: 4, remaining: false });
@@ -276,21 +266,25 @@ describe("the pass that removes deliveries past their retention", () => {
       inbound_pending_retention_days: 2,
     });
     try {
-      const handled = await w.deliver("handled long ago");
-      const young = await w.deliver("pending a day");
-      const old = await w.deliver("pending three days");
-      await w.handle(handled);
-      await setBack([
-        { id: handled, received: 400 * DAY_MS, handled: 400 * DAY_MS },
-        { id: young, received: DAY_MS },
-        { id: old, received: 3 * DAY_MS },
+      await playOut(clock, [
+        {
+          before: 400 * DAY_MS,
+          run: async () => w.handle(await w.deliver("handled long ago")),
+        },
+        {
+          before: 3 * DAY_MS,
+          run: async () => void (await w.deliver("pending three days")),
+        },
+        {
+          before: DAY_MS,
+          run: async () => void (await w.deliver("pending a day")),
+        },
       ]);
-
       expect(await sweep()).toEqual({ deleted: 1, remaining: false });
       expect(await w.kept()).toEqual(["handled long ago", "pending a day"]);
 
       // Both zero keeps everything, a delivery of four hundred days among it.
-      await setBack([{ id: young, received: 400 * DAY_MS }]);
+      await clock.advance(400 * DAY_MS);
       expect(
         (
           await minter().updateConfig({
@@ -311,17 +305,19 @@ describe("the pass that removes deliveries past their retention", () => {
     const w = await world();
     const reset = await configured({ inbound_handled_retention_days: 1 });
     try {
-      const handledOld = await w.deliver("handled two days");
-      const handledYoung = await w.deliver("handled twelve hours");
-      const pendingYoung = await w.deliver("pending twenty days");
-      const pendingOld = await w.deliver("pending thirty-one days");
-      await w.handle(handledOld);
-      await w.handle(handledYoung);
-      await setBack([
-        { id: handledOld, handled: 2 * DAY_MS },
-        { id: handledYoung, handled: 12 * HOUR_MS },
-        { id: pendingYoung, received: 20 * DAY_MS },
-        { id: pendingOld, received: 31 * DAY_MS },
+      const handledAfter = (name: string, before: number): Moment => ({
+        before,
+        run: async () => w.handle(await w.deliver(name)),
+      });
+      const pendingAfter = (name: string, before: number): Moment => ({
+        before,
+        run: async () => void (await w.deliver(name)),
+      });
+      await playOut(clock, [
+        handledAfter("handled two days", 2 * DAY_MS),
+        handledAfter("handled twelve hours", 12 * HOUR_MS),
+        pendingAfter("pending twenty days", 20 * DAY_MS),
+        pendingAfter("pending thirty-one days", 31 * DAY_MS),
       ]);
 
       expect(await sweep()).toEqual({ deleted: 2, remaining: false });
@@ -337,16 +333,9 @@ describe("the pass that removes deliveries past their retention", () => {
 
   it("removes at most 500 deliveries in a pass, the oldest first, and says that work remains", async () => {
     const w = await world();
-    const ids: string[] = [];
-    for (let i = 0; i < 501; i++)
-      ids.push(await w.deliver(`past ${String(i)}`));
-    // The first is the oldest, a second apart from the next.
-    await setBack(
-      ids.map((id, i) => ({
-        id,
-        received: 40 * DAY_MS + (ids.length - i) * 1000,
-      })),
-    );
+    // The first is the oldest, delivered before the next.
+    for (let i = 0; i < 501; i++) await w.deliver(`past ${String(i)}`);
+    await clock.advance(40 * DAY_MS);
     expect(await w.kept()).toHaveLength(501);
 
     expect(await sweep()).toEqual({ deleted: 500, remaining: true });
@@ -409,14 +398,10 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     return value;
   }
 
-  /** Sets back, oldest first, the deliveries past the pending retention. */
-  async function ageOldestFirst(ids: string[]): Promise<void> {
-    await setBack(
-      ids.map((id, i) => ({
-        id,
-        received: 40 * DAY_MS + (ids.length - i) * 1000,
-      })),
-    );
+  /** Moves the clock past the pending retention, so the deliveries made so
+   *  far are past it, the first the oldest. */
+  async function pastPendingRetention(): Promise<void> {
+    await clock.advance(40 * DAY_MS);
   }
 
   it("removes in one pass no more of the oldest than 32 MiB of their charges, taking a set of exactly 32 MiB", async () => {
@@ -430,8 +415,8 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
       TARGET,
     );
     expect(storedCharge(a.id) + storedCharge(b.id)).toBe(TARGET);
-    const small = await exact.deliver("small");
-    await ageOldestFirst([a.id, b.id, small]);
+    await exact.deliver("small");
+    await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 2, remaining: true });
     expect(await exact.kept()).toEqual(["small"]);
     expect(await sweep()).toEqual({ deleted: 1, remaining: false });
@@ -447,7 +432,7 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
       charge(c, over.source, overHalf) + charge(d, over.source, overHalf + 1),
     ).toBe(TARGET + 1);
     expect(storedCharge(c.id) + storedCharge(d.id)).toBe(TARGET + 1);
-    await ageOldestFirst([c.id, d.id]);
+    await pastPendingRetention();
     expect(await sweep()).toEqual({ deleted: 1, remaining: true });
     expect(await over.kept()).toEqual(["d"]);
     expect(await sweep()).toEqual({ deleted: 1, remaining: false });
@@ -460,8 +445,8 @@ describe("the pass that removes deliveries, by the bytes they charge", () => {
     const large = await w.deliverSized("large", TARGET);
     expect(charge(large, w.source, TARGET)).toBeGreaterThan(TARGET);
     expect(storedCharge(large.id)).toBeGreaterThan(TARGET);
-    const small = await w.deliver("small");
-    await ageOldestFirst([large.id, small]);
+    await w.deliver("small");
+    await pastPendingRetention();
 
     expect(await sweep()).toEqual({ deleted: 1, remaining: true });
     expect(await w.kept()).toEqual(["small"]);
@@ -475,7 +460,8 @@ describe("the repeat of a delivery whose first was removed by age", () => {
   it("marks a repeat against the earliest delivery that remains once the first of its value is removed", async () => {
     const w = await world("X-GitHub-Delivery");
     const header = ["X-GitHub-Delivery", "guid-1"];
-    const first = await w.deliver("first", header);
+    await w.deliver("first", header);
+    await clock.advance(40 * DAY_MS);
     const second = await w.deliver("second", header);
     await w.deliver("third", header);
     await w.handle(second);
@@ -486,7 +472,6 @@ describe("the repeat of a delivery whose first was removed by age", () => {
       third: { of: "first", outcome: null },
     });
 
-    await setBack([{ id: first, received: 40 * DAY_MS }]);
     expect(await sweep()).toEqual({ deleted: 1, remaining: false });
     const after = await w.repeats();
     expect(Object.keys(after).sort()).toEqual(["second", "third"]);

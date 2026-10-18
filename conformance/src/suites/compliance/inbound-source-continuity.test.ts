@@ -8,8 +8,10 @@ import {
 } from "../../utils/fresh-server.js";
 import { HeldLock } from "../../utils/held-lock.js";
 import { idOf, openBody, send } from "../../utils/inbound-sender.js";
+import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let server: FreshServer;
+let clock: ReturnType<typeof movedClock>;
 let serial = 0;
 beforeAll(async () => {
   server = await bootFreshServer("inbound-source-continuity", {
@@ -17,6 +19,7 @@ beforeAll(async () => {
     RATE_LIMIT_INBOUND_REQUESTS: "3",
     RATE_LIMIT_WINDOW_MS: "600000",
   });
+  clock = movedClock(server);
 }, FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
   await server?.stop();
@@ -37,8 +40,15 @@ function call(
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
-async function mint(source: string) {
-  const response = await call("/keys", "POST", { label: source, source });
+/** A key that expires an hour from now on the server's clock, or never. */
+const inAnHour = (): string => new Date(clock.now() + HOUR_MS).toISOString();
+
+async function mint(source: string, expiresAt?: string) {
+  const response = await call("/keys", "POST", {
+    label: source,
+    source,
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+  });
   expect(response.status).toBe(201);
   return (await response.json()) as { id: string; key: string };
 }
@@ -56,9 +66,9 @@ async function register(key: string) {
   };
   return { ...value, status: response.status, key };
 }
-async function fixture() {
+async function fixture(expiresAt?: string) {
   const source = `source-continuity-${String(++serial)}`;
-  const oldKey = await mint(source);
+  const oldKey = await mint(source, expiresAt);
   const old = await register(oldKey.key);
   expect(old.status).toBe(201);
   const created = await call(
@@ -342,7 +352,7 @@ describe("source-owned inbound continuity", () => {
         MARFA_INBOUND_IN_FLIGHT_BYTES: "67108864",
       },
     });
-    const { source, oldKey, old, endpoint } = await fixture();
+    const { source, oldKey, old, endpoint } = await fixture(inAnHour());
     const receipt = idOf(await send(server.apiUrl, endpoint.path, "retained"));
     const retiredResponse = await call(
       `/connectors/${old.id}/endpoints`,
@@ -365,11 +375,7 @@ describe("source-owned inbound continuity", () => {
         )
       ).status,
     ).toBe(200);
-    await server.restart(() => {
-      sql(
-        `UPDATE api_keys SET expires_at = '2020-01-01T00:00:00.000Z' WHERE id = '${oldKey.id}'`,
-      );
-    });
+    await clock.advance(2 * HOUR_MS);
     expect((await send(server.apiUrl, endpoint.path, "expired")).status).toBe(
       404,
     );
@@ -485,7 +491,10 @@ describe("source-owned inbound continuity", () => {
         202,
       );
       expect((await call(`/keys/${oldKey.id}`, "DELETE")).status).toBe(200);
-      const waitingKey = await mint(source);
+      const waitingKey = await mint(
+        source,
+        standing === "expired" ? inAnHour() : undefined,
+      );
       expect(
         (await call("/keys/current", "GET", undefined, waitingKey.key)).status,
       ).toBe(200);
@@ -514,7 +523,7 @@ describe("source-owned inbound continuity", () => {
         // identifies the exact post-authentication admission boundary.
         expect(
           sql(
-            `SELECT revoked_at IS NULL AND (expires_at IS NULL OR expires_at > '${new Date().toISOString()}') FROM api_keys WHERE id = '${waitingKey.id}'`,
+            `SELECT revoked_at IS NULL AND (expires_at IS NULL OR expires_at > '${new Date(clock.now()).toISOString()}') FROM api_keys WHERE id = '${waitingKey.id}'`,
           ),
         ).toBe("1");
         await new Promise((resolve) => setTimeout(resolve, 200));
@@ -524,10 +533,14 @@ describe("source-owned inbound continuity", () => {
             `SELECT count(*) FROM connectors WHERE key_id = '${waitingKey.id}'`,
           ),
         ).toBe("0");
-        const column = standing === "revoked" ? "revoked_at" : "expires_at";
-        await lock.commit([
-          `UPDATE api_keys SET ${column} = '2020-01-01T00:00:00.000Z' WHERE id = '${waitingKey.id}'`,
-        ]);
+        if (standing === "revoked") {
+          await lock.commit([
+            `UPDATE api_keys SET revoked_at = '2020-01-01T00:00:00.000Z' WHERE id = '${waitingKey.id}'`,
+          ]);
+        } else {
+          await clock.advance(2 * HOUR_MS);
+          await lock.commit();
+        }
         const refused = await waiting;
         expect(refused.status).toBe(401);
         expect(

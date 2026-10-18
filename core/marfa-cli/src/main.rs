@@ -193,7 +193,9 @@ enum Command {
     },
     /// The audit log: every write, with the acting key. Needs `audit.read`.
     Audit(audit::AuditArgs),
-    /// The event stream, one frame per line.
+    /// The event stream, one frame per line. It ends with an error and a
+    /// non-zero exit when the stream closes on `cursor_ahead`,
+    /// `catchup_too_old` or `stream_incomplete`.
     Events(events::EventsArgs),
     /// The housekeeping jobs the server runs on itself. Explicit management permission required.
     Housekeeping {

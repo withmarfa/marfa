@@ -23,7 +23,10 @@ import type {
   StoredWebhook,
   WebhookOwner,
 } from "../storage/interface.js";
-import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
+import {
+  refuseNonPublicHost,
+  refuseWebhookUrl,
+} from "../webhooks/outbound-http.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { WIRE_EVENT_NAMES, type WireEventName } from "../pubsub.js";
 import { DELIVERY_CANCELED, ownerCredential } from "../webhooks/delivery.js";
@@ -97,7 +100,7 @@ const EventNameSchema = z.enum(WEBHOOK_EVENTS);
 // ---------------------------------------------------------------------------
 
 const URL_TEXT =
-  "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery.";
+  "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery.";
 const EVENTS_TEXT = "The events to send. Name each one: there's no wildcard.";
 const TYPE_FILTER_TEXT =
   "Send item events only for this type and its subtypes, such as `core.media`, or for every type a pattern such as `app.*` matches. The type needn't be registered. Edge events aren't filtered.";
@@ -676,8 +679,13 @@ function wireWebhook(webhook: StoredWebhook, revealSecret = false) {
   return revealSecret ? wire : { ...wire, secret: redactSecret(wire.secret) };
 }
 
-function assertUrlAccepted(url: string, allowPrivateAddresses: boolean): void {
-  const refusal = refuseWebhookUrl(url, allowPrivateAddresses);
+async function assertUrlAccepted(
+  url: string,
+  allowPrivateAddresses: boolean,
+): Promise<void> {
+  const refusal =
+    refuseWebhookUrl(url, allowPrivateAddresses) ??
+    (allowPrivateAddresses ? null : await refuseNonPublicHost(url));
   if (refusal !== null) {
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, refusal);
   }
@@ -692,7 +700,7 @@ export function webhookRoutes(
   router.openapi(createWebhookRoute, async (c) => {
     requireAuth(c);
     const body = c.req.valid("json");
-    assertUrlAccepted(body.url, options.allowPrivateAddresses);
+    await assertUrlAccepted(body.url, options.allowPrivateAddresses);
 
     const webhook = await runAuditedTransaction(
       storage,
@@ -742,7 +750,7 @@ export function webhookRoutes(
     const body = c.req.valid("json");
 
     if (body.url !== undefined) {
-      assertUrlAccepted(body.url, options.allowPrivateAddresses);
+      await assertUrlAccepted(body.url, options.allowPrivateAddresses);
     }
     // Read before the subscription is looked up, so every refusal of the
     // body comes before the `404`, as the schema's own do.

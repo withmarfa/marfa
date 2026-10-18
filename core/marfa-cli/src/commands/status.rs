@@ -61,12 +61,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         };
         let mut lines = vec![
             format!("server {}", remote.origin()),
-            format!(
-                "instance {} ({} {})",
-                field(&instance, "instance_id"),
-                field(&instance, "name"),
-                field(&instance, "version")
-            ),
+            instance_line(&instance),
             format!("health {}", field(&health, "status")),
         ];
         if !held {
@@ -90,6 +85,26 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     })
 }
 
+/// The instance as a line: its id, its name and the release it runs, or the
+/// build when it is not a release.
+pub fn instance_line(instance: &Value) -> String {
+    let text = |name: &str| match instance.get(name) {
+        Some(Value::String(text)) => text.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    };
+    let running = match instance.get("release").and_then(Value::as_str) {
+        Some(release) => format!("{release}, build {}", text("version")),
+        None => text("version"),
+    };
+    format!(
+        "instance {} ({} {})",
+        text("instance_id"),
+        text("name"),
+        running
+    )
+}
+
 pub fn speaks_this_contract(instance: &Value) -> bool {
     instance.get("contract").and_then(Value::as_u64) == Some(marfa_core::contract::CONTRACT_VERSION)
 }
@@ -111,4 +126,30 @@ pub fn contract_line(instance: &Value) -> String {
         "contract {served}; this marfa was built for contract {}, so nothing past this description was read: use a marfa built for the server's contract",
         marfa_core::contract::CONTRACT_VERSION
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_the_release_beside_the_build() {
+        let instance = json!({
+            "name": "Marfa", "version": "abc123", "release": "0.0.14",
+            "instance_id": "id-1", "contract": 0, "features": []
+        });
+        assert_eq!(
+            instance_line(&instance),
+            "instance id-1 (Marfa 0.0.14, build abc123)"
+        );
+    }
+
+    #[test]
+    fn names_only_the_build_when_the_server_is_not_a_release() {
+        let instance = json!({
+            "name": "Marfa", "version": "dev", "instance_id": "id-1",
+            "contract": 0, "features": []
+        });
+        assert_eq!(instance_line(&instance), "instance id-1 (Marfa dev)");
+    }
 }

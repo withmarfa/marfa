@@ -6,6 +6,7 @@ import { runAuditedTransaction } from "./audited-transaction.js";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
+import { withBlobFaults } from "./blob-faults.js";
 
 /**
  * The stores this instance has attached, built in one place so that every
@@ -189,6 +190,7 @@ export type BlobLayerConfig = Pick<
   | "s3SecretAccessKey"
   | "s3ForcePathStyle"
   | "s3Prefix"
+  | "testHooks"
 >;
 
 export async function createBlobLayer(
@@ -209,6 +211,7 @@ export async function createBlobLayer(
       })
     : null;
   const stores: BlobStore[] = s3 ? [disk, s3] : [disk];
+  if (config.testHooks) for (const store of stores) withBlobFaults(store);
   // Marker creation and remote store discovery cannot be rolled back by SQL.
   // Finish both before claiming any registry change.
   for (const store of stores) await store.attach();

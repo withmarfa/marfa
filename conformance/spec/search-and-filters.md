@@ -1404,7 +1404,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 If a read fails while `GET /export?format=archive` is answering, then the server MUST leave nothing of the export on disk.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`.
 
 ### `search-and-filters/archive-spool-start`
 
@@ -1420,7 +1420,7 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 
 **Reason:** the status and headers are sent before the first byte, so the failure shows only as a connection cut short and a gzip stream with no end, which is an archive that nobody mistakes for a complete one.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/export-faults.test.ts › ends the response with an error, so the archive is cut short and cannot be taken for a whole one, and leaves nothing on disk`.
 
 ## Restore
 
@@ -1804,7 +1804,7 @@ If the server refuses an archive, then the server MUST leave no row, history, ty
 
 If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, blob, event or audit record that the restore wrote.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, blob, event or audit record when a write fails ($fault), and restores whole when it is tried again`.
 
 ### `search-and-filters/restore-stopped-nothing`
 
@@ -1812,7 +1812,7 @@ If the process stops while the server restores an archive, then the server MUST 
 
 **Reason:** the bytes are written before the transaction opens, which nothing can roll back, so the copy cleanup of `blob-replicate` and `blob-integrity` removes them.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/restore-faults.test.ts › leaves no row, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed`.
 
 ### `search-and-filters/restore-announced`
 
@@ -1834,7 +1834,7 @@ While a restore writes, the server MUST NOT show its rows, registrations or even
 
 **Reason:** a reader that saw part of a restore would see rows that a failed restore then takes away.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/restore-faults.test.ts › shows other requests none of its rows, registrations, blobs or events until it commits`.
 
 ### `search-and-filters/restore-writers-wait`
 
@@ -1850,4 +1850,4 @@ When the server removes the blob bytes of a restore that did not commit, the ser
 
 **Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed row names, and removes those no row names`, `› keeps the bytes of an upload requested while the failed restore ran`.

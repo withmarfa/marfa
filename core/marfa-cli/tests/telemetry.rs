@@ -1039,6 +1039,65 @@ fn a_failing_command_sends_one_exception_with_its_codes_a_fixed_sentence_and_no_
 }
 
 #[test]
+fn resource_attributes_the_operator_names_reach_the_trace_and_the_exception() {
+    let store = store();
+    let named = "deployment.environment=rehearsal,team=a%20b,service.version=9.9.9";
+
+    // The witness: with no attributes named, the run names none of these.
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    run(&exceptions_to(&collector, &posthog), &catch_up(&store));
+    let plain: Value = serde_json::from_str(&collector.received()[0].body).unwrap();
+    let plain = &plain["resourceSpans"][0]["resource"];
+    assert!(attribute(plain, "deployment.environment").is_none());
+    assert!(attribute(plain, "team").is_none());
+    assert_ne!(word(plain, "service.version"), "9.9.9");
+    assert_eq!(word(plain, "service.name"), "marfa-cli");
+
+    let collector = Collector::open(Reply::Answer(200));
+    let posthog = Collector::open(Reply::Answer(200));
+    let mut env = exceptions_to(&collector, &posthog);
+    env.push(("OTEL_RESOURCE_ATTRIBUTES", named));
+    run(&env, &catch_up(&store));
+
+    let trace: Value = serde_json::from_str(&collector.received()[0].body).unwrap();
+    let resource = &trace["resourceSpans"][0]["resource"];
+    assert_eq!(word(resource, "deployment.environment"), "rehearsal");
+    assert_eq!(word(resource, "team"), "a b");
+    assert_eq!(word(resource, "service.version"), "9.9.9");
+    assert_eq!(word(resource, "service.name"), "marfa-cli");
+
+    let events = posthog.events();
+    assert_eq!(events.len(), 1);
+    let properties = &events[0]["properties"];
+    assert_eq!(properties["deployment.environment"], "rehearsal");
+    assert_eq!(properties["team"], "a b");
+    assert_eq!(properties["service.version"], "9.9.9");
+    assert_eq!(properties["service.name"], "marfa-cli");
+}
+
+#[test]
+fn a_resource_attribute_list_with_a_bad_pair_names_nothing_and_the_run_is_unchanged() {
+    let store = store();
+    let collector = Collector::open(Reply::Answer(200));
+    let mut env = report_to(&collector, &[]);
+    env.push((
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "deployment.environment=rehearsal,broken",
+    ));
+    let ran = run(&env, &catch_up(&store));
+    assert_eq!(ran.code, 4, "{}", ran.stderr);
+    let trace: Value = serde_json::from_str(&collector.received()[0].body).unwrap();
+    assert!(
+        attribute(
+            &trace["resourceSpans"][0]["resource"],
+            "deployment.environment"
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn nothing_planted_in_the_command_line_the_environment_or_the_data_reaches_posthog() {
     let collector = Collector::open(Reply::Answer(200));
     let posthog = Collector::open(Reply::Answer(200));

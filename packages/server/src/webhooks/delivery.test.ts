@@ -337,13 +337,26 @@ describe("an attempt's outcome", () => {
     });
   });
 
-  it("retries a delivery that reached no receiver, recording why in its own words", async () => {
+  it("dead-letters a delivery its receiver's address refused, at the first attempt, recording why", async () => {
     expect(
-      await attempt({ kind: "failed", error: DELIVERY_FAILURE.notPublic }),
+      await attempt({ kind: "refused", error: DELIVERY_FAILURE.notPublic }),
+    ).toMatchObject({
+      status: "dead_letter",
+      status_code: null,
+      attempt: 1,
+      error: DELIVERY_FAILURE.notPublic,
+      next_attempt_at: null,
+    });
+  });
+
+  it("retries a delivery that reached no receiver, recording why in its own words", async () => {
+    // The witness for the refusal above: the same path retries.
+    expect(
+      await attempt({ kind: "failed", error: DELIVERY_FAILURE.unreachable }),
     ).toMatchObject({
       status: "pending",
       status_code: null,
-      error: DELIVERY_FAILURE.notPublic,
+      error: DELIVERY_FAILURE.unreachable,
     });
   });
 });

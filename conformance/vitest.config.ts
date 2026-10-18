@@ -78,10 +78,9 @@ export default defineConfig({
         },
       },
       {
-        // The device's half of the contract. Every body drives the `marfa`
-        // binary against a server the fixture scripts, so a step is a process
-        // spawn rather than an HTTP round trip and the budget matches the
-        // suites above rather than the offline lane.
+        // Device fixtures spawn the `marfa` binary or a binding host against
+        // a scripted server. Process startup and engine calls need the same
+        // budget as the network suites.
         test: {
           name: "device",
           include: ["src/suites/device/**/*.test.ts"],
@@ -100,6 +99,17 @@ export default defineConfig({
           name: "cli",
           include: ["src/suites/cli/**/*.test.ts"],
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
+        // The image's database replica: the shipped entrypoint and
+        // Litestream against the object store, which the restore drill's job
+        // installs. Every body boots and stops the entrypoint several times.
+        test: {
+          name: "backup",
+          include: ["src/suites/backup/**/*.test.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

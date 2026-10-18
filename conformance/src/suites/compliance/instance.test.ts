@@ -395,6 +395,28 @@ describe("the instance", () => {
     expect(odd).toEqual([]);
   });
 
+  it("names a release only as the version a tag carries", async () => {
+    const root = await client.root();
+    expect(root.ok).toBe(true);
+    const { release } = root.data;
+    // A release is three whole numbers; the build the root names beside it is
+    // a different thing and is not held to that form.
+    expect(
+      release === undefined ||
+        /^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}$/.test(release),
+    ).toBe(true);
+  });
+
+  it("names no release for a build made from a checkout", async () => {
+    // The server this run boots is a checkout, never a numbered release. The
+    // field it omits is one the server gives a release build: `app.root.test.ts`
+    // in the server's package and `scripts/check-image.sh` against a built image
+    // show the same door giving it.
+    const root = await client.root();
+    expect(root.ok).toBe(true);
+    expect(root.data).not.toHaveProperty("release");
+  });
+
   it("carries one contract version at the root and in its document", async () => {
     const root = await client.root();
     expect(root.ok).toBe(true);

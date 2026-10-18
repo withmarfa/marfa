@@ -6,37 +6,56 @@ The container recipe here runs the server with its database streamed off-site an
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
 - **The CLI**, included at `/usr/local/bin/marfa`, for private setup, key administration and owner recovery. The image defaults to `/data/control/marfa.sock`.
-- **Litestream** (`litestream.yml`), a sidecar in the same container. `entrypoint.sh` restores the database from the bucket when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
+- **Litestream** (`litestream.yml`), a sidecar in the same container. It keeps the database replica at `<S3_PREFIX>/db` in the bucket. `entrypoint.sh` restores the database from that replica when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
 - **The blob folder is the server's own housekeeping.** Litestream carries the database only. The `blob-replicate` housekeeping job (listed at `GET /housekeeping`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
 
 ## The names it needs
 
-The six the server reads for its object store are the six the sidecar reads, from the same environment, so the two cannot name different buckets:
+The seven names the server reads for its object store are the seven the sidecar reads, from the same environment, so the two cannot name different buckets or prefixes:
 
-| Name                   | Read by                                                                                                                          |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `S3_BUCKET`            | the server, Litestream                                                                                                           |
-| `S3_REGION`            | the server, Litestream (`us-east-1` when unset, which the entrypoint spells out)                                                 |
-| `S3_ENDPOINT`          | the server, Litestream                                                                                                           |
-| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                                                                           |
-| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                                                                           |
-| `S3_FORCE_PATH_STYLE`  | the server, Litestream (path style with an endpoint and virtual hosting without one when unset, which the entrypoint spells out) |
-| `S3_PREFIX`            | the server (default `blobs`); the database replica sits under `db/` beside it                                                    |
-| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                           |
-| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                          |
+| Name                   | Read by                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `S3_BUCKET`            | the server, Litestream                                                                                                                |
+| `S3_REGION`            | the server, Litestream (`us-east-1` when unset, which the entrypoint spells out)                                                      |
+| `S3_ENDPOINT`          | the server, Litestream                                                                                                                |
+| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                                                                                |
+| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                                                                                |
+| `S3_FORCE_PATH_STYLE`  | the server, Litestream (path style with an endpoint and virtual hosting without one when unset, which the entrypoint spells out)      |
+| `S3_PREFIX`            | the server, Litestream (default `blobs`): the instance keeps everything in the bucket under it, the database replica at `<prefix>/db` |
+| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                                |
+| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                               |
+
+**Each instance that shares a bucket needs its own `S3_PREFIX`.** The instance keeps its blobs and its database replica under its prefix, so instances with different prefixes never read or write each other's replica, and a fresh volume restores only the replica under its own prefix. Two instances with the same prefix write one replica, and a fresh volume of either one starts on whichever database was replicated last. A prefix keeps the instances' replicas apart, not their data: each instance holds credentials for the whole bucket, so share a bucket only between instances of one owner. The prefix is segments of letters, digits, `.`, `_` and `-` joined by `/`, such as `trial/blobs`; a `/` at either end is dropped, so `trial/` and `trial` are the same prefix. `instance/replica-under-prefix`, `instance/replica-restores-own` and `instance/replica-other-prefix` in `conformance/spec/instance.md` state the rules.
 
 **The bucket must be on a different site from the instance.** A blob link the object store signs serves the bytes from the bucket's own host, as a download of the blob's recorded type, but a signed link cannot carry the sandbox policy or `nosniff` the instance's own blob answers do (`blobs/download-sandbox` and `blobs/download-nosniff` in `conformance/spec/blobs.md`). Its safety rests on that host being another site: an endpoint under the instance's own domain (say the instance at `marfa.example.com` and the bucket at `files.example.com`) would let an uploaded HTML or SVG blob run as a page of the same site if a browser rendered it.
 
 Plus what any instance needs, which the image's `NODE_ENV=production` makes the server refuse to boot without: `API_KEY_SALT` and `MARFA_AUTH_SECRET`, each generated with `openssl rand -hex 32` (a short, predictable or placeholder value is refused), and `MARFA_AUTH_BASE_URL`, the public URL clients reach the instance at. Set `PORT` when `8600` is not wanted. Every setting the server reads is defined, with its bounds and default, by the settings schema in `packages/server/src/config.ts`, and `.env.example` at the repository root lists each by name; a value outside its bounds stops the server with a message naming the setting. Values live in the deployment's own secret store, never in a file here.
 
-## Building and running
+## Running the published image
 
-From the repository root:
+Every release publishes the server image to `ghcr.io/withmarfa/marfa-server`, for `linux/amd64` and `linux/arm64`, under its version (such as `0.0.14`) and under `latest`. Pull the version you want, not `latest`, so that a restart never changes the build, and so that the old and the new build of an upgrade can each be named:
+
+```bash
+docker pull ghcr.io/withmarfa/marfa-server:<version>
+docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data --env-file <your-env-file> ghcr.io/withmarfa/marfa-server:<version>
+```
+
+`-p 127.0.0.1:8600:8600` publishes the port on the loopback address only. Docker publishes a bare `-p 8600:8600` on every network interface, and on Linux it does so past the host's firewall rules, so the instance would be open to the whole network. Put a reverse proxy or a tunnel on the same machine in front of the loopback port, and set `MARFA_AUTH_BASE_URL` to the address people reach it at.
+
+The image reports which release it is: `GET /` answers it as `release` beside `version`, which is the commit the image was built from, and `marfa status` shows both. The `marfa` inside the image reports the same release.
+
+`release.yml` builds the image on a runner of each platform, boots it through its entrypoint with `scripts/check-image.sh`, and pushes it only for a tag. After tagging, it pulls the image signed out and boots it again before the release is made public.
+
+## Building the image yourself
+
+To run code that is not a release, build from the repository root:
 
 ```bash
 docker build -f deploy/Dockerfile --build-arg VERSION_SHA=$(git rev-parse HEAD) -t marfa-server .
-docker run --name marfa -d -p 8600:8600 -v marfa-data:/data --env-file <your-env-file> marfa-server
+docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data --env-file <your-env-file> marfa-server
 ```
+
+A build without `VERSION_RELEASE` names no release: `GET /` answers `version` and no `release`, and the `marfa` inside reports `0.0.0`. Only a release build sets it.
 
 `ci.yml` builds this image and boots it through its entrypoint on every pull request that can affect it, and on every push to `main` (`scripts/check-image.sh`): it becomes healthy, reports the commit it was built from, stops with status `0` inside ten seconds, and on a database another build wrote stays up and unhealthy. That run uses no bucket, so the Litestream half is the restore drill's.
 
@@ -72,12 +91,12 @@ docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover
 
 Enter the replacement password at the hidden prompt, or use `owner recover --stdin` with a JSON object containing `password`. Recovery changes the existing owner's password and revokes browser sessions. Ordinary keys and approved app access remain in force.
 
-If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets:
+If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets, from the image the instance runs (`<image>`):
 
 ```bash
 docker stop marfa
 docker run -d --name marfa-recovery -v marfa-data:/data \
-  --env-file <your-env-file> marfa-server control-only
+  --env-file <your-env-file> <image> control-only
 docker exec -it marfa-recovery marfa --socket /data/control/marfa.sock owner recover
 docker stop marfa-recovery
 docker rm marfa-recovery
@@ -113,7 +132,8 @@ One setting turns telemetry on: `OTEL_EXPORTER_OTLP_ENDPOINT`, the base URL of a
 | `OTEL_EXPORTER_OTLP_HEADERS`                                             | Headers sent with every export, as `key=value` pairs with percent-encoded values, such as `Authorization=Bearer%20<token>`.                                                                                                                                                                                                                                                                                                                                    |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | The full URL for one signal, used as written, when the receiver does not follow the `v1/traces` and `v1/logs` paths. The base setting must also be set.                                                                                                                                                                                                                                                                                                        |
 | `OTEL_EXPORTER_OTLP_TRACES_HEADERS`, `OTEL_EXPORTER_OTLP_LOGS_HEADERS`   | Headers for one signal, which override `OTEL_EXPORTER_OTLP_HEADERS`.                                                                                                                                                                                                                                                                                                                                                                                           |
-| `OTEL_SERVICE_NAME`                                                      | The service name on exported telemetry (`marfa-server` by default).                                                                                                                                                                                                                                                                                                                                                                                            |
+| `OTEL_SERVICE_NAME`                                                      | The service name on exported telemetry (`marfa-server` by default). It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                                                                                   |
+| `OTEL_RESOURCE_ATTRIBUTES`                                               | Attributes added to everything exported, as `key=value` pairs with percent-encoded values, such as `deployment.environment=staging` to mark a test instance. One named here replaces the server's own of the same name. Every export also names the instance by `service.instance.id`, the `instance_id` that `GET /` answers, so instances sending to one project can be told apart.                                                                          |
 | `MARFA_OTEL_SAMPLE_RATIO`                                                | The share of traces exported (`0.05` by default). A trace that contains an error is exported whatever this says, with the spans that ended before the error and every span after it. To keep memory bounded, the server holds at most 500 spans for one trace, 10,000 spans in all, 1,000 traces that have not yet shown an error, and any one trace for 5 minutes. Past a limit the span that failed is still exported, but the rest of its trace may not be. |
 
 A request's trace has a span for the request and, below it, a span for each storage call the request made, named for the store and the method, such as `items.list`, and for each transaction and read snapshot. A span's name and attributes never include an item's content, a key, a credential or a statement, and the same redaction applies to every span as to every log record. The trace and the request's log lines share the request ID, in the `marfa.request_id` attribute on the span and the `request_id` attribute on each log record, and the log records carry the trace ID. Background jobs make no spans.
@@ -138,8 +158,8 @@ Until the first public release, nothing upgrades a database in place. A build wh
 
 To carry your data into a new build:
 
-1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export.
-2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the last replica onto an empty volume, and that replica is the old build's database, which the new build refuses, so give the new instance a new bucket.
+1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export. Note the build's release, which `GET /` answers as `release`: its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag, and runs beside the new one on its own volume and port.
+2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the replica under the instance's `S3_PREFIX` onto an empty volume. Under the old instance's prefix that replica is the old build's database, which the new build refuses, so give the new instance a prefix of its own, such as `v2/blobs`, or a new bucket.
 3. Claim the new instance, sign in as its owner, and restore the archive at `/auth/owner/restore`. Alternatively, send `POST /restore` through its private socket.
 
 Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `search-and-filters/restore-version` in `conformance/spec/search-and-filters.md` states that promise.
@@ -187,21 +207,23 @@ The instance applies the log at start. A copy's integrity can be checked first w
 
 ## Restoring by hand
 
-A restore is a Litestream command against the same configuration and environment. To the latest replicated state:
+A restore is a Litestream command against the same configuration and environment, which reads the replica at `<S3_PREFIX>/db` in `S3_BUCKET`. Litestream expands an unset name to nothing, so set `S3_PREFIX` to the instance's prefix, without a `/` at either end, even when it is the default `blobs`. To the latest replicated state:
 
 ```bash
-litestream restore -config deploy/litestream.yml -o restored.db -integrity-check full "$SQLITE_PATH"
+S3_PREFIX=blobs litestream restore -config deploy/litestream.yml -o restored.db -integrity-check full "$SQLITE_PATH"
 ```
 
 To a point in time:
 
 ```bash
-litestream restore -config deploy/litestream.yml -o restored.db -timestamp 2026-09-21T10:00:00Z "$SQLITE_PATH"
+S3_PREFIX=blobs litestream restore -config deploy/litestream.yml -o restored.db -timestamp 2026-09-21T10:00:00Z "$SQLITE_PATH"
 ```
+
+Replace `blobs` with the instance's own prefix when it has another.
 
 How fine a point can be named depends on its age. Litestream keeps every one-second sync for five minutes, then compacts them into longer segments (thirty seconds, five minutes, an hour), so a moment in the last five minutes is restorable to the second and an older one to the segment that contains it, back as far as the day of snapshots kept. The drill restores to a moment a few seconds old and asserts the item count it wrote before that moment.
 
-Then boot a server on the restored file with the same bucket and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
+Then boot a server on the restored file with the same bucket and prefix and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
 
 ## What a point-in-time restore can and cannot promise
 

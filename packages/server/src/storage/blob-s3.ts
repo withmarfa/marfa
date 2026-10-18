@@ -34,8 +34,9 @@ export interface S3BlobConfig {
   endpoint?: string;
   accessKeyId?: string;
   secretAccessKey?: string;
-  /** Key prefix inside the bucket. The database's replica lives beside it
-   *  under its own prefix, so one bucket carries one instance. */
+  /** Key prefix inside the bucket. In the image the database's replica
+   *  lives under it too, at `<prefix>/db`, so one bucket can carry several
+   *  instances. */
   prefix?: string;
   /**
    * Path-style addressing (`<endpoint>/<bucket>/<key>`) rather than

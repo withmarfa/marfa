@@ -1,4 +1,4 @@
-import { DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
+import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
 import { withoutFailedQueries } from "../error-text.js";
 import * as clock from "../clock.js";
 
@@ -66,13 +66,14 @@ export function notifyError(
   webhookUrl: string,
   reported: ErrorNotification,
   timeoutMs: number = DEFAULT_WEBHOOK_TIMEOUT_MS,
+  environment: string = DEFAULT_DEPLOYMENT_ENVIRONMENT,
 ): void {
   // The channel is read by more people than the instance holds data for, so
   // the text it is sent never carries a failed query, whoever built it.
   const notification = {
     ...reported,
     error: withoutFailedQueries(reported.error),
-    environment: DEPLOYMENT_ENVIRONMENT,
+    environment,
   };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
   const now = clock.monotonicMs();

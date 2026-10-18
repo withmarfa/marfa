@@ -220,6 +220,33 @@ describe("the environment an error notification names", () => {
   );
 });
 
+describe("an environment the operator names", () => {
+  it("is the one a generic payload and a Telegram message carry, in place of production", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    try {
+      const { notifyError } = await freshNotifier();
+      notifyError(WEBHOOK, notification("boom", "/a"), undefined, "rehearsal");
+      expect(JSON.parse(bodies[0]!)).toHaveProperty("environment", "rehearsal");
+      notifyError(
+        "https://api.telegram.org/bot123/sendMessage",
+        notification("crash", "/b"),
+        undefined,
+        "rehearsal",
+      );
+      expect((JSON.parse(bodies[1]!) as { text: string }).text).toContain(
+        "(rehearsal)",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+});
+
 describe("what the error webhook is sent", () => {
   const VALUE = "bound-value-3e9d51c0";
   const STATEMENT =

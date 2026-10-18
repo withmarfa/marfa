@@ -2,7 +2,7 @@
 
 What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
-`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`. A page is the HTML a browser is given instead.
+`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
 ## Identity
 
@@ -158,6 +158,22 @@ When `GET /` is answered with the description, the server MUST answer `version` 
 
 **Tests:** `compliance/instance.test.ts › describes itself at the root`, `› carries one contract version at the root and in its document`.
 
+### `instance/root-release`
+
+Where the server runs a build made as a numbered release, the server MUST answer `GET /` with `release` as that release's version, three dot-separated whole numbers.
+
+**Reason:** `version` names the build and stays what it was, so that a deployment can be traced to its commit. A person who is upgrading names a release, and reads it here. The fixtures boot a checkout, which is not a release, so they hold only the form of the number; `scripts/check-image.sh` boots a built release image and holds the field to the release it was made as.
+
+**Tests:** `compliance/instance.test.ts › names a release only as the version a tag carries`.
+
+### `instance/root-release-absent`
+
+When `GET /` is answered with the description for a build that is not a numbered release, the server MUST NOT give it `release`.
+
+**Reason:** a placeholder would read as a release that no tag carries.
+
+**Tests:** `compliance/instance.test.ts › names no release for a build made from a checkout`.
+
 ### `instance/features-array`
 
 When `GET /` is answered with the description, the server MUST answer `features` as an array of strings, each named once.
@@ -212,7 +228,29 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ## Backing up
 
-An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it.
+An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it. In the image `deploy/Dockerfile` builds, with `S3_BUCKET` set, Litestream also streams the database to the bucket, and a volume that holds no database is first restored from it.
+
+### `instance/replica-under-prefix`
+
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set, the server MUST keep its database replica under `<S3_PREFIX>/db/` in that bucket, with `S3_PREFIX` read as the settings table says.
+
+**Reason:** everything an instance puts in the bucket is then under its own prefix, its blobs and its database, so one bucket can carry several instances.
+
+**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
+
+### `instance/replica-restores-own`
+
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set, when it starts on a volume that holds no database, the server MUST start on the database last replicated under its own `<S3_PREFIX>/db/`, or on a new database when nothing is there.
+
+**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
+
+### `instance/replica-other-prefix`
+
+Where two instances run in the image `deploy/Dockerfile` builds with the same `S3_BUCKET` and `S3_PREFIX` values that differ as the settings table reads them, the server MUST NOT read or write the other instance's database replica.
+
+**Reason:** a second instance on the bucket, such as a trial instance or the new build during an upgrade, must never start on the first instance's data or stream over its backup.
+
+**Tests:** `backup/replica-paths.test.ts › keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`.
 
 ### `instance/image-starts`
 
@@ -380,13 +418,13 @@ If a component's probe has given no answer within two seconds, then the server M
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `down`.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component down, and the status 503, when the lesser of the two volumes has under 1 MiB`.
 
 ### `instance/health-disk-degraded`
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 64 MiB and at least 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`.
 
 ### `instance/health-disk-unknown`
 
@@ -992,7 +1030,49 @@ If the clock is asked to move back, then the server MUST refuse and keep the tim
 
 When the server starts, the server MUST hold no fault.
 
-**Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`.
+**Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`, `compliance/write-faults.test.ts › does not outlive it: the write it was aimed at lands, and the fault is not listed`.
+
+## Telemetry
+
+Telemetry is on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and these rules hold where it is.
+
+### `instance/telemetry-instance-id`
+
+Where telemetry is on, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+
+**Reason:** instances sending to one collector, such as an owner's, a demo and a test, cannot otherwise be told apart. The id is the one the root answers, so an operator finds the instance an export came from by it. The instance's configured `name` is not carried, because it can change while the server runs and can be personal.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance's id on every log record and span it exports`.
+
+### `instance/telemetry-exception-id`
+
+Where telemetry is on and exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends once it has read its id, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+
+**Reason:** the id is in the database, which opens after the server starts, so an exception captured before it opens goes unnamed.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`.
+
+### `instance/telemetry-attributes`
+
+Where telemetry is on, the server MUST carry each attribute `OTEL_RESOURCE_ATTRIBUTES` names as a resource attribute of every log record and span it exports and as a property of every exception it sends, in place of its own attribute of the same name.
+
+**Reason:** the operator is the one who knows what the instance is for, and the standard variable is how an instance marks itself apart, as `deployment.environment=staging` does.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`, `› names the instance and the environment in an exception and an error notification`.
+
+### `instance/telemetry-service-name`
+
+Where telemetry is on and `OTEL_SERVICE_NAME` is set, the server MUST carry it as the resource attribute `service.name`, whatever `OTEL_RESOURCE_ATTRIBUTES` names.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`.
+
+### `instance/telemetry-error-environment`
+
+Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
+
+**Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`, `› names deployment.environment.name in an error notification before deployment.environment`.
 
 ## Settings refused at boot
 
@@ -1109,7 +1189,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `S3_ACCESS_KEY_ID`                          | None                          | Any text                                                           | The access key ID for the object store.                                                                                                                                                                                                                      |
 | `S3_SECRET_ACCESS_KEY`                      | None                          | Text with no whitespace around it                                  | The secret access key for the object store.                                                                                                                                                                                                                  |
 | `S3_FORCE_PATH_STYLE`                       | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.                                                                                                                                              |
-| `S3_PREFIX`                                 | `blobs`                       | Any text                                                           | The key prefix under which the object store keeps its objects.                                                                                                                                                                                               |
+| `S3_PREFIX`                                 | `blobs`                       | `/`-joined segments of letters, digits, `.`, `_` and `-`           | The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.                  |
 | `MARFA_BLOB_MIN_COPIES`                     | `1`                           | Whole number, 1 or more                                            | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                               |
 | `MARFA_BLOB_READ_IDLE_TIMEOUT_MS`           | `30000` ms                    | Whole number of milliseconds, 1 to 2147483647                      | How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.                                                                                                                    |
 | `MARFA_BLOB_REPLICATE_INTERVAL_MS`          | `60000` ms                    | Whole number of milliseconds, 1 to 3153600000000                   | How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.                                                                                                                                                         |
@@ -1190,7 +1270,8 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_PLACEMENT_LOCATION`                  | None                          | Any text                                                           | Free text naming the location the server runs in, reported at `/health` as `placement.location`.                                                                                                                                                             |
 | `MARFA_PLACEMENT_COUNTRY`                   | None                          | Any text                                                           | Free text naming the country the server runs in, reported at `/health` as `placement.country`.                                                                                                                                                               |
 | `MARFA_OTEL_SAMPLE_RATIO`                   | `0.05`                        | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                       |
-| `OTEL_SERVICE_NAME`                         | `marfa-server`                | Any text                                                           | The service name on exported telemetry.                                                                                                                                                                                                                      |
+| `OTEL_SERVICE_NAME`                         | `marfa-server`                | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                             |
+| `OTEL_RESOURCE_ATTRIBUTES`                  | None                          | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.                                                  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | None                          | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.                                                   |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`        | None                          | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                     |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`          | None                          | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                       |

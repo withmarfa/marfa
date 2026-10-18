@@ -230,13 +230,32 @@ describe("the test hooks", () => {
       try {
         await server.setFault("hold:version-thinning:item");
         await server.setFault("deadline:trash-purge=250");
-        // The witness: both are held before the restart.
+        await server.setFault("fail:commit-full=item.create");
+        // The witness: all three are held before the restart, and the failure
+        // is aimed at a write the server would otherwise answer.
         expect((await server.faults()).map((fault) => fault.name)).toEqual([
           "hold:version-thinning:item",
           "deadline:trash-purge",
+          "fail:commit-full",
         ]);
+        const note = (apiUrl: string, key: string) =>
+          fetch(`${apiUrl}/items`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${key}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              type: "core.note",
+              properties: { body: "a fault that does not outlive a restart" },
+            }),
+          });
+        expect((await note(server.apiUrl, server.workingKey)).status).toBe(507);
+        await server.setFault("fail:commit-full=item.create");
         await server.restart({ signal: "SIGKILL" });
         expect(await server.faults()).toEqual([]);
+        // The write the failure was aimed at lands: the restart cleared it.
+        expect((await note(server.apiUrl, server.workingKey)).status).toBe(201);
         await server.setFault("hold:version-thinning:item");
         await server.restart();
         expect(await server.faults()).toEqual([]);

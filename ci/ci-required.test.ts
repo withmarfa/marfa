@@ -222,9 +222,20 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks", "core", "swift-package"],
     ],
     [
-      "the Node module's Rust, a member of the core workspace",
+      "the Node module's Rust, a member of the core workspace, which the device fixtures drive a build of",
       ["core/bindings/node/src/lib.rs"],
-      ["ci-sqlite", "core-checks", "core-checks-linux", "core"],
+      [
+        "ci-sqlite",
+        "core-checks",
+        "core-checks-linux",
+        "core",
+        "conformance-device",
+      ],
+    ],
+    [
+      "the Node module's manifest, which its build reads",
+      ["core/bindings/node/package.json"],
+      ["ci-sqlite", "core", "conformance-device", "version-fields"],
     ],
     [
       "the Node module's JavaScript",
@@ -386,9 +397,19 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...CONFORMANCE, "restore-drill", "image"],
     ],
     [
-      "the entrypoint, which the image runs and a ci/ test runs",
+      "the entrypoint, which the image, a ci/ test and the drill's backup fixtures run",
       ["deploy/entrypoint.sh"],
+      ["ci-sqlite", "workspace", "restore-drill", "image"],
+    ],
+    [
+      "the ignore file the image's build reads",
+      ["deploy/Dockerfile.dockerignore"],
       ["ci-sqlite", "workspace", "image"],
+    ],
+    [
+      "the image's replica fixtures, which the drill's job runs",
+      ["conformance/src/suites/backup/replica-paths.test.ts"],
+      ["ci-sqlite", "workspace", "conformance-offline", "restore-drill"],
     ],
     [
       "the script that boots the image",
@@ -1199,6 +1220,67 @@ describe("what a job reads reaches it", () => {
         ).toBe(true);
       }
     }
+  });
+  it("the cached device module is keyed on every source it is built from, and the shards that drive it run when they change", () => {
+    const steps = workflow("ci.yml").jobs[CONFORMANCE_SHARD_JOB]?.steps ?? [];
+    const run = steps.find((s) => s.id === "module-key")?.run ?? "";
+    const globs = [...run.matchAll(/'([^']+)'/g)].map((m) => m[1] ?? "");
+    expect(globs).toContain("core/**");
+    expect(globs).toContain(".github/workflows/ci.yml");
+    const excluded = globs
+      .filter((glob) => glob.startsWith("!"))
+      .map((glob) => glob.slice(1));
+    const built = [
+      "core/marfa-core/src/lib.rs",
+      "core/bindings/node/src/lib.rs",
+      "core/bindings/node/build.rs",
+      "core/bindings/node/Cargo.toml",
+      "core/bindings/node/package.json",
+      "core/bindings/node/pnpm-lock.yaml",
+      "core/Cargo.lock",
+    ];
+    for (const source of built) {
+      expect(
+        excluded.filter((glob) => globMatches(glob, source)),
+        `the module is keyed without ${source}`,
+      ).toEqual([]);
+      expect(
+        affected(source).has("conformance-device"),
+        `${source} does not run the shards that drive the module`,
+      ).toBe(true);
+    }
+    // What the build writes, and what only tests it, is not what it is built
+    // from: keying on it would key the module on itself.
+    for (const written of [
+      "core/bindings/node/marfa-core.linux-x64-gnu.node",
+      "core/bindings/node/index.js",
+      "core/bindings/node/index.d.ts",
+      "core/bindings/node/test/follow.test.mjs",
+    ]) {
+      expect(
+        excluded.filter((glob) => globMatches(glob, written)),
+        `the module is keyed on ${written}`,
+      ).not.toEqual([]);
+    }
+    // Restored only for a pull request, and made newer than the checkout,
+    // which the device suite refuses a module for not being.
+    const restore = steps.find((s) => s.id === "module");
+    expect(restore?.if).toBe(
+      "${{ matrix.device && github.event_name == 'pull_request' }}",
+    );
+    expect(restore?.with?.key).toBe("${{ steps.module-key.outputs.key }}");
+    expect(restore?.with?.path).toBe("core/bindings/node/*.node");
+    expect(
+      steps.find((s) => s.run === "touch core/bindings/node/*.node")?.if,
+    ).toBe("${{ matrix.device && steps.module.outputs.cache-hit == 'true' }}");
+    // Built where it is not restored, and told to the suite.
+    expect(
+      steps.find((s) => s.name === "Build the Node module under test")?.run,
+    ).toContain("run build:debug");
+    expect(
+      steps.some((s) => s.run?.includes("MARFA_DEVICE_MODULE=")),
+      "no step names the module to the suite",
+    ).toBe(true);
   });
 });
 
