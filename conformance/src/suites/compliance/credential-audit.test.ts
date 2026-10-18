@@ -7,7 +7,7 @@ import {
   startDeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { DAY_MS, movedClock } from "../../utils/moved-clock.js";
+import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
 import {
   authorize,
   authorizeQuery,
@@ -235,14 +235,10 @@ describe("a grant retired for inactivity", () => {
     // Earlier grants are also idle after the move, so identify this client's
     // audit entry rather than counting every retirement.
     await movedClock(server).advance(366 * DAY_MS);
-    const run = await fetch(
-      `${server.apiUrl}/housekeeping/grant-inactivity-retirement/run`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${server.managementKey}` },
-      },
+    // The scheduler finds the job due after the move and may be running it.
+    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+      "ok",
     );
-    expect(run.status, await run.clone().text()).toBe(200);
     expect(await logged("auth.grant.retired", app.clientId)).toBe(1);
     expect(await grantsOf()).not.toContain(app.clientId);
   });

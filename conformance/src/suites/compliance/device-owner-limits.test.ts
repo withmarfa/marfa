@@ -5,10 +5,12 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 let server: FreshServer;
+let clock: ReturnType<typeof movedClock>;
 let origin: string;
 const CLIENT_HEADER = "x-conformance-client";
 
@@ -16,6 +18,7 @@ beforeEach(async () => {
   server = await bootFreshServer("device-owner-limits", {
     TRUSTED_PROXY_HEADER: CLIENT_HEADER,
   });
+  clock = movedClock(server);
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -258,11 +261,7 @@ describe("the owner device lookup lane", () => {
     expect(
       await location(await enter(codeFor(103), undefined, "203.0.113.1")),
     ).toContain("error=invalid_code");
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.exec(
-        "UPDATE rate_limit_windows SET expires_at = '2000-01-01T00:00:00.000Z' WHERE family LIKE 'device-user-code-owner%'",
-      );
-    });
+    await clock.advance(16 * MINUTE_MS);
     expect(await location(await enter(codeFor(104), second))).toContain(
       "error=invalid_code",
     );
@@ -316,7 +315,7 @@ describe("the owner device lookup lane", () => {
         "device-user-code-owner-instance",
         "all",
         99,
-        new Date(Date.now() + 15 * 60_000).toISOString(),
+        new Date(clock.now() + 15 * MINUTE_MS).toISOString(),
       );
     });
     expect(
@@ -333,11 +332,7 @@ describe("the owner device lookup lane", () => {
     expect(
       await location(await enter(codeFor(4), server.ownerCookie)),
     ).toContain("error=too_many_attempts");
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.exec(
-        "UPDATE rate_limit_windows SET expires_at = '2000-01-01T00:00:00.000Z' WHERE family = 'device-user-code-owner-instance'",
-      );
-    });
+    await clock.advance(16 * MINUTE_MS);
     expect(
       await location(await enter(codeFor(5), server.ownerCookie)),
     ).toContain("error=invalid_code");
