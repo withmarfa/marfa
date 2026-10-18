@@ -1698,9 +1698,33 @@ If the stream that `events` reads sends a `cursor_ahead` or `catchup_too_old` fr
 
 ### `device/command-events-prints-refusing-frame`
 
-When the CLI ends `events` for a `cursor_ahead` or `catchup_too_old` frame, the CLI MUST print the frame it read on standard output before it ends.
+When the CLI ends `events` for a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame, the CLI MUST print the frame it read on standard output before it ends.
 
-**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`.
+**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`, `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-events-refuses-incomplete`
+
+If the stream that `events` reads sends a `stream_incomplete` frame whose `reason` is not `credential_ended` (`events/incomplete-closes`), then the CLI MUST end the command `stream_incomplete` with exit 3.
+
+**Reason:** the stream can no longer deliver what it opened with, and the answer's status says nothing of it. A script that reads only the exit status would take a stream that stopped early for one that ended well. Exit 3 tells it to follow again from the frame's `cursor`.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-events-refuses-credential-ended`
+
+If the stream that `events` reads sends a `stream_incomplete` frame whose `reason` is `credential_ended` (`events/credential-revoked`), then the CLI MUST end the command `unauthorized` with exit 5.
+
+**Reason:** the key or token that held the stream has ended, so following again with it is refused `401` (`events/stream-unauthenticated`), and exit 5 sends the person to a new credential, where exit 3 would send a script to retry.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-events-frame-name-decides`
+
+If a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame that `events` reads carries no data, or data that is not JSON, then the CLI MUST end the command as it does for the frame with its data, with the details the data would have named reported as unknown.
+
+**Reason:** the frame's name alone says the stream is over, so a frame the CLI cannot read must not read as a stream that ended well.
+
+**Tests:** `device/contract.test.ts › ends the command on a $event frame whose data is $data as it does for the frame with its data`.
 
 ### `device/command-cleartext-warning`
 
