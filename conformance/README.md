@@ -209,7 +209,7 @@ which the move has put out of step with it.
 
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
-A name is `hold:<point>`, `fail:<point>` or `deadline:<job>`, and the points
+A name is `hold:<point>`, `fail:<point>`, `deadline:<job>` or `free:<volume>`, and the points
 are the ones below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
@@ -221,6 +221,18 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:housekeeping:<job>`    | A run of the job waits at its start until the fault is cleared.                                                  |
 | `hold:version-thinning:item` | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item. |
 | `deadline:<job>=<ms>`        | Shortens the run deadline of the job.                                                                            |
+| `hold:blob-orphans:purge`    | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                  |
+| `hold:restore:before-commit` | A restore waits with every row written and the bytes placed, before it commits.                                  |
+| `free:<volume>=<bytes>`      | The target reads that many bytes of free space on the volume, `database` or `blobs`, until the fault is cleared. |
+
+A `free` fault makes the target read the free space it says on one volume, for
+the reserve an upload and a restore keep (`blobs`) and for the `disk` component
+of `GET /health` (both volumes). Setting it again while a body streams in
+changes what the next look at the volume finds, which is how a fixture fills a
+volume as the bytes arrive. The check interval is half the reserve, bounded
+to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
+A reserve of zero disables these checks. `<bytes>` is a decimal integer from
+0 through 9007199254740991.
 
 A `fail` fault makes the target fail at the point, once. It acts on the nth
 time the point is reached after the fault was set, the first unless the
@@ -254,9 +266,12 @@ without an action counts every write.
 | `fail:commit-ack[=<write>]`     | The same.                                                                                        | The commit lands and the database reports an error for it with `SQLITE_IOERR`, as when its answer is lost. The write's audit entry is stored, which the target reads to settle the outcome as committed.                                                        |
 | `fail:inbound-receipt[=<n>]`    | Before each of the two statements that store an inbound receipt, its metadata and then its body. | The statement fails with `SQLITE_IOERR`, carrying its values as `fail:audit` does, and the receipt is not stored.                                                                                                                                               |
 | `fail:inbound-cleanup[=<n>]`    | After a run of `inbound-delivery-cleanup` has removed the deliveries it chose.                   | The run's next statement fails with `SQLITE_IOERR`, so its removal rolls back.                                                                                                                                                                                  |
-| `fail:export-read[=<n>]`        | Before each page of items that `GET /export` reads.                                              | The page's read fails with `SQLITE_IOERR`. The response has begun by then.                                                                                                                                                                                      |
+| `fail:export-read[=<n>]`        | Before each page of items that `GET /export` reads.                                              | The page's read fails with `SQLITE_IOERR`. For an NDJSON export the response has begun by then; an archive export reads every page before it sends a byte, so it answers an error.                                                                              |
 | `fail:housekeeping:<job>[=<n>]` | At the start of each run of the job, scheduled or asked for.                                     | The run's first statement fails with `SQLITE_IOERR`. A job that runs no database statement (`heartbeat`) is refused.                                                                                                                                            |
 | `fail:job-row[=<n>]`            | Before each row a bulk-action job writes.                                                        | The row's first statement fails with `SQLITE_IOERR` and the database ends the chunk's transaction, so the rows of the chunk written before it are lost with it.                                                                                                 |
+| `fail:blob-read[=<n>]`          | Before each read of a blob's bytes from a store.                                                 | The read fails with `EIO` before it opens the bytes.                                                                                                                                                                                                            |
+| `fail:blob-write[=<n>]`         | Before each placing of a blob's bytes in a store.                                                | The write fails with `ENOSPC`, as a volume with no room fails it, and the store keeps no bytes.                                                                                                                                                                 |
+| `fail:blob-delete[=<n>]`        | Before each deletion of a blob's bytes from a store.                                             | The deletion fails with `EIO` and the store keeps the bytes.                                                                                                                                                                                                    |
 
 `<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
 cannot fail a point as described says so by refusing its name, and the fixtures

@@ -84,6 +84,7 @@ import { archiveLines, readArchive } from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 
 function archivedRestoredAt(
   item: Record<string, unknown>,
@@ -933,6 +934,7 @@ async function restoreRows(
       }
       await logEdges();
       announceFromLog(logged);
+      if (faultsArmed()) await holdAt("restore:before-commit");
 
       return {
         imported,
