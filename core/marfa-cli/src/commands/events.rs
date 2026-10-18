@@ -28,7 +28,7 @@ pub struct EventsArgs {
     /// Resume from this cursor, replaying what the log holds after it.
     #[arg(long, value_name = "CURSOR")]
     pub from: Option<String>,
-    /// Stop after this many seconds. Unset, it reads until interrupted.
+    /// Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends.
     #[arg(long, value_name = "SECONDS")]
     pub r#for: Option<u64>,
 }

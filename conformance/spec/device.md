@@ -1714,7 +1714,7 @@ If the stream that `events` reads sends a `stream_incomplete` frame whose `reaso
 
 If the stream that a command reads sends a `stream_incomplete` frame whose `reason` is `credential_ended` (`events/credential-revoked`), then the CLI MUST end the command `unauthorized` with exit 5, whichever command reads the stream.
 
-**Reason:** the key or token that held the stream has ended, so reading again with it is refused `401` (`events/stream-unauthenticated`). Exit 5 sends the person to a new credential, where exit 3 would send a script to retry. One place decides it, so `events`, `hydrate` and `catch-up` agree.
+**Reason:** the key or token that held the stream has ended, so reading again with it will not work. Exit 5 says to get a new credential, where exit 3 would send a script to retry. One place decides it, so `events`, `hydrate` and `catch-up` agree.
 
 **Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`, `device/cli-outcomes.test.ts › ends $command on a stream_incomplete frame for credential_ended with exit 5`.
 

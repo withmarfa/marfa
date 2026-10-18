@@ -66,6 +66,12 @@ pub enum CliError {
     NoKeychain(String),
     #[error("signed out of {origin}: run `marfa login`")]
     SignedOut { origin: String },
+    /// A stream's closing frame says so on a `200`, so the envelope names no
+    /// server status.
+    #[error(
+        "the credential that holds this stream has ended: sign in again with `marfa login` or use a new key"
+    )]
+    CredentialEnded,
     #[error("{0}")]
     Invalid(String),
     #[error(
@@ -165,14 +171,10 @@ impl From<CoreError> for CliError {
                 status,
                 location,
             },
-            // The credential that held a stream ended: every command ends
-            // as a request with that credential would, so `marfa login` is
-            // the way on and a retry is not.
+            // The credential that held a stream has ended: a new one is the
+            // way on, and a retry with this one is not.
             CoreError::StreamIncomplete { reason } if reason == "credential_ended" => {
-                Self::Core(CoreError::Unauthorized {
-                    code: "unauthorized".into(),
-                    message: "the credential that holds this stream ended".into(),
-                })
+                Self::CredentialEnded
             }
             other => Self::Core(other),
         }
@@ -260,6 +262,7 @@ own_codes! {
     CliError::NoCredential { .. } => "no_credential",
     CliError::NoKeychain(_) => "no_keychain",
     CliError::SignedOut { .. } => "signed_out",
+    CliError::CredentialEnded => "unauthorized",
     CliError::Invalid(_) => "invalid",
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
@@ -365,7 +368,9 @@ impl CliError {
             | CliError::NoStoreNamed
             | CliError::NoStoreAt(_)
             | CliError::NoServerNamed => Exit::Usage,
-            CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
+            CliError::NoCredential { .. }
+            | CliError::SignedOut { .. }
+            | CliError::CredentialEnded => Exit::Credential,
             CliError::NoKeychain(_)
             | CliError::FolderHeld(_)
             | CliError::FolderNotHandedOver(_) => Exit::Local,
@@ -556,6 +561,8 @@ mod tests {
         });
         assert_eq!(ended.code(), "unauthorized");
         assert_eq!(ended.exit(), Exit::Credential);
+        // The server sent a `200` stream, so the envelope names no status.
+        assert!(ended.envelope()["error"]["server"].is_null());
         // The witness: any other reason is the environment's.
         let behind = CliError::from(CoreError::StreamIncomplete {
             reason: "reader_behind".into(),
@@ -692,6 +699,7 @@ mod tests {
             CliError::SignedOut {
                 origin: String::new(),
             },
+            CliError::CredentialEnded,
             CliError::Invalid(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),
