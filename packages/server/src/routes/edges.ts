@@ -44,7 +44,7 @@ import {
   edgeListingSourceFilter,
   edgeReadable,
   readableEdges,
-  sourceTypesFor,
+  edgeSourcesFor,
 } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
@@ -55,7 +55,7 @@ import {
 import { StaleVersionSchema } from "./_item-conflict.js";
 import { exactItemVersion } from "../storage/conflict.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
-import { publishEdge } from "../pubsub.js";
+import { announcedSource, publishEdge } from "../pubsub.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import { pageLimit, pageCursor } from "../page-limits.js";
 
@@ -759,7 +759,7 @@ export function edgeRoutes(storage: Storage) {
         await publishEdge({
           type: "edge_created",
           edge: created,
-          sourceType: sourceItem.type,
+          ...announcedSource(sourceItem),
         });
         return {
           edge: created,
@@ -862,18 +862,14 @@ export function edgeRoutes(storage: Storage) {
         // second device keeps the stale payload with nothing saying
         // otherwise. A move can change the source, so its type is read for
         // the edge as it now stands.
-        const sourceTypes = await sourceTypesFor(storage, [
-          written.edge.source_id,
-        ]);
-        rememberEdgeSubject(
-          written.edge,
-          "write",
-          sourceTypes.get(written.edge.source_id),
-        );
+        const source = (
+          await edgeSourcesFor(storage, [written.edge.source_id])
+        ).get(written.edge.source_id);
+        rememberEdgeSubject(written.edge, "write", source?.type);
         await publishEdge({
           type: "edge_updated",
           edge: written.edge,
-          sourceType: sourceTypes.get(written.edge.source_id),
+          ...announcedSource(source),
         });
         return { ...written, moved: ends !== null };
       },
@@ -958,7 +954,7 @@ export function edgeRoutes(storage: Storage) {
         await publishEdge({
           type: "edge_deleted",
           edge: removed,
-          sourceType: srcItem?.type,
+          ...announcedSource(srcItem),
         });
         return { removed };
       },

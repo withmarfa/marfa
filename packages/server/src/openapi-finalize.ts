@@ -719,7 +719,7 @@ function eventSchemas(): Record<string, unknown> {
     ItemEventFrame: {
       type: "object",
       description:
-        "An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions.",
+        "An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions. Except on a copy stream, you receive it only if your source filter shows the item.",
       properties: {
         event_type: {
           type: "string",
@@ -751,7 +751,7 @@ function eventSchemas(): Record<string, unknown> {
     EdgeEventFrame: {
       type: "object",
       description:
-        "An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`.",
+        "An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`, and, except on a copy stream, only if your source filter shows the edge's source item.",
       properties: {
         event_type: {
           type: "string",

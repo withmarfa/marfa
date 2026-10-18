@@ -136,7 +136,9 @@ export interface ItemFilters {
   exclude_system_types?: boolean;
   tags?: string[];
   filter?: string;
-  /** The types whose edges a `backref` term counts; omitted, every edge. */
+  /** The types whose edges a `backref` term counts; omitted, every edge.
+   *  The term also counts only edges whose source item `source_filter`
+   *  shows. */
   readable_sources?: TypeFilter;
   allowed_types?: string[];
   /** Patterns the permission map withholds, subtracted from `allowed_types`
@@ -248,7 +250,9 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
-  /** The types whose edges a `backref` term counts; omitted, every edge. */
+  /** The types whose edges a `backref` term counts; omitted, every edge.
+   *  The term also counts only edges whose source item `source_filter`
+   *  shows. */
   readable_sources?: TypeFilter;
   /** Exclusive lower bound on the item's own time — `occurred_at`,
    *  falling back to `created_at` — exactly as `ItemFilters` reads it.

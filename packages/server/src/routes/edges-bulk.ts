@@ -61,12 +61,12 @@ import {
   isEntryVerdict,
 } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
-import { edgeReadable, sourceTypesFor } from "./_edge-visibility.js";
+import { edgeReadable, edgeSourcesFor } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
-import { publishEdge } from "../pubsub.js";
+import { announcedSource, publishEdge } from "../pubsub.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import { undeclaredEntryKeyRefusal } from "./_unknown-body-keys.js";
 
@@ -659,13 +659,11 @@ export function edgesBulkRoutes(storage: Storage) {
           });
           const written = processed.created ?? processed.updated;
           if (written) {
-            const sourceTypes = await sourceTypesFor(storage, [
-              written.source_id,
-            ]);
+            const sources = await edgeSourcesFor(storage, [written.source_id]);
             await publishEdge({
               type: processed.created ? "edge_created" : "edge_updated",
               edge: written,
-              sourceType: sourceTypes.get(written.source_id),
+              ...announcedSource(sources.get(written.source_id)),
               enableFanout,
             });
           }

@@ -46,6 +46,8 @@ import {
 import {
   filterToSqlConditions,
   notSystemTypeSql,
+  MISSING_SOURCE,
+  sourceColumnSql,
   sourceFilterToSql,
   typeFilterSql,
   typeSubtreeSql,
@@ -280,7 +282,7 @@ async function insertConflictedSibling(
       created_at: now,
       updated_at: now,
       occurred_at: now,
-      source: row.source,
+      source: row.source ?? MISSING_SOURCE,
       version: 1,
       schema_version: schemaVersion,
       ...instantColumnValues(properties),
@@ -423,7 +425,7 @@ async function insertConflictedSibling(
       occurred_at: now,
       version: 1,
       schema_version: schemaVersion,
-      source: row.source ?? "unknown",
+      source: row.source ?? MISSING_SOURCE,
     } satisfies Item,
     edges: copied,
   };
@@ -505,7 +507,9 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
 
   if (typeClause) conditions.push(typeClause);
 
-  if (filters.source) conditions.push(eq(items.source, filters.source));
+  if (filters.source) {
+    conditions.push(sql`${sourceColumnSql(items.source)} = ${filters.source}`);
+  }
 
   if (filters.tier !== undefined) {
     conditions.push(eq(items.tier, filters.tier));
@@ -580,11 +584,10 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
 
   if (filters.filter) {
     const expr = parseFilter(filters.filter);
-    const filterConds = filterToSqlConditions(
-      expr,
-      items,
-      filters.readable_sources,
-    );
+    const filterConds = filterToSqlConditions(expr, items, {
+      types: filters.readable_sources,
+      source_filter: filters.source_filter,
+    });
     if (expr.logical === "OR") {
       const orClause = or(...filterConds);
       if (orClause) conditions.push(orClause);
@@ -737,7 +740,7 @@ export class SqliteItemStore implements ItemStore {
             created_at: now,
             updated_at: now,
             occurred_at: input.occurred_at ?? now,
-            source: input.source,
+            source: input.source ?? MISSING_SOURCE,
             source_id: input.source_id,
             // A restore recreates a row under its archived id, so it also
             // carries the version that id had reached. Every other create
@@ -810,7 +813,7 @@ export class SqliteItemStore implements ItemStore {
         occurred_at: input.occurred_at ?? now,
         version: input.version ?? 1,
         schema_version: schemaVersion,
-        source: input.source ?? "unknown",
+        source: input.source ?? MISSING_SOURCE,
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
@@ -1303,7 +1306,7 @@ export class SqliteItemStore implements ItemStore {
           if (isSourceDedupViolation(err)) {
             throw new MarfaError(
               ErrorCode.SOURCE_ID_CONFLICT,
-              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
               { source: row.source, source_id: input.source_id },
             );
           }
@@ -1597,7 +1600,7 @@ export class SqliteItemStore implements ItemStore {
         if (isSourceDedupViolation(err)) {
           throw new MarfaError(
             ErrorCode.SOURCE_ID_CONFLICT,
-            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
             { source: row.source, source_id: input.source_id },
           );
         }

@@ -1,4 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
+import { MISSING_SOURCE } from "../filter-sql.js";
 import { isTier, VERSION_WRITER_KINDS } from "@withmarfa/shared";
 import type {
   Item,
@@ -43,7 +44,7 @@ export function rowToItem(row: ItemRow): Item {
     updated_at: row.updated_at,
     occurred_at: row.occurred_at,
     version: row.version,
-    source: row.source ?? "unknown",
+    source: row.source ?? MISSING_SOURCE,
     ...(row.source_id != null && { source_id: row.source_id }),
     schema_version: row.schema_version ?? 0,
     ...(row.capture_latitude != null && {
