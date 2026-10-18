@@ -1384,7 +1384,7 @@ describe("a verdict is reported, not acted on", () => {
                 }),
               ),
             ]
-          : [refusal(404, "item_not_found", "no such item")],
+          : [answers.itemNotFound(id)],
         update: [
           answers.updated(
             wireItem({

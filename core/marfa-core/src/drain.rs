@@ -269,10 +269,7 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
 fn first_succeeded(answer: &Answer) -> bool {
     serde_json::from_str::<serde_json::Value>(&answer.body)
         .ok()
-        .and_then(|body| {
-            body.pointer("/error/details/original_status")
-                .and_then(serde_json::Value::as_u64)
-        })
+        .and_then(|body| body.pointer("/error/details/original_status")?.as_u64())
         .is_some_and(|status| (200..300).contains(&status))
 }
 
@@ -2187,29 +2184,29 @@ fn settle_delivered(
         Shape::Edge => row.edge_id.as_deref().map(|id| ("edges", id)),
         Shape::Plain | Shape::Blob => None,
     };
-    let mut read = None;
-    if let Some((collection, id)) = subject {
+    let read = match subject {
+        None => None,
         // The server would refuse the read; sent again, the write is
         // answered the same way once the copy is built again.
-        if pass.changed() {
-            return Ok(Settled::plain(None, None, row.refusals));
-        }
-        let context = read_view::Context::capture(&*core.conn()?)?;
-        read = match context.http(core.http()?).read_whole(&[collection, id]) {
-            Ok(found) => found,
-            Err(CoreError::Forbidden { .. }) => None,
-            Err(error) if names_no_row(&error) => None,
-            Err(error) if error.is_environmental() => {
-                telemetry::degraded!(&error);
-                return Ok(Settled {
-                    retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
-                    unavailable: unavailable_by(&error).or_else(|| Some(error.to_string())),
-                    ..Settled::plain(None, None, row.refusals)
-                });
+        Some(_) if pass.changed() => return Ok(Settled::plain(None, None, row.refusals)),
+        Some((collection, id)) => {
+            let context = read_view::Context::capture(&*core.conn()?)?;
+            match context.http(core.http()?).read_whole(&[collection, id]) {
+                Ok(found) => found,
+                Err(CoreError::Forbidden { .. }) => None,
+                Err(error) if names_no_row(&error) => None,
+                Err(error) if error.is_environmental() => {
+                    telemetry::degraded!(&error);
+                    return Ok(Settled {
+                        retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
+                        unavailable: unavailable_by(&error).or_else(|| Some(error.to_string())),
+                        ..Settled::plain(None, None, row.refusals)
+                    });
+                }
+                Err(error) => return Err(context.failed(core, error)?),
             }
-            Err(error) => return Err(context.failed(core, error)?),
-        };
-    }
+        }
+    };
     let (body, shape) = match read {
         Some(mut found) => {
             found["acknowledged"] = serde_json::Value::Bool(true);
