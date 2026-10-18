@@ -103,22 +103,32 @@ describe("isPublicAddress", () => {
       expect(isPublicAddress(address), address).toBe(true);
     }
     for (const address of [
-      // ::/96, which carries an IPv4 address in its last 32 bits.
+      // Outside 2000::/3.
       "::10.0.0.1",
       "::a00:1",
       "::7f00:1",
       "::808:808",
       "::ffff:0:808:808",
+      "64:ff9b::808:808",
+      "64:ff9b:1::1",
       "fc00::1",
       "fe80::1",
+      "fe80::1%eth0",
       "ff02::1",
       "ff0e::1",
-      "2001:db8::1",
-      // Outside 2000::/3.
       "1fff::1",
       "4000::1",
       "8000::1",
       "e000::1",
+      // Special blocks inside 2000::/3.
+      "2001::1",
+      "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+      "2001:10::1",
+      "2001:20::1",
+      "2001:db8::1",
+      "2002:808:808::1",
+      "3fff::1",
+      // IPv4-mapped, judged as the IPv4 address it carries.
       "::ffff:10.0.0.1",
     ]) {
       expect(isPublicAddress(address), address).toBe(false);
