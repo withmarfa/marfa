@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 it("holds an assigned port and serves only a startup response before activation", async () => {
-  const config = loadConfig({ PORT: "0" });
+  const config = loadConfig({ PORT: "0", MARFA_LISTEN_HOST: "127.0.0.1" });
   const listener = await reservePublicListener(config);
   listeners.push(listener);
   expect(config.port).toBeGreaterThan(0);
@@ -45,5 +45,13 @@ it("assigns distinct ports concurrently while preserving an explicit origin", as
     ])),
   );
   expect(first.port).not.toBe(second.port);
+  for (const { server } of listeners) {
+    const address = server.address();
+    expect(
+      address &&
+        typeof address !== "string" &&
+        ["::", "0.0.0.0"].includes(address.address),
+    ).toBe(true);
+  }
   expect(first.authBaseUrl).toBe("http://localhost:0");
 });

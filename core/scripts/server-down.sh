@@ -5,8 +5,7 @@ env_file="${1:-${MARFA_SERVER_ENV:-}}"
 [[ -n "${env_file}" && -f "${env_file}" ]] || { echo "server-down: no env file" >&2; exit 2; }
 # shellcheck disable=SC1090
 source "${env_file}"
-# The recorded pid is pnpm's; the node process holding the port is its
-# grandchild, so the whole tree is signaled. Not by process group: inside a
+# Signal the process and any children. Not by process group: inside a
 # command substitution the job shares the caller's group. Children are
 # collected before any is signaled, since an orphan can no longer be found.
 descendants() {

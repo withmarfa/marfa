@@ -72,7 +72,7 @@ up
 [[ "${MARFA_TEST_SOCKET}" != "${first_socket}" ]]
 [[ ! -e "${first_socket}" ]]
 [[ "${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}" == "${first_owner}" ]]
-echo "The working key, private control socket and test owner survive a kept-server restart."
+echo "The working key, public URL and test owner survive a kept-server restart."
 
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
 python3 - "${MARFA_SERVER_KEEP}/boot.env" <<'PY'

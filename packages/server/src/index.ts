@@ -134,10 +134,8 @@ async function main() {
     setActivePermissionBundles(bundles);
     config.permissionBundles = bundles;
 
-    // **Minted at first boot**, so an instance holds its name before it has
-    // answered anything and before the socket is listening. The root route is
-    // handed the value rather than reading it, which is what keeps that one
-    // door answerable on an instance whose database has since gone.
+    // The root route keeps this value so it remains answerable if the
+    // database later becomes unavailable.
     const instanceId = await ensureInstanceId(storage.settings);
 
     const localApp = createApp(

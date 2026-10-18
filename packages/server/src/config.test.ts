@@ -31,6 +31,7 @@ const FREE_TEXT = [
   "SQLITE_PATH",
   "BLOB_PATH",
   "MARFA_CONTROL_SOCKET",
+  "MARFA_LISTEN_HOST",
   "S3_BUCKET",
   "S3_REGION",
   "S3_ACCESS_KEY_ID",
@@ -49,6 +50,10 @@ describe("the settings schema", () => {
   it("boots on an empty environment, every setting at its default", () => {
     const config = loadConfig({});
     expect(config.port).toBe(8600);
+    expect(config.listenHost).toBeUndefined();
+    expect(loadConfig({ MARFA_LISTEN_HOST: "127.0.0.1" }).listenHost).toBe(
+      "127.0.0.1",
+    );
     expect(config.isProduction).toBe(false);
     expect(config.versionRecentDays).toBe(30);
     expect(config.rateLimitEnabled).toBe(true);

@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """Exercise helper port ownership against real throwaway servers."""
 import concurrent.futures
-import errno
+import fcntl
+import http.server
+import threading
+import time
 import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -30,19 +34,18 @@ def get(url):
         return json.load(response)
 
 
+def lock_available(path):
+    with path.open("a") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        return True
+
+
 def bind_port(port=0):
-    listener = None
-    try:
-        listener = socket.socket(socket.AF_INET6)
-        listener.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-        listener.bind(("::", port))
-    except OSError as error:
-        if listener is not None:
-            listener.close()
-        if error.errno not in (errno.EAFNOSUPPORT, errno.EPROTONOSUPPORT, errno.EADDRNOTAVAIL):
-            raise
-        listener = socket.socket(socket.AF_INET)
-        listener.bind(("0.0.0.0", port))
+    listener = socket.socket(socket.AF_INET)
+    listener.bind(("127.0.0.1", port))
     return listener
 
 
@@ -61,7 +64,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
                           f"else: os.execv({sys.executable!r}, [{sys.executable!r}] + sys.argv[1:])\n")
         python.chmod(0o700)
         environments = []
-        for name in ("first", "second", "collision", "broken"):
+        for name in ("first", "second", "collision", "broken", "ipv4", "shared-env", "racing"):
             env = dict(os.environ)
             for key in ("PORT", "MARFA_SERVER_KEEP", "MARFA_CONTROL_SOCKET", "MARFA_AUTH_BASE_URL"):
                 env.pop(key, None)
@@ -85,17 +88,69 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             assert urls[0] != urls[1]
             identities = [get(url + "/")["instance_id"] for url in urls]
             assert identities[0] != identities[1]
+            for instance, expected in zip((first, second), identities):
+                private = json.loads(subprocess.check_output(["curl", "-fsS", "--unix-socket", instance["MARFA_TEST_SOCKET"], "http://localhost/"]))
+                assert private["instance_id"] == expected, "published URL reaches a different instance"
             for url in urls:
                 issuer = get(url + "/auth/.well-known/oauth-authorization-server")["issuer"]
                 expected_origin = urllib.parse.urlparse(url.replace("127.0.0.1", "localhost"))
                 actual_origin = urllib.parse.urlparse(issuer)
                 assert (actual_origin.scheme, actual_origin.netloc) == (expected_origin.scheme, expected_origin.netloc), issuer
                 assert not url.endswith(f":{candidate}")
+            class Witness(http.server.BaseHTTPRequestHandler):
+                def do_GET(self):
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(b'{"witness": true}')
+
+                def log_message(self, *_args):
+                    pass
+
+            with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Witness) as witness:
+                thread = threading.Thread(target=witness.serve_forever)
+                thread.start()
+                try:
+                    ipv4 = environments[4] | {"PORT": str(witness.server_port)}
+                    result = subprocess.run([scripts / "server-up.sh"], env=ipv4, capture_output=True, text=True)
+                    assert result.returncode != 0, "helper accepted another instance's IPv4 endpoint"
+                    assert "EADDRINUSE" in result.stderr, result.stderr
+                    assert get(f"http://127.0.0.1:{witness.server_port}/health") == {"witness": True}
+                finally:
+                    witness.shutdown()
+                    thread.join()
+
+            original_env = Path(environments[0]["MARFA_SERVER_ENV"])
+            saved_env = original_env.read_bytes()
+            state = Path(first["MARFA_SERVER_STATE"])
+            saved_boot = (state / "boot.env").read_bytes()
+            assert "node" in subprocess.check_output(["ps", "-p", first["MARFA_SERVER_PID"], "-o", "comm="], text=True)
+            assert not lock_available(state / "server.lock"), "server lost its state reservation"
+            assert not lock_available(original_env), "server lost its env reservation"
+            for duplicate in (environments[0], environments[5] | {"MARFA_SERVER_ENV": str(original_env)}):
+                saved_log = (state / "server.log").read_bytes()
+                result = subprocess.run([scripts / "server-up.sh"], env=duplicate, capture_output=True, text=True)
+                observed = original_env.read_bytes() if original_env.exists() else None
+                # Preserve the original process's shutdown metadata even on a failed witness.
+                original_env.write_bytes(saved_env)
+                assert result.returncode != 0, "duplicate helper booted"
+                assert observed == saved_env, "duplicate replaced the running server's env file"
+                assert (state / "boot.env").read_bytes() == saved_boot
+                # The running server may append, but its earlier bytes must remain.
+                assert (state / "server.log").read_bytes().startswith(saved_log)
+                assert get(urls[0] + "/")["instance_id"] == identities[0]
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                starts = list(pool.map(lambda _index: subprocess.run(
+                    [scripts / "server-up.sh"], env=environments[6], capture_output=True, text=True), range(2)))
+            assert sorted(result.returncode for result in starts) == [0, 1], "concurrent duplicate starts did not have one owner"
+            racing = read_env(Path(environments[6]["MARFA_SERVER_ENV"]))
+            assert get(racing["MARFA_TEST_URL"] + "/")["instance_id"]
             collision = environments[2] | {"PORT": str(candidate)}
             result = subprocess.run([scripts / "server-up.sh"], env=collision, capture_output=True, text=True)
             assert result.returncode != 0, "occupied explicit port booted"
             assert "EADDRINUSE" in result.stderr, result.stderr
             assert not Path(collision["MARFA_SERVER_ENV"]).exists(), "failed boot left its env file"
+            assert lock_available(Path(collision["MARFA_SERVER_KEEP"]) / "server.lock")
             # A failure after reservation must also close its listener and state.
             broken_state = work / "broken-state"
             broken_state.mkdir()
@@ -107,6 +162,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
             assert result.returncode != 0, "invalid blob path booted"
             assert "Marfa server listening on port" not in result.stderr
             assert not Path(broken["MARFA_SERVER_ENV"]).exists()
+            assert lock_available(broken_state / "server.lock")
             with bind_port(startup_port):
                 pass
             with sqlite3.connect(broken_state / "marfa.db", timeout=0) as database:
@@ -127,9 +183,22 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
                         assert not Path(event["path"]).exists(), "failed boot left its control socket"
             with bind_port(startup_port):
                 pass
+            assert lock_available(broken_state / "server.lock")
+            subprocess.run([scripts / "server-down.sh", original_env], check=True)
+            assert lock_available(state / "server.lock"), "normal shutdown kept the state reservation"
+            restarted = up(environments[0])
+            assert restarted["MARFA_TEST_URL"] == first["MARFA_TEST_URL"]
+            assert restarted["MARFA_TEST_KEY"] == first["MARFA_TEST_KEY"]
+            os.kill(int(restarted["MARFA_SERVER_PID"]), signal.SIGKILL)
+            deadline = time.monotonic() + 10
+            while not lock_available(state / "server.lock") or not lock_available(original_env):
+                assert time.monotonic() < deadline, "crashed server kept its reservations"
+                time.sleep(0.05)
+            restarted = up(environments[0])
+            assert restarted["MARFA_TEST_KEY"] == first["MARFA_TEST_KEY"]
         finally:
             for env in environments:
                 path = Path(env["MARFA_SERVER_ENV"])
                 if path.exists():
                     subprocess.run([scripts / "server-down.sh", path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-print("Atomic automatic ports, distinct instances, auth origins and explicit-port refusal passed.")
+print("Automatic ports, endpoint ownership, metadata reservations and kept restarts passed.")

@@ -83,6 +83,8 @@ export interface AppConfig {
    *  non-production. `loadConfig` always populates it. */
   isProduction?: boolean;
   port: number;
+  /** Unset keeps the runtime's unspecified listening address. */
+  listenHost?: string;
   sqlitePath: string;
   controlSocket?: string;
   controlOnly?: boolean;
@@ -901,6 +903,9 @@ const settingsShape = {
     "The port the server listens on. Zero lets the operating system assign a port.",
     { min: 0, max: 65_535 },
   ),
+  MARFA_LISTEN_HOST: optionalText(
+    "The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.",
+  ),
   SQLITE_PATH: setting(
     text,
     () => "./data/marfa.db",
@@ -1684,6 +1689,7 @@ export function loadConfig(
   return {
     isProduction: s.NODE_ENV === "production",
     port: s.PORT,
+    listenHost: s.MARFA_LISTEN_HOST,
     sqlitePath: s.SQLITE_PATH,
     controlSocket:
       s.MARFA_CONTROL_SOCKET ||

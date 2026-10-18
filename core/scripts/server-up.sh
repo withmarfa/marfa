@@ -28,6 +28,21 @@ else
   state="$(mktemp -d "/tmp/marfa-core-server.XXXXXX")"
 fi
 state="$(cd "${state}" && pwd -P)"
+
+# flock belongs to the inherited open file description. The real Node process
+# keeps both reservations until it exits, including after this helper returns.
+reserve_fd() {
+  python3 -c 'import fcntl,sys
+try:
+    fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("server-up: " + sys.argv[2] + " is already in use", file=sys.stderr)
+    sys.exit(1)' "$1" "$2"
+}
+exec 9>>"${state}/server.lock"
+reserve_fd 9 "server state ${state}"
+env_file="${MARFA_SERVER_ENV:-${state}/env}"
+
 boot="${state}/boot.env"
 kept_key=""
 owner_email=""
@@ -47,6 +62,8 @@ if [[ -f "${boot}" ]]; then
     exit 1
   fi
 fi
+exec 8>>"${env_file}"
+reserve_fd 8 "server env file ${env_file}"
 port="${PORT:-0}"
 url="http://127.0.0.1:${port}"
 log="${state}/server.log"
@@ -54,6 +71,7 @@ log="${state}/server.log"
 export SQLITE_PATH="${state}/marfa.db"
 export BLOB_PATH="${state}/blobs"
 export PORT="${port}"
+export MARFA_LISTEN_HOST="127.0.0.1"
 export MARFA_AUTH_SECRET="${MARFA_AUTH_SECRET:-$(openssl rand -hex 32)}"
 export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
 
@@ -63,14 +81,12 @@ control_dir="$(mktemp -d "/tmp/marfa-core-control.XXXXXX")"
 control_dir="$(cd "${control_dir}" && pwd -P)"
 export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
-# The pid is pnpm's, two levels above node; server-down.sh walks the tree.
+# The recorded process owns the listener and both file reservations.
 (
-  cd "${repo}"
-  exec pnpm --filter @withmarfa/server exec tsx --import ./src/instrumentation.ts src/index.ts
+  cd "${repo}/packages/server"
+  exec node --import tsx --import ./src/instrumentation.ts src/index.ts
 ) >"${log}" 2>&1 &
 pid=$!
-
-env_file="${MARFA_SERVER_ENV:-${state}/env}"
 
 # Written before the server is up, so a failed boot can still be stopped.
 write_env() {
