@@ -167,11 +167,7 @@ fn terminal_refusal(frame: &Frame) -> Option<CliError> {
             text("min_retained_id")
         ))),
         "stream_incomplete" => Some(CliError::from(marfa_core::CoreError::StreamIncomplete {
-            reason: data
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
+            reason: text("reason").to_string(),
         })),
         _ => None,
     }

@@ -577,9 +577,11 @@ describe("the contract the binary was built for", () => {
         "5",
       ]);
       expect(ended.code, ended.stderr).toBe(exit);
-      expect(
-        (JSON.parse(ended.stderr) as { error: { code: string } }).error.code,
-      ).toBe(code);
+      const { error } = JSON.parse(ended.stderr) as {
+        error: { code: string; message: string };
+      };
+      expect(error.code).toBe(code);
+      expect(error.message).toContain("unknown");
     },
   );
 
