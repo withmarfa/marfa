@@ -99,6 +99,34 @@ describe("a ? inside a value", () => {
     expect(r.data.data.map((i) => i.id)).toEqual([marked]);
   });
 
+  it("matches as itself in a tags parameter on GET /items/stats, GET /search and POST /items/bulk-actions", async () => {
+    const tag = `${word}-why?`;
+    const stats = await key.rawRequest<Record<string, number>>(
+      `/items/stats?tags=${enc(tag)}`,
+    );
+    expect(stats.status).toBe(200);
+    expect(stats.data).toEqual({ active: 1 });
+    const searched = await key.rawRequest<{ data: { item: { id: string } }[] }>(
+      `/search?q=${word}&tags=${enc(tag)}&limit=10`,
+    );
+    expect(searched.status).toBe(200);
+    expect(searched.data.data.map((hit) => hit.item.id)).toEqual([marked]);
+    const bulk = await key.rawRequest<{ ids: string[] }>(
+      "/items/bulk-actions",
+      {
+        method: "POST",
+        body: {
+          filter: { tags: [tag] },
+          action: "update_tags",
+          add: [`${word}-never`],
+          dry_run: true,
+        },
+      },
+    );
+    expect(bulk.status).toBe(200);
+    expect(bulk.data.ids).toEqual([marked]);
+  });
+
   it("matches as itself in a filter on GET /items/stats", async () => {
     for (const filter of filters()) {
       const r = await key.rawRequest<Record<string, number>>(
