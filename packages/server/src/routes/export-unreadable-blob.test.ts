@@ -573,6 +573,103 @@ describe("an archive export of a blob it cannot read", () => {
         expect(late?.destroyed).toBe(true);
       });
     });
+
+    it("calls off a read that has not opened once the client leaves", async () => {
+      const ctx = await context();
+      const hash = await upload(ctx, "bytes a hanging read would carry");
+      await noteNaming(ctx, hash);
+      storeChecks.timeoutMs = 60_000;
+      const open = { count: 0 };
+      vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+        (wanted, _range, signal) => hanging(open)(wanted, signal),
+      );
+
+      const res = await exportArchive(ctx);
+      expect(res.status).toBe(200);
+      await vi.waitFor(() => {
+        expect(open.count).toBe(1);
+      });
+      await res.body?.cancel();
+      await vi.waitFor(() => {
+        expect(open.count).toBe(0);
+      });
+    });
+
+    it("strikes nothing when the read again under the lock does not open in time", async () => {
+      const ctx = await context();
+      const content = "bytes read wrong once and then not at all";
+      const hash = await upload(ctx, content);
+      await noteNaming(ctx, hash);
+      const open = { count: 0 };
+      let reads = 0;
+      vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+        (wanted, _range, signal) => {
+          reads++;
+          if (reads > 1) return hanging(open)(wanted, signal);
+          return Promise.resolve({
+            stream: Readable.from([Buffer.from("x".repeat(content.length))]),
+            size_bytes: content.length,
+            offset: 0,
+            length: content.length,
+          });
+        },
+      );
+
+      const res = await exportArchive(ctx);
+      expect(res.status).toBe(200);
+      await expect(res.arrayBuffer()).rejects.toThrow();
+      // The witness: the copy was read a second time, under the lock.
+      expect(reads).toBe(2);
+      expect(open.count).toBe(0);
+      expect(
+        (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      ).toEqual([ctx.blobs.disk.id]);
+    });
+
+    it("gives up a hanging disk for the rest of the export once it has not answered", async () => {
+      const ctx = await context();
+      const { stores } = await withSecondStore(ctx);
+      const contents = Array.from(
+        { length: storeChecks.concurrency + 4 },
+        (_, i) => `bytes number ${String(i)} that both stores hold`,
+      );
+      const hashes: string[] = [];
+      for (const content of contents) hashes.push(await upload(ctx, content));
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: hashes.map((h) => `![x](${h})`).join(" ") },
+        },
+      });
+      expect(res.status).toBe(201);
+      await new BlobReplicator(ctx.storage, stores, {
+        maxBlobs: 100,
+        maxBytes: 1024 * 1024,
+      }).runOnce();
+      const open = { count: 0 };
+      const checks = vi
+        .spyOn(ctx.blobs.disk, "has")
+        .mockImplementation(hanging(open));
+      const reads = vi
+        .spyOn(ctx.blobs.disk, "get")
+        .mockImplementation((wanted, _range, signal) =>
+          hanging(open)(wanted, signal),
+        );
+
+      const { entries, manifest } = await exported(ctx);
+      expect(manifest.missing_blobs).toEqual({});
+      hashes.forEach((hash, i) => {
+        expect(entries.get(`blobs/${hash}`)?.toString()).toBe(contents[i]);
+      });
+      // Only the checks already running when the disk first failed to
+      // answer waited for it.
+      expect(checks.mock.calls.length).toBeLessThanOrEqual(
+        storeChecks.concurrency,
+      );
+      expect(reads).not.toHaveBeenCalled();
+      expect(open.count).toBe(0);
+    });
   });
 
   describe("a read that does not prove the copy wrong", () => {

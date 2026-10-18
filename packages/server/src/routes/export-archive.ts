@@ -28,6 +28,7 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import type { OwnerItemRead } from "./_owner-item-read.js";
 import type { Storage, ItemFilters } from "../storage/interface.js";
 import {
+  answeringFirst,
   recordedStores,
   storeChecks,
   storeUnavailable,
@@ -96,25 +97,34 @@ type HonoContext = Context<any, any, any>;
 
 /**
  * The bytes of the first recorded copy of `hash` that holds them whole, and
- * the store they come from. Nothing of the entry is written yet, so a store
- * that fails here, or holds the blob short, gives way to the next.
+ * the store they come from, asking the stores in `unanswered` last and
+ * adding to it a store that fails. Nothing of the entry is written yet, so
+ * a store that fails here, or holds the blob short, gives way to the next.
  */
 async function readWhole(
   storage: Storage,
   blobs: BlobLayer,
   hash: string,
   sizeBytes: number,
+  unanswered: Set<string>,
+  signal: AbortSignal,
 ): Promise<{ read: BlobRead; store: BlobStore }> {
   let failure: unknown;
-  for (const store of await recordedStores(storage, blobs, hash)) {
+  const stores = answeringFirst(
+    await recordedStores(storage, blobs, hash),
+    unanswered,
+  );
+  for (const store of stores) {
     let read: BlobRead | null;
     try {
       read = await within(
-        (signal) => store.get(hash, undefined, signal),
+        (cancel) => store.get(hash, undefined, cancel),
         storeChecks.timeoutMs,
-        { late: (gone) => gone?.stream.destroy() },
+        { signal, late: (gone) => gone?.stream.destroy() },
       );
     } catch (error) {
+      signal.throwIfAborted();
+      unanswered.add(store.id);
       failure = storeUnavailable(store, hash, error);
       continue;
     }
@@ -230,6 +240,9 @@ export async function handleArchiveExport(
 ): Promise<Response> {
   const clientGone = c.req.raw.signal;
   const spool = new ExportSpool(() => blobs.disk.spoolPath());
+  // Kept from the selection to the last entry, so a store that hung once is
+  // waited for once.
+  const unanswered = new Set<string>();
 
   let selection: Selection;
   try {
@@ -240,6 +253,7 @@ export async function handleArchiveExport(
       filter,
       spool,
       signal: clientGone,
+      unanswered,
     });
   } catch (error) {
     await spool.dispose();
@@ -298,7 +312,7 @@ export async function handleArchiveExport(
       // `blob-integrity` reads it, and struck only if it is still wrong.
       new VerifyingTransform(hash, size, async () => {
         await withBlobUploadLock(hash, async () => {
-          if (!(await copyIntact(store, hash, size))) {
+          if (!(await copyIntact(store, hash, size, stopped.signal))) {
             await strikeCopy(storage, store, hash);
           }
         });
@@ -346,7 +360,14 @@ export async function handleArchiveExport(
         // rewritten, so its size is the one the selection judged by.
         const size = (await storage.blobs.get(hash))?.size_bytes;
         if (size === undefined) throw new Error(`${hash} is not registered`);
-        const { read, store } = await readWhole(storage, blobs, hash, size);
+        const { read, store } = await readWhole(
+          storage,
+          blobs,
+          hash,
+          size,
+          unanswered,
+          stopped.signal,
+        );
         await blobEntry(hash, size, read.stream, store);
       }
       after = hashes.at(-1);
@@ -403,8 +424,9 @@ async function collectSelection(input: {
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
+  unanswered: Set<string>;
 }): Promise<Selection> {
-  const { storage, blobs, reader, filter, spool, signal } = input;
+  const { storage, blobs, reader, filter, spool, signal, unanswered } = input;
   const readsHistory = reader.reads;
   const items = await spool.text();
   const edges = await spool.text();
@@ -582,7 +604,10 @@ async function collectSelection(input: {
         records.set(hash, { mime_type: null, size_bytes: null });
       }
     }
-    const copies = await wholeCopies(storage, blobs, sizes, signal);
+    const copies = await wholeCopies(storage, blobs, sizes, {
+      signal,
+      unanswered,
+    });
     for (const [hash, record] of records) {
       const entry = `${JSON.stringify(hash)}:${JSON.stringify({
         mime_type: record.mime_type,

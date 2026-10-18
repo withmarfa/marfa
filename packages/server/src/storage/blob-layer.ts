@@ -110,10 +110,28 @@ export async function within<T>(
 }
 
 /**
- * For each blob in `sizes`, the first attached store, the disk first, that
- * the log records a copy in and that holds the blob at its whole size, asked
- * of the stores themselves; `null` when none does. The log is read once for
- * the lot.
+ * `stores` with those in `unanswered`, the ids of stores that failed or did
+ * not answer earlier in the same piece of work, moved to the end. One
+ * hanging store then costs the work one timeout, not one for each blob,
+ * while a blob it alone holds is still asked of it.
+ */
+export function answeringFirst(
+  stores: readonly BlobStore[],
+  unanswered: ReadonlySet<string>,
+): BlobStore[] {
+  return [
+    ...stores.filter((store) => !unanswered.has(store.id)),
+    ...stores.filter((store) => unanswered.has(store.id)),
+  ];
+}
+
+/**
+ * For each blob in `sizes`, an attached store that the log records a copy
+ * in and that holds the blob at its whole size, asked of the stores
+ * themselves; `null` when none does. The stores are asked in the order
+ * {@link answeringFirst} gives, the disk first otherwise, and a store that
+ * fails or does not answer joins `unanswered`. The log is read once for the
+ * lot.
  *
  * Throws `blob_store_unavailable` when no store holds a blob whole and a
  * store it asked failed or did not answer in time: a store that cannot
@@ -124,8 +142,9 @@ export async function wholeCopies(
   storage: Storage,
   blobs: BlobLayer,
   sizes: ReadonlyMap<string, number>,
-  signal?: AbortSignal,
+  options: { signal?: AbortSignal; unanswered?: Set<string> } = {},
 ): Promise<Map<string, BlobStore | null>> {
+  const { signal, unanswered = new Set<string>() } = options;
   const recorded = await storage.blobs.storeIdsOf([...sizes.keys()]);
   const found = new Map<string, BlobStore | null>();
   const queue = [...sizes];
@@ -138,7 +157,8 @@ export async function wholeCopies(
   const check = async (hash: string, size: number) => {
     const ids = new Set(recorded.get(hash) ?? []);
     let failure: MarfaError | undefined;
-    for (const store of blobs.stores.filter((one) => ids.has(one.id))) {
+    const holding = blobs.stores.filter((one) => ids.has(one.id));
+    for (const store of answeringFirst(holding, unanswered)) {
       let held: { size_bytes: number } | null;
       try {
         held = await within(
@@ -148,6 +168,7 @@ export async function wholeCopies(
         );
       } catch (error) {
         decided.signal.throwIfAborted();
+        unanswered.add(store.id);
         failure ??= storeUnavailable(store, hash, error);
         continue;
       }
