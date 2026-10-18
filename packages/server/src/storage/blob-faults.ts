@@ -23,8 +23,10 @@ export function withBlobFaults<S extends BlobStore>(store: S): S {
   const get = store.get.bind(store);
   const put = store.put.bind(store);
   const remove = store.delete.bind(store);
-  store.get = (hash, range) =>
-    failAt("blob-read") ? Promise.reject(unreadable("read")) : get(hash, range);
+  store.get = (hash, range, signal) =>
+    failAt("blob-read")
+      ? Promise.reject(unreadable("read"))
+      : get(hash, range, signal);
   store.put = (hash, source) =>
     failAt("blob-write") ? Promise.reject(noRoom()) : put(hash, source);
   store.delete = (hash) =>

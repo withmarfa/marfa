@@ -334,6 +334,64 @@ describe("an archive export on an instance with one disk store", () => {
       blobs_missing: [absent],
     });
   });
+
+  it("strikes no copy when a read of a blob's bytes fails", async () => {
+    const owner = ownerOf(server!);
+    const hash = await upload(
+      working,
+      bytesOf("a blob whose read fails once", 120),
+    );
+    await noteNaming(working, hash);
+    // The witness: the archive before the fault, carrying the blob.
+    const before = await archiveOf(owner);
+    expect(Object.keys(before.manifest.blobs)).toContain(hash);
+
+    await server!.setFault("fail:blob-read=1");
+    try {
+      const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
+        headers: { cookie: server!.ownerCookie },
+      });
+      expect(res.status).toBe(200);
+      await expect(res.arrayBuffer()).rejects.toThrow();
+      expect(
+        (await server!.faults()).find((f) => f.name === "fail:blob-read")
+          ?.fired,
+      ).toBe(1);
+    } finally {
+      await server!.clearFault();
+    }
+
+    const after = await archiveOf(owner);
+    expect(Object.keys(after.manifest.blobs).sort()).toEqual(
+      Object.keys(before.manifest.blobs).sort(),
+    );
+    expect(after.manifest.missing_blobs).toEqual(before.manifest.missing_blobs);
+  });
+
+  it("ends the response with an error when a listed blob's file goes before its entry is written", async () => {
+    // Incompressible bytes ahead of the blob in the archive, so the export
+    // cannot reach its entry while the response is not read.
+    const ahead: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      ahead.push(await upload(working, new Uint8Array(randomBytes(8 << 20))));
+    }
+    let last = "";
+    for (;;) {
+      last = await upload(
+        working,
+        bytesOf("a blob whose file goes during the export", 140),
+      );
+      if (ahead.every((hash) => hash < last)) break;
+    }
+    for (const hash of [...ahead, last]) await noteNaming(working, hash);
+
+    const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
+      headers: { Authorization: `Bearer ${server!.workingKey}` },
+    });
+    expect(res.status).toBe(200);
+    unlinkSync(diskPath(server!, last));
+    await expect(res.arrayBuffer()).rejects.toThrow();
+  });
 });
 
 describe("an archive export on an instance with an object store", () => {

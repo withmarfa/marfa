@@ -54,4 +54,13 @@ describe("a store made to fail", () => {
     await store.delete(HASH);
     expect(await store.has(HASH)).toBeNull();
   });
+
+  it("hands a read the signal that calls it off", async () => {
+    await store.put(HASH, source());
+    const called = new AbortController();
+    called.abort();
+    await expect(
+      store.get(HASH, undefined, called.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  });
 });

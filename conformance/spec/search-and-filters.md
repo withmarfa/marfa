@@ -1292,7 +1292,7 @@ If a read of a blob's copy by `GET /export?format=archive` fails or ends before 
 
 **Reason:** a read that goes wrong says nothing of the bytes the store holds.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/export-missing-blob.test.ts › strikes no copy when a read of a blob's bytes fails`.
 
 ### `search-and-filters/archive-blob-gone`
 
@@ -1300,7 +1300,7 @@ If a blob that the manifest of `GET /export?format=archive` lists in `blobs` has
 
 **Reason:** the manifest that lists the blob has already been sent, so an archive that left the entry out would claim a file it does not hold.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a listed blob's file goes before its entry is written`.
 
 ### `search-and-filters/archive-store-unavailable`
 
