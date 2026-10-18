@@ -30,11 +30,6 @@ export function realNowMs(): number {
   return systemNow();
 }
 
-/** Whether external libraries need isolation from the process's test clock. */
-export function dateShimInstalled(): boolean {
-  return installed;
-}
-
 /** Keep a library and its asynchronous work on its external peer's clock. */
 export function withRealTime<T>(run: () => T): T {
   // Startup can schedule library work before the shim is installed.
