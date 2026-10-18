@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 
@@ -114,10 +114,9 @@ function expectFixedFailure(reported: string): void {
   expect(reported).not.toContain(DRIVER_MESSAGE);
 }
 
-/** The server's own log, which its state directory holds. */
+/** Everything the server logged, which its state directory holds. */
 function serverLog(): string {
-  const path = join(dirname(server!.sqlitePath), "server.log");
-  return existsSync(path) ? readFileSync(path, "utf8") : "";
+  return serverOutput(dirname(server!.sqlitePath));
 }
 
 async function until<T>(

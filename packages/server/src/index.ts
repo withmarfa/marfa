@@ -34,6 +34,8 @@ import {
 import { shutdownInOrder } from "./shutdown.js";
 import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
+import { setClockOffset } from "./clock.js";
+import { clearFaults } from "./control/faults.js";
 
 async function main() {
   installUnhandledRejectionReporter((event, listener) => {
@@ -41,6 +43,16 @@ async function main() {
   });
   const config = bootConfig();
   setLogStacks(!config.isProduction);
+  // Before anything reads the time, so a restart keeps the clock the harness
+  // moved. The setting is refused unless the hooks are on.
+  setClockOffset(config.testClockOffsetMs ?? 0);
+  if (config.testHooks) {
+    log(
+      "warn",
+      "Test hooks are on: the private control socket can move this server's clock and hold its jobs",
+      { clock_offset_ms: config.testClockOffsetMs ?? 0 },
+    );
+  }
   for (const warning of config.settingWarnings ?? []) log("warn", warning);
   log("info", "Server version", {
     sha: config.versionSha ?? "dev",
@@ -169,6 +181,8 @@ async function main() {
     // twice. Re-entering would re-run every `stop()` and race two exits.
     if (shuttingDown) return;
     shuttingDown = true;
+    // A held run would otherwise keep the stop waiting for it.
+    clearFaults();
     void shutdownInOrder({
       bulkActionWorker,
       housekeeping,

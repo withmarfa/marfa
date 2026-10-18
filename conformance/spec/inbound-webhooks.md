@@ -884,7 +884,7 @@ When the oldest delivery past its retention alone charges more than 33554432 byt
 
 If a run of `inbound-delivery-cleanup` fails while it removes deliveries, then the server MUST keep every delivery it was removing, with its body.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `inbound-webhooks/cleanup-interval`
 
@@ -920,7 +920,7 @@ If storing a receipt fails on a database fault, then the server MUST NOT carry t
 
 **Reason:** `errors/report-log-values` keeps the values a failed statement was bound to out of a report, and a receipt's address and content are among them.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `inbound-webhooks/contention`
 

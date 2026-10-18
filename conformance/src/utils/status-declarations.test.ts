@@ -19,6 +19,7 @@ import {
   formatObserved,
   formatUndeclared,
   parseRequestLines,
+  readRequestLog,
   reportStatuses,
   SIGN_IN_ROUTE_STATUSES,
   UNPUBLISHED_ROUTES,
@@ -83,6 +84,7 @@ function logLine(fields: Record<string, unknown>): string {
   return JSON.stringify({
     timestamp: "2026-09-22T00:00:00.000Z",
     request_id: "019d1234-5678-7abc-8def-1234567890ab",
+    transport: "http",
     duration_ms: 1,
     ...fields,
   });
@@ -395,23 +397,37 @@ describe("the status checker", () => {
     expect(report.lines).toBe(5);
   });
 
-  it.each([undefined, "http", "unrecognized"])(
-    "does not exempt control paths without explicit local transport (%s)",
+  it("does not exempt control paths without explicit local transport", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        logLine({
+          method: "POST",
+          path: "/_control/setup/claim",
+          route: "/_control/setup/claim",
+          status: 201,
+          transport: "http",
+        }),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.local.size).toBe(0);
+    expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
+  });
+
+  it.each([undefined, "unrecognized"])(
+    "cannot read a control path whose transport is not stated (%s)",
     (transport) => {
-      const report = reportStatuses(
-        parseRequestLines(
-          logLine({
-            method: "POST",
-            path: "/_control/setup/claim",
-            route: "/_control/setup/claim",
-            status: 201,
-            transport,
-          }),
-        ),
-        documentDeclaring([200]),
+      const read = readRequestLog(
+        logLine({
+          method: "POST",
+          path: "/_control/setup/claim",
+          route: "/_control/setup/claim",
+          status: 201,
+          transport,
+        }),
       );
-      expect(report.local.size).toBe(0);
-      expect(report.unexplained).toEqual(["POST /_control/setup/claim"]);
+      expect(read.lines).toEqual([]);
+      expect(read.unreadable).toHaveLength(1);
     },
   );
 
@@ -636,6 +652,81 @@ describe("the status checker", () => {
     ]);
   });
 
+  it("reads the two kinds of line the server writes, and a request that answered no route", () => {
+    const logRecord = JSON.stringify({
+      timestamp: "2026-09-22T00:00:00.000Z",
+      level: "warn",
+      message: "Housekeeping runs left unfinished by an earlier process",
+      names: ["trash-purge"],
+    });
+    const unrouted = logLine({
+      method: "GET",
+      path: "/no-such-door",
+      status: 404,
+    });
+    const read = readRequestLog(
+      ["", OBSERVED_200, logRecord, unrouted, OBSERVED_403].join("\n"),
+    );
+    expect(read.unreadable).toEqual([]);
+    // The unrouted request is read and belongs to no operation.
+    expect(read.lines.map((line) => line.status)).toEqual([200, 403]);
+  });
+
+  it("returns a line it cannot read instead of dropping it, and reads the same log once the line is gone", () => {
+    const good = [OBSERVED_200, OBSERVED_403];
+    const unreadable: [string, string][] = [
+      ["(node:4242) ExperimentalWarning: something", "not JSON"],
+      [
+        '{"timestamp":"2026-09-22T00:00:00.000Z","method":"GET","pa',
+        "not JSON",
+      ],
+      ["[1,2]", "not an object"],
+      ["null", "not an object"],
+      [
+        logLine({ method: "GET", path: "/items/x", route: "/items/{id}" }),
+        "status is not an integer",
+      ],
+      [
+        logLine({
+          method: 7,
+          path: "/items/x",
+          route: "/items/{id}",
+          status: 200,
+        }),
+        "method is not a string",
+      ],
+      [
+        logLine({
+          method: "GET",
+          path: "/x",
+          route: "/x",
+          status: 200,
+          transport: "unix",
+        }),
+        "transport is neither",
+      ],
+      [JSON.stringify({ hello: "world" }), "method is not a string"],
+    ];
+    for (const [line, reason] of unreadable) {
+      const read = readRequestLog([good[0]!, line, good[1]!].join("\n"));
+      expect(read.unreadable, line).toHaveLength(1);
+      expect(read.unreadable[0]).toMatchObject({ line: 2 });
+      expect(read.unreadable[0]?.reason, line).toContain(reason);
+      // The witness: the same log without the line reads clean, so the one
+      // line is what is reported.
+      const without = readRequestLog(good.join("\n"));
+      expect(without.unreadable, line).toEqual([]);
+      expect(without.lines).toHaveLength(2);
+    }
+  });
+
+  it("takes a setup code out of the line it reports", () => {
+    const read = readRequestLog("Claim this Marfa with setup code: ABCD-EFGH");
+    expect(read.unreadable[0]?.text).toBe(
+      "Claim this Marfa with setup code: [redacted]",
+    );
+  });
+
   it("exits end to end on each thing it refuses, and 0 on a clean run", async () => {
     // The script is the shell CI runs, so its exit paths are what a red
     // check rests on. Driven against hand-written logs and a server that
@@ -722,6 +813,23 @@ describe("the status checker", () => {
       );
       expect(exposed.stderr).toContain("POST /_control/setup/claim");
       expect(exposed.status).toBe(1);
+
+      const WARNING = "(node:4242) Warning: a dependency printed to stdout";
+      const stray = await run(stateWith([OBSERVED_200, WARNING, OBSERVED_403]));
+      expect(stray.stderr).toContain("cannot be read");
+      expect(stray.stderr).toContain("server.log:2: not JSON");
+      expect(stray.stderr).toContain(WARNING);
+      expect(stray.status).toBe(1);
+      // The witness: the same log without that line is clean.
+      const strayRemoved = await run(stateWith([OBSERVED_200, OBSERVED_403]));
+      expect(strayRemoved.stderr).toBe("");
+      expect(strayRemoved.status).toBe(0);
+      // A line in a fixture server's log is held to the same format.
+      const strayInFresh = await run(
+        stateWith([OBSERVED_200], [OBSERVED_403, WARNING]),
+      );
+      expect(strayInFresh.stderr).toContain("fixture.log:2: not JSON");
+      expect(strayInFresh.status).toBe(1);
 
       statuses = [200, 401];
       const undeclared = await run(stateWith([OBSERVED_200, OBSERVED_403]));

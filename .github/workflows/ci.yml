@@ -361,6 +361,7 @@ jobs:
           overwrite: true
           path: |
             ${{ runner.temp }}/marfa/server.log
+            ${{ runner.temp }}/marfa/server.stderr
             ${{ runner.temp }}/marfa/fresh-server-logs/
             ${{ runner.temp }}/marfa/openapi.json
           if-no-files-found: ignore
@@ -570,6 +571,7 @@ jobs:
           name: marfa-cli-server-log
           path: |
             ${{ runner.temp }}/marfa-cli/server.log
+            ${{ runner.temp }}/marfa-cli/server.stderr
             ${{ runner.temp }}/marfa-cli/fresh-server-logs/
           if-no-files-found: ignore
 

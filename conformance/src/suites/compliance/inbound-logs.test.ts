@@ -1,12 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import {
   answerToUnfinished,
@@ -40,7 +39,7 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-const readLog = () => readFileSync(join(server.stateDir, "server.log"), "utf8");
+const readLog = () => serverOutput(server.stateDir);
 
 /** A value no other text in the log could be: unlike a fixed word, it cannot
  *  be there for another reason. */

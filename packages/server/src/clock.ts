@@ -13,6 +13,13 @@
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
 const MAX_INSTANT_MS = 8_640_000_000_000_000;
 
+/**
+ * The furthest ahead the clock may be: a hundred years. It is also the largest
+ * `MARFA_TEST_CLOCK_OFFSET_MS`, so a server that moved the clock can always
+ * be restarted with the offset it reached.
+ */
+export const MAX_CLOCK_OFFSET_MS = 3_153_600_000_000;
+
 let offsetMs = 0;
 
 /** The current time in milliseconds since the epoch. */
@@ -41,12 +48,18 @@ export function clockOffsetMs(): number {
 
 /**
  * Moves the clock forward by `ms` and returns the new offset. A step that is
- * negative, not a whole number or would carry the clock past the last
- * instant a `Date` can hold is refused, and the clock stays where it was.
+ * negative, not a whole number or would carry the offset past
+ * `MAX_CLOCK_OFFSET_MS` (or the clock past the last instant a `Date` can
+ * hold) is refused, and the clock stays where it was.
  */
 export function advanceClock(ms: number): number {
   if (!Number.isSafeInteger(ms) || ms < 0) {
     throw new RangeError("the clock moves forward by a whole number of ms");
+  }
+  if (offsetMs + ms > MAX_CLOCK_OFFSET_MS) {
+    throw new RangeError(
+      `the clock cannot be more than ${String(MAX_CLOCK_OFFSET_MS)} ms ahead`,
+    );
   }
   if (Date.now() + offsetMs + ms > MAX_INSTANT_MS) {
     throw new RangeError("the clock cannot move past the last instant");

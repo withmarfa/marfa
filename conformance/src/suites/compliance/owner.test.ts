@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import { controlRequest } from "../../utils/control-request.js";
 import {
   FRESH_SERVER_TIMEOUT_MS,
   keepStatusLog,
+  serverOutput,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -167,7 +168,7 @@ describe("claiming the one owner", () => {
       { origin: server.url, "x-conformance-client": "192.0.2.200" },
     );
     expect(fresh.status).toBe(200);
-    const log = await readFile(join(state, "server.log"), "utf8");
+    const log = serverOutput(state);
     expect(log).toContain("/setup/exchange");
     for (const secret of [
       code,

@@ -970,7 +970,7 @@ When the server executes again, under the same `Idempotency-Key`, a write that w
 
 **Reason:** the record that answers a repeat can be gone when the repeat arrives, and the repeat is then executed rather than answered.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/copy-once-repeat.test.ts › is not written again, nor is a second edge to the original, when the repeat is executed because its record is gone`.
 
 ### `versions/copy-link-trash`
 

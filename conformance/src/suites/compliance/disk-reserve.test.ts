@@ -25,7 +25,7 @@ import { TEST_OWNER } from "../../utils/target.js";
  * restore that cannot work on this server.
  *
  * A body that outgrows the room as it arrives, and a volume that is full,
- * need a volume the fixture controls; they wait on #1444.
+ * need a volume the fixture controls; they wait on #2071.
  */
 const HUGE_RESERVE = 2 ** 50;
 

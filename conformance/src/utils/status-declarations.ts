@@ -12,6 +12,7 @@
  * real log and a real document into it.
  */
 
+import { redactSetupProof } from "./target.js";
 import { readFileSync } from "node:fs";
 
 /** One request as `middleware/logger.ts` writes it. */
@@ -226,42 +227,109 @@ export const RACE_CODES: Readonly<Record<string, string>> = {
  */
 export const UNREACHED: Readonly<Record<string, string>> = {};
 
+/** A line of the server log that is neither a request record nor a log record. */
+export interface UnreadableLine {
+  /** 1-based, within the log. */
+  line: number;
+  reason: string;
+  /** The start of the line, with a setup code taken out. */
+  text: string;
+}
+
+const LOG_LEVELS = new Set(["info", "warn", "error"]);
+
+/** Why `record` is not a request record, or `undefined` when it is one. */
+function requestProblem(record: Record<string, unknown>): string | undefined {
+  if (typeof record.method !== "string") return "method is not a string";
+  if (typeof record.path !== "string") return "path is not a string";
+  if (!Number.isInteger(record.status)) return "status is not an integer";
+  if (record.transport !== "http" && record.transport !== "local_socket")
+    return "transport is neither http nor local_socket";
+  if (record.route !== undefined && typeof record.route !== "string")
+    return "route is not a string";
+  if (record.error_code !== undefined && typeof record.error_code !== "string")
+    return "error_code is not a string";
+  return undefined;
+}
+
 /**
- * The request lines in a server log, which also carries startup and failure
- * lines and whatever a dependency wrote to stdout. A line that is not a
- * request record is skipped: this reads the stream, it does not own it.
+ * Reads a server log in the format `conformance/README.md` states: the
+ * server's stdout carries JSON objects, one per line, and nothing else.
+ * A line with a string `level` and a string `message` is a log record and
+ * is not a request. Any other object is a request record: `method`, `path`,
+ * `status` and `transport` are required, `route` is absent when no route
+ * answered, and such a request is read but belongs to no operation.
+ *
+ * A line that is neither is returned in `unreadable` and not dropped,
+ * because a request the reader cannot see is a status nothing checked.
  */
-export function parseRequestLines(log: string): RequestLine[] {
-  const out: RequestLine[] = [];
-  for (const raw of log.split("\n")) {
+export function readRequestLog(log: string): {
+  lines: RequestLine[];
+  unreadable: UnreadableLine[];
+} {
+  const lines: RequestLine[] = [];
+  const unreadable: UnreadableLine[] = [];
+  const refuse = (line: number, raw: string, reason: string) => {
+    unreadable.push({
+      line,
+      reason,
+      text: redactSetupProof(raw.trim().slice(0, 200)),
+    });
+  };
+  log.split("\n").forEach((raw, index) => {
     const text = raw.trim();
-    if (text === "" || !text.startsWith("{")) continue;
+    if (text === "") return;
+    const line = index + 1;
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
     } catch {
-      continue;
+      refuse(line, raw, "not JSON");
+      return;
     }
-    if (parsed === null || typeof parsed !== "object") continue;
-    const line = parsed as Record<string, unknown>;
     if (
-      typeof line.method !== "string" ||
-      typeof line.route !== "string" ||
-      typeof line.path !== "string" ||
-      typeof line.status !== "number"
+      parsed === null ||
+      typeof parsed !== "object" ||
+      Array.isArray(parsed)
     ) {
-      continue;
+      refuse(line, raw, "JSON, but not an object");
+      return;
     }
-    out.push({
-      method: line.method.toUpperCase(),
-      transport: line.transport === "local_socket" ? "local_socket" : "http",
-      route: line.route,
-      path: line.path,
-      status: line.status,
-      code: typeof line.error_code === "string" ? line.error_code : undefined,
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.message === "string" &&
+      typeof record.level === "string" &&
+      LOG_LEVELS.has(record.level)
+    ) {
+      return;
+    }
+    const problem = requestProblem(record);
+    if (problem !== undefined) {
+      refuse(
+        line,
+        raw,
+        `neither a log record nor a request record: ${problem}`,
+      );
+      return;
+    }
+    // Checked above: a request with no route answered no operation.
+    if (typeof record.route !== "string") return;
+    lines.push({
+      method: (record.method as string).toUpperCase(),
+      transport: record.transport === "local_socket" ? "local_socket" : "http",
+      route: record.route,
+      path: record.path as string,
+      status: record.status as number,
+      code:
+        typeof record.error_code === "string" ? record.error_code : undefined,
     });
-  }
-  return out;
+  });
+  return { lines, unreadable };
+}
+
+/** The request lines in a server log; see {@link readRequestLog}. */
+export function parseRequestLines(log: string): RequestLine[] {
+  return readRequestLog(log).lines;
 }
 
 export interface OpenApiLike {

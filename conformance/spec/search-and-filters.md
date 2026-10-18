@@ -1272,7 +1272,7 @@ While `GET /export?format=archive` reads its selection, the server MUST keep a w
 
 **Reason:** the export does not hold the server for the whole selection, so a write can land between pages.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.
 
 ### `search-and-filters/archive-spool-ended`
 
@@ -1286,7 +1286,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 If a read fails while `GET /export?format=archive` is answering, then the server MUST leave nothing of the export on disk.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `search-and-filters/archive-spool-start`
 
@@ -1302,7 +1302,7 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 
 **Reason:** the status and headers are sent before the first byte, so the failure shows only as a connection cut short and a gzip stream with no end, which is an archive that nobody mistakes for a complete one.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ## Restore
 
@@ -1642,7 +1642,7 @@ If the server refuses an archive, then the server MUST leave no row, history, ty
 
 If a write fails while the server restores an archive, then the server MUST leave no row, type, edge type, blob, event or audit record that the restore wrote.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `search-and-filters/restore-stopped-nothing`
 
@@ -1650,7 +1650,7 @@ If the process stops while the server restores an archive, then the server MUST 
 
 **Reason:** the bytes are written before the transaction opens, which nothing can roll back, so the copy cleanup of `blob-replicate` and `blob-integrity` removes them.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `search-and-filters/restore-announced`
 
@@ -1672,7 +1672,7 @@ While a restore writes, the server MUST NOT show its rows, registrations or even
 
 **Reason:** a reader that saw part of a restore would see rows that a failed restore then takes away.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `search-and-filters/restore-writers-wait`
 
@@ -1688,4 +1688,4 @@ When the server removes the blob bytes of a restore that did not commit, the ser
 
 **Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.

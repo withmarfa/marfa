@@ -137,7 +137,7 @@ When a stream's final drain consumes a logged live frame, the server MUST give `
 
 **Reason:** the drain settles delivery just as replay does, so its withheld frames are also covered by the marker.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/stream-live-skips-covered`
 
@@ -155,7 +155,7 @@ When a client resumes from the `cursor` of `stream_live`, the server MUST send i
 
 If the server cannot read the log's head within its budget, and before `stream_live` the stream has neither read an event in a replay nor sent one, then the server MUST send `stream_live` with `cursor` `null`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## Cursors
 
@@ -263,7 +263,7 @@ When the oldest event the log retains has an id exactly one above the cursor, th
 
 If the retention sweep retires the next events of a replay while it reads, then the server MUST end the stream with `catchup_too_old` rather than replay over the gap.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/retention-prefix`
 
@@ -329,7 +329,7 @@ When a stream has sent or replayed events up to an id, the server MUST NOT send 
 
 **Reason:** an archive restore announces its events after it commits, by which time a stream opened since may have replayed them from the log.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/unreadable-row-not-replayed`
 
@@ -343,7 +343,7 @@ If the log holds an event the server can no longer read, then the server MUST se
 
 **Reason:** the live copy is the one carrier the event has left. It is the one place ids are not ascending.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## Filters
 
@@ -549,7 +549,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 **Reason:** a `5xx` tells the caller nothing was written, so it sends the change again. No idempotency key catches it, because an operation that takes one releases it on a `5xx` and the bulk operations take none.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `events/sweep-purge-announced`
 
@@ -611,7 +611,7 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 **Reason:** a source the server cannot classify cannot be shown readable.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## A stream and the source filter
 
@@ -655,7 +655,7 @@ When replay or the final drain consumes a live frame selected by a stream's immu
 
 **Reason:** authority can widen while a frame waits, so an earlier credential read cannot settle whether it will be delivered.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/replay-consumed`
 
@@ -663,7 +663,7 @@ When a replay has sent or legitimately withheld a readable logged event, the ser
 
 **Reason:** replay has settled the row, and a later widening cannot revive it behind a higher delivered cursor; `events/unreadable-row-live-copy` still governs rows the replay could not classify.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/credential-narrowed`
 
@@ -721,7 +721,7 @@ When a key that holds a stream open passes its `expires_at`, the server MUST end
 
 When the sign-in token that holds a stream open passes its expiry, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2075.
 
 ### `events/credential-reconnect`
 
@@ -773,13 +773,13 @@ When the server has sent `stream_incomplete`, the server MUST close the stream.
 
 If the server's read of the log's head fails when a stream opens, a read of the log fails while the stream replays, or the read of the stream's credential before a page of the replay fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/live-delivery-failed`
 
 If the read of a stream's credential at a heartbeat or before a batch of live frames fails, or the server cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `events/backlog-overflow`
 
@@ -787,7 +787,7 @@ If more than 500 live frames selected by a stream's immutable `type` and `edges`
 
 **Reason:** the frames a stream holds while it opens are bounded, including those excluded only by mutable credential authority because that authority can widen before delivery. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## Registering a subscription
 
@@ -1293,13 +1293,13 @@ When a receiver's `Retry-After` is shorter than the ordinary wait for the attemp
 
 When a receiver's `Retry-After` is longer than five minutes, the server MUST wait the longer of five minutes and the ordinary wait.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2073.
 
 ### `events/retry-schedule`
 
 When a receiver answers every attempt with a retryable failure, the server MUST make eight attempts, with seven waits of 1, 5, 25, 125, 625, 3125 and 15625 seconds between them, and then record the delivery `dead_letter`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2073.
 
 ### `events/retry-poll-run`
 
@@ -1311,7 +1311,7 @@ When a caller authorized by `instance.maintain` or direct owner or local authori
 
 When the server stops while it schedules deliveries and starts again, the server MUST queue exactly one delivery for each event and each subscription entitled to it.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2073.
 
 ## Settling a delivery unsent
 
@@ -1401,7 +1401,7 @@ If the server refuses or duplicates a redelivery, then the server MUST NOT recor
 
 If the server cannot record a redelivery's audit entry, then the server MUST leave the failed delivery unchanged.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `events/history-dead-letter-kept`
 
@@ -1477,7 +1477,7 @@ Where the instance does not allow private addresses, the server MUST connect to 
 
 **Reason:** a second resolution could move the connection to an address that is not public.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2073.
 
 ## When delivery starts
 
@@ -1533,7 +1533,7 @@ If the server cannot record a write's audit entry, then the server MUST roll the
 
 **Reason:** a change nobody can account for is worse than a refused one.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `events/audit-no-secrets`
 

@@ -384,7 +384,7 @@ If a series takes more than 1,000 ms to unfold, then the server MUST leave the s
 
 **Reason:** the time bound is a backstop that fires only on a slow machine, and the bound on candidate times fires first for any rule that is slow on an ordinary one.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2075.
 
 ### `occurrences/unfold-per-series`
 

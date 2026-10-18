@@ -7,6 +7,7 @@ import { oauthRegistrationRoute } from "./routes/oauth-registration-schema.js";
 import { ConnectorProblemsSchema } from "./routes/_connector-problems.js";
 import { requireSecureOwnerTransport } from "./auth/owner-browser.js";
 import { controlRoutes } from "./control/routes.js";
+import { testRoutes } from "./control/test-routes.js";
 import { setupRoutes } from "./routes/setup.js";
 import { ownerPages } from "./routes/owner-pages.js";
 import { directAuthorityMiddleware } from "./middleware/direct-authority.js";
@@ -828,6 +829,13 @@ export function createApp(
       app.route("/_control", controlRoutes(storage, auth, config.authBaseUrl));
     app.route("/auth/owner", ownerPages(storage, auth));
   }
+  // The harness's clock and fault routes: on the private socket alone, and
+  // only when the instance was started for testing.
+  if (options.localAuthority && config.testHooks)
+    app.route(
+      "/_control/test",
+      testRoutes(() => housekeeping.names()),
+    );
   app.route("/export", exportRoutes(storage, blobs, instanceId));
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's

@@ -14,6 +14,7 @@ import {
   type ResolvedPolicy,
 } from "./version-thinning.js";
 import { log } from "../middleware/logger.js";
+import { holdAt } from "../control/faults.js";
 
 const PAGE_SIZE = 100;
 const DELETE_CHUNK_SIZE = 200;
@@ -100,6 +101,7 @@ export class VersionThinner {
     const first = await this.decide(itemId);
     if (first.kind === "unresolvable") note(first.type);
     if (first.kind !== "delete") return 0;
+    await holdAt("version-thinning:item");
 
     let deleted = 0;
     for (;;) {

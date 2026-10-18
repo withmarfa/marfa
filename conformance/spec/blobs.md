@@ -120,7 +120,7 @@ Where an instance keeps a reserve of free space, if a `POST /blobs` body that de
 
 **Reason:** a chunked body declares no length, so only the room it takes as it arrives can refuse it.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `blobs/upload-reserve-nothing-kept`
 
@@ -426,13 +426,13 @@ Where the instance serves a link, the server MUST keep it working for at least i
 
 **Reason:** a signer counts a lifetime in whole seconds, so a store's own link, counted from the second it was signed in, may stop up to a second sooner.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-link-clock.test.ts › works until its expires_in seconds have passed on the server's clock, and not after`.
 
 ### `blobs/link-cap-from-answer`
 
 The server MUST NOT give a link that works for more than seven days from the answer that gave it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/blob-link-clock.test.ts › is seven days from the answer that gave it, whatever lifetime was asked for`.
 
 ### `blobs/link-outlives-key`
 
@@ -750,7 +750,7 @@ Where an instance keeps a reserve of free space, if an entry of the archive in a
 
 **Reason:** a compressed archive says nothing of the size it expands to, so a body that fits can still inflate past the volume.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `blobs/restore-reserve-nothing-written`
 
