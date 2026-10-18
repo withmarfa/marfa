@@ -278,22 +278,24 @@ fn id_of_file(mut file: std::fs::File) -> Option<String> {
     id_of_reader(file).ok().flatten()
 }
 
+type CodeUnit = fn([u8; 2]) -> u16;
+
 /// Read only the frontmatter, preserving an I/O failure as uncertainty. A
 /// line that is not UTF-8 is read as the folder's own scan reads it, with its
 /// ASCII id line intact, so bytes that are not text hold no id and are not
-/// an I/O failure. A file that opens with a UTF-16 byte-order mark is read as
-/// UTF-16, so a moved file saved again that way still shows where it came
-/// from.
+/// an I/O failure. A file that opens with a UTF-16 byte-order mark, or with
+/// a frontmatter fence in UTF-16 and no mark, is read as UTF-16, so a moved
+/// file saved again that way still shows where it came from.
 fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
     let mut reader = BufReader::new(reader);
-    let wide: Option<fn([u8; 2]) -> u16> = match reader.fill_buf()? {
-        [0xff, 0xfe, ..] => Some(u16::from_le_bytes),
-        [0xfe, 0xff, ..] => Some(u16::from_be_bytes),
-        _ => None,
+    let (wide, mark): (Option<CodeUnit>, usize) = match reader.fill_buf()? {
+        [0xff, 0xfe, ..] => (Some(u16::from_le_bytes), 2),
+        [0xfe, 0xff, ..] => (Some(u16::from_be_bytes), 2),
+        [b'-', 0, b'-', 0, b'-', 0, ..] => (Some(u16::from_le_bytes), 0),
+        [0, b'-', 0, b'-', 0, b'-', ..] => (Some(u16::from_be_bytes), 0),
+        _ => (None, 0),
     };
-    if wide.is_some() {
-        reader.consume(2);
-    }
+    reader.consume(mark);
     let mut next = || match wide {
         Some(unit) => wide_line(&mut reader, unit),
         None => narrow_line(&mut reader),
@@ -708,8 +710,9 @@ mod tests {
             big_endian.extend(unit.to_be_bytes());
         }
         std::fs::write(root.join("utf16be.md"), &big_endian).unwrap();
-        // With no mark there is nothing to say the bytes are UTF-16.
+        // With no mark, the fence alone says the bytes are UTF-16.
         std::fs::write(root.join("bare.md"), &utf16[2..]).unwrap();
+        std::fs::write(root.join("barebe.md"), &big_endian[2..]).unwrap();
         // Cut off inside a code unit.
         std::fs::write(root.join("cut.md"), &utf16[..7]).unwrap();
         std::fs::write(
@@ -726,7 +729,7 @@ mod tests {
             bound: OnceCell::new(),
         };
         let walked = peer.walked();
-        assert_eq!(walked.files.len(), 5);
+        assert_eq!(walked.files.len(), 6);
         assert_eq!(
             walked.partial, None,
             "a file whose bytes are not text made the whole folder unreadable"
@@ -744,7 +747,12 @@ mod tests {
             "a file saved as UTF-16 hid the id that shows where it moved from"
         );
         assert_eq!(id("utf16be.md"), Some("n8"));
-        assert_eq!(id("bare.md"), None);
+        assert_eq!(
+            id("bare.md"),
+            Some("n9"),
+            "a file saved as UTF-16 with no mark hid the id that shows where it moved from"
+        );
+        assert_eq!(id("barebe.md"), Some("n8"));
         assert_eq!(id("cut.md"), None);
         assert_eq!(id("latin1.md"), Some("n2"));
     }
