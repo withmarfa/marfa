@@ -335,18 +335,17 @@ describe("an archive export on an instance with one disk store", () => {
     });
   });
 
-  it("strikes no copy when a read of a blob's bytes fails", async () => {
+  /** Exports with `fault` set, which cuts the response, and answers that the
+   *  archive after it lists the blobs the archive before it did. */
+  async function cutBy(fault: string, label: string) {
     const owner = ownerOf(server!);
-    const hash = await upload(
-      working,
-      bytesOf("a blob whose read fails once", 120),
-    );
+    const hash = await upload(working, bytesOf(label, 120));
     await noteNaming(working, hash);
     // The witness: the archive before the fault, carrying the blob.
     const before = await archiveOf(owner);
     expect(Object.keys(before.manifest.blobs)).toContain(hash);
 
-    await server!.setFault("fail:blob-read=1");
+    await server!.setFault(`${fault}=1`);
     try {
       const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
         headers: { cookie: server!.ownerCookie },
@@ -354,8 +353,7 @@ describe("an archive export on an instance with one disk store", () => {
       expect(res.status).toBe(200);
       await expect(res.arrayBuffer()).rejects.toThrow();
       expect(
-        (await server!.faults()).find((f) => f.name === "fail:blob-read")
-          ?.fired,
+        (await server!.faults()).find((f) => f.name === fault)?.fired,
       ).toBe(1);
     } finally {
       await server!.clearFault();
@@ -366,6 +364,14 @@ describe("an archive export on an instance with one disk store", () => {
       Object.keys(before.manifest.blobs).sort(),
     );
     expect(after.manifest.missing_blobs).toEqual(before.manifest.missing_blobs);
+  }
+
+  it("strikes no copy when a read of a blob's bytes fails", async () => {
+    await cutBy("fail:blob-read", "a blob whose read fails once");
+  });
+
+  it("strikes no copy when a read of a blob's bytes ends short", async () => {
+    await cutBy("fail:blob-read-short", "a blob whose read ends short once");
   });
 
   it("ends the response with an error when a listed blob's file goes before its entry is written", async () => {
@@ -384,6 +390,11 @@ describe("an archive export on an instance with one disk store", () => {
       if (ahead.every((hash) => hash < last)) break;
     }
     for (const hash of [...ahead, last]) await noteNaming(working, hash);
+
+    // The witness: the same export ends cleanly and carries the blob while
+    // its file is there.
+    const whole = await archiveOf(working);
+    expect(whole.entries).toContain(`blobs/${last}`);
 
     const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
       headers: { Authorization: `Bearer ${server!.workingKey}` },
@@ -429,5 +440,51 @@ describe("an archive export on an instance with an object store", () => {
     );
     expect(entry).toBeDefined();
     expect(blobHash(entry!.body)).toBe(hash);
+  });
+
+  it("restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it", async () => {
+    const owner = ownerOf(server!);
+    const content = bytesOf("a blob the disk cannot answer for", 160);
+    const hash = await upload(working, content);
+    await noteNaming(working, hash);
+    await runJob(operator, "blob-replicate");
+    const kinds = (await operator.listBlobLocations(hash)).data.data
+      .map((row) => row.kind)
+      .sort();
+    expect(kinds).toEqual(["disk", "s3"]);
+    const id = uuidv7();
+    const lacking = itemsArchive(
+      [
+        {
+          id,
+          type: "core.note",
+          source: "export-missing-blob",
+          properties: { body: `![bytes](${hash})` },
+        },
+      ],
+      [],
+      [],
+      (m) => ({
+        ...m,
+        blobs: {
+          [hash]: { mime_type: "text/plain", size_bytes: content.length },
+        },
+      }),
+    );
+
+    const folder = dirname(diskPath(server!, hash));
+    chmodSync(folder, 0o000);
+    try {
+      // The witness: the folder really cannot be read by this user, which
+      // on a server with the disk alone answers 503.
+      expect(() => statSync(diskPath(server!, hash))).toThrow();
+
+      const restored = await owner.restoreArchive(lacking);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_missing).toEqual([]);
+      expect((await working.getItem(id)).status).toBe(200);
+    } finally {
+      chmodSync(folder, 0o755);
+    }
   });
 });

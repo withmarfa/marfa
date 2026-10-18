@@ -66,6 +66,7 @@ export const POINTS: {
     { name: "inbound-cleanup", arg: "nth" },
     { name: "export-read", arg: "nth" },
     { name: "blob-read", arg: "nth" },
+    { name: "blob-read-short", arg: "nth" },
     { name: "blob-write", arg: "nth" },
     { name: "blob-delete", arg: "nth" },
     { name: "housekeeping:<job>", arg: "nth" },

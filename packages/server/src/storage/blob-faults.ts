@@ -1,5 +1,6 @@
+import { Readable } from "node:stream";
 import { failAt } from "../control/faults.js";
-import type { BlobStore } from "./blob-store.js";
+import type { BlobRead, BlobStore } from "./blob-store.js";
 
 /** The error the operating system raises for a write to a volume with no room. */
 function noRoom(): NodeJS.ErrnoException {
@@ -12,21 +13,48 @@ function unreadable(verb: "read" | "delete"): NodeJS.ErrnoException {
   return Object.assign(new Error(`EIO: i/o error, ${verb}`), { code: "EIO" });
 }
 
+/** The first `bytes` of `source`, and then a clean end. */
+async function* firstOf(source: Readable, bytes: number) {
+  let left = bytes;
+  try {
+    for await (const chunk of source) {
+      if (left === 0) return;
+      const part = (chunk as Buffer).subarray(0, left);
+      left -= part.length;
+      yield part;
+    }
+  } finally {
+    source.destroy();
+  }
+}
+
+/** `read` with its stream ending cleanly after half the bytes it carries. */
+function endingShort(read: BlobRead): BlobRead {
+  return {
+    ...read,
+    stream: Readable.from(firstOf(read.stream, Math.floor(read.length / 2)), {
+      objectMode: false,
+    }),
+  };
+}
+
 /**
- * Makes `store` fail where the `blob-read`, `blob-write` and `blob-delete`
- * points of `control/faults.ts` say. Applied once to each attached store
- * under `MARFA_TEST_HOOKS` and to no store otherwise, so the disk store and
- * the object store fail the same way. A read fails before it opens the
- * bytes, a write before it stores any, and a delete before it removes any.
+ * Makes `store` fail where the `blob-read`, `blob-read-short`, `blob-write`
+ * and `blob-delete` points of `control/faults.ts` say. Applied once to each
+ * attached store under `MARFA_TEST_HOOKS` and to no store otherwise, so the
+ * disk store and the object store fail the same way. A read fails before it
+ * opens the bytes, or ends short after it opens them, a write fails before
+ * it stores any, and a delete before it removes any.
  */
 export function withBlobFaults<S extends BlobStore>(store: S): S {
   const get = store.get.bind(store);
   const put = store.put.bind(store);
   const remove = store.delete.bind(store);
-  store.get = (hash, range, signal) =>
-    failAt("blob-read")
-      ? Promise.reject(unreadable("read"))
-      : get(hash, range, signal);
+  store.get = async (hash, range, signal) => {
+    if (failAt("blob-read")) throw unreadable("read");
+    const read = await get(hash, range, signal);
+    return read && failAt("blob-read-short") ? endingShort(read) : read;
+  };
   store.put = (hash, source) =>
     failAt("blob-write") ? Promise.reject(noRoom()) : put(hash, source);
   store.delete = (hash) =>

@@ -55,6 +55,23 @@ describe("a store made to fail", () => {
     expect(await store.has(HASH)).toBeNull();
   });
 
+  it("ends the nth read cleanly after half its bytes, and no other", async () => {
+    await store.put(HASH, source());
+    const bytesOf = async (read: Awaited<ReturnType<typeof store.get>>) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of read!.stream) chunks.push(chunk as Buffer);
+      return Buffer.concat(chunks);
+    };
+    setFault("fail:blob-read-short", "2");
+    expect(await bytesOf(await store.get(HASH))).toEqual(BYTES);
+    const short = await store.get(HASH);
+    expect(short?.length).toBe(BYTES.length);
+    expect(await bytesOf(short)).toEqual(
+      BYTES.subarray(0, Math.floor(BYTES.length / 2)),
+    );
+    expect(await bytesOf(await store.get(HASH))).toEqual(BYTES);
+  });
+
   it("hands a read the signal that calls it off", async () => {
     await store.put(HASH, source());
     const called = new AbortController();

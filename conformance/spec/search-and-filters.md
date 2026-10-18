@@ -1292,7 +1292,7 @@ If a read of a blob's copy by `GET /export?format=archive` fails or ends before 
 
 **Reason:** a read that goes wrong says nothing of the bytes the store holds.
 
-**Tests:** `compliance/export-missing-blob.test.ts › strikes no copy when a read of a blob's bytes fails`.
+**Tests:** `compliance/export-missing-blob.test.ts › strikes no copy when a read of a blob's bytes fails`, `› strikes no copy when a read of a blob's bytes ends short`.
 
 ### `search-and-filters/archive-blob-gone`
 
@@ -1448,7 +1448,7 @@ When `POST /restore` succeeds, the server MUST carry the counts `imported`, `dup
 
 ### `search-and-filters/restore-blobs-missing`
 
-When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, and that no attached store of the instance holds whole.
+When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, and that no attached store of the instance holds a recorded copy of whole.
 
 **Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
 
@@ -1456,11 +1456,11 @@ When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the has
 
 ### `search-and-filters/restore-store-unavailable`
 
-If a store fails, or does not answer within 15 seconds, while `POST /restore` checks whether the instance holds a blob that the archive names and does not carry, then the server MUST answer `503 blob_store_unavailable`.
+If a store fails, or does not answer within 15 seconds, while `POST /restore` checks whether the instance holds a blob that the archive names and does not carry, and no other attached store holds a recorded copy of the blob whole, then the server MUST answer `503 blob_store_unavailable`.
 
 **Reason:** a store that cannot answer is no evidence that the instance lacks the blob, so the restore does not answer it in `blobs_missing`.
 
-**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`, `› restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it`.
 
 ### `search-and-filters/restore-store-unavailable-unwritten`
 
