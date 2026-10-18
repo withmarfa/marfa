@@ -104,7 +104,11 @@ describe("isPublicAddress", () => {
     }
     for (const address of [
       // Outside 2000::/3.
+      // `::/96`, written with the dotted tail libuv gives an address: refused
+      // as `::/96`, whatever the IPv4 address in its last 32 bits is.
       "::10.0.0.1",
+      "::8.8.8.8",
+      "::93.184.215.14",
       "::a00:1",
       "::7f00:1",
       "::808:808",

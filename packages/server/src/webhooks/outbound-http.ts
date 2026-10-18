@@ -40,6 +40,24 @@ class AddressNotPublicError extends Error {
   }
 }
 
+/**
+ * An IPv6 address with its dotted IPv4 tail written as two hexadecimal
+ * groups, and no zone. ipaddr.js reads any dotted tail as IPv4-mapped, so
+ * `::8.8.8.8` in `::/96` would be taken for `::ffff:8.8.8.8`, while libuv
+ * writes an address in `::/96` with a dotted tail. Whether an address is
+ * mapped is then decided by its bits: `::ffff:808:808` is, `::808:808` is not.
+ */
+function withHexTail(address: string): string {
+  const bare = address.replace(/%.*$/, "");
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(bare);
+  if (dotted === null) return bare;
+  const octets = dotted.slice(2).map(Number);
+  if (octets.some((octet) => octet > 255)) return bare;
+  const [a = 0, b = 0, c = 0, d = 0] = octets;
+  const hex = (high: number, low: number) => (high * 256 + low).toString(16);
+  return `${dotted[1] ?? ""}${hex(a, b)}:${hex(c, d)}`;
+}
+
 /** Global unicast, the only IPv6 block that is assigned to hosts on the internet. */
 const GLOBAL_UNICAST_V6 = ipaddr.IPv6.parseCIDR("2000::/3");
 
@@ -56,7 +74,7 @@ const GLOBAL_UNICAST_V6 = ipaddr.IPv6.parseCIDR("2000::/3");
 export function isPublicAddress(address: string): boolean {
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
   try {
-    parsed = ipaddr.parse(address);
+    parsed = ipaddr.parse(withHexTail(address));
   } catch {
     return false;
   }
