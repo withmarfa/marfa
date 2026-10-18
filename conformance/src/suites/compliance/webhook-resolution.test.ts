@@ -94,6 +94,8 @@ describe("webhook address resolution", () => {
   });
 
   it("connects to the address it checked and does not resolve the name again", async () => {
+    // Registration allows private addresses, so it does not resolve this test name.
+    const id = await subscribe("rebind.test", "rebind");
     // The target boots again with private addresses refused, as a production
     // instance runs, and stays so until the file ends.
     await server.restart({
@@ -106,12 +108,11 @@ describe("webhook address resolution", () => {
     await server.setFault(
       `resolve:rebind.test=${PUBLIC_ADDRESS}>127.0.0.1;::1`,
     );
-    const id = await subscribe("rebind.test", "rebind");
     try {
       await write("rebind");
-      await receiver.waitFor((r) => r.path === "/hook/rebind");
       const sent = await deliveryAt(id, 1);
       expect(sent.status).toBe("success");
+      await receiver.waitFor((r) => r.path === "/hook/rebind");
       expect(
         receiver.received.filter((r) => r.path === "/hook/rebind"),
         "one attempt, one delivery",

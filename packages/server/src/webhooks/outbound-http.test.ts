@@ -369,7 +369,7 @@ describe("the delivery client", () => {
     const allowed = createWebhookHttpClient({ allowPrivateAddresses: true });
     expect(await allowed.post(post(url))).toMatchObject({ status: 200 });
     expect(await guarded.post(post(url))).toEqual({
-      kind: "failed",
+      kind: "refused",
       error: DELIVERY_FAILURE.notPublic,
     });
     expect(r.hits()).toBe(1);
