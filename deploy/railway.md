@@ -115,7 +115,7 @@ These settings describe the saved template and its container defaults.
 | `S3_FORCE_PATH_STYLE`       | `false` for newly created Railway buckets            |
 | `S3_PREFIX`                 | `blobs`                                              |
 
-Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template.
+Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template. The one exception is the new build in an upgrade, which can share the old instance's bucket under a new `S3_PREFIX`.
 
 The container uses Railway's Git build argument when `VERSION_SHA` is empty or unset. An explicit `VERSION_SHA` takes precedence for other build workflows. The resulting revision appears in `/health`; see [Dockerfile build variables](https://docs.railway.com/builds/dockerfiles#using-variables-at-build-time).
 

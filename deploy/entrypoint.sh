@@ -102,7 +102,7 @@ if [ -z "${S3_BUCKET:-}" ]; then
   supervise /bin/sh "$0" run-server || code=$?
 else
   # `-if-db-not-exists` leaves a database already on the volume alone;
-  # `-if-replica-exists` makes a bucket holding no replica yet, the first boot
+  # `-if-replica-exists` makes a prefix holding no replica yet, the first boot
   # of a new instance, a fresh start rather than a failure.
   litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
 
