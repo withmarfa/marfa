@@ -154,6 +154,7 @@ describe("deploy/entrypoint.sh", () => {
       body: `echo "the schema is not this build's" >&2\nexit ${String(REFUSED)}`,
     });
 
+    await expect.poll(run.output, { timeout: 10_000 }).toContain("stays up");
     expect(await stillRunningAfter(run, 1_500)).toBe(true);
     expect(run.output()).toContain("the schema is not this build's");
     expect(run.output()).toContain("will not start on it");
@@ -161,8 +162,12 @@ describe("deploy/entrypoint.sh", () => {
   });
 
   it("stays up the same way under Litestream, which ends 1 whatever status the server ended with", async () => {
-    const run = start({ bucket: true, body: `exit ${String(REFUSED)}` });
+    const run = start({
+      bucket: true,
+      body: `sleep 2\nexit ${String(REFUSED)}`,
+    });
 
+    await expect.poll(run.output, { timeout: 10_000 }).toContain("stays up");
     expect(await stillRunningAfter(run, 1_500)).toBe(true);
     expect(run.output()).toContain("will not start on it");
   });
@@ -202,6 +207,7 @@ describe("deploy/entrypoint.sh", () => {
 
   it("ends 0 on the signal that stops the container, once it has stayed up", async () => {
     const run = start({ body: `exit ${String(REFUSED)}` });
+    await expect.poll(run.output, { timeout: 10_000 }).toContain("stays up");
     expect(await stillRunningAfter(run, 1_000)).toBe(true);
 
     run.child.kill("SIGTERM");
