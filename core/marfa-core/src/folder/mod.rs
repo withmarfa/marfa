@@ -1536,13 +1536,8 @@ impl Folder {
             .iter()
             .map(|bound| (bound.path.as_str(), bound))
             .collect();
-        // Items whose own create or edit the server has not taken, whose
-        // files a scan must not call unchanged.
-        let unanswered: HashSet<String> = crate::store::waiting_writes(&*self.core.conn()?)?
-            .into_iter()
-            .filter(|write| matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem))
-            .filter_map(|write| write.item_id)
-            .collect();
+        // Files a scan must not call unchanged.
+        let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
         // Each file's size and time, taken before its read, so a change made
         // during the read differs from what is recorded.
         let mut stats: Vec<(String, String)> = Vec::new();

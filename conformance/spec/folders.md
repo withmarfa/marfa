@@ -4948,6 +4948,14 @@ When a folder scan finds a file whose bytes are as they were bound and whose wri
 
 **Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
 
+### `folders/scan-waiting-not-dead`
+
+When a folder scan finds a file whose bytes are as they were bound and whose only unanswered write is dead, a device MUST count it in `unchanged` and not in `waiting`.
+
+**Reason:** A dead write is never sent again, so nothing waits to be delivered.
+
+**Tests:** `device/folders.test.ts › counts a file whose create died unchanged, not waiting`.
+
 ### `folders/scan-waiting-said`
 
 When a folder scan counts a file `waiting`, the CLI MUST say how many in its text report.

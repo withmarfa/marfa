@@ -3120,6 +3120,36 @@ describe("files and items", () => {
     expect(said.value.text).toContain("the server asked for 2s");
   });
 
+  it("counts a file whose create died unchanged, not waiting", async () => {
+    harness = await folderHarness("scan-dead-not-waiting");
+    // An answer the device cannot read, until the write dies.
+    scriptFolderWrites(harness, {
+      creating: () =>
+        ({ kind: "json", status: 200, body: "not json at all" }) as Answer,
+    });
+    put(harness, "One.md", "---\ntitle: One\n---\nOne\n");
+    let dead = false;
+    let waited = false;
+    for (let pass = 0; pass < 8 && !dead; pass += 1) {
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      waited ||= pushed.value.scan.waiting === 1;
+      dead = pushed.value.drain.verdicts.some(
+        (entry) => entry.verdict === "dead",
+      );
+    }
+    // The witness: before it died, the create was counted waiting.
+    expect([waited, dead]).toEqual([true, true]);
+    const after = await harness.folder.push();
+    expect(after.ok, JSON.stringify(after)).toBe(true);
+    if (!after.ok) return;
+    expect(
+      [after.value.scan.unchanged, after.value.scan.waiting],
+      "a file whose write died, and is never sent again, was counted waiting",
+    ).toEqual([1, 0]);
+  });
+
   it("sends again when the Retry-After a rate limit named is over, without waiting for a change", async () => {
     harness = await folderHarness("watch-waits-out-rate-limit");
     // A monotonic clock, so an adjustment of the wall clock cannot move the
