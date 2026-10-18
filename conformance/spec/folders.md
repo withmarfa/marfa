@@ -5224,9 +5224,29 @@ When a paused disk removal is restored and the missing files’ items still matc
 
 ### `folders/restore-disk-files-put-back-count`
 
-When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST count the missing files as `put_back`.
+When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST count as `put_back` each missing file the restore wrote back.
 
-**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`.
+**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `› counts as put back only the files a restore wrote, and keeps the item of one it could not`.
+
+### `folders/restore-not-written-listed`
+
+If a paused disk removal is restored and a missing file whose item still matches the folder’s search cannot be written back, such as one whose bytes cannot be fetched, then a device MUST list that file in `not_written_back` with the reason, rather than count it as `put_back`.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`.
+
+### `folders/restore-not-written-kept`
+
+If a paused disk removal is restored and a missing file cannot be written back, then a device MUST NOT delete that file’s item at a later push.
+
+**Reason:** the person asked for the files back, so a file still missing is one the device has not yet written, not one the person deleted.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`.
+
+### `folders/restore-not-written-retried`
+
+When a pull after a restore can fetch the bytes of a missing file the restore could not write back, a device MUST write that file.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`.
 
 ### `folders/restore-departed-binding`
 

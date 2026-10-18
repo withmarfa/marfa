@@ -322,8 +322,19 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Restore { dir } => {
             let restored = working(&dir, named.session_if_named()?)?.restore()?;
             output::report(&restored, json, || {
+                let unwritten = match restored.not_written_back.len() {
+                    0 => String::new(),
+                    left => format!(
+                        "; {left} file(s) not written back yet, which every pull tries again{}",
+                        restored
+                            .not_written_back
+                            .iter()
+                            .map(|file| format!("\n{}: {}", file.path, file.reason))
+                            .collect::<String>()
+                    ),
+                };
                 format!(
-                    "{} file(s) written back; {} item(s) restored, sent at the next push",
+                    "{} file(s) written back; {} item(s) restored, sent at the next push{unwritten}",
                     restored.put_back, restored.restored
                 )
             })

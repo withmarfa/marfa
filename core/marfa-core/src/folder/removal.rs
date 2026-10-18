@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use std::cell::OnceCell;
 
-use super::{Departing, Folder, Missing, PullReport, Unsure, state};
+use super::{Departing, Flagged, Folder, Missing, PullReport, Unsure, state};
 use crate::Result;
 use crate::model::ItemState;
 
@@ -20,7 +20,12 @@ pub struct Confirmed {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Restored {
+    /// Missing files the restore's pull wrote back.
     pub put_back: usize,
+    /// Missing files the restore's pull could not write back, such as one
+    /// whose bytes could not be fetched, each with why. Every later pull
+    /// tries each again.
+    pub not_written_back: Vec<Flagged>,
     pub restored: usize,
     pub pull: PullReport,
 }
@@ -93,7 +98,7 @@ impl Folder {
             )
         };
         let members = self.members(&settings)?;
-        let mut put_back = 0;
+        let mut marked = Vec::new();
         for path in &disk {
             let (bound, held) = {
                 let conn = self.core.conn()?;
@@ -129,7 +134,7 @@ impl Folder {
                     ..bound
                 },
             )?;
-            put_back += 1;
+            marked.push(path);
         }
         let mut restored = 0;
         for path in &pull {
@@ -162,10 +167,34 @@ impl Folder {
             state::set_paused(&conn, state::Removal::Disk, &[])?;
             state::set_paused(&conn, state::Removal::Pull, &[])?;
         }
+        let pull = self.pull()?;
+        let mut not_written_back = Vec::new();
+        for path in &marked {
+            if self.exists(self.root.join(path)) {
+                continue;
+            }
+            // Bound, the missing file would be read as deleted by the next
+            // scan, and its item sent to the bin. Unbound, it is an item the
+            // folder has not written yet, which every pull tries again.
+            state::unbind(&*self.core.conn()?, path)?;
+            not_written_back.push(
+                pull.flagged
+                    .iter()
+                    .find(|file| &file.path == *path)
+                    .cloned()
+                    .unwrap_or_else(|| Flagged {
+                        path: (*path).clone(),
+                        flag: "absent",
+                        reason: "the pull did not write it".into(),
+                        item: None,
+                    }),
+            );
+        }
         Ok(Restored {
-            put_back,
+            put_back: marked.len() - not_written_back.len(),
+            not_written_back,
             restored,
-            pull: self.pull()?,
+            pull,
         })
     }
 }
