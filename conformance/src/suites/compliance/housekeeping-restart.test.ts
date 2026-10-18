@@ -109,9 +109,11 @@ describe("a run the last process left unfinished", () => {
         await server.restart({ signal: "SIGKILL" });
         await Promise.all(runs);
 
+        // Only the jobs held before the kill: the scheduler's first pass may
+        // have started another job whose run is legitimately under way.
         const after = await jobs(server);
-        for (const [name, row] of Object.entries(after)) {
-          expect(row.running_since, name).toBeNull();
+        for (const name of held) {
+          expect(after[name]?.running_since, name).toBeNull();
         }
         expect(await server.faults()).toEqual([]);
         for (const name of held) {
