@@ -16,6 +16,7 @@ import {
 import { safeJsonParse } from "../json-utils.js";
 import { auditLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
   return {
@@ -43,7 +44,7 @@ export class SqliteAuditStore implements AuditStore {
   ): typeof auditLog.$inferInsert {
     return {
       id,
-      created_at: new Date().toISOString(),
+      created_at: clock.now().toISOString(),
       key_id: entry.key_id ?? null,
       action: entry.action,
       resource_type: entry.resource_type,
@@ -156,7 +157,7 @@ export class SqliteAuditStore implements AuditStore {
 
   async cleanup(retentionDays: number): Promise<number> {
     const cutoff = new Date(
-      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+      clock.nowMs() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
     const result = await this.db
       .delete(auditLog)

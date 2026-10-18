@@ -8,6 +8,7 @@ import type {
 } from "../interface.js";
 import { enrichmentState, item_blob_references, items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 export class SqliteEnrichmentStore implements EnrichmentStore {
   constructor(private db: DrizzleDb) {}
@@ -102,7 +103,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
       attempts: state.attempts,
       error: state.error ?? null,
       config_signature: state.config_signature,
-      updated_at: new Date().toISOString(),
+      updated_at: clock.now().toISOString(),
     };
     await this.db
       .insert(enrichmentState)

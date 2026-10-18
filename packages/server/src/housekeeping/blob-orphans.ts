@@ -4,6 +4,7 @@ import { log } from "../middleware/logger.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 // A type alias rather than an interface: an interface carries no index
 // signature, so it cannot satisfy the `HousekeepingReport` the scheduler
@@ -39,7 +40,7 @@ export class BlobOrphanReporter {
     private readonly storage: Storage,
     private readonly stores: Stores,
     private readonly graceMs: number,
-    private readonly nowFn: () => Date = () => new Date(),
+    private readonly nowFn: () => Date = () => clock.now(),
   ) {}
 
   async runOnce(): Promise<OrphanResult> {

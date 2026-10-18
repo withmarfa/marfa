@@ -2,6 +2,7 @@ import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { oauthPrincipal, toRequestApiKey } from "../middleware/auth.js";
 import type { CredentialKind } from "../routes/_blob-reach.js";
+import * as clock from "../clock.js";
 
 /** A credential as it stands now, for work that outlives its request. */
 export interface LiveCredential {
@@ -46,7 +47,7 @@ export async function resolveLiveCredential(
   if (id === null) return null;
   const key = await storage.keys.get(id);
   if (key) {
-    if (key.expires_at && key.expires_at <= new Date().toISOString()) {
+    if (key.expires_at && key.expires_at <= clock.now().toISOString()) {
       return null;
     }
     return { key, kind: "api_key", permissions: key.permissions };
@@ -56,7 +57,7 @@ export async function resolveLiveCredential(
   if (
     !options.tokenOutlivesExpiry &&
     token.expiresAtMs !== null &&
-    token.expiresAtMs < Date.now()
+    token.expiresAtMs < clock.nowMs()
   ) {
     return null;
   }

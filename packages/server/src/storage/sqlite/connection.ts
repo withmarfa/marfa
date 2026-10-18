@@ -28,6 +28,7 @@ import {
   TransactionControl,
   transactionControl,
 } from "./transaction-control.js";
+import * as clock from "../../clock.js";
 
 /**
  * The database's DDL, generated from `schema.ts` by
@@ -325,13 +326,13 @@ export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = busyBudgetMs,
 ): Promise<T> {
-  const deadline = Date.now() + budgetMs;
+  const deadline = clock.nowMs() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
   for (;;) {
     try {
       return await attempt();
     } catch (err) {
-      const remaining = deadline - Date.now();
+      const remaining = deadline - clock.nowMs();
       if (!isBusy(err)) throw err;
       if (remaining <= 0) {
         // The budget is spent and the lock is still held. Rethrowing

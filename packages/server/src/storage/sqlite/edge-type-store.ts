@@ -10,6 +10,7 @@ import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore } from "../interface.js";
 import { edgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 function parseRow(row: typeof edgeTypes.$inferSelect): EdgeTypeSchema {
   return JSON.parse(row.schema) as EdgeTypeSchema;
@@ -41,7 +42,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
           `Edge type ${schema.id} already exists`,
           { edge_type: schema.id },
         );
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       await tx
         .insert(edgeTypes)
         .values({
@@ -63,7 +64,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
         .update(edgeTypes)
         .set({
           schema: JSON.stringify(schema),
-          updated_at: new Date().toISOString(),
+          updated_at: clock.now().toISOString(),
         })
         .where(eq(edgeTypes.id, schema.id))
         .returning({ id: edgeTypes.id });

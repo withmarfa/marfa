@@ -9,6 +9,7 @@ import { isConnectionLostError } from "./job-tick.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * The retention sweeps. Each is a class with one `runOnce()` that does a
@@ -97,7 +98,7 @@ export class TrashPurger {
   constructor(
     private storage: Storage,
     private retentionDays: number,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
     private configOverride?: RetentionOverride,
   ) {}
 
@@ -185,7 +186,7 @@ export class RevokedGrantPurger {
   constructor(
     private storage: Storage,
     private retentionDays: number,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   async runOnce(): Promise<number> {
@@ -248,7 +249,7 @@ export class GrantInactivityRetirer {
   constructor(
     private storage: Storage,
     private inactivityDays: number,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One sweep: retires every grant inactive past the window and returns
@@ -336,7 +337,7 @@ export class GrantInactivityRetirer {
 export class AuthSessionCleaner {
   constructor(
     private store: AuthSessionStore,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One sweep — drops every row whose `expires_at` is strictly before
@@ -361,7 +362,7 @@ export class AuthSessionCleaner {
 export class RateLimitWindowCleaner {
   constructor(
     private storage: Storage,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One sweep — drops every expired window row. */
@@ -402,7 +403,7 @@ export class DcrClientCleaner {
   constructor(
     private storage: Storage,
     private retentionDays: number,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One sweep — deletes grantless clients idle past the window. No-op
@@ -462,7 +463,7 @@ export class RevokedKeyReaper {
 
   constructor(
     private storage: Storage,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One bounded sweep of at most 200 keys, reporting the audited count. */

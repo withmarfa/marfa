@@ -1,5 +1,6 @@
 import { DEPLOYMENT_ENVIRONMENT } from "../deployment-environment.js";
 import { withoutFailedQueries } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * Fire-and-forget error webhook notifications with per-error-type debouncing.
@@ -74,7 +75,7 @@ export function notifyError(
     environment: DEPLOYMENT_ENVIRONMENT,
   };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
-  const now = Date.now();
+  const now = clock.nowMs();
   const last = debounceMap.get(errorKey);
   if (last && now - last < DEBOUNCE_MS) return;
   forgetExpired(now);

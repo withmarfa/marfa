@@ -17,6 +17,7 @@ import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS } from "../config.js";
 import { hashInboundToken } from "../inbound/address.js";
+import * as clock from "../clock.js";
 
 /** Long enough for a backlog to drain or a burst to pass. */
 const RETRY_AFTER_SECONDS = 60;
@@ -67,7 +68,7 @@ export function inboundRoutes(storage: Storage, config: AppConfig) {
 
     if (config.rateLimitEnabled) {
       const key = `endpoint:${target.endpoint_id}`;
-      const now = Date.now();
+      const now = clock.nowMs();
       const windows = await storage.rateLimits.incrementWindows(
         "inbound",
         [key],

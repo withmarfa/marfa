@@ -20,6 +20,7 @@ import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
 import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
 import { indexShapes, reindexChangedTypes } from "./search-store.js";
+import * as clock from "../../clock.js";
 
 const DUPLICATE_KEY_CODES = new Set([
   "SQLITE_CONSTRAINT_PRIMARYKEY",
@@ -46,7 +47,7 @@ export class SqliteTypeStore implements TypeStore {
     schema: TypeSchema,
     provenance?: TypeProvenance,
   ): Promise<TypeSchema> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db.transaction(async (tx) => {
       const shapes = indexShapes(schema.id);
       try {
@@ -78,7 +79,7 @@ export class SqliteTypeStore implements TypeStore {
   }
 
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db.transaction(async (tx) => {
       const shapes = indexShapes(id);
       const stored = await tx
@@ -206,7 +207,7 @@ export class SqliteTypeStore implements TypeStore {
   async seedPlatformTypes(
     seeded: readonly SeededPlatformType[],
   ): Promise<string[]> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     return this.db.transaction(async (tx) => {
       // What the rows were indexed under, so that a build shipping a changed
       // schema for a type indexes its rows, and its subtypes', again.

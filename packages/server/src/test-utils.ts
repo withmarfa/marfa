@@ -31,6 +31,7 @@ import { subscribe, subscribeEdges } from "./pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "./pubsub.js";
 import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
+import * as clock from "./clock.js";
 
 /**
  * Replace every `$ref` in a slice of the OpenAPI document with the schema it
@@ -336,9 +337,9 @@ export async function waitForConsentLockDepth(
   authUserId: string,
   expected: number,
 ): Promise<void> {
-  const deadline = Date.now() + LOCK_ARRIVAL_BUDGET_MS;
+  const deadline = clock.nowMs() + LOCK_ARRIVAL_BUDGET_MS;
   while (consentLockDepth(clientId, authUserId) < expected) {
-    if (Date.now() >= deadline) {
+    if (clock.nowMs() >= deadline) {
       throw new Error(
         `competing request never reached the consent lock: depth ` +
           `${String(consentLockDepth(clientId, authUserId))}, expected ` +
@@ -813,7 +814,7 @@ export async function readSse(
   let text = "";
   let closed = false;
   let satisfied = false;
-  const deadline = Date.now() + timeoutMs;
+  const deadline = clock.nowMs() + timeoutMs;
 
   // One read outstanding at a time, and the same promise is awaited again
   // rather than replaced. A second `read()` issued while the first is still
@@ -825,7 +826,7 @@ export async function readSse(
   let pending: Promise<StreamChunk> | undefined;
 
   for (;;) {
-    const remaining = deadline - Date.now();
+    const remaining = deadline - clock.nowMs();
     if (remaining <= 0) break;
     pending ??= reader
       .read()

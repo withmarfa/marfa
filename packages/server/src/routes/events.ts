@@ -37,6 +37,7 @@ import { readableMetadata } from "./_extension-reach.js";
 import { announcedEdgeReadable } from "./_edge-visibility.js";
 import { errorMessage } from "../error-text.js";
 import type { StreamIncompleteReason } from "./_stream-incomplete.js";
+import * as clock from "../clock.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
 const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
@@ -540,10 +541,10 @@ export function eventRoutes(
               // would retain one listener per departed viewer indefinitely.
               const subscriptionAbort = new AbortController();
 
-              let lastWriteAt = Date.now();
+              let lastWriteAt = clock.nowMs();
               const send = (data: string) => {
                 if (state.closed) return;
-                lastWriteAt = Date.now();
+                lastWriteAt = clock.nowMs();
                 try {
                   controller.enqueue(encoder.encode(data));
                 } catch {
@@ -571,7 +572,7 @@ export function eventRoutes(
               const waitForRoom = async (): Promise<boolean> => {
                 if (hasRoom()) return true;
                 let room = controller.desiredSize ?? 0;
-                let tookAt = Date.now();
+                let tookAt = clock.nowMs();
                 while (!state.closed) {
                   let timer: ReturnType<typeof setTimeout> | undefined;
                   await new Promise<void>((resolve) => {
@@ -584,9 +585,9 @@ export function eventRoutes(
                   if (state.closed) return false;
                   if (hasRoom()) return true;
                   const now = controller.desiredSize ?? 0;
-                  if (now > room) tookAt = Date.now();
+                  if (now > room) tookAt = clock.nowMs();
                   room = now;
-                  if (Date.now() - tookAt >= readerStallMs) return false;
+                  if (clock.nowMs() - tookAt >= readerStallMs) return false;
                 }
                 return false;
               };
@@ -1139,7 +1140,7 @@ export function eventRoutes(
                     ) {
                       return false;
                     }
-                    if (Date.now() - lastWriteAt >= REPLAY_PROGRESS_MS) {
+                    if (clock.nowMs() - lastWriteAt >= REPLAY_PROGRESS_MS) {
                       send(": replaying\n\n");
                     }
 

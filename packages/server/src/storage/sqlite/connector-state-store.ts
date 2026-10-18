@@ -21,6 +21,7 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
+import * as clock from "../../clock.js";
 
 type AgreementRow = typeof connectorAgreements.$inferSelect;
 
@@ -101,7 +102,7 @@ export class SqliteConnectorStateStore implements ConnectorStateStore {
     | ConnectorHeld
   > {
     return this.db.transaction(async (tx) => {
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       const refused = await unheld(tx, fence, now);
       if (refused !== null) return refused;
       const previous =
@@ -157,7 +158,7 @@ export class SqliteConnectorStateStore implements ConnectorStateStore {
   > {
     const named = [...batch.set.map((entry) => entry.item_id), ...batch.clear];
     return this.db.transaction(async (tx) => {
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       const refused = await unheld(tx, fence, now);
       if (refused !== null) return refused;
 

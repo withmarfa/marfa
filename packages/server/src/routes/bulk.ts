@@ -102,6 +102,7 @@ import {
   undeclaredEntryKeyRefusal,
 } from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
+import * as clock from "../clock.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1142,7 +1143,7 @@ export function bulkRoutes(storage: Storage) {
           input: JSON.stringify(body),
           matched_ids: JSON.stringify(matched.map((i) => i.id)),
           matched_count: matched.length,
-          created_at: new Date().toISOString(),
+          created_at: clock.now().toISOString(),
         }),
       (job) => ({
         client_ip: c.get("clientIp") ?? null,
@@ -1182,7 +1183,7 @@ export function bulkRoutes(storage: Storage) {
         if (!existing)
           throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
         assertJobAuth(c, existing, "instance.maintain");
-        await storage.bulkActionJobs.cancel(id, new Date().toISOString());
+        await storage.bulkActionJobs.cancel(id, clock.now().toISOString());
         const after = await storage.bulkActionJobs.getById(id);
         if (!after)
           throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");

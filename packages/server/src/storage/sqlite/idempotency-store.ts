@@ -9,6 +9,7 @@ import type {
 } from "../interface.js";
 import { idempotencyRecords } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 type Row = typeof idempotencyRecords.$inferSelect;
 
@@ -152,7 +153,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
 
   async cleanup(retentionHours: number): Promise<number> {
     const cutoff = new Date(
-      Date.now() - retentionHours * 3_600_000,
+      clock.nowMs() - retentionHours * 3_600_000,
     ).toISOString();
     const rows = await this.db
       .delete(idempotencyRecords)

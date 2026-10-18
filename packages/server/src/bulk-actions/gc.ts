@@ -4,12 +4,13 @@
  */
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
+import * as clock from "../clock.js";
 
 export class BulkActionJobGcSweeper {
   constructor(
     private storage: Storage,
     private retentionMs: number,
-    private nowFn: () => Date = () => new Date(),
+    private nowFn: () => Date = () => clock.now(),
   ) {}
 
   /** One sweep. Returns the number of rows deleted; 0 means nothing was

@@ -54,6 +54,34 @@ export default [
     },
   },
   {
+    // The server reads the time through `packages/server/src/clock.ts`,
+    // which the conformance harness moves forward through the test hooks.
+    // A read of the system clock anywhere else is a read the harness cannot
+    // move. `auth-pages.ts` is one of the sign-in pages, which are moved
+    // onto the clock with the rest of that surface.
+    files: ["packages/server/src/**/*.ts"],
+    ignores: [
+      "**/*.test.ts",
+      "packages/server/src/clock.ts",
+      "packages/server/src/routes/auth-pages.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[object.name='Date'][property.name='now']",
+          message:
+            "Read the time through `clock.nowMs()` (src/clock.ts), so the test hooks can move it.",
+        },
+        {
+          selector: "NewExpression[callee.name='Date'][arguments.length=0]",
+          message:
+            "Read the time through `clock.now()` (src/clock.ts), so the test hooks can move it.",
+        },
+      ],
+    },
+  },
+  {
     // Tests frequently use non-null assertions where an in-scope setup
     // guarantees the value exists; the test framework surfaces the failure
     // clearly if the assumption is wrong.

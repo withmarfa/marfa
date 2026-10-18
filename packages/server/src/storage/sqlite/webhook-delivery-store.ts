@@ -16,6 +16,7 @@ import {
 } from "../../webhooks/delivery.js";
 import { outboundWebhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 // Success and cancellation no longer need a replay frame. Failed frames
 // retain the original retention deadline for explicit owner redelivery.
@@ -172,7 +173,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         status_code: null,
         attempt: 0,
         error: null,
-        created_at: new Date().toISOString(),
+        created_at: clock.now().toISOString(),
         next_attempt_at: entry.nextAttemptAt,
         payload: entry.payload,
         webhook_url: entry.webhookUrl,
@@ -184,7 +185,9 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   }
 
   async getPending(now: string, limit = 50): Promise<PendingWebhookDelivery[]> {
-    const claimExpiry = new Date(Date.now() + CLAIM_LOCK_TTL_MS).toISOString();
+    const claimExpiry = new Date(
+      clock.nowMs() + CLAIM_LOCK_TTL_MS,
+    ).toISOString();
     const rows = await this.db.all<{
       id: string;
       webhook_id: string;
@@ -305,7 +308,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
 
   async cleanup(retentionDays: number): Promise<number> {
     const cutoff = new Date(
-      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+      clock.nowMs() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
     const result = await this.db
       .delete(outboundWebhookDeliveries)

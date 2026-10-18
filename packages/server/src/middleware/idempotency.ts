@@ -15,6 +15,7 @@ import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { CONTRACT_VERSION } from "../contract.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * A write that is retried after a lost response learns what its first
@@ -431,7 +432,7 @@ async function acquire(
 ): Promise<{ recordId: string; heldSince: string } | { answer: Response }> {
   for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
     const id = generateId();
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const claim = await storage.idempotency.claim({
       id,
       credential,
@@ -476,7 +477,8 @@ async function acquire(
       };
     }
 
-    const expired = Date.parse(held.created_at) < Date.now() - CLAIM_LEASE_MS;
+    const expired =
+      Date.parse(held.created_at) < clock.nowMs() - CLAIM_LEASE_MS;
     if (!expired) {
       throw new MarfaError(
         ErrorCode.IDEMPOTENCY_KEY_IN_FLIGHT,
@@ -563,7 +565,7 @@ async function recordOutcome(
       authorization,
       response_content_type: retained ? contentType : null,
       response_body: retained ? body : null,
-      completed_at: new Date().toISOString(),
+      completed_at: clock.now().toISOString(),
     });
     if (!recorded) {
       // The row is gone, or it is no longer the one this caller took —

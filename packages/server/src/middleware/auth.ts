@@ -28,6 +28,7 @@ import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import type { BoundCredential } from "../auth/live-credential.js";
 import type { ReadViewAuthority } from "../storage/read-view.js";
+import * as clock from "../clock.js";
 
 // ---------------------------------------------------------------------------
 // Hono environment type (shared across all routes)
@@ -109,8 +110,8 @@ export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
   if (
     authority.kind === "owner" &&
-    (Date.now() - authority.authenticatedAt > 300_000 ||
-      authority.authenticatedAt > Date.now())
+    (clock.nowMs() - authority.authenticatedAt > 300_000 ||
+      authority.authenticatedAt > clock.nowMs())
   ) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -239,7 +240,7 @@ export async function stampOAuthGrantLastUsed(
   connectionItemId: string,
 ): Promise<void> {
   const cacheKey = `oauth:${connectionItemId}`;
-  const now = Date.now();
+  const now = clock.nowMs();
   const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
   if (now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
@@ -279,7 +280,7 @@ export async function stampOAuthGrantLastUsedByGrantKey(
   },
 ): Promise<void> {
   const cacheKey = `oauth-grantkey:${opts.clientId}:${opts.authUserId}`;
-  const now = Date.now();
+  const now = clock.nowMs();
   const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
   if (now - lastTracked <= DEBOUNCE_MS) return;
   // Mark BEFORE the lookup — if the lookup misses (no projection yet),
@@ -349,7 +350,7 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
   const grantHandle = `${oauthToken.clientId}:${oauthToken.userId}`;
   const createdAtIso = oauthToken.createdAtMs
     ? new Date(oauthToken.createdAtMs).toISOString()
-    : new Date().toISOString();
+    : clock.now().toISOString();
   // **No role is projected, because there is no role.** What the app may
   // do is the grant, which travels beside this principal rather than
   // inside it.
@@ -504,7 +505,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       // DB-side conditional UPDATE is the authoritative floor; this cache
       // skips the round-trip when this instance already wrote within DEBOUNCE_MS.
       const cacheKey = `key:${stored.id}`;
-      const now = Date.now();
+      const now = clock.nowMs();
       const lastTracked = lastUsedCache.get(cacheKey) ?? 0;
       if (now - lastTracked > DEBOUNCE_MS) {
         await storage.keys.updateLastUsed(stored.id);

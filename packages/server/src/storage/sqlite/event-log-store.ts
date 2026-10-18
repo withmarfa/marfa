@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 export class SqliteEventLogStore implements EventLogStore {
   constructor(private db: DrizzleDb) {}
@@ -15,7 +16,7 @@ export class SqliteEventLogStore implements EventLogStore {
   }): Promise<bigint> {
     const result = await this.db.run(sql`
       INSERT INTO event_log (event_type, item_id, edge_id, payload, enable_fanout, created_at)
-      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.payload}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${new Date().toISOString()})
+      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.payload}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${clock.now().toISOString()})
     `);
     // libsql returns lastInsertRowid as a `bigint` or a number depending on
     // the driver build; normalized to bigint either way so the public wire
@@ -111,7 +112,7 @@ export class SqliteEventLogStore implements EventLogStore {
 
   async cleanup(retentionHours: number): Promise<number> {
     const cutoff = new Date(
-      Date.now() - retentionHours * 3_600_000,
+      clock.nowMs() - retentionHours * 3_600_000,
     ).toISOString();
     // Cut by id, below the oldest row still within retention, and never the
     // newest row. `append` stamps a row before its insert waits for the

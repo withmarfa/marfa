@@ -14,6 +14,7 @@
  */
 
 import type { Storage } from "../storage/interface.js";
+import * as clock from "../clock.js";
 
 export interface ThrottleResult {
   /** `true` if the request is allowed. `false` if the cap has been hit. */
@@ -59,7 +60,7 @@ export class KeyedThrottle {
    */
   async attempt(
     key: string,
-    nowIso = new Date().toISOString(),
+    nowIso = clock.now().toISOString(),
   ): Promise<ThrottleResult> {
     const row = await this.storage.rateLimits.incrementWindow(
       this.family,

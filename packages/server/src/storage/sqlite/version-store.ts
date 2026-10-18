@@ -16,6 +16,7 @@ import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToVersion, writerColumns } from "./helpers.js";
 import { isUniqueViolation } from "./pk-violation.js";
+import * as clock from "../../clock.js";
 
 /** The base Drizzle handle or a transaction handle from `db.transaction`. */
 type TxOrDb =
@@ -42,7 +43,7 @@ export class SqliteVersionStore implements VersionStore {
       tier: itemFields.tier,
       occurred_at: itemFields.occurred_at,
       source_id: itemFields.source_id,
-      created_at: new Date().toISOString(),
+      created_at: clock.now().toISOString(),
     };
     await db
       .insert(versions)

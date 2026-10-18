@@ -40,6 +40,7 @@ import { typeFilterSql } from "../filter-sql.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { collectBlobHashes } from "../blob-utils.js";
 import { scanPendingPropertyPatches } from "./bulk-action-job-store.js";
+import * as clock from "../../clock.js";
 
 // Enqueue and each attempt move to the durable tail; a failed first deletion
 // cannot monopolize a bounded cleanup page, including after a restart.
@@ -59,7 +60,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
         hash,
         mime_type: mimeType,
         size_bytes: sizeBytes,
-        created_at: new Date().toISOString(),
+        created_at: clock.now().toISOString(),
       })
       .onConflictDoNothing()
       .run();
@@ -239,7 +240,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
     kind: BlobStoreKind;
     locator: string;
   }): Promise<void> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db
       .insert(blobStores)
       .values({
@@ -257,7 +258,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
   }
 
   async detachStoresExcept(ids: readonly string[]): Promise<number> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const rows = await this.db
       .update(blobStores)
       .set({ detached_at: now })
@@ -306,7 +307,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
         .values({
           hash,
           store_id: storeId,
-          recorded_at: new Date().toISOString(),
+          recorded_at: clock.now().toISOString(),
           verified_at: null,
         })
         .onConflictDoNothing()
@@ -621,7 +622,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
       await tx.delete(blobs).where(eq(blobs.hash, hash)).run();
       await tx
         .insert(blobPurges)
-        .values({ hash, purged_at: new Date().toISOString() })
+        .values({ hash, purged_at: clock.now().toISOString() })
         .onConflictDoNothing()
         .run();
       return true;

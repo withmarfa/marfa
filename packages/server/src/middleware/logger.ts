@@ -8,6 +8,7 @@ import type { AppEnv } from "./auth.js";
 import { toOpenApiPath } from "../openapi-path.js";
 import { loggablePath } from "../inbound/address.js";
 import { reportableError, withoutFailedQueries } from "../error-text.js";
+import * as clock from "../clock.js";
 
 // ---------------------------------------------------------------------------
 // Structured log entry
@@ -92,7 +93,7 @@ function emitOtelLog(
     severityText: level.toUpperCase(),
     body,
     attributes: attributes as Record<string, AnyValue> satisfies AnyValueMap,
-    timestamp: new Date(),
+    timestamp: clock.now(),
   });
 }
 
@@ -149,7 +150,7 @@ export function log(
       payload.error_summary = formatErrorSummary(prepared.firstError);
     }
     line = JSON.stringify({
-      timestamp: new Date().toISOString(),
+      timestamp: clock.now().toISOString(),
       level,
       message,
       ...payload,
@@ -162,7 +163,7 @@ export function log(
     // from primitives only, so it cannot fail in turn.
     payload = { log_payload_unrenderable: describeThrown(err) };
     line = JSON.stringify({
-      timestamp: new Date().toISOString(),
+      timestamp: clock.now().toISOString(),
       level,
       message: safeString(message),
       ...payload,
@@ -588,7 +589,7 @@ export function loggerMiddleware(transport: "http" | "local_socket" = "http") {
 
     const route = matchedRoute(c);
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp: clock.now().toISOString(),
       request_id: requestId,
       method: c.req.method,
       transport,

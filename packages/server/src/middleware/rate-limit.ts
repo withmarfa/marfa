@@ -3,6 +3,7 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { credentialHandle } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
+import * as clock from "../clock.js";
 
 export interface RateLimitConfig {
   /** Default requests per window. */
@@ -98,7 +99,7 @@ export function rateLimitMiddleware(
     // finer per-path keys can't be used to multiply a caller's overall budget.
     const pathPrefix = matchedPrefix ?? path.split("/").slice(0, 2).join("/");
     const credentialWindowKey = `${identifier}:${pathPrefix}`;
-    const now = Date.now();
+    const now = clock.nowMs();
     const nowIso = new Date(now).toISOString();
 
     // Both windows increment in ONE statement — same table, same

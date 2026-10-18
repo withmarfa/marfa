@@ -10,6 +10,7 @@ import { loggablePath } from "../inbound/address.js";
 import { diskFull } from "../storage/disk-space.js";
 import { PasswordAttemptsSpent } from "../auth/sign-in-throttle.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
+import * as clock from "../clock.js";
 
 /**
  * The single place an error becomes a response.
@@ -149,7 +150,7 @@ export function createErrorHandler(config: {
       notifyError(
         config.errorWebhookUrl,
         {
-          timestamp: new Date().toISOString(),
+          timestamp: clock.now().toISOString(),
           request_id: c.get("requestId"),
           error: summary,
           path: loggablePath(c.req.path),

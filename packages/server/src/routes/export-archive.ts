@@ -33,6 +33,7 @@ import { streamFailure } from "../process-faults.js";
 import { mayReadBlob } from "./_blob-reach.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
+import * as clock from "../clock.js";
 
 /** How many edges, blob digests or history snapshots are read at once. */
 const PAGE = 200;
@@ -150,7 +151,7 @@ export async function handleArchiveExport(
     throw error;
   }
 
-  const created = new Date().toISOString();
+  const created = clock.now().toISOString();
   const head = JSON.stringify({
     version: 0,
     format: "marfa-archive-v0",

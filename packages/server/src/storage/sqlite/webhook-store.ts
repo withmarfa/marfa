@@ -21,6 +21,7 @@ import {
   outboundWebhookDeliveries,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 function ownerOf(row: typeof outboundWebhooks.$inferSelect): WebhookOwner {
   if (row.key_id !== null) return { kind: "key", keyId: row.key_id };
@@ -156,7 +157,7 @@ export class SqliteWebhookStore implements WebhookStore {
   ): Promise<StoredWebhook> {
     return this.db.transaction(async () => {
       await this.checkpoint();
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       const row = {
         event_start_id: ((await this.events.getMaxId()) ?? 0n).toString(),
         id: generateId(),
@@ -193,7 +194,7 @@ export class SqliteWebhookStore implements WebhookStore {
   }
 
   async update(id: string, input: UpdateWebhookInput): Promise<StoredWebhook> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };
     if (input.url !== undefined) updates.url = input.url;
     if (input.events !== undefined)

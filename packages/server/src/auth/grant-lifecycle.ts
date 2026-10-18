@@ -6,6 +6,7 @@ import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
 import type { WrittenBy } from "./version-writer.js";
+import * as clock from "../clock.js";
 
 /**
  * The transitions of a user-app grant that more than one door reaches.
@@ -146,7 +147,7 @@ export async function revokeProjectedGrant(
         id: opts.itemId,
         properties: {
           status: "revoked",
-          revoked_at: new Date().toISOString(),
+          revoked_at: clock.now().toISOString(),
         },
       },
     );
@@ -229,7 +230,7 @@ export async function projectGrantOnConsent(
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     })) ?? null;
-  const now = new Date().toISOString();
+  const now = clock.now().toISOString();
   if (itemId) {
     const existing = await storage.items.get(itemId);
     const prior = Array.isArray(existing?.properties.scopes)

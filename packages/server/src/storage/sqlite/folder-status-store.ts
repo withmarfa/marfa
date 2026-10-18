@@ -9,6 +9,7 @@ import type { FolderStatusStore } from "../interface.js";
 import { assertInWriteTransaction } from "./request-context.js";
 import type { DrizzleDb } from "./connection.js";
 import { folderStatus, apiKeys, auth_session } from "./schema.js";
+import * as clock from "../../clock.js";
 
 export class SqliteFolderStatusStore implements FolderStatusStore {
   constructor(private db: DrizzleDb) {}
@@ -35,7 +36,7 @@ export class SqliteFolderStatusStore implements FolderStatusStore {
         sequence: previous.sequence,
         received_at: previous.received_at,
       };
-    const received_at = new Date().toISOString();
+    const received_at = clock.now().toISOString();
     await this.db
       .insert(folderStatus)
       .values({
