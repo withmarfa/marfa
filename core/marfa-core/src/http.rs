@@ -436,6 +436,19 @@ impl Http {
         }
     }
 
+    /// What a `GET` of `segments` answers, whole, or `None` where it is
+    /// answered `404`.
+    pub(crate) fn read_whole(
+        &self,
+        segments: &[&str],
+    ) -> Result<Option<serde_json::Value>, CoreError> {
+        match self.get_json::<serde_json::Value>(segments, &[]) {
+            Ok(answer) => Ok(Some(answer)),
+            Err(CoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub(crate) fn edge(&self, id: &str) -> Result<Option<WireEdge>, CoreError> {
         match self.get_json::<crate::wire::WireEdgeAnswer>(&["edges", id], &[]) {
             Ok(answer) => Ok(Some(answer.edge)),

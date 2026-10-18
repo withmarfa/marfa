@@ -1337,6 +1337,93 @@ describe("a verdict is reported, not acted on", () => {
     ).toBe(false);
   });
 
+  it.each([
+    [201, "accepted", true],
+    [400, "refused", false],
+  ] as const)(
+    "takes idempotency_result_not_retained naming a first %i as %s, and sends the write waiting on it only after a success",
+    async (originalStatus, verdict, sent) => {
+      harness = await hydratedHarness(
+        `verdicts-not-retained-${originalStatus}`,
+        {
+          rows: held(),
+        },
+      );
+      const created = await harness.device.create({
+        type: "core.note",
+        properties: { title: "large", body: "large" },
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const id = created.value.item_id ?? "a";
+      const edit = await harness.device.update(id, {
+        properties: { title: "waiting" },
+        version: 0,
+      });
+      expect(edit.ok).toBe(true);
+      if (!edit.ok) return;
+
+      scriptWrites(harness.server, {
+        // The first answer was too large to keep and was lost on the way, so
+        // the repeat carries only its status (`errors/idem-not-retained-status`).
+        create: [
+          refusal(
+            422,
+            "idempotency_result_not_retained",
+            "the first response was too large to keep",
+            { original_status: originalStatus },
+          ),
+        ],
+        read: sent
+          ? [
+              answers.updated(
+                wireItem({
+                  id,
+                  version: 1,
+                  properties: { title: "large", body: "large" },
+                }),
+              ),
+            ]
+          : [refusal(404, "item_not_found", "no such item")],
+        update: [
+          answers.updated(
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "waiting", body: "large" },
+            }),
+          ),
+        ],
+      });
+      const drained = await harness.device.drain();
+      expect(drained.ok).toBe(true);
+      if (!drained.ok) return;
+
+      const byId = new Map(
+        drained.value.verdicts.map((answered) => [answered.id, answered]),
+      );
+      expect(
+        byId.get(created.value.id)?.verdict,
+        "the verdict does not follow the status the server says the first answer carried",
+      ).toBe(verdict);
+      const patches = harness.server.requests.filter(
+        (request) => request.method === "PATCH",
+      );
+      expect(
+        patches.length,
+        sent
+          ? "the write waiting on a create the server took was refused or held, so a person's edit never went out"
+          : "the write waiting on a create the server refused went out",
+      ).toBe(sent ? 1 : 0);
+      if (!sent) return;
+      expect(byId.get(edit.value.id)?.verdict).toBe("accepted");
+      expect(
+        (JSON.parse(patches[0]?.body ?? "{}") as { version?: number }).version,
+        "the waiting write went out on the placeholder version rather than the one the create made",
+      ).toBe(1);
+    },
+  );
+
   it("answers about whole fields, never about part of one", async () => {
     harness = await hydratedHarness("verdicts-whole", { rows: held() });
     const edit = await harness.device.update(HELD.id, {

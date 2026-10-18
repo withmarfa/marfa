@@ -628,11 +628,19 @@ When the working copy holds a copy the server set aside, a device MUST hold its 
 
 ### `queue-and-verdicts/refused-contract`
 
-When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks` and `queue-and-verdicts/in-flight-counted` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
+When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted` and `queue-and-verdicts/not-retained-accepted` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
 
 **Reason:** the same request sent again is the same request: a device that retried it would spend the ceiling on identical refusals.
 
-**Tests:** `device/classification.test.ts › refuses a contract failure on the first answer`, `› refuses on the first answer a %i %s that names the contract`, `device/verdicts.test.ts › refused: carries the server's code and is not sent again`.
+**Tests:** `device/classification.test.ts › refuses a contract failure on the first answer`, `› refuses on the first answer a %i %s that names the contract`, `device/verdicts.test.ts › refused: carries the server's code and is not sent again`, `› takes idempotency_result_not_retained naming a first %i as %s, and sends the write waiting on it only after a success`.
+
+### `queue-and-verdicts/not-retained-accepted`
+
+When the server answers a write `422 idempotency_result_not_retained` with a `details.original_status` from `200` to `299`, and the write is not a create that names no `id`, a device MUST give it the verdict `accepted` and read again the row or edge it wrote, as `queue-and-verdicts/success-read-again` states for a `2xx`.
+
+**Reason:** the server ran the write and kept only the status of its answer (`errors/idem-not-retained-status`), so the writes that wait on it can go. The answer carries no row, so a read by id takes its place. A create that names no `id` lands on the row its natural key resolves, and no read by id finds that row, so `queue-and-verdicts/refused-contract` refuses it.
+
+**Tests:** `device/verdicts.test.ts › takes idempotency_result_not_retained naming a first %i as %s, and sends the write waiting on it only after a success`.
 
 ### `queue-and-verdicts/refused-not-resent`
 
