@@ -160,6 +160,10 @@ enum Command {
         command: config::ConfigCommand,
     },
     /// Export the instance's data.
+    ///
+    /// An archive is written even when it lacks blobs that no store could
+    /// read whole. Its manifest lists them under `missing_blobs`, and the
+    /// command then exits 1 with `blobs_missing`, naming them.
     Export(export::ExportArgs),
     /// Restore an archive with direct owner or local authority.
     ///
@@ -176,6 +180,11 @@ enum Command {
     /// Until the first public release, restore only with the server build that
     /// wrote the archive. Archive format 0 does not promise compatibility
     /// between builds.
+    ///
+    /// When the archive lacks blobs it names and this instance does not hold
+    /// them either, the answer lists them in `blobs_missing`, and the command
+    /// prints it and exits 1 with `blobs_missing`. Upload their bytes again
+    /// with `blobs upload` to restore them.
     Restore(restore::RestoreArgs),
     /// Outbound subscriptions that send events out. Every command needs `webhooks.manage`.
     Webhooks {
