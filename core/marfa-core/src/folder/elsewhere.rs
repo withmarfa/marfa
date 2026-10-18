@@ -278,18 +278,28 @@ fn id_of_file(mut file: std::fs::File) -> Option<String> {
     id_of_reader(file).ok().flatten()
 }
 
-/// Read only the frontmatter, preserving an I/O failure as uncertainty.
+/// Read only the frontmatter, preserving an I/O failure as uncertainty. A
+/// line that is not UTF-8 is read as the folder's own scan reads it, with its
+/// ASCII id line intact, so bytes that are not text hold no id and are not
+/// an I/O failure.
 fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
-    let mut lines = BufReader::new(reader).lines();
-    let Some(line) = lines.next().transpose()? else {
+    let mut lines = BufReader::new(reader);
+    let mut next = || -> std::io::Result<Option<String>> {
+        let mut line = Vec::new();
+        if lines.read_until(b'\n', &mut line)? == 0 {
+            return Ok(None);
+        }
+        let line = String::from_utf8_lossy(&line);
+        Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+    };
+    let Some(line) = next()? else {
         return Ok(None);
     };
     let first = line.strip_prefix(super::document::MARK).unwrap_or(&line);
     if first.trim_end() != "---" {
         return Ok(None);
     }
-    for line in lines {
-        let line = line?;
+    while let Some(line) = next()? {
         if line.trim_end() == "---" {
             return Ok(None);
         }
@@ -635,6 +645,70 @@ mod tests {
         assert!(
             listed.is_some_and(|peer| peer.root_dir.is_none()),
             "a folder listed where a link now leads into this one was not kept as a peer it cannot read"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_leaves_the_other_folder_complete() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let mut utf16: Vec<u8> = vec![0xff, 0xfe];
+        for unit in "---\nmarfa_id: n9\n---\nbody\n".encode_utf16() {
+            utf16.extend(unit.to_le_bytes());
+        }
+        std::fs::write(root.join("utf16.md"), &utf16).unwrap();
+        std::fs::write(
+            root.join("latin1.md"),
+            b"---\nmarfa_id: n2\ntitle: caf\xe9\n---\nbody\n",
+        )
+        .unwrap();
+        let peer = Peer {
+            root: root.clone(),
+            root_dir: Some(Directory::open(&root).unwrap()),
+            folder: None,
+            members: OnceCell::new(),
+            walked: OnceCell::new(),
+            bound: OnceCell::new(),
+        };
+        let walked = peer.walked();
+        assert_eq!(walked.files.len(), 2);
+        assert_eq!(
+            walked.partial, None,
+            "a file whose bytes are not text made the whole folder unreadable"
+        );
+        let id = |key: &str| {
+            walked
+                .files
+                .iter()
+                .find(|file| file.key == key)
+                .and_then(|file| file.id.as_deref())
+        };
+        assert_eq!(id("utf16.md"), None);
+        assert_eq!(id("latin1.md"), Some("n2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_the_system_will_not_read_still_leaves_the_other_folder_partial() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let shut = root.join("shut.md");
+        std::fs::write(&shut, "---\nmarfa_id: n3\n---\nbody\n").unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let peer = Peer {
+            root: root.clone(),
+            root_dir: Some(Directory::open(&root).unwrap()),
+            folder: None,
+            members: OnceCell::new(),
+            walked: OnceCell::new(),
+            bound: OnceCell::new(),
+        };
+        let partial = peer.walked().partial.clone();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            partial.is_some(),
+            "the witness: a file that cannot be read at all is doubt"
         );
     }
 

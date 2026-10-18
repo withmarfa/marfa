@@ -3946,6 +3946,14 @@ When a missing folder file could be in unreadable registered folders or several 
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
+### `folders/uncertain-move-not-text`
+
+When another registered folder holds a file whose bytes can be read but are not UTF-8, a device MUST treat that folder's inventory as complete.
+
+**Reason:** The file is held on its own (`folders/unreadable-no-write`), so it is no doubt about where another folder's missing file went, and a deletion of a missing file that waited on it would wait for as long as the file stays.
+
+**Tests:** `device/folders-one-mac.test.ts › confirms a large removal while another folder holds files that are not text`, `device/folders-one-mac.test.ts › holds a file that is not text on its own, and takes it in once it can be read`.
+
 ### `folders/moved-arrival-bytes`
 
 When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.

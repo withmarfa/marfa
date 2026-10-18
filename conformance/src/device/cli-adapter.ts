@@ -1341,6 +1341,7 @@ export class CliFolder {
       this.dir,
       ...this.server(),
     ]);
+      unsure: Array<{ path: string; reason: string }>;
   }
 
   async scan(): Promise<Outcome<ScanReport>> {

@@ -2763,6 +2763,99 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, ids[3]!)).toBe(1);
   });
 
+  it("confirms a large removal while another folder holds files that are not text", async () => {
+    const ids = [0, 1, 2, 3, 4, 5].map(
+      (n) => `01a00000-0000-7000-8000-0000000018${String(n).padStart(2, "0")}`,
+    );
+    const { a, b } = await onOneMac(
+      "confirm-not-text",
+      {
+        search: { types: ["core.note"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": ids.map((id, n) => ({
+          item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
+        })),
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    // Untidy files in the other folder: UTF-16 with and without a byte-order
+    // mark, and Latin-1.
+    const wide = "---\nmarfa_id: not-ours\n---\nwide\n";
+    writeFileSync(
+      join(b.dir, "utf16.md"),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(wide, "utf16le")]),
+    );
+    writeFileSync(join(b.dir, "bare-utf16.md"), Buffer.from(wide, "utf16le"));
+    writeFileSync(
+      join(b.dir, "latin1.md"),
+      Buffer.from("---\ntitle: Café\n---\nun café\n", "latin1"),
+    );
+    for (const n of [0, 1, 2, 3]) rmSync(join(a.dir, `Note ${String(n)}.md`));
+    const paused = await a.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(4);
+
+    const confirmed = await a.folder.confirm();
+    expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+    if (!confirmed.ok) return;
+    expect(
+      [confirmed.value.deleted, confirmed.value.unsure],
+      "a file in another folder that is not text held the deletes of this one",
+    ).toEqual([4, []]);
+    expect((await a.folder.push()).ok).toBe(true);
+    for (const n of [0, 1, 2, 3]) expect(deletesOf(a.server, ids[n]!)).toBe(1);
+    for (const n of [4, 5]) expect(deletesOf(a.server, ids[n]!)).toBe(0);
+  });
+
+  it("holds a file that is not text on its own, and takes it in once it can be read", async () => {
+    const gone = "01a00000-0000-7000-8000-000000001841";
+    const kept = "01a00000-0000-7000-8000-000000001842";
+    const { a, b } = await onOneMac(
+      "not-text-alone",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          { item: { id: gone, properties: { title: "Gone", body: "g\n" } } },
+          { item: { id: kept, properties: { title: "Kept", body: "k\n" } } },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const wide = Buffer.from("---\ntitle: Wide\n---\nwide\n", "utf16le");
+    writeFileSync(join(b.dir, "wide.md"), wide);
+    writeFileSync(join(a.dir, "wide.md"), wide);
+    rmSync(join(a.dir, "Gone.md"));
+    writeFileSync(
+      join(a.dir, "Kept.md"),
+      readFileSync(join(a.dir, "Kept.md"), "utf8").replace("k\n", "edited\n"),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(
+      [deletesOf(a.server, gone), swept.value.scan.unsure],
+      "a file that is not text, in this folder or the other, held a delete",
+    ).toEqual([1, []]);
+    expect(sentUpdates(a).map((sent) => sent.id)).toEqual([kept]);
+    expect(
+      swept.value.scan.flagged.filter((file) => file.path === "wide.md"),
+      "the file that is not text is reported once",
+    ).toHaveLength(1);
+    expect(readFileSync(join(a.dir, "wide.md"))).toEqual(wide);
+    expect(readFileSync(join(b.dir, "wide.md"))).toEqual(wide);
+
+    // Saved as UTF-8, it is sent as any new file is.
+    const before = sentTitles(a).length;
+    put(a, "wide.md", "---\ntitle: Wide\n---\nwide\n");
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(sentTitles(a).slice(before)).toEqual(["Wide"]);
+  });
+
   it("keeps a file a crash cut off taking in where it was, and journals no delete", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-00000000fa45",
