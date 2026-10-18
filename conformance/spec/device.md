@@ -1670,13 +1670,13 @@ When the server answers `GET /keys/current` to a key that reaches no type, the C
 
 ### `device/command-keys-keep-refuses-spent-key`
 
-If the server refuses the check of `keys keep` `401`, as it does a key that is revoked, expired or unknown, then the CLI MUST keep nothing and exit 5.
+If the server answers the check of `keys keep` `401 unauthorized`, as it does for a key that is revoked, expired or unknown, then the CLI MUST keep nothing and exit 5.
 
 **Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
 
 ### `device/command-keys-keep-refuses-access-token`
 
-If the server refuses the check of `keys keep` `403 forbidden`, as it does an app's access token (`keys-and-oauth/current-key-app`), then the CLI MUST keep nothing and refuse it `invalid` with exit 1, saying the credential is not a key.
+If the server answers the check of `keys keep` `403 forbidden`, as it does for an app's access token (`keys-and-oauth/current-key-app`), then the CLI MUST keep nothing and refuse it `invalid` with exit 1, saying the credential is not a key.
 
 **Reason:** an access token ends within the hour, and `login` keeps a sign-in that renews it.
 

@@ -488,7 +488,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         let checked = Remote::keyed(remote.url(), &key)?;
         match checked.json(&current_request()) {
             Ok(_) => {}
-            // An app's access token is refused the key's own answer
+            // The server refuses an app's access token this answer
             // (`keys-and-oauth/current-key-app`). It is not a key, and it
             // ends within the hour, so a keychain is no place for it.
             Err(CliError::Refused {
