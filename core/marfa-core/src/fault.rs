@@ -66,8 +66,8 @@ mod holds {
         armed: bool,
         reached: usize,
         waiting: usize,
-        /// Moves each release, so a caller waiting through one release and
-        /// an arming after it is not let go by the earlier release.
+        /// Lets a released caller proceed even if the point is armed again
+        /// before that caller wakes.
         released: u64,
     }
 

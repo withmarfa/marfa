@@ -243,7 +243,7 @@ was last told, a call held at a point, a wait read without being spent. A
 second implementation is judged by the binding fixtures when it supplies what
 follows.
 
-- **The module.** It is loaded in a process of its own,
+- **The module.** Each fixture loads it in a new process,
   `src/device/binding-host.mjs`, which the fixture talks to over IPC. A
   call that blocks its thread, as the engine's synchronous ones do while they
   read from the server, would otherwise stop the scripted server in the
@@ -254,7 +254,10 @@ follows.
   apart by `kind` (`applied`, `catalogChanged`, `serverUnreachable`,
   `serverReachable`, `queueDrained`, `queueNotDrained`, `saved`,
   `watchFailed`). A call that waits on the server, `withdraw` and `discard`
-  among them, answers a promise.
+  among them, answers a promise. The adapter in
+  [`src/device/binding-adapter.ts`](src/device/binding-adapter.ts) defines the
+  calls and result shapes the fixtures use; the host translates them to the
+  module's methods.
 - **`toldUnreachable`.** `follow` and `watch` take it as an optional last
   argument. It says the caller was last told `serverUnreachable` by an earlier
   one, so the first stream is told `serverReachable` and `serverUnreachable`
@@ -284,7 +287,7 @@ follows.
 
 A release build has no `testHooks` and no `testClock`: a fixture that uses
 them fails on a module built `--release`, naming that. The module's build
-needs the `napi` command its `package.json` pins, and the fixtures refuse a
+needs the `napi` command its `pnpm-lock.yaml` pins, and the fixtures refuse a
 module older than the binding's or the engine's source.
 
 ### The request log

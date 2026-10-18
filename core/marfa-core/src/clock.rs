@@ -163,8 +163,6 @@ mod manual {
         }
 
         pub(super) fn now(&self) -> Instant {
-            // A clock moved past what an `Instant` can hold stays at the
-            // latest it can.
             self.base
                 .checked_add(held(&self.state).elapsed)
                 .unwrap_or(self.base)
