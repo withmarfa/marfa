@@ -7,7 +7,7 @@ import {
   startDeviceFlow,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { DAY_MS, movedClock, runJob } from "../../utils/moved-clock.js";
 import {
   authorize,
   authorizeQuery,
@@ -151,35 +151,6 @@ describe("a grant made or ended without the person asking", () => {
     await flow.approve();
     expect(await logged("auth.grant.created")).toBe(before + 1);
   });
-
-  it("is in the audit log when the inactivity retirement retires a grant", async () => {
-    const app = await registerApp(server, NOTES);
-    const issued = await connect(server, origin, cookie, app, NOTES);
-    // A year is a long wait, so the grant is aged in place.
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      const aged = db
-        .prepare(
-          `UPDATE items SET properties = json_set(properties, '$.granted_at', '2001-01-01T00:00:00.000Z', '$.last_used_at', '2001-01-01T00:00:00.000Z')
-           WHERE type = 'system.connection' AND json_extract(properties, '$.client_id') = ?`,
-        )
-        .run(app.clientId);
-      expect(aged.changes).toBe(1);
-    });
-    const before = await logged("auth.grant.retired");
-    const run = await fetch(
-      `${server.apiUrl}/housekeeping/grant-inactivity-retirement/run`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${server.managementKey}` },
-      },
-    );
-    expect(run.status, await run.clone().text()).toBe(200);
-    expect(await logged("auth.grant.retired")).toBe(before + 1);
-    const usable = await fetch(`${server.apiUrl}/items?limit=1`, {
-      headers: { authorization: `Bearer ${issued.access_token!}` },
-    });
-    expect(usable.status, "the retired grant's token still worked").toBe(401);
-  });
 });
 
 describe("a security observation", () => {
@@ -237,5 +208,38 @@ describe("a security observation", () => {
     // The witness: a request nothing narrows records no such entry.
     await codeFor(server, origin, cookie, app, NOTES);
     expect(await logged("auth.scopes.narrowed", app.clientId)).toBe(before + 1);
+  });
+});
+
+/**
+ * Last in the file, because moving the server's clock a year puts every
+ * sign-in token and owner session made before it out of step with the
+ * server.
+ */
+describe("a grant retired for inactivity", () => {
+  it("is in the audit log when the inactivity retirement retires a grant", async () => {
+    const app = await registerApp(server, NOTES);
+    await connect(server, origin, cookie, app, NOTES);
+    const grantsOf = async (): Promise<string[]> => {
+      const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+        headers: { authorization: `Bearer ${server.managementKey}` },
+      });
+      expect(listed.status).toBe(200);
+      return (
+        (await listed.json()) as { data: { client_id: string }[] }
+      ).data.map((g) => g.client_id);
+    };
+    expect(await grantsOf()).toContain(app.clientId);
+    expect(await logged("auth.grant.retired", app.clientId)).toBe(0);
+
+    // Earlier grants are also idle after the move, so identify this client's
+    // audit entry rather than counting every retirement.
+    await movedClock(server).advance(366 * DAY_MS);
+    // The scheduler finds the job due after the move and may be running it.
+    expect((await runJob(server, "grant-inactivity-retirement")).outcome).toBe(
+      "ok",
+    );
+    expect(await logged("auth.grant.retired", app.clientId)).toBe(1);
+    expect(await grantsOf()).not.toContain(app.clientId);
   });
 });

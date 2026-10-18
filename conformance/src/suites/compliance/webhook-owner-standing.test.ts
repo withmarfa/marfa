@@ -8,6 +8,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
@@ -16,16 +17,19 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * with that credential: a key that reaches its `expires_at`, an app whose
  * grant is revoked.
  *
- * A server of its own. A key's expiry is set only in the stored database, and
- * an app's grant needs the instance's one owner, who is created here.
+ * A server of its own. A key's expiry is reached by moving the server's clock,
+ * which would put a sign-in token out of step with it, so the case that needs
+ * an app's token, which also needs the instance's one owner, comes first.
  */
 let server: FreshServer | undefined;
+let clock: ReturnType<typeof movedClock>;
 let receiver: Receiver;
 /** Paths of the receiver that answer a delivery with a failure to retry. */
 const failing = new Set<string>();
 
 beforeAll(async () => {
   server = await bootFreshServer("webhook-owner-standing");
+  clock = movedClock(server);
   receiver = await startReceiver({
     status: (received) => (failing.has(received.path) ? 503 : 200),
   });
@@ -79,92 +83,6 @@ const sentTo = (label: string) =>
   receiver.received.filter((r) => r.path === `/hook/${label}`);
 
 describe("a subscription whose credential stops standing", () => {
-  it("delivers nothing more once the key that registered the subscription expires", async () => {
-    const minted = await client(server!.workingKey).createKey({
-      label: "expiring-owner",
-      source: "webhook-owner-standing-expiring",
-      permissions: ["webhooks.manage"],
-      type_permissions: { "*": "read" },
-    });
-    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
-    // Asked of the server's address as it stands, which a restart changes.
-    const owner = () => client(minted.data.key);
-
-    // The key holds an expiry a long way off while it registers and is
-    // delivered to, so what it stops doing later is what its expiry did.
-    await server!.restart({
-      whileStopped: () => {
-        withInstanceDatabase(server!.sqlitePath, (db) => {
-          db.prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").run(
-            new Date(Date.now() + 600_000).toISOString(),
-            minted.data.id,
-          );
-        });
-      },
-    });
-    await subscribe(owner(), "expiry-live");
-    const retrying = await subscribe(owner(), "expiry-retrying");
-    // The sentinel: a subscription of a key that does not expire, which
-    // says an event was dispatched.
-    await subscribe(client(server!.workingKey), "expiry-sentinel");
-
-    const before = await note("expiry-before");
-    await receiver.waitFor(
-      (r) => r.path === "/hook/expiry-live" && r.body.includes(before),
-    );
-    // A delivery of the expiring key that is waiting on a retry when the key
-    // expires: the receiver fails it until the file says otherwise.
-    failing.add("/hook/expiry-retrying");
-    const waiting = await note("expiry-waiting");
-    const pending = await waitFor("the retry to be waiting", async () => {
-      const rows = await owner().listWebhookDeliveries(retrying);
-      return rows.data.data.find(
-        (row) =>
-          row.status === "pending" &&
-          row.attempt >= 1 &&
-          sentTo("expiry-retrying").some((r) => r.body.includes(waiting)),
-      );
-    });
-    failing.delete("/hook/expiry-retrying");
-
-    await server!.restart({
-      whileStopped: () => {
-        withInstanceDatabase(server!.sqlitePath, (db) => {
-          db.prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?").run(
-            new Date(Date.now() + 3000).toISOString(),
-            minted.data.id,
-          );
-        });
-      },
-    });
-    await waitFor("the key to pass its expiry", async () =>
-      (await owner().getCurrentKey()).status === 401 ? true : undefined,
-    );
-    const sentBefore = sentTo("expiry-retrying").length;
-
-    const after = await note("expiry-after");
-    await receiver.waitFor(
-      (r) => r.path === "/hook/expiry-sentinel" && r.body.includes(after),
-    );
-    await run("webhook-poll");
-    await run("webhook-poll");
-
-    expect(
-      sentTo("expiry-live").some((r) => r.body.includes(after)),
-      "an event written after the key expired was delivered to its subscription",
-    ).toBe(false);
-    expect(
-      sentTo("expiry-retrying").length,
-      "a pending delivery of the expired key was attempted",
-    ).toBe(sentBefore);
-    const stored = withInstanceDatabase(server!.sqlitePath, (db) =>
-      db
-        .prepare("SELECT status FROM outbound_webhook_deliveries WHERE id = ?")
-        .get(pending.id),
-    ) as { status: string };
-    expect(stored.status).not.toBe("success");
-  });
-
   it("deletes an app's subscriptions when its grant is revoked", async () => {
     const app = await approvedApp(server!, [
       "core.note:read",
@@ -216,5 +134,73 @@ describe("a subscription whose credential stops standing", () => {
       sentTo("grant-app").some((r) => r.body.includes(after)),
       "an event written after the grant was revoked was delivered to its subscription",
     ).toBe(false);
+  });
+
+  it("delivers nothing more once the key that registered the subscription expires", async () => {
+    const minted = await client(server!.workingKey).createKey({
+      label: "expiring-owner",
+      source: "webhook-owner-standing-expiring",
+      permissions: ["webhooks.manage"],
+      type_permissions: { "*": "read" },
+      expires_at: new Date(clock.now() + HOUR_MS).toISOString(),
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    const owner = () => client(minted.data.key);
+
+    // The key holds an expiry an hour off while it registers and is
+    // delivered to, so what it stops doing later is what its expiry did.
+    await subscribe(owner(), "expiry-live");
+    const retrying = await subscribe(owner(), "expiry-retrying");
+    // The sentinel: a subscription of a key that does not expire, which
+    // says an event was dispatched.
+    await subscribe(client(server!.workingKey), "expiry-sentinel");
+
+    const before = await note("expiry-before");
+    await receiver.waitFor(
+      (r) => r.path === "/hook/expiry-live" && r.body.includes(before),
+    );
+    // A delivery of the expiring key that is waiting on a retry when the key
+    // expires: the receiver fails it until the file says otherwise.
+    failing.add("/hook/expiry-retrying");
+    const waiting = await note("expiry-waiting");
+    const pending = await waitFor("the retry to be waiting", async () => {
+      const rows = await owner().listWebhookDeliveries(retrying);
+      return rows.data.data.find(
+        (row) =>
+          row.status === "pending" &&
+          row.attempt >= 1 &&
+          sentTo("expiry-retrying").some((r) => r.body.includes(waiting)),
+      );
+    });
+    failing.delete("/hook/expiry-retrying");
+
+    await clock.advance(2 * HOUR_MS);
+    expect(
+      (await owner().getCurrentKey()).status,
+      "the key had not passed its expiry",
+    ).toBe(401);
+    const sentBefore = sentTo("expiry-retrying").length;
+
+    const after = await note("expiry-after");
+    await receiver.waitFor(
+      (r) => r.path === "/hook/expiry-sentinel" && r.body.includes(after),
+    );
+    await run("webhook-poll");
+    await run("webhook-poll");
+
+    expect(
+      sentTo("expiry-live").some((r) => r.body.includes(after)),
+      "an event written after the key expired was delivered to its subscription",
+    ).toBe(false);
+    expect(
+      sentTo("expiry-retrying").length,
+      "a pending delivery of the expired key was attempted",
+    ).toBe(sentBefore);
+    const stored = withInstanceDatabase(server!.sqlitePath, (db) =>
+      db
+        .prepare("SELECT status FROM outbound_webhook_deliveries WHERE id = ?")
+        .get(pending.id),
+    ) as { status: string };
+    expect(stored.status).not.toBe("success");
   });
 });

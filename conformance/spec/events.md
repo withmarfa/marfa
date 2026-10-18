@@ -271,7 +271,7 @@ When the server retires events from the log, the server MUST retire an event onl
 
 **Reason:** a hole in the middle of the log would let a cursor look valid while the events after it were gone.
 
-**Tests:** `compliance/event-retention.test.ts › retires the oldest events together, never leaving a hole`.
+**Tests:** `compliance/event-retention.test.ts › retires the oldest events together, keeping every event from the oldest one within the window`, `› never leaves a hole: an event past the window that stands above one within it is kept`.
 
 ### `events/retention-keeps-newest`
 

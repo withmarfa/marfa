@@ -7,17 +7,22 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * A key's `expires_at`: named on a mint, changed by an update, and held to
- * the lifetime of the key that acts. The server these run against is one of
- * the file's own, so a key can be moved past its expiry in the database to
- * see what a passed expiry does without waiting for one.
+ * the lifetime of the key that acts. What a passed expiry does is seen on a
+ * server of its own, whose clock the fixture moves past the expiry through
+ * the target interface rather than waiting for it.
  */
 let server: FreshServer;
 let management: MarfaClient;
 let owner: MarfaClient;
+/** The server whose clock the expiry cases move, and the operator's key on it. */
+let moving: FreshServer;
+let mover: MarfaClient;
+let clock: ReturnType<typeof movedClock>;
 
 const SOON = "2999-01-01T00:00:00.000Z";
 const LATER = "2999-06-01T00:00:00.000Z";
@@ -25,7 +30,15 @@ const LATEST = "2999-12-01T00:00:00.000Z";
 const PAST = "2001-01-01T00:00:00.000Z";
 
 beforeAll(async () => {
-  server = await bootFreshServer("key-expiry");
+  [server, moving] = await Promise.all([
+    bootFreshServer("key-expiry"),
+    bootFreshServer("key-expiry-clock"),
+  ]);
+  mover = new MarfaClient({
+    baseUrl: moving.apiUrl,
+    apiKey: moving.managementKey,
+  });
+  clock = movedClock(moving);
   management = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.managementKey,
@@ -38,7 +51,7 @@ beforeAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await server.stop();
+  await Promise.all([server.stop(), moving.stop()]);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 let sequence = 0;
@@ -81,45 +94,49 @@ async function expiryOf(id: string): Promise<string | null | undefined> {
   return listed.data.data.find((key) => key.id === id)?.expires_at;
 }
 
-function stampExpiry(id: string, at: string): void {
-  withInstanceDatabase(server.sqlitePath, (db) => {
-    const stamped = db
-      .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
-      .run(at, id);
-    expect(stamped.changes).toBe(1);
-  });
+/** An instant an hour ahead of the clock on the server that moves. */
+const inAnHour = (): string => new Date(clock.now() + HOUR_MS).toISOString();
+
+/** The expiry a key on the server that moves holds, read from its file. */
+function storedExpiry(id: string): string | null {
+  const row = withInstanceDatabase(moving.sqlitePath, (db) =>
+    db.prepare("SELECT expires_at FROM api_keys WHERE id = ?").get(id),
+  ) as { expires_at: string | null };
+  return row.expires_at;
 }
 
 describe("a key past its expires_at", () => {
   it("is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke", async () => {
-    const expiring = await mint("expiring");
-    const lasting = await mint("lasting");
+    const expiring = await mint("expiring", inAnHour(), mover);
+    const lasting = await mint("lasting", undefined, mover);
     const bearer = new MarfaClient({
-      baseUrl: server.apiUrl,
+      baseUrl: moving.apiUrl,
       apiKey: expiring.key,
     });
     // The witness: before its expiry the key works and is listed.
     expect((await bearer.getCurrentKey()).status).toBe(200);
-    expect((await management.listKeys()).data.data.map((k) => k.id)).toContain(
+    expect((await mover.listKeys()).data.data.map((k) => k.id)).toContain(
       expiring.id,
     );
 
-    stampExpiry(expiring.id, "2001-01-01T00:00:00.000Z");
+    await clock.advance(2 * HOUR_MS);
 
     const refused = await bearer.getCurrentKey();
     expect(refused.status).toBe(401);
     expect(refused.error?.error.code).toBe("unauthorized");
-    const listed = (await management.listKeys()).data.data.map((k) => k.id);
+    const listed = (await mover.listKeys()).data.data.map((k) => k.id);
     expect(listed).not.toContain(expiring.id);
     expect(listed).toContain(lasting.id);
 
-    const updated = await management.updateKey(expiring.id, { label: "x" });
+    const updated = await mover.updateKey(expiring.id, { label: "x" });
     expect(updated.status).toBe(404);
     expect(updated.error?.error.code).toBe("api_key_not_found");
-    const revoked = await management.revokeKey(expiring.id);
+    const revoked = await mover.revokeKey(expiring.id);
     expect(revoked.status).toBe(404);
     expect(revoked.error?.error.code).toBe("api_key_not_found");
-    const unchanged = withInstanceDatabase(server.sqlitePath, (db) =>
+    // No door lists an expired key, so its file is the only witness that the
+    // refused update and revoke changed nothing.
+    const unchanged = withInstanceDatabase(moving.sqlitePath, (db) =>
       db
         .prepare("SELECT label, revoked_at FROM api_keys WHERE id = ?")
         .get(expiring.id),
@@ -129,41 +146,34 @@ describe("a key past its expires_at", () => {
 
     // The witness that the refusals are the expiry's: the other key changes.
     expect(
-      (await management.updateKey(lasting.id, { label: "lasting-renamed" }))
-        .status,
+      (await mover.updateKey(lasting.id, { label: "lasting-renamed" })).status,
     ).toBe(200);
   });
 
   it("is refused 401 once the expiry it was minted with comes", async () => {
-    const soon = new Date(Date.now() + 8_000).toISOString();
-    const minted = await mint("brief", soon);
+    const minted = await mint("brief", inAnHour(), mover);
     const bearer = new MarfaClient({
-      baseUrl: server.apiUrl,
+      baseUrl: moving.apiUrl,
       apiKey: minted.key,
     });
     // The witness: the key works until its expiry.
     expect((await bearer.getCurrentKey()).status).toBe(200);
 
-    const deadline = Date.now() + 30_000;
-    let status = 200;
-    while (status === 200 && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      status = (await bearer.getCurrentKey()).status;
-    }
-    expect(status).toBe(401);
+    await clock.advance(2 * HOUR_MS);
+    expect((await bearer.getCurrentKey()).status).toBe(401);
   });
 
   it("gives up its own source to the next mint, and holds it until then", async () => {
     const source = unique("lapsing-source");
-    const lapsing = await management.createKey({
+    const lapsing = await mover.createKey({
       label: source,
       source,
       permissions: ["audit.read"],
-      expires_at: SOON,
+      expires_at: inAnHour(),
     });
     expect(lapsing.status).toBe(201);
     const next = () =>
-      management.createKey({
+      mover.createKey({
         label: `${source}-next`,
         source,
         permissions: ["audit.read"],
@@ -174,9 +184,9 @@ describe("a key past its expires_at", () => {
     expect(held.status).toBe(409);
     expect(held.error?.error.code).toBe("conflict");
 
-    stampExpiry(lapsing.data.id, PAST);
+    await clock.advance(2 * HOUR_MS);
     // The witness: the lapse alone revokes nothing.
-    const before = await management.listAudit({
+    const before = await mover.listAudit({
       action: "key.revoke",
       resource_id: lapsing.data.id,
     });
@@ -188,7 +198,7 @@ describe("a key past its expires_at", () => {
     expect((await next()).status).toBe(409);
 
     // The mint revoked the lapsed key, and the log says so.
-    const revoked = await management.listAudit({
+    const revoked = await mover.listAudit({
       action: "key.revoke",
       resource_id: lapsing.data.id,
     });
@@ -198,19 +208,17 @@ describe("a key past its expires_at", () => {
   });
 
   it("answers 404 api_key_not_found to an update that would clear its expiry, and stays past it", async () => {
-    const expiring = await mint("expired-clear", SOON);
-    stampExpiry(expiring.id, PAST);
-    const cleared = await management.updateKey(expiring.id, {
+    const expiring = await mint("expired-clear", inAnHour(), mover);
+    const expiry = expiring.expires_at;
+    await clock.advance(2 * HOUR_MS);
+    const cleared = await mover.updateKey(expiring.id, {
       expires_at: null,
     });
     expect(cleared.status).toBe(404);
     expect(cleared.error?.error.code).toBe("api_key_not_found");
-    const stored = withInstanceDatabase(server.sqlitePath, (db) =>
-      db
-        .prepare("SELECT expires_at FROM api_keys WHERE id = ?")
-        .get(expiring.id),
-    ) as { expires_at: string };
-    expect(stored.expires_at).toBe(PAST);
+    // No door lists an expired key, so its file is the only witness that the
+    // refused update left the expiry where it was.
+    expect(storedExpiry(expiring.id)).toBe(expiry);
   });
 });
 
