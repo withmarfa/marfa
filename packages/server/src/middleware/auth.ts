@@ -243,7 +243,7 @@ export async function stampOAuthGrantLastUsed(
   const cacheKey = `oauth:${connectionItemId}`;
   const now = clock.monotonicMs();
   const lastTracked = oauthLastUsedCache.get(cacheKey);
-  if (lastTracked !== undefined && now - lastTracked < DEBOUNCE_MS) return;
+  if (lastTracked !== undefined && now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
     await storage.oauthProvider?.updateLastUsedAt(
@@ -283,7 +283,7 @@ export async function stampOAuthGrantLastUsedByGrantKey(
   const cacheKey = `oauth-grantkey:${opts.clientId}:${opts.authUserId}`;
   const now = clock.monotonicMs();
   const lastTracked = oauthLastUsedCache.get(cacheKey);
-  if (lastTracked !== undefined && now - lastTracked < DEBOUNCE_MS) return;
+  if (lastTracked !== undefined && now - lastTracked <= DEBOUNCE_MS) return;
   // Mark BEFORE the lookup — if the lookup misses (no projection yet),
   // we still want to skip retrying for the rest of the window.
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
@@ -410,6 +410,7 @@ export function authMiddleware(storage: Storage, salt: string) {
   // OAuth grants get their throttle from `oauthLastUsedCache` (module-
   // scoped) so route-handler stampers can share the same window.
   const lastUsedCache = new Map<string, number>();
+  const pendingLastUsed = new Map<string, Promise<void>>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
     c.set("authority", undefined);
@@ -503,22 +504,27 @@ export function authMiddleware(storage: Storage, salt: string) {
       c.set("apiKey", toRequestApiKey(stored));
       c.set("authType", "api_key");
 
-      // DB-side conditional UPDATE is the authoritative floor; this cache
-      // skips the round-trip while a write is pending or within DEBOUNCE_MS.
+      // The DB floor uses a strict older-than comparison, so the cache must
+      // wait until more than DEBOUNCE_MS has elapsed before another attempt.
       const cacheKey = `key:${stored.id}`;
       const now = clock.monotonicMs();
       const lastTracked = lastUsedCache.get(cacheKey);
-      if (lastTracked === undefined || now - lastTracked >= DEBOUNCE_MS) {
-        touchLastUsedCache(lastUsedCache, cacheKey, now);
-        try {
-          await storage.keys.updateLastUsed(stored.id);
-        } catch (error) {
-          // An older pending write must not clear a newer window's mark.
-          if (lastUsedCache.get(cacheKey) === now)
-            lastUsedCache.delete(cacheKey);
-          throw error;
-        }
+      let pending = pendingLastUsed.get(cacheKey);
+      if (
+        !pending &&
+        (lastTracked === undefined || now - lastTracked > DEBOUNCE_MS)
+      ) {
+        pending = storage.keys
+          .updateLastUsed(stored.id)
+          .then(() => {
+            touchLastUsedCache(lastUsedCache, cacheKey, now);
+          })
+          .finally(() => {
+            pendingLastUsed.delete(cacheKey);
+          });
+        pendingLastUsed.set(cacheKey, pending);
       }
+      if (pending) await pending;
 
       return next();
     }
