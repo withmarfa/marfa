@@ -4,7 +4,7 @@
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, edges_skipped_reasons, blobs_imported,
- * types_registered, types_skipped, edge_types_registered,
+ * blobs_missing, types_registered, types_skipped, edge_types_registered,
  * edge_types_skipped}`. Enforces the manifest version 0 contract and blob-hash
  * verification, and checks every row before writing any. Memory does not
  * grow with the archive: entries it does not read are skipped, the rest are
@@ -58,7 +58,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import type { BlobLayer } from "../storage/blob-layer.js";
+import { holdsWhole, type BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   planArchiveTypes,
@@ -208,6 +208,11 @@ const restoreArchiveRoute = createRoute({
               .number()
               .describe(
                 "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them.",
+              ),
+            blobs_missing: z
+              .array(z.string())
+              .describe(
+                "The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them.",
               ),
             types_registered: z
               .number()
@@ -965,6 +970,21 @@ async function restoreRows(
   );
 }
 
+/** Of `hashes`, those no attached store holds whole. */
+async function stillAbsent(
+  storage: Storage,
+  blobs: BlobLayer,
+  hashes: string[],
+): Promise<string[]> {
+  const absent: string[] = [];
+  for (const hash of hashes) {
+    const record = await storage.blobs.get(hash);
+    if (!record || !(await holdsWhole(storage, blobs, hash, record.size_bytes)))
+      absent.push(hash);
+  }
+  return absent;
+}
+
 export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
@@ -1094,6 +1114,7 @@ export function restoreArchiveRoutes(
               edges_skipped: result.edgesSkipped,
               edges_skipped_reasons: result.edgesSkippedReasons,
               blobs_imported: archive.blobs.length,
+              blobs_missing: await stillAbsent(storage, blobs, archive.absent),
               types_registered: result.types.typesRegistered,
               types_skipped: result.types.typesSkipped,
               edge_types_registered: result.types.edgeTypesRegistered,

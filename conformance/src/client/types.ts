@@ -663,6 +663,7 @@ export interface RestoreArchiveResponse {
   edges_imported: number;
   edges_skipped: number;
   blobs_imported: number;
+  blobs_missing: string[];
 }
 
 export interface PerfResult {

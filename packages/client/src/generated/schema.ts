@@ -21155,6 +21155,8 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
+                        blobs_missing: string[];
                         /** @description How many types Marfa registered. */
                         types_registered: number;
                         /** @description How many types Marfa skipped because the instance already registers them identically. */
@@ -23287,7 +23289,7 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold. */
                 format?: "ndjson" | "archive";
             };
             header?: never;

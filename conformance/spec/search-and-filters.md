@@ -1214,7 +1214,7 @@ When `GET /export?format=archive` names the filters of an NDJSON export, the ser
 
 ### `search-and-filters/archive-entries`
 
-The server MUST open an archive with its `manifest.json`, then `items.ndjson`, `edges.ndjson` and `types.ndjson`, and then a `blobs/<hash>` entry for each blob.
+The server MUST open an archive with its `manifest.json`, then `items.ndjson`, `edges.ndjson` and `types.ndjson`, and then a `blobs/<hash>` entry for each blob its manifest lists in `blobs`.
 
 **Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest.
 
@@ -1233,6 +1233,34 @@ The server MUST write into the manifest of an archive its `version`, its `format
 The server MUST list in the manifest of an archive each blob it carries, with its MIME type and its size in bytes.
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
+
+### `search-and-filters/archive-missing-blobs`
+
+When an archive would carry a blob of which no attached store holds a copy that the location log records, at the blob's whole size, the server MUST name the blob in the manifest's `missing_blobs` with its MIME type and its size in bytes.
+
+**Reason:** one lost file costs the backup that file and not the rest of the instance, and the manifest, which a reader reads first, says which file the archive lacks. The bytes a struck or dropped copy leaves in its store are not the blob's (`stores/no-bytes-not-found`).
+
+**Tests:** `compliance/export-missing-blob.test.ts › names a blob whose file has left the disk under missing_blobs, and carries the rest`, `› names a blob whose struck copy is the only one under missing_blobs, and answers a whole archive`.
+
+### `search-and-filters/archive-missing-not-carried`
+
+When the manifest of an archive names a blob in `missing_blobs`, the server MUST NOT list the blob in `blobs`, count it in `blob_count` or carry a `blobs/<hash>` entry for it.
+
+**Tests:** `compliance/export-missing-blob.test.ts › names a blob whose file has left the disk under missing_blobs, and carries the rest`.
+
+### `search-and-filters/archive-blob-any-store`
+
+When one attached store's recorded copy of a blob that an archive carries is missing or not as long as the blob, and another attached store holds a recorded copy whole, the server MUST carry the blob's bytes from that other store.
+
+**Tests:** `compliance/export-missing-blob.test.ts › carries a blob whose disk file is gone from the object store's copy`.
+
+### `search-and-filters/archive-bytes-verified`
+
+If the bytes `GET /export?format=archive` reads for a blob do not hash to the blob's name, then the server MUST end the response with an error and not with a clean end.
+
+**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. `blob-integrity` strikes such a copy, and the next export names the blob in `missing_blobs` or reads it from another store.
+
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name`.
 
 ### `search-and-filters/archive-only`
 
@@ -1370,6 +1398,28 @@ When `POST /restore` succeeds, the server MUST carry the counts `imported`, `dup
 
 **Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`.
 
+### `search-and-filters/restore-blobs-missing`
+
+When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, and that no attached store of the instance holds whole.
+
+**Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`.
+
+### `search-and-filters/cli-export-lacking`
+
+When `marfa export --format archive` has written an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+
+**Reason:** the archive is kept, because it holds everything else, and the exit says it is not a whole backup.
+
+**Tests:** `cli/archive-blobs.test.ts › writes the archive and exits 1 with blobs_missing, naming the blob`.
+
+### `search-and-filters/cli-restore-lacking`
+
+When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the CLI MUST print the answer and exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+
+**Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
+
 ### `search-and-filters/restore-edge-skips`
 
 When `POST /restore` skips an edge because the instance already holds it, because an endpoint is missing or because the line is malformed, the server MUST count it in `edges_skipped_reasons` under `already_present`, `endpoint_missing` or `malformed` respectively.
@@ -1472,7 +1522,7 @@ If the `manifest.json` of an archive names a `version` other than 0, then the se
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them or an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
+If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them, `missing_blobs` or an entry of `blobs` or `missing_blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
 **Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 

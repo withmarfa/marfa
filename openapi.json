@@ -41532,6 +41532,13 @@
                       "type": "number",
                       "description": "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them."
                     },
+                    "blobs_missing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them."
+                    },
                     "types_registered": {
                       "type": "number",
                       "description": "How many types Marfa registered."
@@ -41556,6 +41563,7 @@
                     "edges_skipped",
                     "edges_skipped_reasons",
                     "blobs_imported",
+                    "blobs_missing",
                     "types_registered",
                     "types_skipped",
                     "edge_types_registered",
@@ -45861,10 +45869,10 @@
                 "ndjson",
                 "archive"
               ],
-              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`."
+              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold."
             },
             "required": false,
-            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`.",
+            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold.",
             "name": "format",
             "in": "query"
           }

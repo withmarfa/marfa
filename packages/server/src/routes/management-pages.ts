@@ -127,7 +127,8 @@ document.getElementById('restore').addEventListener('submit', async (event) => {
   const result = document.getElementById('result'); result.textContent = 'Restoring…';
   try { const response = await fetch('/restore', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/gzip'}, body:file});
     const body = await response.json(); if (!response.ok) throw new Error(body.error?.message || 'The archive could not be restored.');
-    result.textContent = 'Restored ' + body.imported + ' items and ' + body.blobs_imported + ' files. Skipped ' + body.duplicates + ' existing items.';
+    const missing = body.blobs_missing.length ? ' ' + body.blobs_missing.length + ' files are missing from both the archive and this instance.' : '';
+    result.textContent = 'Restored ' + body.imported + ' items and ' + body.blobs_imported + ' files. Skipped ' + body.duplicates + ' existing items.' + missing;
   } catch(error) { result.textContent = error.message; } finally { button.disabled = false; }
 });
 </script>`,

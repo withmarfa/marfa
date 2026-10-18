@@ -20,6 +20,41 @@ export interface BlobLayer {
   byId(id: string): BlobStore | undefined;
 }
 
+/**
+ * The attached stores the location log records a copy of `hash` in, the disk
+ * first. A copy struck or dropped can linger in its store until its deletion
+ * is retried, and those bytes are not the blob's.
+ */
+export async function recordedStores(
+  storage: Storage,
+  blobs: BlobLayer,
+  hash: string,
+): Promise<BlobStore[]> {
+  const holding = new Set(
+    (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
+  );
+  return blobs.stores.filter((store) => holding.has(store.id));
+}
+
+/**
+ * Whether a recorded copy of `hash` is present at the blob's whole size,
+ * asked of the stores themselves rather than of the log. A store that fails
+ * to answer holds no copy it can be read from, so one unreadable file or an
+ * unreachable bucket costs the blobs it holds and not the whole question.
+ */
+export async function holdsWhole(
+  storage: Storage,
+  blobs: BlobLayer,
+  hash: string,
+  sizeBytes: number,
+): Promise<boolean> {
+  for (const store of await recordedStores(storage, blobs, hash)) {
+    const held = await store.has(hash).catch(() => null);
+    if (held?.size_bytes === sizeBytes) return true;
+  }
+  return false;
+}
+
 export type BlobLayerConfig = Pick<
   AppConfig,
   | "blobPath"
