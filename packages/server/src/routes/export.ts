@@ -11,6 +11,7 @@ import type { BlobLayer } from "../storage/blob-layer.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
+import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
@@ -237,20 +238,22 @@ export function exportRoutes(
       const exportedIds = new Set<string>();
       let cursor: string | undefined;
       do {
-        const result = await storage.items.list({
-          type,
-          state,
-          all_states: allStates,
-          exclude_states: EXPORT_EXCLUDED_STATES,
-          source,
-          occurred_after: occurredAfter,
-          occurred_before: occurredBefore,
-          allowed_types: allowedTypes,
-          excluded_types: excludedTypes,
-          source_filter: sourceFilter,
-          limit: 200,
-          cursor,
-        });
+        const result = await withStatementFault("export-read", () =>
+          storage.items.list({
+            type,
+            state,
+            all_states: allStates,
+            exclude_states: EXPORT_EXCLUDED_STATES,
+            source,
+            occurred_after: occurredAfter,
+            occurred_before: occurredBefore,
+            allowed_types: allowedTypes,
+            excluded_types: excludedTypes,
+            source_filter: sourceFilter,
+            limit: 200,
+            cursor,
+          }),
+        );
 
         for (const item of await reader.cascade(storage, result.data)) {
           const metadata = reader.metadata(await storage.metadata.get(item.id));

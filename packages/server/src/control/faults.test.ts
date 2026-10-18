@@ -1,0 +1,199 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  activeFaults,
+  atPoint,
+  clearFaults,
+  deadlineFault,
+  failAt,
+  faultProblem,
+  faultsArmed,
+  POINTS,
+  setFault,
+} from "./faults.js";
+
+const JOBS = ["trash-purge", "inbound-delivery-cleanup"];
+
+afterEach(() => {
+  clearFaults();
+});
+
+/** Arms a fault the way the route does: a refused name never reaches the table. */
+function arm(name: string, arg: string | null = null): string | undefined {
+  const problem = faultProblem(name, arg, JOBS);
+  if (problem === undefined) setFault(name, arg);
+  return problem;
+}
+
+describe("the declared points", () => {
+  it("arm every point the table declares, with a job where a point names one", () => {
+    for (const kind of ["hold", "fail"] as const) {
+      for (const point of POINTS[kind]) {
+        const name = `${kind}:${point.name.replace("<job>", JOBS[0]!)}`;
+        expect(arm(name), name).toBeUndefined();
+      }
+    }
+    expect(activeFaults().length).toBe(POINTS.hold.length + POINTS.fail.length);
+  });
+
+  it("refuse a name no point answers to, in every kind", () => {
+    for (const name of [
+      "hold:nothing",
+      "hold:housekeeping:",
+      "hold:housekeeping:Bad_Name",
+      "fail:nothing",
+      "fail:housekeeping:",
+      "fail:commit:extra",
+      "freeze:lock",
+      "lock",
+      "",
+      "deadline:",
+      "deadline:Not A Job",
+    ]) {
+      expect(
+        arm(name, name.startsWith("deadline") ? "10" : null),
+        name,
+      ).not.toBeUndefined();
+    }
+    expect(activeFaults()).toEqual([]);
+  });
+
+  it("refuse a job the scheduler has not registered, for a hold, a failure and a deadline", () => {
+    expect(arm("hold:housekeeping:unregistered")).toMatch(
+      /no housekeeping job/,
+    );
+    expect(arm("fail:housekeeping:unregistered")).toMatch(
+      /no housekeeping job/,
+    );
+    expect(arm("deadline:unregistered", "10")).toMatch(/no housekeeping job/);
+    expect(arm("fail:housekeeping:trash-purge")).toBeUndefined();
+  });
+
+  it("refuse an argument the point does not take", () => {
+    expect(arm("hold:version-thinning:item", "1")).toMatch(/no argument/);
+    expect(arm("fail:lock", "0")).toMatch(/from 1/);
+    expect(arm("fail:lock", "-1")).toMatch(/from 1/);
+    expect(arm("fail:lock", "1.5")).toMatch(/from 1/);
+    expect(arm("fail:lock", "items.bulk@2")).toMatch(/from 1/);
+    expect(arm("fail:lock", "1000001")).toMatch(/from 1/);
+    expect(arm("fail:commit", "items.bulk@0")).toMatch(/<action>@<n>/);
+    expect(arm("fail:commit", "Items Bulk")).toMatch(/<action>@<n>/);
+    expect(arm("fail:commit", "@2")).toMatch(/<action>@<n>/);
+    expect(arm("deadline:trash-purge", "0")).toMatch(/milliseconds/);
+    expect(arm("deadline:trash-purge")).toMatch(/milliseconds/);
+    expect(activeFaults()).toEqual([]);
+  });
+
+  it("take a count, an action or an action and a count on a write point", () => {
+    for (const arg of [
+      "3",
+      "items.bulk",
+      "items.bulk@2",
+      "items.bulk_action.chunk@10",
+    ]) {
+      expect(arm("fail:audit", arg), arg).toBeUndefined();
+    }
+  });
+});
+
+describe("a fail fault", () => {
+  it("acts on the first reach by default, once, and keeps its count", () => {
+    arm("fail:lock");
+    expect([failAt("lock"), failAt("lock"), failAt("lock")]).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    expect(activeFaults()).toEqual([
+      { name: "fail:lock", arg: null, waiting: 0, fired: 1 },
+    ]);
+  });
+
+  it("acts on the nth reach and on no other, with reaches before and after it", () => {
+    arm("fail:lock", "3");
+    expect(Array.from({ length: 5 }, () => failAt("lock"))).toEqual([
+      false,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("counts only the reaches made with the audit action it is aimed at", () => {
+    arm("fail:audit", "items.bulk@2");
+    expect(failAt("audit", "keys.create")).toBe(false);
+    expect(failAt("audit", "items.bulk")).toBe(false);
+    expect(failAt("audit", "keys.create")).toBe(false);
+    expect(failAt("audit", "items.bulk")).toBe(true);
+    expect(failAt("audit", "items.bulk")).toBe(false);
+  });
+
+  it("counts every reach when it is aimed at no action, and takes a bare action as the first", () => {
+    arm("fail:commit", "2");
+    expect([failAt("commit", "a"), failAt("commit", "b")]).toEqual([
+      false,
+      true,
+    ]);
+    arm("fail:commit-ack", "items.bulk");
+    expect([
+      failAt("commit-ack", "x"),
+      failAt("commit-ack", "items.bulk"),
+    ]).toEqual([false, true]);
+  });
+
+  it("does not act on a point no fault was set on, and leaves another fault's count alone", () => {
+    arm("fail:commit");
+    expect(failAt("commit-full")).toBe(false);
+    expect(failAt("audit")).toBe(false);
+    expect(failAt("commit")).toBe(true);
+  });
+
+  it("starts again when it is set again, and when it is cleared acts no more", () => {
+    arm("fail:lock");
+    expect(failAt("lock")).toBe(true);
+    arm("fail:lock", "2");
+    expect(activeFaults()[0]).toMatchObject({ arg: "2", fired: 0 });
+    expect([failAt("lock"), failAt("lock")]).toEqual([false, true]);
+    clearFaults("fail:lock");
+    expect(failAt("lock")).toBe(false);
+    expect(activeFaults()).toEqual([]);
+  });
+
+  it("is gone when every fault is cleared, which a restart does by starting empty", () => {
+    arm("fail:audit");
+    arm("hold:version-thinning:item");
+    arm("deadline:trash-purge", "50");
+    expect(faultsArmed()).toBe(true);
+    clearFaults();
+    expect(faultsArmed()).toBe(false);
+    expect(failAt("audit")).toBe(false);
+    expect(deadlineFault("trash-purge")).toBeUndefined();
+  });
+
+  it("costs one read of the table when nothing is set", () => {
+    expect(faultsArmed()).toBe(false);
+    expect(failAt("lock")).toBe(false);
+    expect(failAt("audit", "items.bulk")).toBe(false);
+  });
+});
+
+describe("a hold fault and a deadline fault", () => {
+  it("keep their behavior: a hold waits until cleared, and a deadline reads its milliseconds", async () => {
+    arm("hold:version-thinning:item");
+    const order: string[] = [];
+    const held = atPoint("version-thinning:item", (wasHeld) => {
+      order.push(`ran held=${String(wasHeld)}`);
+      return Promise.resolve();
+    });
+    await Promise.resolve();
+    expect(activeFaults()[0]).toMatchObject({ waiting: 1, fired: 0 });
+    expect(order).toEqual([]);
+    clearFaults();
+    await held;
+    expect(order).toEqual(["ran held=true"]);
+
+    arm("deadline:trash-purge", "250");
+    expect(deadlineFault("trash-purge")).toBe(250);
+    expect(deadlineFault("inbound-delivery-cleanup")).toBeUndefined();
+  });
+});
