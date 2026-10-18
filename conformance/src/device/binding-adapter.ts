@@ -177,8 +177,8 @@ export interface ListenerOptions {
 }
 
 /**
- * What came of opening a store as a writer would. A store another handle
- * holds the writer's role of opens as a reading handle.
+ * The result of opening a store. If another handle holds the writer's role,
+ * the new handle opens as a reader.
  */
 export interface OpenAttempt {
   opened: boolean;

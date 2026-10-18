@@ -43,9 +43,9 @@ import {
 /**
  * A device and the server it talks to, both under the fixture's control.
  *
- * The device is the `marfa` binary. There is no second implementation here
- * and there is not meant to be: a fixture that agreed with a reference device
- * would be two of this suite's own opinions agreeing with each other.
+ * Fixtures drive the engine through the `marfa` binary or the Node binding.
+ * A separate reference implementation would only compare two implementations
+ * owned by this suite.
  */
 
 export const KEY = "device-fixture-key";
@@ -246,7 +246,6 @@ export async function startBindingHarness(
   const device = await BindingDevice.start({
     module,
     store: newStore(label),
-    // A working copy with no server holds a store and nothing else.
     ...(options.server === false ? {} : { url: server.url, key: KEY }),
   });
   return {
