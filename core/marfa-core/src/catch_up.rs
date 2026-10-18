@@ -27,7 +27,7 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // cursor, so this has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Pace {
     pub(crate) stop_poll: Duration,
     pub(crate) silence: Duration,
@@ -40,7 +40,18 @@ pub(crate) struct Pace {
     /// How long a stream stayed open is read from this clock, so a test can
     /// hold it still and a slow machine cannot make a stream that ended at
     /// once look like one that was held.
-    pub(crate) clock: fn() -> Instant,
+    pub(crate) clock: &'static (dyn Fn() -> Instant + Sync),
+}
+
+impl std::fmt::Debug for Pace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pace")
+            .field("stop_poll", &self.stop_poll)
+            .field("silence", &self.silence)
+            .field("reconnect_first", &self.reconnect_first)
+            .field("reconnect_most", &self.reconnect_most)
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) const PACE: Pace = Pace {
@@ -48,7 +59,7 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
-    clock: Instant::now,
+    clock: &Instant::now,
 };
 
 struct Slice {
@@ -1409,7 +1420,7 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
-        clock: frozen,
+        clock: &frozen,
     };
 
     /// A clock that never moves, so no stream is held for `reconnect_most`
@@ -2256,29 +2267,22 @@ mod tests {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         let ended = || stream(vec![connected()], Then::End);
-        server.on(
-            "/events",
-            vec![
-                ended(),
-                ended(),
-                stream(
-                    vec![connected()],
-                    Then::Hold {
-                        keepalive: Some(MS(5)),
-                        lasting: Some(MS(600)),
-                    },
-                ),
-                ended(),
-            ],
-        );
+        server.on("/events", vec![ended(), ended(), ended(), ended()]);
         let (_dir, core) = hydrated(&server);
-        // The streams that end at once must stay under the most wait on the
-        // real clock, so it is wide; the held one outlasts it.
-        let pace = Pace {
-            reconnect_most: MS(500),
-            clock: Instant::now,
-            ..QUICK
-        };
+        // `follow_paced` reads the clock once when a stream opens and once
+        // after it ends, and not for an open that failed, so the sixth read
+        // is the end of the third stream. It shows that stream as open for
+        // the most wait; every other read shows none.
+        let reads = AtomicUsize::new(0);
+        let still = frozen();
+        let most = QUICK.reconnect_most;
+        let clock: &'static (dyn Fn() -> Instant + Sync) = Box::leak(Box::new(move || match reads
+            .fetch_add(1, Ordering::SeqCst)
+        {
+            5 => still + most,
+            _ => still,
+        }));
+        let pace = Pace { clock, ..QUICK };
         let run = follow_on(&core, pace, Some(3));
         run.ended().unwrap();
         assert_eq!(
