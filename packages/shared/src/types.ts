@@ -588,6 +588,7 @@ export interface EnforcementSettings {
 
 /** Instance configuration. Written through `/config` on `config.manage`. */
 export interface InstanceConfig {
+  name?: string;
   enforcement?: EnforcementSettings;
   /**
    * Retention overrides for the cleanup jobs. Each falls back to the

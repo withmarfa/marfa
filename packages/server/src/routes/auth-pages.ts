@@ -3,6 +3,7 @@ import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { readInstanceName } from "../instance-name.js";
 import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -467,6 +468,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     ) {
       return c.html(
         renderSignedInPage({
+          instanceName: await readInstanceName(storage.settings),
           nonce: c.var.cspNonce,
           email: session.user.email,
           continueTo: returnTo,
@@ -482,6 +484,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const email = url.searchParams.get("email") ?? undefined;
     return c.html(
       renderSignInPage({
+        instanceName: await readInstanceName(storage.settings),
         nonce: c.var.cspNonce,
         returnTo,
         error,
@@ -808,6 +811,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
+        instanceName: await readInstanceName(storage.settings),
         nonce: c.var.cspNonce,
         clientName: client.name ?? client.clientId,
         webOrigins: webOriginsOf(client),

@@ -1,3 +1,5 @@
+import type { Storage } from "../storage/interface.js";
+import { readInstanceName } from "../instance-name.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import { Hono } from "hono";
 import { PERMISSIONS } from "@withmarfa/shared";
@@ -7,7 +9,7 @@ import { escapeHtml } from "./auth-html.js";
 import { PERMISSION_LABELS } from "./permission-labels.js";
 
 /** These pages call the API's own documented operations, as the owner's browser. */
-export function managementPages() {
+export function managementPages(storage: Storage) {
   const router = new Hono<AppEnv>();
   router.use("*", async (c, next) => {
     requireDirectAuthority(c);
@@ -17,7 +19,8 @@ export function managementPages() {
     );
     await next();
   });
-  router.get("/manage", (c) => {
+  router.get("/manage", async (c) => {
+    const instanceName = await readInstanceName(storage.settings);
     const permissions = PERMISSIONS.map(
       (permission) =>
         `<label><input type="checkbox" name="permission" value="${escapeHtml(permission)}"> ${escapeHtml(PERMISSION_LABELS[permission])}</label>`,
@@ -25,9 +28,9 @@ export function managementPages() {
     return c.html(
       renderAuthLayout({
         nonce: c.var.cspNonce,
-        title: "Manage Marfa",
+        title: `Manage ${instanceName}`,
         wide: true,
-        bodyHtml: `<h1>Manage Marfa</h1>
+        bodyHtml: `<h1>Manage ${escapeHtml(instanceName)}</h1>
 <p><a href="/auth/owner/password">Change password</a> | <a href="/auth/owner/passkeys">Passkeys</a> | <a href="/auth/owner/restore">Restore an archive</a></p>
 <p id="status" role="status"></p>
 <h2>Server</h2><pre id="health">Loading…</pre>

@@ -615,3 +615,98 @@ describe("GET /config and PUT /config", () => {
     }
   }, 120_000);
 });
+
+describe("the instance display name", () => {
+  it(
+    "sets, trims, persists and clears the name without changing identity",
+    async () => {
+      const client = configKey();
+      await client.updateConfig({});
+      const before = await rootIdentity(server!);
+      const description = async () => {
+        const response = await fetch(`${server!.apiUrl}/`);
+        expect(response.status).toBe(200);
+        return (await response.json()) as { name: string; instance_id: string };
+      };
+      expect((await description()).name).toBe("Marfa");
+      const updated = await client.updateConfig({
+        name: "  Library 東京 🌱  ",
+        audit_retention_days: 31,
+      });
+      expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+      expect(updated.data).toMatchObject({
+        name: "Library 東京 🌱",
+        audit_retention_days: 31,
+        instance_id: before,
+      });
+      expect(await description()).toMatchObject({
+        name: "Library 東京 🌱",
+        instance_id: before,
+      });
+      await server!.restart();
+      expect(await description()).toMatchObject({
+        name: "Library 東京 🌱",
+        instance_id: before,
+      });
+      expect((await configKey().getConfig()).data).toMatchObject({
+        name: "Library 東京 🌱",
+        audit_retention_days: 31,
+      });
+      expect(
+        (await configKey().updateConfig({ audit_retention_days: 31 })).status,
+      ).toBe(200);
+      expect(await description()).toMatchObject({
+        name: "Marfa",
+        instance_id: before,
+      });
+      expect((await configKey().getConfig()).data).not.toHaveProperty("name");
+      await configKey().updateConfig({});
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it("refuses invalid names and escapes the name in pages on later requests", async () => {
+    const client = configKey();
+    const name = '<img src=x onerror="throw 1"> & Library';
+    expect((await client.updateConfig({ name })).status).toBe(200);
+    for (const path of ["/", "/auth/sign-in", "/setup"]) {
+      const response = await fetch(`${server!.apiUrl}${path}`, {
+        headers: { accept: "text/html" },
+      });
+      expect(response.status, path).toBe(200);
+      const html = await response.text();
+      expect(html, path).toContain(
+        "&lt;img src=x onerror=&quot;throw 1&quot;&gt; &amp; Library",
+      );
+      expect(html, path).not.toContain(name);
+    }
+    for (const invalid of [
+      "",
+      "   ",
+      "x".repeat(201),
+      "a\nline",
+      "\tname",
+      "a\u0000b",
+      "a\u0085b",
+      "a\u202eb",
+      "a\u2066b",
+      "a\u200eb",
+      "a\u061cb",
+    ]) {
+      const refused = await client.updateConfig({ name: invalid });
+      expect(refused.status, JSON.stringify(invalid)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect((await client.getConfig()).data).toMatchObject({ name });
+    }
+    expect((await client.updateConfig({ name: "x".repeat(200) })).status).toBe(
+      200,
+    );
+    expect((await client.updateConfig({ name: "🌱".repeat(200) })).status).toBe(
+      200,
+    );
+    expect((await client.updateConfig({ name: "🌱".repeat(201) })).status).toBe(
+      400,
+    );
+    await client.updateConfig({});
+  });
+});

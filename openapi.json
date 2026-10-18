@@ -1043,10 +1043,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "enum": [
-              "marfa"
-            ],
-            "description": "Always `marfa`."
+            "description": "The instance's display name. Defaults to `Marfa`."
           },
           "version": {
             "type": "string",
@@ -6260,6 +6257,12 @@
             "type": "string",
             "description": "Unique identifier for the instance, the same value `GET /` returns."
           },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`."
+          },
           "enforcement": {
             "type": "object",
             "properties": {
@@ -6330,7 +6333,7 @@
         "required": [
           "instance_id"
         ],
-        "description": "The instance configuration: its enforcement levers and retention settings, with the instance's ID."
+        "description": "The instance configuration: its display name, enforcement levers and retention settings, with the instance's ID."
       },
       "InvalidPropertiesOrInvalidSchemaOrValidationErrorRefusal": {
         "type": "object",
@@ -8034,7 +8037,7 @@
           "Instance"
         ],
         "summary": "Describe the instance",
-        "description": "Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
+        "description": "Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
         "responses": {
           "200": {
             "description": "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
@@ -40753,7 +40756,7 @@
           "Instance"
         ],
         "summary": "Get the configuration",
-        "description": "Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
+        "description": "Returns the instance configuration: its display name, enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -41026,6 +41029,12 @@
                     "minLength": 1,
                     "description": "This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing."
                   },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`."
+                  },
                   "enforcement": {
                     "type": "object",
                     "properties": {
@@ -41128,7 +41137,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.",
+            "description": "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.",
             "content": {
               "application/json": {
                 "schema": {

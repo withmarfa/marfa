@@ -110,7 +110,7 @@ function kindAt(value: unknown, path: string): string {
 interface Fields {
   /** Paths whose value has to be the same on both sides. */
   same?: string[];
-  /** Paths where only the JSON kind can be compared, because a run mints the value. */
+  /** Paths where only the JSON kind can be compared, because a run determines the value. */
   shape?: string[];
   /**
    * Keys the two sides deliberately differ on, each one a decision rather
@@ -1744,8 +1744,8 @@ describe("the scripted answers match the server's", () => {
       { status: response.status, body },
       answers.root(Number(BUILT_FOR)),
       {
-        same: ["name", "contract"],
-        shape: ["version", "instance_id", "features"],
+        same: ["contract"],
+        shape: ["name", "version", "instance_id", "features"],
       },
     );
     // The scripted server names the contract of the document the binary was

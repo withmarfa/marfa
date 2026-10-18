@@ -179,7 +179,7 @@ describe("renderConsentScreen — layout + form contract", () => {
     // The server serves no settings page, and nothing else on this page names
     // where access is changed, so the page says nothing about it. The line it
     // would have said is the witness that the check below can fail.
-    expect(html).toContain("wants to access your server.");
+    expect(html).toContain("wants to access Marfa.");
     expect(html).not.toMatch(/settings|anytime/i);
   });
 });

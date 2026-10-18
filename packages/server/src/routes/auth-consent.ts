@@ -101,6 +101,7 @@ import { projectGrantOnConsent } from "../auth/grant-lifecycle.js";
 import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
+import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
 import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
@@ -537,6 +538,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     await deps.storage.oauthProvider?.markClientOffered(clientId);
 
     const html = renderConsentScreen({
+      instanceName: await readInstanceName(deps.storage.settings),
       nonce: c.var.cspNonce,
       clientName,
       webOrigins: webOriginsOf(client),

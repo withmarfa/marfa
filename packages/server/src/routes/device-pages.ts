@@ -13,6 +13,7 @@ import { authAssetUrl } from "./auth-static.js";
  * via the `renderAuthLayout` helper.
  */
 
+import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
   grantCoversScope,
@@ -42,6 +43,7 @@ interface DevicePageParams {
 }
 
 interface DeviceConsentParams {
+  instanceName?: string;
   /** The nonce the response's content security policy names. */
   nonce: string;
   clientName: string;
@@ -327,7 +329,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
   // not an entry input — show it whole in a soft code tile.
   const bodyHtml = `
     <h1 class="title">Approve sign-in</h1>
-    <p class="sub"><b>${safeClient}</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
+    <p class="sub"><b>${safeClient}</b> is trying to sign in to ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)} as you. Approve only if this code matches what's on that device.</p>
     ${pageOriginLine(params.webOrigins ?? [])}
     ${unverifiedAppCallout()}
     <div class="codetile">${safeUserCode}</div>

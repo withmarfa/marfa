@@ -34,7 +34,7 @@ describe("GET /", () => {
       contract: number;
       features: string[];
     };
-    expect(body.name).toBe("marfa");
+    expect(body.name).toBe("Marfa");
     // Against the store, not against a shape. A hardcoded or invented id
     // satisfies every assertion about format, and the wiring this covers is
     // exactly the step that could hand the app somebody else's name.
@@ -106,7 +106,7 @@ describe("GET /", () => {
       });
       expect(program.headers.get("content-type")).toContain("application/json");
       expect(program.headers.get("vary")).toContain("Accept");
-      expect(((await program.json()) as { name: string }).name).toBe("marfa");
+      expect(((await program.json()) as { name: string }).name).toBe("Marfa");
     }
   });
 

@@ -39,6 +39,7 @@ import type { BlobLayer } from "./storage/blob-layer.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createMarfaAuth } from "./auth/instance.js";
 import { itemRoutes } from "./routes/items.js";
+import { readInstanceName } from "./instance-name.js";
 import { renderRootPage } from "./routes/root-page.js";
 import { renderSignedInPage } from "./routes/signed-in-page.js";
 import { setNoStore } from "./routes/no-store.js";
@@ -134,18 +135,9 @@ export function createApp(
    * The name this instance answers to, resolved by the caller before the
    * app exists.
    *
-   * Passed in rather than read per request, for two reasons.
-   *
-   * The root route must not be able to fail. It is what a client asks to
-   * learn whether it is talking to a marfa server and which one, and a
-   * handler that awaits the database answers `500` exactly when an operator
-   * most needs it to answer — which is the failure `GET /health` is
-   * deliberately built never to have.
-   *
-   * And three doors show this value. Resolving it here and handing it to
-   * each makes "the three agree" true by construction rather than by every
-   * call site happening to read the same row; `ensureInstanceId` resolves
-   * it, and the server's boot is what calls that.
+   * The identity remains stable while display configuration can change.
+   * Resolving it at boot and handing it to each identity door keeps their
+   * answers equal without relying on separate reads of the stored row.
    */
   instanceId: string,
   options: { localAuthority?: boolean } = {},
@@ -466,6 +458,7 @@ export function createApp(
   // somebody pointing a client at an address is asking.
   app.openAPIRegistry.registerPath(instanceDescriptionRoute);
   app.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
+    const instanceName = await readInstanceName(storage.settings);
     // One address, two readers: a program takes the description and a person
     // opening it in a browser takes a page.
     if (prefersHtml(c.req.header("accept"))) {
@@ -477,13 +470,14 @@ export function createApp(
         session
           ? renderSignedInPage({
               email: session.user.email,
+              instanceName,
               nonce: c.var.cspNonce,
             })
-          : renderRootPage(c.var.cspNonce),
+          : renderRootPage(c.var.cspNonce, instanceName),
       );
     }
     const description: z.infer<typeof InstanceDescriptionSchema> = {
-      name: "marfa",
+      name: instanceName,
       version: deployedVersion,
       instance_id: instanceId,
       contract: CONTRACT_VERSION,

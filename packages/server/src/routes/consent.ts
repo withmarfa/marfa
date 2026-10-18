@@ -63,6 +63,7 @@ import { authAssetUrl } from "./auth-static.js";
  * `/oauth2/consent`.
  */
 
+import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
   HIDDEN_MECHANISM_SCOPES,
@@ -89,6 +90,7 @@ import {
 } from "./scope-operation.js";
 
 interface ConsentParams {
+  instanceName?: string;
   clientName: string;
   /** The addresses approving lets reach the server, from `webOriginsOf`. */
   webOrigins?: readonly string[];
@@ -1065,9 +1067,9 @@ export function renderConsentScreen(params: ConsentParams): string {
   // would then be a claim the screen itself contradicts two lines down.
   const sub = showDiff
     ? asksForMore
-      ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
-      : `You have used <b>${safeClient}</b> before. It is asking you to confirm what it already has.`
-    : `<b>${safeClient}</b> wants to access your server.`;
+      ? `You have used <b>${safeClient}</b> on ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)} before. It is asking for a little more.`
+      : `You have used <b>${safeClient}</b> on ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)} before. It is asking you to confirm what it already has.`
+    : `<b>${safeClient}</b> wants to access ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)}.`;
   const primaryLabel = showDiff ? "Continue" : "Allow access";
 
   // Each group's master toggle drives its members; members reflect back as an

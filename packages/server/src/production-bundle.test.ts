@@ -109,7 +109,7 @@ it("starts the production bundle and serves health, instance and OpenAPI", async
     }
     const root = await fetch(`${url}/`);
     expect(root.status).toBe(200);
-    expect(await root.json()).toMatchObject({ name: "marfa" });
+    expect(await root.json()).toMatchObject({ name: "Marfa" });
     const response = await fetch(`${url}/openapi.json`);
     expect(response.status).toBe(200);
     const document = (await response.json()) as {
