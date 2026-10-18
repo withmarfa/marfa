@@ -83,7 +83,12 @@ async function signedOwner() {
     expect(response.status).toBe(200);
     return (await response.json()) as { id: string };
   };
-  return { ...ctx, post, ownerCookie, options, register };
+  const remove = (id: string) =>
+    ctx.app.request(origin + "/owner/passkeys/" + id, {
+      method: "DELETE",
+      headers: { origin, cookie: ownerCookie },
+    });
+  return { ...ctx, post, ownerCookie, options, register, remove };
 }
 function cookies(response: Response) {
   return response.headers
@@ -119,15 +124,7 @@ it("signs with cryptographic credentials, consumes challenges, and removes only 
   );
   expect(replay.status).toBe(400);
   expect(cookies(replay)).not.toContain("session_token");
-  expect(
-    (
-      await ctx.post(
-        "/auth/passkey/delete-passkey",
-        { id: registered.id },
-        ctx.ownerCookie,
-      )
-    ).status,
-  ).toBe(200);
+  expect((await ctx.remove(registered.id)).status).toBe(200);
   const removedChallenge = await ctx.options("authenticate");
   const removed = await ctx.post(
     "/auth/passkey/verify-authentication",
@@ -225,12 +222,7 @@ it("requires the owner's recent browser session and same origin at every managem
   const ctx = await signedOwner(),
     device = testAuthenticator();
   const registered = await ctx.register(device, "Owner");
-  for (const path of [
-    "generate-register-options",
-    "list-user-passkeys",
-    "verify-registration",
-    "delete-passkey",
-  ]) {
+  for (const path of ["generate-register-options", "verify-registration"]) {
     const method =
       path.startsWith("generate") || path.startsWith("list") ? "GET" : "POST";
     const body =
@@ -265,11 +257,7 @@ it("requires the owner's recent browser session and same origin at every managem
   await db.run(
     sql`update auth_session set created_at = ${Math.floor(Date.now() / 1000) - 3600} where id = ${session!.session.id}`,
   );
-  for (const path of [
-    "generate-register-options",
-    "verify-registration",
-    "delete-passkey",
-  ]) {
+  for (const path of ["generate-register-options", "verify-registration"]) {
     const method = path.startsWith("generate") ? "GET" : "POST";
     const response = await ctx.app.request(origin + "/auth/passkey/" + path, {
       method,
@@ -284,12 +272,11 @@ it("requires the owner's recent browser session and same origin at every managem
     });
     expect(response.status).toBe(401);
   }
-  const list = await ctx.app.request(
-    origin + "/auth/passkey/list-user-passkeys",
-    { headers: { origin, cookie: ctx.ownerCookie } },
-  );
+  const list = await ctx.app.request(origin + "/owner/passkeys", {
+    headers: { origin, cookie: ctx.ownerCookie },
+  });
   expect(list.status).toBe(200);
-  expect(await list.json()).toHaveLength(1);
+  expect(((await list.json()) as { data: unknown[] }).data).toHaveLength(1);
 });
 
 it("rolls back the session and counter when its audit cannot commit", async () => {
@@ -346,15 +333,7 @@ it("refuses duplicate registration so removal cannot leave the same credential u
     challenge.cookie,
   );
   expect(duplicate.status).toBe(409);
-  expect(
-    (
-      await ctx.post(
-        "/auth/passkey/delete-passkey",
-        { id: registered.id },
-        ctx.ownerCookie,
-      )
-    ).status,
-  ).toBe(200);
+  expect((await ctx.remove(registered.id)).status).toBe(200);
   const authentication = await ctx.options("authenticate");
   expect(
     (
@@ -456,12 +435,11 @@ it("rechecks a browser revoked between admission and the registration write", as
   expect(refused.status).toBe(401);
   expect(await ctx.auth.listBrowserSessions(session.user.id)).toHaveLength(0);
   const login = await ctx.post("/auth/sign-in/email", owner);
-  const list = await ctx.app.request(
-    origin + "/auth/passkey/list-user-passkeys",
-    { headers: { origin, cookie: cookies(login) } },
-  );
+  const list = await ctx.app.request(origin + "/owner/passkeys", {
+    headers: { origin, cookie: cookies(login) },
+  });
   expect(list.status).toBe(200);
-  expect(await list.json()).toEqual([]);
+  expect(await list.json()).toEqual({ data: [], next_cursor: null });
 });
 
 it("uses the verified registration identity and keeps removal effective", async () => {
@@ -479,15 +457,7 @@ it("uses the verified registration identity and keeps removal effective", async 
     challenge.cookie,
   );
   expect.soft(duplicate.status).toBe(409);
-  expect(
-    (
-      await ctx.post(
-        "/auth/passkey/delete-passkey",
-        { id: registered.id },
-        ctx.ownerCookie,
-      )
-    ).status,
-  ).toBe(200);
+  expect((await ctx.remove(registered.id)).status).toBe(200);
   const authentication = await ctx.options("authenticate");
   const login = await ctx.post(
     "/auth/passkey/verify-authentication",
@@ -503,12 +473,11 @@ it("includes every credential in the inventory and both ceremony options", async
   const rows = [];
   for (const [index, device] of devices.entries())
     rows.push(await ctx.register(device, `Passkey ${String(index)}`));
-  const list = await ctx.app.request(
-    origin + "/auth/passkey/list-user-passkeys",
-    { headers: { origin, cookie: ctx.ownerCookie } },
-  );
+  const list = await ctx.app.request(origin + "/owner/passkeys", {
+    headers: { origin, cookie: ctx.ownerCookie },
+  });
   expect(list.status).toBe(200);
-  const listed = (await list.json()) as { id: string }[];
+  const { data: listed } = (await list.json()) as { data: { id: string }[] };
   expect
     .soft(listed.map((row) => row.id).sort())
     .toEqual(rows.map((row) => row.id).sort());
@@ -539,15 +508,7 @@ it("includes every credential in the inventory and both ceremony options", async
       )
     ).status,
   ).toBe(200);
-  expect(
-    (
-      await ctx.post(
-        "/auth/passkey/delete-passkey",
-        { id: lastRow.id },
-        ctx.ownerCookie,
-      )
-    ).status,
-  ).toBe(200);
+  expect((await ctx.remove(lastRow.id)).status).toBe(200);
   const removed = await ctx.options("authenticate");
   expect(
     (
@@ -558,4 +519,68 @@ it("includes every credential in the inventory and both ceremony options", async
       )
     ).status,
   ).toBe(401);
+});
+
+it("orders verification and removal at the credential writer in either order", async () => {
+  for (const first of ["verify", "remove"] as const) {
+    const ctx = await signedOwner();
+    const device = testAuthenticator();
+    const registered = await ctx.register(device, "Racing");
+    const challenge = await ctx.options("authenticate");
+    let entered!: () => void, release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const resume = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const original = ctx.storage.audit.log.bind(ctx.storage.audit);
+    let once = true;
+    const spy = vi
+      .spyOn(ctx.storage.audit, "log")
+      .mockImplementation(async (entry, id) => {
+        if (
+          once &&
+          entry.action ===
+            (first === "verify" ? "auth.passkey.update" : "auth.passkey.delete")
+        ) {
+          once = false;
+          entered();
+          await resume;
+        }
+        return original(entry, id);
+      });
+    const verify = () =>
+      ctx.post(
+        "/auth/passkey/verify-authentication",
+        { response: device.authentication(challenge.body.challenge, origin) },
+        challenge.cookie,
+      );
+    const initial = first === "verify" ? verify() : ctx.remove(registered.id);
+    await held;
+    const later = first === "verify" ? ctx.remove(registered.id) : verify();
+    release();
+    const [initialResponse, laterResponse] = await Promise.all([
+      initial,
+      later,
+    ]);
+    spy.mockRestore();
+    expect(initialResponse.status).toBe(200);
+    expect(laterResponse.status).toBe(first === "verify" ? 200 : 401);
+    if (first === "verify")
+      expect(cookies(initialResponse)).toContain("session_token");
+    else expect(cookies(laterResponse)).not.toContain("session_token");
+    const removed = await ctx.options("authenticate");
+    expect(
+      (
+        await ctx.post(
+          "/auth/passkey/verify-authentication",
+          {
+            response: device.authentication(removed.body.challenge, origin, 2),
+          },
+          removed.cookie,
+        )
+      ).status,
+    ).toBe(401);
+  }
 });

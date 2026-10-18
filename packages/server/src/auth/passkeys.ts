@@ -10,8 +10,6 @@ export const PASSKEY_SIGN_IN_PATHS = new Set([
 export const PASSKEY_OWNER_PATHS = new Set([
   "/passkey/generate-register-options",
   "/passkey/verify-registration",
-  "/passkey/list-user-passkeys",
-  "/passkey/delete-passkey",
 ]);
 export const PASSKEY_VERIFY_PATHS = new Set([
   "/passkey/verify-registration",

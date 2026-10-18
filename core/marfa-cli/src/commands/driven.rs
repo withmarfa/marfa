@@ -165,6 +165,7 @@ fn socket_only(words: &[String]) -> bool {
         || words == ["setup", "code"]
         || words == ["setup", "open"]
         || words == ["owner", "recover"]
+        || words.starts_with(&["owner".into(), "passkeys".into()])
 }
 
 /// Where a command has no use: what is not a request to the server, what
@@ -374,7 +375,16 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             .iter()
             .map(|leaf| leaf.words.join(" "))
             .collect::<Vec<_>>(),
-        ["setup status", "setup code", "setup open", "owner recover"]
+        [
+            "setup status",
+            "setup code",
+            "setup open",
+            "owner passkeys list",
+            "owner passkeys rename",
+            "owner passkeys remove",
+            "owner passkeys add",
+            "owner recover",
+        ]
     );
     for leaf in commands {
         let argv = command_line(&server.url, &leaf.words, &[], &file).unwrap();
@@ -647,6 +657,11 @@ const MISSED: &[&str] = &[
     "reportFolderStatus",
     // `login`: found by discovery and sent in a browser flow.
     "registerOAuthClient",
+    // Private transport: the CLI scenarios drive these with a real passkey,
+    // and `device/contract.test.ts` checks their socket response contract.
+    "listOwnerPasskeys",
+    "updateOwnerPasskey",
+    "removeOwnerPasskey",
     // `setup claim`: secret input is driven by the child-process fixture above.
     "createOwner",
 ];

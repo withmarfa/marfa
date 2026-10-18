@@ -6,12 +6,28 @@ import {
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
+import { validatorFor, type OpenApiDocument } from "../../utils/openapi.js";
 import { controlRequest } from "../../utils/control-request.js";
 import {
   FRESH_SERVER_TIMEOUT_MS,
   keepStatusLog,
 } from "../../utils/fresh-server.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
+
+let document: OpenApiDocument;
+async function expectMatchesSchema(
+  method: string,
+  path: string,
+  status: number,
+  body: unknown,
+) {
+  const schema =
+    document.paths[path]?.[method.toLowerCase()]?.responses?.[String(status)]
+      ?.content?.["application/json"]?.schema;
+  expect(schema).toBeDefined();
+  const validate = validatorFor(schema, document);
+  expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+}
 
 let state: string,
   server: { url: string; controlSocket: string },
@@ -22,7 +38,7 @@ const owner = {
 };
 const first = testAuthenticator(),
   second = testAuthenticator();
-let firstId: string;
+let firstId: string, secondId: string;
 const cookie = (response: Response) =>
   response.headers
     .getSetCookie()
@@ -94,6 +110,9 @@ async function signIn(
 beforeAll(async () => {
   state = await mkdtemp(join(tmpdir(), "marfa-passkey-conformance-"));
   server = await bootUnclaimedServer({ state });
+  document = (await (
+    await fetch(server.url + "/openapi.json")
+  ).json()) as OpenApiDocument;
   const setup = await controlRequest(
     server.controlSocket,
     "/_control/setup/code",
@@ -117,7 +136,7 @@ afterAll(async () => {
 describe("owner passkeys", () => {
   it("registers and lists independent owner credentials", async () => {
     firstId = (await register(first, "First")).id;
-    await register(second, "Second");
+    secondId = (await register(second, "Second")).id;
     const duplicateChallenge = await options("register");
     const response = first.registration(
       duplicateChallenge.body.challenge,
@@ -133,12 +152,16 @@ describe("owner passkeys", () => {
       duplicateChallenge.cookie,
     );
     expect(duplicate.status).toBe(409);
-    const list = await fetch(server.url + "/auth/passkey/list-user-passkeys", {
+    const list = await fetch(server.url + "/owner/passkeys", {
       headers: { origin: server.url, cookie: ownerCookie },
     });
     expect(list.status).toBe(200);
+    const listed = await list.json();
+    await expectMatchesSchema("GET", "/owner/passkeys", 200, listed);
     expect(
-      ((await list.json()) as { name: string }[]).map((row) => row.name).sort(),
+      (listed as { data: { name: string }[] }).data
+        .map((row) => row.name)
+        .sort(),
     ).toEqual(["First", "Second"]);
     const page = await fetch(server.url + "/auth/owner/passkeys", {
       headers: { cookie: ownerCookie },
@@ -154,20 +177,131 @@ describe("owner passkeys", () => {
       ).status,
     ).toBe(200);
   });
-  it("requires owner authority and the instance origin for passkey management", async () => {
-    const absent = await fetch(
-      server.url + "/auth/passkey/list-user-passkeys",
-      { headers: { origin: server.url } },
+  it("renames safely through owner and private local authority", async () => {
+    const renamed = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/" + firstId,
+      { method: "PATCH", body: { name: "  Renamed first  " } },
     );
+    expect(renamed.status).toBe(200);
+    await expectMatchesSchema(
+      "PATCH",
+      "/owner/passkeys/{id}",
+      200,
+      renamed.body,
+    );
+    expect(renamed.body).toMatchObject({
+      id: firstId,
+      name: "Renamed first",
+      created_at: expect.any(String),
+    });
+    expect(Object.keys(renamed.body).sort()).toEqual([
+      "created_at",
+      "id",
+      "name",
+    ]);
+    for (const name of [
+      " ",
+      "x".repeat(201),
+      "bad\u0000name",
+      "bad\u202ename",
+    ]) {
+      const refused = await controlRequest(
+        server.controlSocket,
+        "/owner/passkeys/" + firstId,
+        { method: "PATCH", body: { name } },
+      );
+      expect(refused.status).toBe(400);
+    }
+    const temporary = await register(testAuthenticator(), "Temporary");
+    const removed = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/" + temporary.id,
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(200);
+    await expectMatchesSchema(
+      "DELETE",
+      "/owner/passkeys/{id}",
+      200,
+      removed.body,
+    );
+    expect(
+      (
+        await controlRequest(
+          server.controlSocket,
+          "/owner/passkeys/" + temporary.id,
+          { method: "DELETE" },
+        )
+      ).status,
+    ).toBe(404);
+    const unknown = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/missing",
+      { method: "DELETE" },
+    );
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toMatchObject({
+      error: { code: "passkey_not_found" },
+    });
+    const missingRename = await fetch(server.url + "/owner/passkeys/missing", {
+      method: "PATCH",
+      headers: {
+        origin: server.url,
+        cookie: ownerCookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "Missing passkey" }),
+    });
+    expect(missingRename.status).toBe(404);
+    const missingRenameBody = await missingRename.json();
+    expect(missingRenameBody).toMatchObject({
+      error: { code: "passkey_not_found" },
+    });
+    await expectMatchesSchema(
+      "PATCH",
+      "/owner/passkeys/{id}",
+      404,
+      missingRenameBody,
+    );
+    const link = await controlRequest(
+      server.controlSocket,
+      "/_control/owner/passkeys/add-url",
+    );
+    expect(link.status).toBe(200);
+    const url = new URL(String(link.body.url));
+    expect(url.origin).toBe(server.url);
+    expect(url.pathname).toBe("/auth/sign-in");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      prompt: "login",
+      return_to: "/auth/owner/passkeys",
+    });
+    expect(
+      (await fetch(server.url + "/_control/owner/passkeys/add-url")).status,
+    ).toBe(404);
+    const rename = await fetch(server.url + "/owner/passkeys/" + firstId, {
+      method: "PATCH",
+      headers: {
+        origin: server.url,
+        cookie: ownerCookie,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ name: "First" }),
+    });
+    expect(rename.status).toBe(200);
+  });
+  it("requires owner authority and the instance origin for passkey management", async () => {
+    const absent = await fetch(server.url + "/owner/passkeys", {
+      headers: { origin: server.url },
+    });
     expect(absent.status).toBe(401);
-    const foreign = await fetch(server.url + "/auth/passkey/delete-passkey", {
-      method: "POST",
+    const foreign = await fetch(server.url + "/owner/passkeys/" + firstId, {
+      method: "DELETE",
       headers: {
         origin: "https://foreign.example",
         cookie: ownerCookie,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ id: firstId }),
     });
     expect(foreign.status).toBe(403);
     expect((await signIn(first, 2)).status).toBe(200);
@@ -234,19 +368,41 @@ describe("owner passkeys", () => {
       expect((await signIn(second, 1)).status).toBe(200);
       expect(
         (
-          await post(
-            "/auth/passkey/delete-passkey",
-            { id: firstId },
-            ownerCookie,
-          )
+          await fetch(server.url + "/owner/passkeys/" + firstId, {
+            method: "DELETE",
+            headers: { origin: server.url, cookie: ownerCookie },
+          })
         ).status,
       ).toBe(200);
       expect((await signIn(first, 3)).status).toBe(401);
+      expect(
+        (
+          await controlRequest(
+            server.controlSocket,
+            "/owner/passkeys/" + secondId,
+            { method: "PATCH", body: { name: "Persistent second" } },
+          )
+        ).status,
+      ).toBe(200);
       const port = Number(new URL(server.url).port);
       await stopServer({ state });
       server = await bootUnclaimedServer({ state, port });
       expect((await signIn(first, 3)).status).toBe(401);
       expect((await signIn(second, 2)).status).toBe(200);
+      const inventory = await controlRequest(
+        server.controlSocket,
+        "/owner/passkeys",
+      );
+      expect(inventory.body).toEqual({
+        data: [
+          {
+            id: secondId,
+            name: "Persistent second",
+            created_at: expect.any(String),
+          },
+        ],
+        next_cursor: null,
+      });
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );

@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 /**
  * Sign-in page renderer for the human-facing /auth/sign-in surface.
  *
@@ -126,9 +127,9 @@ export function renderSignInPage(params: SignInPageParams): string {
     <button type="button" id="sign-in-passkey" class="btn" data-return-to="${safeReturnTo}">Sign in with a passkey</button>
     <p>Passkeys require a secure HTTPS address, or localhost for development. A password lock does not block passkeys.</p>
     <p id="passkey-status" role="status"></p>
-    <script src="/auth/static/passkeys.js" nonce="${escapeHtml(params.nonce)}"></script>
-    <script src="/auth/static/password-toggle.js" nonce="${escapeHtml(params.nonce)}"></script>
-    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("passkeys.js")}" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("password-toggle.js")}" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("submit-state.js")}" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({

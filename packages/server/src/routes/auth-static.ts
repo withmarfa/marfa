@@ -1,19 +1,5 @@
-/**
- * Static assets served from `/auth/static/*`.
- *
- *   - `GET /auth/static/auth.css` — shared auth-page stylesheet.
- *   - `GET /auth/static/password-toggle.js` — show/hide password fields.
- *   - `GET /auth/static/passkeys.js` — browser passkey ceremonies.
- *   - `GET /auth/static/submit-state.js` — submitting-state + double-submit guard.
- *
- * Public routes — no bearer / cookie required. Every file is inlined
- * via TypeScript template literals (`auth-static/auth-css.ts`,
- * `auth-static/password-toggle-js.ts`,
- * `auth-static/submit-state-js.ts`) so there is no static-asset copy step
- * in the build. ETags are SHA-1 of the bytes; `If-None-Match` returns 304
- * with no body. `Cache-Control: public, max-age=3600` — browsers cache for
- * an hour but the ETag forces revalidation across deploys when bytes shift.
- */
+/** Inline auth assets use content hashes in page URLs so a deployment changes
+ *  the browser cache identity whenever the asset bytes change. */
 import { PASSKEYS_JS } from "./auth-static/passkeys-js.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
@@ -22,10 +8,12 @@ import { PASSWORD_TOGGLE_JS } from "./auth-static/password-toggle-js.js";
 import { SUBMIT_STATE_JS } from "./auth-static/submit-state-js.js";
 
 function makeAsset(body: string, contentType: string) {
+  const version = createHash("sha1").update(body).digest("hex");
   return {
+    version,
     body,
     contentType,
-    etag: `"${createHash("sha1").update(body).digest("hex")}"`,
+    etag: `"${version}"`,
     bytes: Buffer.byteLength(body, "utf-8"),
   };
 }
@@ -39,6 +27,20 @@ const SUBMIT_STATE = makeAsset(
   SUBMIT_STATE_JS,
   "application/javascript; charset=utf-8",
 );
+
+const ASSETS = {
+  "auth.css": CSS,
+  "password-toggle.js": PASSWORD_TOGGLE,
+  "submit-state.js": SUBMIT_STATE,
+  "passkeys.js": makeAsset(
+    PASSKEYS_JS,
+    "application/javascript; charset=utf-8",
+  ),
+};
+
+export function authAssetUrl(name: keyof typeof ASSETS): string {
+  return `/auth/static/${name}?v=${ASSETS[name].version}`;
+}
 
 export function authStaticRoutes(): Hono {
   const app = new Hono();
@@ -63,13 +65,8 @@ export function authStaticRoutes(): Hono {
     };
   }
 
-  app.get(
-    "/passkeys.js",
-    serveAsset(makeAsset(PASSKEYS_JS, "application/javascript; charset=utf-8")),
-  );
-  app.get("/auth.css", serveAsset(CSS));
-  app.get("/password-toggle.js", serveAsset(PASSWORD_TOGGLE));
-  app.get("/submit-state.js", serveAsset(SUBMIT_STATE));
+  for (const [name, asset] of Object.entries(ASSETS))
+    app.get(`/${name}`, serveAsset(asset));
 
   return app;
 }

@@ -1434,19 +1434,19 @@ If an answer names a contract other than the one the CLI was built for, then the
 
 **Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds every owner passkey command to the contract through its private socket`.
 
 ### `device/command-mismatch-prints-nothing`
 
 When the CLI refuses an answer for its contract, the CLI MUST print nothing of the answer.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› holds every owner passkey command to the contract through its private socket`.
 
 ### `device/command-unnamed-success`
 
 If a success names no contract, then the CLI MUST refuse it `contract_mismatch` with exit 1.
 
-**Tests:** `device/contract.test.ts › refuses a success that names no contract`.
+**Tests:** `device/contract.test.ts › refuses a success that names no contract`, `› holds every owner passkey command to the contract through its private socket`.
 
 ### `device/command-contract-twice`
 
@@ -1486,7 +1486,7 @@ If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with 
 
 When the CLI sends a call other than a mint, `status` or `whoami`, the CLI MUST send that call alone, with no read of the server's root before it.
 
-**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`.
+**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`, `› holds every owner passkey command to the contract through its private socket`.
 
 ### `device/command-mint-root-first`
 

@@ -60,6 +60,12 @@ export function controlRoutes(
     });
     return c.json(ownerWire(owner), 201);
   });
+  app.get("/owner/passkeys/add-url", (c) => {
+    const url = new URL("/auth/sign-in", baseURL);
+    url.searchParams.set("prompt", "login");
+    url.searchParams.set("return_to", "/auth/owner/passkeys");
+    return c.json({ url: url.toString() });
+  });
   app.post("/owner/recover", async (c) => {
     const input = recoveryInput.safeParse(await c.req.json().catch(() => null));
     if (!input.success)

@@ -38,7 +38,7 @@ pub enum BlobsCommand {
         ttl: Option<u64>,
     },
     /// Every store the instance has attached, and the copies a blob keeps
-    /// at the least. Requires `blobs.manage`.
+    /// at the least. Requires `instance.read`.
     Stores,
     /// The stores recorded as holding one blob's bytes, and when each copy
     /// was last found intact.
@@ -56,7 +56,7 @@ pub enum BlobsCommand {
         store: String,
     },
     /// The blobs the last orphan sweep found nothing referencing. Requires
-    /// `blobs.manage`.
+    /// `instance.read`.
     Orphans,
 }
 

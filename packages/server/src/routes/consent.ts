@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 /**
  * OAuth consent screen renderer.
  *
@@ -1118,7 +1119,7 @@ export function renderConsentScreen(params: ConsentParams): string {
       </div>
     </form>
     <script nonce="${escapeHtml(params.nonce)}">${enhancementScript}</script>
-    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("submit-state.js")}" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({

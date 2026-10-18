@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -74,7 +75,7 @@ describe("renderSignInPage", () => {
       returnTo: "/",
     });
     expect(html).toContain(
-      '<script src="/auth/static/submit-state.js" nonce="test-nonce"></script>',
+      `<script src="${authAssetUrl("submit-state.js")}" nonce="test-nonce"></script>`,
     );
   });
 
@@ -117,7 +118,7 @@ describe("renderSignInPage", () => {
       returnTo: "/",
     });
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(html).not.toContain("<style>");
   });

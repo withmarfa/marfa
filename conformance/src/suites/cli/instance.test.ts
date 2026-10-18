@@ -17,6 +17,7 @@ import {
   trackWebhook,
 } from "../../utils/setup.js";
 import { TEST_OWNER } from "../../utils/target.js";
+import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { expectSignedBy, startReceiver } from "../../utils/webhook-receiver.js";
 import type { Receiver } from "../../utils/webhook-receiver.js";
 import { cliContext, releaseHeld, unique } from "./harness.js";
@@ -545,6 +546,148 @@ describe("the instance from the terminal", () => {
     const refused = await claimer.refused(create("cli-unclaimed"));
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.code).toBe("forbidden");
+  });
+
+  it("lists, renames and removes a passkey through the private socket, and requires that socket for every passkey command", async () => {
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(
+      socket,
+      "the fixture exposes its private control socket",
+    ).toBeTruthy();
+    const local = c.cli.viaSocket(socket!);
+    const origin = new URL(c.apiUrl).origin;
+    const cookies = (response: Response) =>
+      response.headers
+        .getSetCookie()
+        .map((value) => value.split(";")[0])
+        .join("; ");
+    const signedIn = await fetch(`${origin}/auth/sign-in/email`, {
+      method: "POST",
+      headers: { origin, "content-type": "application/json" },
+      body: JSON.stringify(TEST_OWNER),
+    });
+    expect(signedIn.status).toBe(200);
+    const ownerCookie = cookies(signedIn);
+    const options = await fetch(
+      `${origin}/auth/passkey/generate-register-options`,
+      {
+        headers: { origin, cookie: ownerCookie },
+      },
+    );
+    expect(options.status).toBe(200);
+    const challenge = (await options.json()) as { challenge: string };
+    const name = unique("cli-passkey");
+    const registered = await fetch(
+      `${origin}/auth/passkey/verify-registration`,
+      {
+        method: "POST",
+        headers: {
+          origin,
+          cookie: [ownerCookie, cookies(options)].filter(Boolean).join("; "),
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          name,
+          response: testAuthenticator().registration(
+            challenge.challenge,
+            origin,
+            new URL(origin).hostname,
+          ),
+        }),
+      },
+    );
+    expect(registered.status).toBe(200);
+    const { id } = (await registered.json()) as { id: string };
+    interface Passkey {
+      id: string;
+      name: string | null;
+      created_at: string;
+    }
+    try {
+      const listed = await local.json<{ data: Passkey[]; next_cursor: null }>([
+        "owner",
+        "passkeys",
+        "list",
+      ]);
+      expect(listed.next_cursor).toBeNull();
+      const held = listed.data.find((row) => row.id === id);
+      expect(held).toEqual({ id, name, created_at: expect.any(String) });
+      const plain = await local.run(["owner", "passkeys", "list"]);
+      expect(plain.code).toBe(0);
+      expect(plain.stdout).toContain(
+        `${id}  ${name}  created ${held!.created_at}`,
+      );
+
+      const renamed = await local.json<Passkey>([
+        "owner",
+        "passkeys",
+        "rename",
+        id,
+        "--name",
+        "  -Studio-  ",
+      ]);
+      expect(renamed).toEqual({ ...held, name: "-Studio-" });
+      const invalid = await local.refused([
+        "owner",
+        "passkeys",
+        "rename",
+        id,
+        "--name",
+        " ",
+      ]);
+      expect(invalid.envelope.error.server?.status).toBe(400);
+      expect(
+        (
+          await local.json<{ data: Passkey[] }>(["owner", "passkeys", "list"])
+        ).data.find((row) => row.id === id)?.name,
+      ).toBe("-Studio-");
+
+      const added = await local.json<{ url: string }>([
+        "owner",
+        "passkeys",
+        "add",
+        "--no-browser",
+      ]);
+      const signInUrl = new URL(added.url);
+      expect(signInUrl.origin).toBe(origin);
+      expect(signInUrl.pathname).toBe("/auth/sign-in");
+      expect(Object.fromEntries(signInUrl.searchParams)).toEqual({
+        prompt: "login",
+        return_to: "/auth/owner/passkeys",
+      });
+
+      for (const ordinary of [c.cli, c.operator]) {
+        for (const args of [
+          ["list"],
+          ["rename", id, "--name", "Remote"],
+          ["remove", id],
+          ["add", "--no-browser"],
+        ]) {
+          const refused = await ordinary.refused([
+            "owner",
+            "passkeys",
+            ...args,
+          ]);
+          expect(refused.envelope.error.message).toContain(
+            "requires --socket PATH",
+          );
+          expect(refused.envelope.error.server).toBeNull();
+        }
+      }
+      expect(await local.json(["owner", "passkeys", "remove", id])).toEqual({
+        ok: true,
+      });
+      expect(
+        (
+          await local.json<{ data: Passkey[] }>(["owner", "passkeys", "list"])
+        ).data.some((row) => row.id === id),
+      ).toBe(false);
+      const again = await local.refused(["owner", "passkeys", "remove", id]);
+      expect(again.envelope.error.server?.status).toBe(404);
+      expect(again.envelope.error.server?.code).toBe("passkey_not_found");
+    } finally {
+      await local.run(["owner", "passkeys", "remove", id]);
+    }
   });
 
   it("lists, renames and ends a sign-in through the private socket, and refuses an ordinary key", async () => {

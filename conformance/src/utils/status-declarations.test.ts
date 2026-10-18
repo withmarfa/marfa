@@ -982,8 +982,6 @@ describe("the sign-in routes", () => {
     ["GET", "/auth/passkey/generate-authenticate-options", 200],
     ["POST", "/auth/passkey/verify-registration", 409],
     ["POST", "/auth/passkey/verify-authentication", 500],
-    ["GET", "/auth/passkey/list-user-passkeys", 401],
-    ["POST", "/auth/passkey/delete-passkey", 404],
     ["GET", "/auth/owner/passkeys", 403],
     ["GET", "/auth/static/passkeys.js", 200],
   ])("recognises %s %s and its %i response", (method, path, status) => {

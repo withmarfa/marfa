@@ -9,6 +9,11 @@ use std::io::{IsTerminal, Read};
 pub enum OwnerCommand {
     /// Show the instance's owner.
     Show,
+    /// Manage the owner's registered passkeys using private machine authority.
+    Passkeys {
+        #[command(subcommand)]
+        command: super::owner_passkeys::PasskeysCommand,
+    },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
 }
@@ -79,6 +84,7 @@ fn require_local(remote: &Remote) -> Result<(), CliError> {
 
 pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
+        OwnerCommand::Passkeys { command } => super::owner_passkeys::run(command, remote, out),
         OwnerCommand::Show => out.value(&remote.json(&Request::get(&["owner"]))?),
         OwnerCommand::Recover(args) => {
             require_local(remote)?;

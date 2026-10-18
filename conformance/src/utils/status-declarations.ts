@@ -91,8 +91,6 @@ export const SIGN_IN_LIBRARY_ROUTES: Readonly<Record<string, string>> = {
   "GET /auth/passkey/generate-authenticate-options":
     "a passkey sign-in challenge",
   "POST /auth/passkey/verify-authentication": "passkey sign-in",
-  "GET /auth/passkey/list-user-passkeys": "the owner's registered passkeys",
-  "POST /auth/passkey/delete-passkey": "the owner's passkey removal",
   "GET /auth/jwks": "the key set that signs id tokens",
   "GET /auth/oauth2/authorize": "an app's authorization request",
   "POST /auth/oauth2/token": "the token exchange, every grant",
@@ -151,8 +149,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "POST /auth/passkey/verify-registration": [200, 400, 401, 403, 409, 500],
   "GET /auth/passkey/generate-authenticate-options": [200, 403],
   "POST /auth/passkey/verify-authentication": [200, 400, 401, 403, 500],
-  "GET /auth/passkey/list-user-passkeys": [200, 401, 403],
-  "POST /auth/passkey/delete-passkey": [200, 400, 401, 403, 404],
   "GET /auth/oauth2/authorize": [200, 302],
   "GET /auth/authorize": [200, 302, 400, 404],
   "POST /auth/authorize/decision": [200, 302, 400, 403, 500],

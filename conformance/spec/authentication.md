@@ -10,7 +10,7 @@ When the owner submits a valid WebAuthn registration with user verification from
 
 ### `authentication/passkey-list`
 
-When the signed-in owner lists passkeys, the server MUST return each registered passkey with its ID and name.
+When the owner or private local process lists `GET /owner/passkeys`, the server MUST return every registered owner passkey with only `id`, nullable `name`, and UTC `created_at`, oldest first, with `next_cursor: null`.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
@@ -70,7 +70,7 @@ When a registration names a credential ID already registered on the instance, th
 
 ### `authentication/passkey-owner-only`
 
-When a caller without an owner browser session asks to list passkeys, the server MUST refuse it with `401`.
+When a caller without an owner browser session or private local authority asks to manage passkeys, the server MUST refuse the request with `401` if unauthenticated or `403` if using an app token or API key.
 
 **Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
 
@@ -79,3 +79,33 @@ When a caller without an owner browser session asks to list passkeys, the server
 When a foreign origin asks to remove an owner passkey, the server MUST refuse it with `403`.
 
 **Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
+
+### `authentication/passkey-recent-management`
+
+When the owner renames or removes a passkey through `PATCH` or `DELETE /owner/passkeys/{id}`, the server MUST require a live owner browser session authenticated within five minutes or private local authority.
+
+**Tests:** `compliance/passkeys.test.ts › requires owner authority and the instance origin for passkey management`.
+
+### `authentication/passkey-rename`
+
+When an authorized caller submits a passkey name, the server MUST trim its ends and accept it only when it is nonempty, at most 200 characters, and free of control and bidirectional formatting characters, with no other body fields.
+
+**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
+
+### `authentication/passkey-management-not-found`
+
+When an authorized caller renames or removes a missing, foreign, or removed passkey ID, the server MUST return `404` with `passkey_not_found`.
+
+**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
+
+### `authentication/passkey-management-atomic`
+
+When the server renames or removes a passkey, the server MUST check ownership and commit only that credential change with its audit record in one transaction.
+
+**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
+
+### `authentication/passkey-add-url`
+
+When the private local process requests `GET /_control/owner/passkeys/add-url`, the server MUST return the configured-origin sign-in URL with `prompt=login` and `return_to=/auth/owner/passkeys` without issuing credentials or setup proof.
+
+**Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.

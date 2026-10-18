@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 /**
  * HTML pages for the Device Authorization Grant flow (RFC 8628):
  * verification form, consent screen, and decision-result page.
@@ -209,7 +210,7 @@ export function renderDevicePage(params: DevicePageParams): string {
         <button type="submit" class="btn btn--primary" data-loading-label="Checking...">Continue</button>
       </div>
     </form>
-    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("submit-state.js")}" nonce="${escapeHtml(params.nonce)}"></script>
     <script nonce="${escapeHtml(params.nonce)}">${OTP_SCRIPT}</script>
   `;
 
@@ -344,7 +345,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
         <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
     </div>
-    <script src="/auth/static/submit-state.js" nonce="${escapeHtml(params.nonce)}"></script>
+    <script src="${authAssetUrl("submit-state.js")}" nonce="${escapeHtml(params.nonce)}"></script>
   `;
 
   return renderAuthLayout({

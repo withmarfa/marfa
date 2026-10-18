@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import {
@@ -20,7 +21,7 @@ describe("renderDevicePage", () => {
   it("links to the shared stylesheet and has no inline <style>", () => {
     const html = renderDevicePage({ prefilled: "" });
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(html).not.toContain("<style>");
   });
@@ -77,7 +78,7 @@ describe("renderDeviceConsentScreen", () => {
   it("links to the shared stylesheet and has no inline <style>", () => {
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(html).not.toContain("<style>");
   });
@@ -235,10 +236,10 @@ describe("renderDeviceDecisionPage", () => {
 
   it("links to the shared stylesheet on both branches", () => {
     expect(renderDeviceDecisionPage({ approved: true })).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(renderDeviceDecisionPage({ approved: false })).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
   });
 });

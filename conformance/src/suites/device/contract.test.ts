@@ -604,14 +604,17 @@ const NEEDS_A_KEY =
   "this operation needs a key or a token, which --socket does not carry; run it without --socket";
 
 /**
- * A server on a Unix socket of its own. It answers a blob download and a
- * list of items, or `401` to everything once `denies` is set, and counts the
- * requests made to it. The directory is short because macOS caps a socket
+ * A server on a Unix socket of its own. It serves a supplied JSON answer,
+ * a blob download or a list of items, or `401` once `denies` is set, and
+ * counts the requests. The directory is short because macOS caps a socket
  * path, and private because the binary refuses any other.
  */
 class PrivateSocket {
   requests = 0;
   denies = false;
+  contract: string | null = BUILT_FOR;
+  answer: unknown;
+  asked: string[] = [];
 
   private constructor(
     readonly dir: string,
@@ -627,7 +630,8 @@ class PrivateSocket {
     const server = createServer((request, response) => {
       const socket = holder.socket!;
       socket.requests += 1;
-      const named = { [CONTRACT_HEADER]: BUILT_FOR };
+      const named =
+        socket.contract === null ? {} : { [CONTRACT_HEADER]: socket.contract };
       if (socket.denies) {
         response.writeHead(401, {
           "content-type": "application/json",
@@ -638,6 +642,14 @@ class PrivateSocket {
             error: { code: "unauthorized", message: "Authentication required" },
           }),
         );
+      } else if (socket.answer !== undefined) {
+        socket.asked.push(`${request.method} ${request.url}`);
+        request.resume();
+        response.writeHead(200, {
+          "content-type": "application/json",
+          ...named,
+        });
+        response.end(JSON.stringify(socket.answer));
       } else if (request.url?.startsWith("/blobs/")) {
         response.writeHead(200, {
           "content-type": "application/octet-stream",
@@ -825,6 +837,12 @@ function codeOf(stderr: string): string {
  */
 const beyondTheTable: Record<string, () => string[]> = {};
 
+const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
+  "owner passkeys list": () => [],
+  "owner passkeys rename": () => [ID, "--name", "Studio"],
+  "owner passkeys remove": () => [ID],
+};
+
 const stdinFor: Record<string, string> = {
   "setup claim": JSON.stringify({
     email: "a@cyzr.me",
@@ -846,10 +864,9 @@ const refusedOnly: Record<string, () => string[]> = {
 };
 
 /**
- * Commands the binary has that no case here drives, each with why: the
- * completeness check below holds the binary's own command tree to the
- * driven set and this list, so a command added later is driven or said to
- * need no driving.
+ * Commands outside the HTTP table walk, each with why and where it is
+ * exercised. The completeness check below holds the binary's own command
+ * tree to the driven set and this list.
  */
 const NOT_DRIVEN: Record<string, string> = {
   "setup status":
@@ -860,6 +877,8 @@ const NOT_DRIVEN: Record<string, string> = {
     "requires the private socket; exercised by packaged image smoke",
   "owner recover":
     "requires the private socket; packaged image smoke changes the production password and verifies it after restart",
+  "owner passkeys add":
+    "requires the private socket; its response contract is driven here and its sign-in URL is checked by the CLI instance scenario",
   status: "describes a server on another contract; held by its own case",
   whoami: "describes a server on another contract; held by its own case",
   logout:
@@ -926,7 +945,11 @@ async function driven(): Promise<{ command: string }[]> {
   const outcome = await marfa(["--json", "operations"]);
   const rows = JSON.parse(outcome.stdout) as { command: string }[];
   return [
-    ...rows.filter((row) => !Object.hasOwn(BOUND_CORE_TABLE, row.command)),
+    ...rows.filter(
+      (row) =>
+        !Object.hasOwn(BOUND_CORE_TABLE, row.command) &&
+        !Object.hasOwn(PRIVATE_SOCKET_TABLE, row.command),
+    ),
     ...Object.keys(beyondTheTable).map((command) => ({ command })),
   ];
 }
@@ -979,9 +1002,83 @@ describe("every command holds the server to the contract", () => {
     const commands = (await table()).map((row) => row.command);
     expect(commands.length).toBeGreaterThan(0);
     expect(
-      [...Object.keys(invocations), ...Object.keys(BOUND_CORE_TABLE)].sort(),
+      [
+        ...Object.keys(invocations),
+        ...Object.keys(BOUND_CORE_TABLE),
+        ...Object.keys(PRIVATE_SOCKET_TABLE),
+      ].sort(),
     ).toEqual(commands.filter((command) => command !== DESCRIBES).sort());
     expect(commands).toContain(DESCRIBES);
+  });
+
+  it("holds every owner passkey command to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const cases = [
+      {
+        command: "owner passkeys list",
+        args: PRIVATE_SOCKET_TABLE["owner passkeys list"]!(),
+        path: "GET /owner/passkeys",
+        body: { data: [], next_cursor: null },
+      },
+      {
+        command: "owner passkeys rename",
+        args: PRIVATE_SOCKET_TABLE["owner passkeys rename"]!(),
+        path: `PATCH /owner/passkeys/${ID}`,
+        body: { id: ID, name: "Studio", created_at: WHEN },
+      },
+      {
+        command: "owner passkeys remove",
+        args: PRIVATE_SOCKET_TABLE["owner passkeys remove"]!(),
+        path: `DELETE /owner/passkeys/${ID}`,
+        body: { ok: true },
+      },
+      {
+        command: "owner passkeys add",
+        args: ["--no-browser"],
+        path: "GET /_control/owner/passkeys/add-url",
+        body: {
+          url: "http://localhost/auth/sign-in?prompt=login&return_to=%2Fauth%2Fowner%2Fpasskeys",
+        },
+      },
+    ];
+    expect(
+      cases
+        .filter((row) => Object.hasOwn(PRIVATE_SOCKET_TABLE, row.command))
+        .map((row) => row.command)
+        .sort(),
+    ).toEqual(
+      Object.keys(PRIVATE_SOCKET_TABLE)
+        .filter((command) => command.startsWith("owner passkeys "))
+        .sort(),
+    );
+    try {
+      for (const row of cases) {
+        socket.answer = row.body;
+        for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+          socket.contract = contract;
+          socket.asked = [];
+          const outcome = await marfa([
+            "--json",
+            "--socket",
+            socket.path,
+            ...row.command.split(" "),
+            ...row.args,
+          ]);
+          const label = `${row.command} on contract ${String(contract)} (exit ${outcome.code}): ${outcome.stderr}`;
+          expect(socket.asked, label).toEqual([row.path]);
+          if (contract === BUILT_FOR) {
+            expect(outcome.code, label).toBe(0);
+            expect(JSON.parse(outcome.stdout), label).toEqual(row.body);
+          } else {
+            expect(outcome.code, label).toBe(1);
+            expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+            expect(outcome.stdout, label).toBe("");
+          }
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
   });
 
   it("refuses a content response on another contract from a bound folder push", async () => {

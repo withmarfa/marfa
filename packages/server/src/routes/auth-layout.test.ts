@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect } from "vitest";
 import { renderAuthLayout } from "./test-render.js";
 
@@ -27,7 +28,7 @@ describe("renderAuthLayout", () => {
   it("links to /auth/static/auth.css", () => {
     const html = renderAuthLayout({ title: "x", bodyHtml: "" });
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
   });
 

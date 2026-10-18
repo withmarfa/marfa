@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 /**
  * A browser navigation that fails gets a page; everything else gets JSON.
  *
@@ -56,7 +57,7 @@ describe("prefersHtml", () => {
 describe("the rendered page", () => {
   it("uses the shared layout and carries no request-supplied text", () => {
     const html = renderHttpErrorPage(404);
-    expect(html).toContain('href="/auth/static/auth.css"');
+    expect(html).toContain(`href="${authAssetUrl("auth.css")}"`);
     expect(html).toContain("<title>Page not found</title>");
     // Parameterless beyond the status, deliberately: an error page is
     // reachable on any path with any query, so every value from the request
@@ -87,7 +88,7 @@ describe("content negotiation end to end", () => {
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    expect(html).toContain('href="/auth/static/auth.css"');
+    expect(html).toContain(`href="${authAssetUrl("auth.css")}"`);
   });
 
   it("an unmatched path gives an API client the documented JSON", async () => {
