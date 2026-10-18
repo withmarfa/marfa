@@ -1,18 +1,20 @@
 /**
- * SQL condition generator for the advanced query language.
- *
- * Converts a FilterExpression AST into SQL conditions for both:
- * - Drizzle ORM (used by item stores): returns SQL[] to compose with and()/or()
- * - Raw SQL strings (used by search stores): returns parameterized clause strings
+ * The one SQL compiler for what a read selects: the advanced query language,
+ * the credential's type map, the `?type=` read filter, the `system.*`
+ * default and the `source_filter` lever. Every store builds its statement
+ * from these as Drizzle `SQL`, so every value is a bound parameter and no
+ * statement is ever split on `?`.
  */
 
-import { sql, type SQL } from "drizzle-orm";
+import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
   ErrorCode,
+  GLOBAL_TYPE_WILDCARD,
   MarfaError,
+  declaredDescendantsOutsideNamespace,
+  subtreeWildcardRoot,
   typeFilterTerms,
-  typePatternToSql,
-  typeSubtreeToSql,
+  type TypeFilter,
 } from "@withmarfa/shared";
 import { normalizeTimeBound } from "./interface.js";
 import type {
@@ -22,74 +24,119 @@ import type {
 } from "@withmarfa/shared";
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Types: the permission map, the read filter and the system default
 // ---------------------------------------------------------------------------
-
-/** The types whose edges a filter's `backref` terms may count, as a map reads. */
-export interface ReadableSources {
-  allowed?: string[];
-  excluded: string[];
-}
-
-/** One type pattern as a clause on a raw column, for either compiler. */
-function patternClause(
-  column: string,
-  pattern: string,
-  params: unknown[],
-): string {
-  const { global, exact, descendantPattern } = typePatternToSql(pattern);
-  if (global) return "1=1";
-  if (!exact) return "1=0";
-  if (!descendantPattern) {
-    params.push(exact);
-    return `${column} = ?`;
-  }
-  const { from, before } = subtreeBounds(exact);
-  params.push(exact, from, before);
-  return `(${column} = ? OR (${column} >= ? AND ${column} < ?))`;
-}
 
 /**
  * `/` immediately follows `.` in binary order, so these bounds cover
  * exactly the `<root>.` prefix. A range can use the BINARY type index;
  * default case-insensitive LIKE cannot.
  */
-export function subtreeBounds(root: string): { from: string; before: string } {
+function subtreeBounds(root: string): { from: string; before: string } {
   return { from: `${root}.`, before: `${root}/` };
+}
+
+/** A type and everything named under it, compared by exact characters. */
+function namedSubtreeSql(column: SQLWrapper, root: string): SQL {
+  const { from, before } = subtreeBounds(root);
+  return sql`(${column} = ${root} OR (${column} >= ${from} AND ${column} < ${before}))`;
+}
+
+/**
+ * One permission pattern as a predicate on a type column.
+ *
+ * By name only, never by declared parent: `type-patterns.ts` says why. A bare
+ * identifier is an exact grant; widening it to a subtree would hand a
+ * credential scoped to one type everything under it. Only the empty string
+ * reaches `1=0`, and `resolveTypePermission` cannot honor that as a grant or
+ * as an exclusion either, so `1=0` matches the point check in both positions.
+ */
+function permissionPatternSql(column: SQLWrapper, pattern: string): SQL {
+  if (pattern === GLOBAL_TYPE_WILDCARD) return sql`1=1`;
+  const root = subtreeWildcardRoot(pattern);
+  if (root !== null) return namedSubtreeSql(column, root);
+  if (pattern === "") return sql`1=0`;
+  return sql`${column} = ${pattern}`;
+}
+
+/**
+ * The credential's type map as a predicate on a type column: the one
+ * compiler every door that reads with SQL uses, and the twin of
+ * `matchesTypeFilter`, which compiles the same `typeFilterTerms`.
+ *
+ * `allowed: undefined` (no credential to bound the read) and a global grant
+ * that nothing carves into both restrict nothing, and answer `undefined`, so
+ * a caller adds the result only when it is present. An empty `allowed` is a
+ * credential that may read no type, and answers `1=0` rather than nothing.
+ */
+export function typeFilterSql(
+  column: SQLWrapper,
+  filter: TypeFilter,
+): SQL | undefined {
+  if (filter.allowed === undefined) return undefined;
+  const terms = typeFilterTerms(filter.allowed, filter.excluded);
+  if (
+    terms.some(
+      ({ pattern, minus }) =>
+        pattern === GLOBAL_TYPE_WILDCARD && minus.length === 0,
+    )
+  )
+    return undefined;
+  if (terms.length === 0) return sql`1=0`;
+  const clauses = terms.map(({ pattern, minus }) => {
+    const granted = permissionPatternSql(column, pattern);
+    if (minus.length === 0) return granted;
+    // `typeFilterTerms` has already dropped the exclusions this grant
+    // outranks, so everything left carves into it.
+    const carved = minus.map((m) => permissionPatternSql(column, m));
+    return sql`(${granted} AND NOT (${sql.join(carved, sql` OR `)}))`;
+  });
+  return sql`(${sql.join(clauses, sql` OR `)})`;
+}
+
+/**
+ * A `?type=` read filter as a predicate on a type column: the type, every
+ * type named under it, and every type that declares its way under it from
+ * outside its name. `core.entity` and `core.entity.*` read the same, and `*`
+ * restricts nothing. The JavaScript twin is `typeAnswersSubtreeFilter`.
+ *
+ * Deliberately not the permission compiler above: the same strings, opposite
+ * defaults. Here a bare identifier selects its subtree; in a grant it is
+ * exact.
+ */
+export function typeSubtreeSql(
+  column: SQLWrapper,
+  type: string,
+): SQL | undefined {
+  if (type === GLOBAL_TYPE_WILDCARD) return undefined;
+  const root = subtreeWildcardRoot(type) ?? type;
+  const named = namedSubtreeSql(column, root);
+  const declared = declaredDescendantsOutsideNamespace(root);
+  if (declared.length === 0) return named;
+  return sql`(${named} OR ${column} IN (${sql.join(
+    declared.map((t) => sql`${t}`),
+    sql`, `,
+  )}))`;
+}
+
+/**
+ * The default that keeps platform rows out of an ordinary read, decided by
+ * `excludesSystemTypes`. A name test on the column, so the route's opt-in and
+ * this exclusion read the same rows.
+ */
+export function notSystemTypeSql(column: SQLWrapper): SQL {
+  return sql`${column} NOT LIKE 'system.%'`;
 }
 
 /**
  * The clause a `backref` term adds so it counts only edges whose source the
- * caller may read, as every door that serves an edge does; `null` for none.
+ * caller may read, as every door that serves an edge does; empty for no
+ * credential. The source item must exist even when the map reads every type.
  */
-function readableSourceRawSql(
-  sources: ReadableSources | undefined,
-  params: unknown[],
-): string | null {
-  if (!sources?.allowed) return null;
-  if (sources.allowed.length === 0) return "AND 1=0";
-  const terms = typeFilterTerms(sources.allowed, sources.excluded).map(
-    ({ pattern, minus }) => {
-      const granted = patternClause("s.type", pattern, params);
-      if (minus.length === 0) return granted;
-      const carved = minus.map((m) => patternClause("s.type", m, params));
-      return `(${granted} AND NOT (${carved.join(" OR ")}))`;
-    },
-  );
-  return `AND EXISTS (SELECT 1 FROM items s WHERE s.id = e.source_id AND (${terms.join(" OR ")}))`;
-}
-
-/** The same clause as a Drizzle fragment. */
-function readableSourceSql(sources: ReadableSources | undefined): SQL {
-  const params: unknown[] = [];
-  const raw = readableSourceRawSql(sources, params);
-  if (raw === null) return sql``;
-  const parts = raw.split("?");
-  return sql.join(
-    parts.flatMap((part, i) =>
-      i < params.length ? [sql.raw(part), sql`${params[i]}`] : [sql.raw(part)],
-    ),
-  );
+function readableSourceSql(sources: TypeFilter | undefined): SQL {
+  if (sources?.allowed === undefined) return sql``;
+  const readable = typeFilterSql(sql`s.type`, sources) ?? sql`1=1`;
+  return sql`AND EXISTS (SELECT 1 FROM items s WHERE s.id = e.source_id AND ${readable})`;
 }
 
 /**
@@ -99,14 +146,11 @@ function readableSourceSql(sources: ReadableSources | undefined): SQL {
  * has no default, so an unaccompanied `\_` is a literal backslash followed
  * by the single-character wildcard — a `contains` filter for `web_gallery`
  * silently matches nothing. Every LIKE built from this must carry
- * `LIKE_ESCAPE_CLAUSE`.
+ * `ESCAPE '\\'`.
  */
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
 }
-
-/** Declares the escape character `escapeLike` writes. Append to every LIKE. */
-const LIKE_ESCAPE_CLAUSE = " ESCAPE '\\'";
 
 /**
  * The text operators are case-insensitive: SQLite's LIKE is
@@ -135,13 +179,8 @@ interface ItemsTableRef {
   properties: unknown;
 }
 
-export interface RawSqlResult {
-  clause: string;
-  params: unknown[];
-}
-
 // ---------------------------------------------------------------------------
-// System field column mapping (for Drizzle)
+// System field column mapping
 // ---------------------------------------------------------------------------
 
 function getSystemColumn(table: ItemsTableRef, column: string): unknown {
@@ -161,13 +200,13 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// Drizzle SQL condition generator (for item stores)
+// The filter expression
 // ---------------------------------------------------------------------------
 
 function conditionToSql(
   condition: FilterCondition,
   table: ItemsTableRef,
-  sources: ReadableSources | undefined,
+  sources: TypeFilter | undefined,
 ): SQL {
   const { field, op, value } = condition;
 
@@ -210,7 +249,7 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
-  sources: ReadableSources | undefined,
+  sources: TypeFilter | undefined,
 ): SQL {
   if (direction === "outbound") {
     switch (op) {
@@ -409,236 +448,9 @@ function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {
 export function filterToSqlConditions(
   expr: FilterExpression,
   table: ItemsTableRef,
-  sources?: ReadableSources,
+  sources?: TypeFilter,
 ): SQL[] {
   return expr.conditions.map((c) => conditionToSql(c, table, sources));
-}
-
-// ---------------------------------------------------------------------------
-// Raw SQL condition generator (for search stores)
-// ---------------------------------------------------------------------------
-
-function conditionToRawSql(
-  condition: FilterCondition,
-  tableAlias: string,
-  params: unknown[],
-  sources: ReadableSources | undefined,
-): string {
-  const { field, op, value } = condition;
-
-  if (field.kind === "system") {
-    return systemFieldRawSql(
-      tableAlias,
-      field.column,
-      op,
-      systemComparisonValue(field.column, op, value),
-      params,
-    );
-  }
-
-  if (field.kind === "property") {
-    return propertyFieldRawSql(tableAlias, field.path, op, value, params);
-  }
-
-  if (field.kind === "edge") {
-    return edgeFieldRawSql(
-      tableAlias,
-      field.edge_type,
-      field.direction,
-      op,
-      value,
-      params,
-      sources,
-    );
-  }
-
-  // tags
-  return tagsFieldRawSql(tableAlias, op, value, params);
-}
-
-function edgeFieldRawSql(
-  alias: string,
-  edgeType: string,
-  direction: "outbound" | "backref",
-  op: ComparisonOp,
-  value: unknown,
-  params: unknown[],
-  sources: ReadableSources | undefined,
-): string {
-  const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
-  const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
-  const readable = (): string =>
-    direction === "backref"
-      ? ` ${readableSourceRawSql(sources, params) ?? ""}`
-      : "";
-
-  if (op === "exists" || op === "not_exists") {
-    params.push(edgeType);
-    const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?${readable()})`;
-  }
-
-  if (op === "eq" || op === "neq") {
-    params.push(edgeType);
-    params.push(value);
-    const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?${readable()})`;
-  }
-
-  throw new Error(`Unsupported operator "${op}" for edge reference in raw SQL`);
-}
-
-function systemFieldRawSql(
-  alias: string,
-  column: string,
-  op: ComparisonOp,
-  value: unknown,
-  params: unknown[],
-): string {
-  const col = `${alias}.${column}`;
-
-  switch (op) {
-    case "eq":
-      params.push(value);
-      return `${col} = ?`;
-    case "neq":
-      params.push(value);
-      return `${col} != ?`;
-    case "gt":
-      params.push(value);
-      return `${col} > ?`;
-    case "gte":
-      params.push(value);
-      return `${col} >= ?`;
-    case "lt":
-      params.push(value);
-      return `${col} < ?`;
-    case "lte":
-      params.push(value);
-      return `${col} <= ?`;
-    case "contains":
-      params.push("%" + escapeLike(String(value)) + "%");
-      return `${col} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
-    case "starts_with":
-      params.push(escapeLike(String(value)) + "%");
-      return `${col} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
-    default:
-      throw new Error(
-        `Unsupported operator "${op}" for system field in raw SQL`,
-      );
-  }
-}
-
-function propertyFieldRawSql(
-  alias: string,
-  path: string,
-  op: ComparisonOp,
-  value: unknown,
-  params: unknown[],
-): string {
-  const isNumeric = typeof value === "number";
-  params.push(`$.${path}`);
-  const extract = `json_extract(${alias}.properties, ?)`;
-  const numExtract = `CAST(${extract} AS REAL)`;
-
-  if (isNumeric && (op === "eq" || op === "neq")) {
-    params.push(`$.${path}`, `$.${path}`, value);
-    const numericExtract = `CASE WHEN json_type(${alias}.properties, ?) IN ('integer', 'real') THEN CAST(${extract} AS REAL) ELSE ${extract} END`;
-    return `${numericExtract} ${op === "eq" ? "=" : "!="} ?`;
-  }
-
-  switch (op) {
-    case "eq":
-      params.push(value);
-      return `${extract} = ?`;
-    case "neq":
-      params.push(value);
-      return `${extract} != ?`;
-    case "gt": {
-      const expr = isNumeric ? numExtract : extract;
-      params.push(value);
-      return `${expr} > ?`;
-    }
-    case "gte": {
-      const expr = isNumeric ? numExtract : extract;
-      params.push(value);
-      return `${expr} >= ?`;
-    }
-    case "lt": {
-      const expr = isNumeric ? numExtract : extract;
-      params.push(value);
-      return `${expr} < ?`;
-    }
-    case "lte": {
-      const expr = isNumeric ? numExtract : extract;
-      params.push(value);
-      return `${expr} <= ?`;
-    }
-    case "contains":
-      params.push("%" + escapeLike(String(value)) + "%");
-      return `${extract} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
-    case "starts_with":
-      params.push(escapeLike(String(value)) + "%");
-      return `${extract} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
-    case "exists":
-      return `${extract} IS NOT NULL`;
-    case "not_exists":
-      return `${extract} IS NULL`;
-    default:
-      throw new Error(
-        `Unsupported operator "${String(op)}" for property in raw SQL`,
-      );
-  }
-}
-
-function tagsFieldRawSql(
-  alias: string,
-  op: ComparisonOp,
-  value: unknown,
-  params: unknown[],
-): string {
-  if (op === "contains") {
-    params.push(value);
-    return `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id AND je.value = ?)`;
-  }
-
-  if (op === "exists") {
-    return `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`;
-  }
-
-  if (op === "not_exists") {
-    return `NOT EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`;
-  }
-
-  throw new Error(`Unsupported operator "${op}" for tags in raw SQL`);
-}
-
-/**
- * Convert a FilterExpression into a raw SQL WHERE clause fragment.
- *
- * @param expr - The parsed filter expression
- * @param tableAlias - Table alias used in the query (e.g., "i")
- * @returns The SQL clause and its positional parameter values
- */
-export function filterToRawSql(
-  expr: FilterExpression,
-  tableAlias: string,
-  sources?: ReadableSources,
-): RawSqlResult {
-  const params: unknown[] = [];
-  const fragments: string[] = [];
-
-  for (const condition of expr.conditions) {
-    fragments.push(conditionToRawSql(condition, tableAlias, params, sources));
-  }
-
-  const joiner = expr.logical === "OR" ? " OR " : " AND ";
-  const clause =
-    fragments.length === 1
-      ? (fragments[0] ?? "")
-      : `(${fragments.join(joiner)})`;
-
-  return { clause, params };
 }
 
 // ---------------------------------------------------------------------------
@@ -655,8 +467,7 @@ export interface SourceFilterSettings {
 }
 
 /**
- * Which configured entries the predicate has to compile, pre-decomposed so
- * the two emitters below bind parameters in their own order.
+ * The roots the lever covers, each with everything named under it.
  *
  * A configured identifier covers its subtree, because that is what a read of
  * that identifier has always selected: `?type=core.note` returns
@@ -665,24 +476,19 @@ export interface SourceFilterSettings {
  */
 function decomposeCoveredTypes(types: string[]): {
   global: boolean;
-  pairs: { exact: string }[];
+  roots: string[];
 } {
-  const pairs: { exact: string }[] = [];
+  const roots: string[] = [];
   for (const configured of types) {
-    const { global, exact, descendantPattern, extraTypes } =
-      typeSubtreeToSql(configured);
-    if (global) return { global: true, pairs: [] };
-    if (exact !== null && descendantPattern !== null) {
-      pairs.push({ exact });
-    }
+    if (configured === GLOBAL_TYPE_WILDCARD) return { global: true, roots: [] };
+    const root = subtreeWildcardRoot(configured) ?? configured;
+    roots.push(root);
     // A declared descendant is covered as a root of its own, or a lever
     // narrowing a subtree would leave the member named outside that
     // subtree's namespace unnarrowed.
-    for (const extra of extraTypes) {
-      pairs.push({ exact: extra });
-    }
+    roots.push(...declaredDescendantsOutsideNamespace(root));
   }
-  return { global: false, pairs };
+  return { global: false, roots };
 }
 
 export function sourceFilterIncludesItem(
@@ -690,11 +496,11 @@ export function sourceFilterIncludesItem(
   item: { type: string; source: string },
 ): boolean {
   if (!filter) return true;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
+  const { global, roots } = decomposeCoveredTypes(filter.types);
   const covered =
     global ||
-    pairs.some(
-      ({ exact }) => item.type === exact || item.type.startsWith(`${exact}.`),
+    roots.some(
+      (root) => item.type === root || item.type.startsWith(`${root}.`),
     );
   return !covered || filter.sources.includes(item.source);
 }
@@ -703,9 +509,9 @@ export function canonicalSourceFilter(
   filter: SourceFilterSettings | undefined,
 ): { types: string[]; sources: string[] } | null {
   if (!filter) return null;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
-  const roots = [...new Set(pairs.map(({ exact }) => exact))].sort();
-  const types = global
+  const covered = decomposeCoveredTypes(filter.types);
+  const roots = [...new Set(covered.roots)].sort();
+  const types = covered.global
     ? ["*"]
     : roots.filter(
         (root) =>
@@ -732,81 +538,26 @@ export function canonicalSourceFilter(
  */
 export function sourceFilterToSql(
   filter: SourceFilterSettings | undefined,
-  typeCol: unknown,
-  sourceCol: unknown,
+  typeCol: SQLWrapper,
+  sourceCol: SQLWrapper,
 ): SQL | undefined {
   if (!filter) return undefined;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
-  if (!global && pairs.length === 0) return undefined;
+  const { global, roots } = decomposeCoveredTypes(filter.types);
+  if (!global && roots.length === 0) return undefined;
 
   const covered = global
     ? sql`1=1`
-    : pairs
-        .map(
-          (p) =>
-            sql`(${typeCol} = ${p.exact} OR (${typeCol} >= ${subtreeBounds(p.exact).from} AND ${typeCol} < ${subtreeBounds(p.exact).before}))`,
-        )
-        .reduce(
-          (acc, clause, i) => (i === 0 ? clause : sql`${acc} OR ${clause}`),
-          sql``,
-        );
+    : sql.join(
+        roots.map((root) => namedSubtreeSql(typeCol, root)),
+        sql` OR `,
+      );
 
   // An empty source list approves nothing, so covered rows drop out entirely.
   // Emitting `IN ()` instead is a syntax error.
   if (filter.sources.length === 0) return sql`NOT (${covered})`;
 
-  const list = filter.sources
-    .map((s) => sql`${s}`)
-    .reduce(
-      (acc, value, i) => (i === 0 ? value : sql`${acc}, ${value}`),
-      sql``,
-    );
-  return sql`(NOT (${covered}) OR ${sourceCol} IN (${list}))`;
-}
-
-/**
- * The same predicate for the raw-SQL query path the search stores build.
- *
- * Returns null when the lever is off, mirroring `sourceFilterToSql`'s
- * undefined. The clause is unparenthesized at the top level; callers append
- * it with their own `AND `.
- */
-export function sourceFilterToRawSql(
-  filter: SourceFilterSettings | undefined,
-  tableAlias: string,
-): RawSqlResult | null {
-  if (!filter) return null;
-  const { global, pairs } = decomposeCoveredTypes(filter.types);
-  if (!global && pairs.length === 0) return null;
-
-  const params: unknown[] = [];
-  const typeCol = `${tableAlias}.type`;
-
-  let covered: string;
-  if (global) {
-    covered = "1=1";
-  } else {
-    covered = pairs
-      .map((p) => {
-        const { from, before } = subtreeBounds(p.exact);
-        params.push(p.exact, from, before);
-        return `(${typeCol} = ? OR (${typeCol} >= ? AND ${typeCol} < ?))`;
-      })
-      .join(" OR ");
-  }
-
-  if (filter.sources.length === 0) {
-    return { clause: `NOT (${covered})`, params };
-  }
-
-  const list = filter.sources
-    .map((s) => {
-      params.push(s);
-      return "?";
-    })
-    .join(", ");
-  return {
-    clause: `(NOT (${covered}) OR ${tableAlias}.source IN (${list}))`,
-    params,
-  };
+  return sql`(NOT (${covered}) OR ${sourceCol} IN (${sql.join(
+    filter.sources.map((source) => sql`${source}`),
+    sql`, `,
+  )}))`;
 }

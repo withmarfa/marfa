@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   subtreeWildcardRoot,
-  typeAnswersSubtreeFilter,
+  decidingPattern,
+  matchesTypeFilter,
+  patternRank,
   typeMatchesPattern,
-  typePatternToSql,
-  typeSubtreeToSql,
 } from "./type-patterns.js";
 import {
   declaredDescendantsOutsideNamespace,
@@ -115,121 +115,80 @@ describe("subtreeWildcardRoot", () => {
   });
 });
 
-describe("typePatternToSql", () => {
-  it("decomposes a subtree wildcard into an equality plus a prefix", () => {
-    expect(typePatternToSql("core.media.*")).toEqual({
-      global: false,
-      exact: "core.media",
-      descendantPattern: "core.media.%",
-      extraTypes: [],
-    });
+describe("one ranking for a permission map", () => {
+  it("ranks an exact identifier over the longest wildcard over a shorter one over the global wildcard", () => {
+    const ranked = ["*", "core.*", "core.media.*", "core.media.book"].map(
+      patternRank,
+    );
+    expect([...ranked].sort((a, b) => a - b)).toEqual(ranked);
+    expect(new Set(ranked).size).toBe(ranked.length);
   });
 
-  it("decomposes an exact identifier into an equality alone", () => {
-    expect(typePatternToSql("core.note")).toEqual({
-      global: false,
-      exact: "core.note",
-      descendantPattern: null,
-      extraTypes: [],
-    });
-  });
-
-  it("flags the global wildcard so callers emit no predicate", () => {
-    expect(typePatternToSql("*")).toEqual({
-      global: true,
-      exact: null,
-      descendantPattern: null,
-      extraTypes: [],
-    });
-  });
-
-  it("escapes SQL LIKE metacharacters in valid identifier segments", () => {
-    expect(typePatternToSql("demo.web_gallery.*")).toEqual({
-      global: false,
-      exact: "demo.web_gallery",
-      descendantPattern: "demo.web\\_gallery.%",
-      extraTypes: [],
-    });
-  });
-});
-
-describe("resolving names alone", () => {
-  it("consults no registry where the caller matches on identifiers alone", () => {
-    // Webhook filters and scope parsing match on identifiers only, so the
-    // declared half stays out of the predicate they emit.
-    // `typePatternToSql` never resolves it at all — see its own comment.
-    expect(typeSubtreeToSql("core.note").extraTypes).toEqual([]);
-    expect(typeMatchesPattern("user.elsewhere", "core.note.*")).toBe(false);
-    // A permission pattern never consults the registry, whatever is registered.
-    expect(typePatternToSql("core.note.*").extraTypes).toEqual([]);
-  });
-});
-
-/**
- * The in-memory read filter answers what the SQL one selects.
- *
- * `typeAnswersSubtreeFilter` exists so the stream, which has no query to
- * hang a predicate on, resolves `?type=` the way `/items` compiles it.
- * That promise is only worth making if the two agree about every input,
- * and the one that is easy to get wrong is the declared clause: a predicate
- * that resolved declared parentage where its twin resolves none would be
- * exactly the disagreement this exists to prevent.
- */
-describe("the read filter's predicate answers what its SQL twin selects", () => {
-  const OUTSIDE = "user.declared_note";
-
-  const declaredChild = (id: string): TypeSchema =>
-    ({
-      id,
-      name: id,
-      description: "test",
-      parent: "core.note",
-      version: 1,
-      fields: {},
-    }) as unknown as TypeSchema;
-
-  afterEach(() => {
-    unregisterTypeSchema(OUTSIDE);
-  });
-
-  /** Membership as the SQL clauses decide it, for comparison. */
-  const sqlAdmits = (type: string, filter: string): boolean => {
-    const { global, exact, descendantPattern, extraTypes } =
-      typeSubtreeToSql(filter);
-    if (global) return true;
-    if (exact !== null && type === exact) return true;
-    if (
-      descendantPattern !== null &&
-      type.startsWith(descendantPattern.replace(/\\(.)/g, "$1").slice(0, -1))
-    ) {
-      return true;
+  it("decides a type by its most specific covering entry, in any order", () => {
+    const patterns = ["*", "core.*", "core.media.*", "core.media.book"];
+    for (const order of [patterns, [...patterns].reverse()]) {
+      expect(decidingPattern("core.media.book", order)).toBe("core.media.book");
+      expect(decidingPattern("core.media.film", order)).toBe("core.media.*");
+      expect(decidingPattern("core.media", order)).toBe("core.media.*");
+      expect(decidingPattern("core.note", order)).toBe("core.*");
+      expect(decidingPattern("user.note", order)).toBe("*");
     }
-    return extraTypes.includes(type);
-  };
+    expect(decidingPattern("user.note", ["core.*"])).toBeUndefined();
+  });
 
-  it("agrees with the SQL decomposition", () => {
-    registerTypeSchema(declaredChild(OUTSIDE));
-
-    for (const [type, filter] of [
-      ["core.note", "core.note"],
-      ["core.note.private", "core.note"],
-      ["core.note.private", "core.note.*"],
-      ["core.media", "core.note"],
-      ["anything.at.all", "*"],
-      // Named outside the filter's namespace, reachable only through a
-      // declared parent.
-      [OUTSIDE, "core.note"],
-    ] as const) {
-      expect({
-        type,
-        filter,
-        admitted: typeAnswersSubtreeFilter(type, filter),
-      }).toEqual({
-        type,
-        filter,
-        admitted: sqlAdmits(type, filter),
-      });
+  /**
+   * Every map over a small vocabulary of patterns, against every type the
+   * patterns can tell apart: the point check and the list filter's predicate
+   * answer alike. The SQL compiler is held to `matchesTypeFilter` in the
+   * server's `filter-sql-type.test.ts`.
+   */
+  it("gives the point check and the list filter one answer for every map", () => {
+    const patterns = [
+      "*",
+      "core.*",
+      "core.media.*",
+      "core.media.book",
+      "core.media",
+      "core.note",
+      "user.*",
+      "user.secret",
+    ];
+    const types = [
+      "core.media",
+      "core.media.book",
+      "core.media.film",
+      "core.mediation",
+      "core.note",
+      "core.note.private",
+      "user.secret",
+      "user.diary",
+      "acme.thing",
+    ];
+    const levels = ["absent", "read", "write", "none"] as const;
+    let maps: Record<string, "read" | "write" | "none">[] = [{}];
+    for (const pattern of patterns) {
+      maps = maps.flatMap((map) =>
+        levels.map((level) =>
+          level === "absent" ? map : { ...map, [pattern]: level },
+        ),
+      );
     }
+    for (const map of maps) {
+      const allowed = Object.keys(map).filter((p) => map[p] !== "none");
+      const excluded = Object.keys(map).filter((p) => map[p] === "none");
+      for (const type of types) {
+        expect({
+          map,
+          type,
+          listed: matchesTypeFilter(type, { allowed, excluded }),
+        }).toEqual({
+          map,
+          type,
+          listed: resolveTypePermission(type, map) !== "none",
+        });
+      }
+    }
+    expect(maps).toHaveLength(levels.length ** patterns.length);
   });
 });
 

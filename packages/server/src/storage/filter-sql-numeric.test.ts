@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createClient, type InValue } from "@libsql/client";
+import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
-import { and } from "drizzle-orm";
+import { and, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { parseFilter } from "@withmarfa/shared";
-import { filterToRawSql, filterToSqlConditions } from "./filter-sql.js";
+import { filterToSqlConditions } from "./filter-sql.js";
 import { items } from "./sqlite/schema.js";
 
 const numbers = [
@@ -48,12 +49,17 @@ afterAll(() => {
   client.close();
 });
 
+/**
+ * The listing runs the compiler inside the query builder; search and the tag
+ * counts run it inside a statement over an aliased table. Both shapes, one
+ * compiler.
+ */
 async function ids(
   filter: string,
-  compiler: "drizzle" | "raw",
+  shape: "query builder" | "statement",
 ): Promise<string[]> {
   const expression = parseFilter(filter);
-  if (compiler === "drizzle") {
+  if (shape === "query builder") {
     return (
       await db
         .select({ id: items.id })
@@ -63,15 +69,14 @@ async function ids(
       .map((row) => row.id)
       .sort();
   }
-  const compiled = filterToRawSql(expression, "items");
-  const result = await client.execute({
-    sql: `SELECT id FROM items WHERE ${compiled.clause}`,
-    args: compiled.params as InValue[],
-  });
-  return result.rows.map((row) => row.id as string).sort();
+  const i = alias(items, "i");
+  const rows = await db.all<{ id: string }>(
+    sql`SELECT i.id AS id FROM items i WHERE ${and(...filterToSqlConditions(expression, i))}`,
+  );
+  return rows.map((row) => row.id).sort();
 }
 
-for (const compiler of ["drizzle", "raw"] as const) {
+for (const compiler of ["query builder", "statement"] as const) {
   describe(`${compiler} numeric property comparisons`, () => {
     it.each(Object.entries(comparisons))(
       "executes %s using the API number interpretation",

@@ -35,9 +35,6 @@ import {
   MarfaError,
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
-  typePatternToSql,
-  typeFilterTerms,
-  typeSubtreeToSql,
   GLOBAL_TYPE_WILDCARD,
 } from "@withmarfa/shared";
 import { resolveMergePolicy, resolveTypeSchema } from "../policy.js";
@@ -48,8 +45,10 @@ import {
 } from "../merge-properties.js";
 import {
   filterToSqlConditions,
+  notSystemTypeSql,
   sourceFilterToSql,
-  subtreeBounds,
+  typeFilterSql,
+  typeSubtreeSql,
 } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
@@ -177,58 +176,6 @@ function isRevokedAppGrantRow(row: Item): boolean {
     row.properties.kind === "app" &&
     row.properties.status === "revoked"
   );
-}
-
-/**
- * Compiles the caller's readable-type patterns into one predicate.
- *
- * Shared by `list` and `stats` so the two cannot disagree about what a
- * credential can see. Both directions of disagreement have bitten: comparing
- * the patterns as literal identifiers reports zero rows for every
- * wildcard-scoped credential, and ignoring an empty list reports every row
- * to a credential that may read nothing.
- *
- * `undefined` in means "no filter", which is either a request that carried no
- * credential at all — bootstrap and the anonymous reads — or a server-internal
- * read with no caller to bound it. No authenticated caller produces it: its
- * permission map is the whole of what it may reach, so it always arrives with
- * a real list. An empty array is the opposite: a credential whose map, or
- * whose projected OAuth scopes, permit no type at all, which must see nothing
- * rather than everything. `undefined` out means "no predicate", so a caller
- * pushes the result only when it is present.
- */
-function typePatternClause(pattern: string): SQL {
-  const { global, exact, descendantPattern } = typePatternToSql(pattern);
-  if (global) return sql`1=1`;
-  // Only the empty string reaches here, and `resolveTypePermission` cannot
-  // honor that as a grant or as an exclusion either — so `1=0` matches the
-  // point check in both positions: it grants nothing, and negated it
-  // withholds nothing.
-  if (!exact) return sql`1=0`;
-  if (!descendantPattern) return sql`${items.type} = ${exact}`;
-  const { from, before } = subtreeBounds(exact);
-  return sql`(${items.type} = ${exact} OR (${items.type} >= ${from} AND ${items.type} < ${before}))`;
-}
-
-export function allowedTypesCondition(
-  patterns: string[] | undefined,
-  excluded: string[] = [],
-): SQL | undefined {
-  if (!patterns) return undefined;
-  if (patterns.length === 0) return sql`1=0`;
-  const clauses = typeFilterTerms(patterns, excluded).map(
-    ({ pattern, minus }) => {
-      const granted = typePatternClause(pattern);
-      if (minus.length === 0) return granted;
-      // `typeFilterTerms` has already dropped the exclusions this grant
-      // outranks, so everything left genuinely carves into it.
-      const carved = minus
-        .map(typePatternClause)
-        .reduce((acc, part) => sql`${acc} OR ${part}`);
-      return sql`(${granted} AND NOT (${carved}))`;
-    },
-  );
-  return or(...clauses);
 }
 
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
@@ -515,20 +462,9 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
   // `core.entity` and `core.entity.*` mean the same thing: the type and
   // everything under it. A bare identifier has always included its
   // subtypes here, so the explicit wildcard must too.
-  let typeClause: SQL | undefined;
-  if (filters.type) {
-    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-      filters.type,
-    );
-    if (!global && exact && descendantPattern) {
-      const { from, before } = subtreeBounds(exact);
-      typeClause = or(
-        eq(items.type, exact),
-        sql`(${items.type} >= ${from} AND ${items.type} < ${before})`,
-        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
-      );
-    }
-  }
+  const typeClause = filters.type
+    ? typeSubtreeSql(items.type, filters.type)
+    : undefined;
 
   // Without statistics, SQLite can choose the state index even when most
   // rows are active. Steer typed active reads to the type index, but leave
@@ -575,7 +511,7 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
   }
 
   if (filters.exclude_system_types) {
-    conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
+    conditions.push(notSystemTypeSql(items.type));
   }
 
   if (occurredAfter !== undefined) {
@@ -628,13 +564,11 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
     }
   }
 
-  if (filters.allowed_types) {
-    const clause = allowedTypesCondition(
-      filters.allowed_types,
-      filters.excluded_types,
-    );
-    if (clause) conditions.push(clause);
-  }
+  const readable = typeFilterSql(items.type, {
+    allowed: filters.allowed_types,
+    excluded: filters.excluded_types ?? [],
+  });
+  if (readable) conditions.push(readable);
 
   const sourceLever = sourceFilterToSql(
     filters.source_filter,

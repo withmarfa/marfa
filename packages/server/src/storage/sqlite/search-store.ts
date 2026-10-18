@@ -1,21 +1,22 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import {
   ErrorCode,
   MarfaError,
   declaredDescendants,
   parseFilter,
-  typePatternToSql,
-  typeFilterTerms,
-  typeSubtreeToSql,
   type SearchResult,
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { normalizeTimeBound } from "../interface.js";
 import {
-  filterToRawSql,
-  sourceFilterToRawSql,
-  subtreeBounds,
+  filterToSqlConditions,
+  notSystemTypeSql,
+  sourceFilterToSql,
+  typeFilterSql,
+  typeSubtreeSql,
 } from "../filter-sql.js";
+import { items } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
@@ -211,45 +212,30 @@ export class SqliteSearchStore implements SearchStore {
     // whether another follows, so the store takes the number it is given.
     const limit = filters.limit ?? 20;
     const offset = filters.offset ?? 0;
-    const conditions: string[] = [];
-    const params: unknown[] = [escapedQuery];
+    const i = alias(items, "i");
+    const conditions: SQL[] = [];
 
     if (filters.state) {
-      conditions.push("AND i.state = ?");
-      params.push(filters.state);
+      conditions.push(sql`${i.state} = ${filters.state}`);
     } else if (!filters.all_states) {
       // The same default the listing grammar gives, because a search that
       // answered rows a listing hides is two answers to one question.
-      conditions.push("AND i.state = 'active'");
+      conditions.push(sql`${i.state} = 'active'`);
     }
 
-    if (filters.type) {
-      // Subtree, not an exact identifier — the same reading `GET /items`
-      // gives the parameter. `core.entity` and `core.entity.*` both mean
-      // the type and everything under it, by name prefix and by declared
-      // parent, so a caller who narrows a search the way they narrow a
-      // listing gets the same set.
-      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-        filters.type,
-      );
-      if (!global && exact && descendantPattern) {
-        const clauses = ["i.type = ?", "i.type LIKE ? ESCAPE '\\'"];
-        params.push(exact, descendantPattern);
-        if (extraTypes.length > 0) {
-          clauses.push(`i.type IN (${extraTypes.map(() => "?").join(", ")})`);
-          params.push(...extraTypes);
-        }
-        conditions.push(`AND (${clauses.join(" OR ")})`);
-      }
-    }
+    // Subtree, not an exact identifier: the same reading `GET /items` gives
+    // the parameter, through the same compiler.
+    const typeClause = filters.type
+      ? typeSubtreeSql(i.type, filters.type)
+      : undefined;
+    if (typeClause) conditions.push(typeClause);
 
     if (filters.tier !== undefined) {
-      conditions.push("AND i.tier = ?");
-      params.push(filters.tier);
+      conditions.push(sql`${i.tier} = ${filters.tier}`);
     }
 
     if (filters.exclude_system_types) {
-      conditions.push("AND i.type NOT LIKE 'system.%'");
+      conditions.push(notSystemTypeSql(i.type));
     }
 
     // The item store's twin, and deliberately the same expression:
@@ -261,82 +247,51 @@ export class SqliteSearchStore implements SearchStore {
       "occurred_after",
     );
     if (occurredAfter !== undefined) {
-      conditions.push("AND COALESCE(i.occurred_at, i.created_at) > ?");
-      params.push(occurredAfter);
+      conditions.push(
+        sql`COALESCE(${i.occurred_at}, ${i.created_at}) > ${occurredAfter}`,
+      );
     }
     const occurredBefore = normalizeTimeBound(
       filters.occurred_before,
       "occurred_before",
     );
     if (occurredBefore !== undefined) {
-      conditions.push("AND COALESCE(i.occurred_at, i.created_at) < ?");
-      params.push(occurredBefore);
+      conditions.push(
+        sql`COALESCE(${i.occurred_at}, ${i.created_at}) < ${occurredBefore}`,
+      );
     }
 
     // Items must have ALL specified tags (AND semantics).
-    if (filters.tags && filters.tags.length > 0) {
-      for (const tag of filters.tags) {
-        conditions.push(
-          "AND EXISTS (SELECT 1 FROM json_each(m.tags) je WHERE je.value = ?)",
-        );
-        params.push(tag);
-      }
+    for (const tag of filters.tags ?? []) {
+      conditions.push(
+        sql`EXISTS (SELECT 1 FROM json_each(m.tags) je WHERE je.value = ${tag})`,
+      );
     }
 
-    if (filters.allowed_types) {
-      // Empty allowed_types means "no readable types" — see
-      // SqliteItemStore.list. Must filter to zero rows.
-      if (filters.allowed_types.length === 0) {
-        conditions.push("AND 1=0");
-      } else {
-        const clauseFor = (pattern: string): string => {
-          const { global, exact, descendantPattern } =
-            typePatternToSql(pattern);
-          if (global) return "1=1";
-          if (!exact) return "1=0";
-          if (!descendantPattern) {
-            params.push(exact);
-            return "i.type = ?";
-          }
-          const { from, before } = subtreeBounds(exact);
-          params.push(exact, from, before);
-          return "(i.type = ? OR (i.type >= ? AND i.type < ?))";
-        };
-        const typeClauses = typeFilterTerms(
-          filters.allowed_types,
-          filters.excluded_types ?? [],
-        ).map(({ pattern, minus }) => {
-          const granted = clauseFor(pattern);
-          if (minus.length === 0) return granted;
-          return `(${granted} AND NOT (${minus.map(clauseFor).join(" OR ")}))`;
-        });
-        conditions.push(`AND (${typeClauses.join(" OR ")})`);
-      }
-    }
+    const readable = typeFilterSql(i.type, {
+      allowed: filters.allowed_types,
+      excluded: filters.excluded_types ?? [],
+    });
+    if (readable) conditions.push(readable);
 
-    const sourceLever = sourceFilterToRawSql(filters.source_filter, "i");
-    if (sourceLever) {
-      conditions.push(`AND ${sourceLever.clause}`);
-      params.push(...sourceLever.params);
-    }
+    const sourceLever = sourceFilterToSql(
+      filters.source_filter,
+      i.type,
+      i.source,
+    );
+    if (sourceLever) conditions.push(sourceLever);
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams } = filterToRawSql(
-        expr,
-        "i",
-        filters.readable_sources,
+      const terms = filterToSqlConditions(expr, i, filters.readable_sources);
+      conditions.push(
+        sql`(${sql.join(terms, expr.logical === "OR" ? sql` OR ` : sql` AND `)})`,
       );
-      conditions.push(`AND ${clause}`);
-      params.push(...filterParams);
     }
 
-    params.push(limit);
-    params.push(offset);
-
-    const rawSql = `
+    const statement = sql`
       SELECT
-        snippet(items_fts, -1, '${MARK_OPEN}', '${MARK_CLOSE}', '...', 32) AS snippet,
+        snippet(items_fts, -1, ${sql.raw(`'${MARK_OPEN}', '${MARK_CLOSE}'`)}, '...', 32) AS snippet,
         bm25(items_fts) AS rank,
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
@@ -348,27 +303,16 @@ export class SqliteSearchStore implements SearchStore {
       JOIN item_search_keys k ON k.seq = fts.rowid
       JOIN items i ON i.id = k.item_id
       LEFT JOIN metadata m ON m.item_id = i.id
-      WHERE items_fts MATCH ?
-        ${conditions.join("\n        ")}
+      WHERE items_fts MATCH ${escapedQuery}
+        ${sql.join(
+          conditions.map((condition) => sql`AND ${condition}`),
+          sql` `,
+        )}
       ORDER BY rank, i.id
-      LIMIT ? OFFSET ?
+      LIMIT ${limit} OFFSET ${offset}
     `;
 
-    // Build the prepared SQL by stitching `?`-split fragments together with
-    // drizzle's parameter binding for each inline value. Drizzle's `sql`
-    // template binds JS values to libsql's positional `?` parameters; we
-    // can't pass a pre-formatted SQL string with `?`s through `sql.raw`
-    // because raw fragments don't bind params.
-    const fragments = rawSql.split("?");
-    const builder = sql.empty();
-    for (let i = 0; i < fragments.length; i++) {
-      builder.append(sql.raw(fragments[i] ?? ""));
-      if (i < fragments.length - 1) {
-        builder.append(sql`${params[i]}`);
-      }
-    }
-
-    const rows = await this.db.all<Record<string, unknown>>(builder);
+    const rows = await this.db.all<Record<string, unknown>>(statement);
 
     return rows.map((row) => ({
       item: rowToItem({

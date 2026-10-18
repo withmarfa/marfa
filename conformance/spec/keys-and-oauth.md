@@ -57,6 +57,50 @@ While a credential's edge map grants `write` on an edge type, the server MUST le
 
 **Tests:** `compliance/edge-permissions.test.ts › an edge type granted write is readable without a read entry`.
 
+## How a type map is read
+
+A type map's keys are exact type identifiers, subtree wildcards such as `core.media.*` and the global `*`. These rules decide which entry sets a credential's level on a type, at every operation that reads or writes items.
+
+### `keys-and-oauth/map-exact-first`
+
+When a credential's type map names a type exactly and a wildcard in the map also covers the type, the server MUST hold the credential to the level of the exact entry on items of that type.
+
+**Tests:** `compliance/type-map-ranking.test.ts › decides a type by its exact entry over any wildcard that also covers it`, `› writes a type at the level of its exact entry over a wildcard`.
+
+### `keys-and-oauth/map-longest-wildcard`
+
+When two subtree wildcards in a credential's type map cover a type, the server MUST hold the credential to the level of the wildcard whose part before `.*` is longer on items of that type.
+
+**Tests:** `compliance/type-map-ranking.test.ts › decides a type by the wildcard with the longer root when two cover it`.
+
+### `keys-and-oauth/map-global-last`
+
+When `*` is the only entry of a credential's type map that covers a type, the server MUST hold the credential to the level of `*` on items of that type.
+
+**Tests:** `compliance/type-map-ranking.test.ts › applies the global wildcard only where no other entry covers a type`.
+
+### `keys-and-oauth/map-exclusion-carves`
+
+When a credential's type map names `none` for a pattern that a less specific entry granting `read` or `write` also covers, the server MUST leave the items of the types the `none` entry decides out of every read that returns a set.
+
+**Reason:** `keys-and-oauth/map-exact-first`, `keys-and-oauth/map-longest-wildcard` and `keys-and-oauth/map-global-last` decide which entry holds, and a read by id answers such an item as missing (`keys-and-oauth/unreadable-as-missing`).
+
+**Tests:** `compliance/type-map-ranking.test.ts › leaves out what a none entry under a granted wildcard covers, and keeps the rest`.
+
+### `keys-and-oauth/map-wildcard-root`
+
+When a credential's type map names a subtree wildcard, the server MUST apply the wildcard to the type named by its part before `.*` as well as to every type named under it.
+
+**Reason:** `core.media.*` reads as media and everything under it, which is also how a granted scope lists it.
+
+**Tests:** `compliance/type-map-ranking.test.ts › applies core.media.* to core.media itself, and not to a type outside it`.
+
+### `keys-and-oauth/map-case-sensitive`
+
+The server MUST match a credential's type map entry against a type identifier character for character, so that an exact entry, or the part of a subtree wildcard before `.*`, that differs from every type in case or holds a character no type identifier holds covers no type.
+
+**Tests:** `compliance/type-map-ranking.test.ts › covers no type with an entry in another case`, `› covers no type with an entry holding a ?`.
+
 ## An item the key cannot read
 
 ### `keys-and-oauth/unreadable-as-missing`

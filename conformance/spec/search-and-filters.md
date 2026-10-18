@@ -126,6 +126,12 @@ When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /e
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › GET /items, /export and /search leave out what the key may not read`, `› GET /items/stats counts only what the key may read`, `› GET /items/stats answers an object with no counts for a wildcard over types the key reads none of`, `› GET /occurrences reads a wildcard as a wildcard`, `› GET /events streams the readable types a wildcard matches and withholds the rest`, `compliance/types.test.ts › selects with a type the types declared under it, as with its own name`.
 
+### `search-and-filters/type-grammar-refused`
+
+If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /occurrences`, or the `filter.type` of `POST /items/bulk-actions`, holds a value that is neither a type identifier nor a wildcard ending in `.*` over one, then the server MUST answer `400 validation_error` naming the field in `details.errors`.
+
+**Tests:** `compliance/question-mark-values.test.ts › is refused on every door that takes a type, naming it`.
+
 ### `search-and-filters/type-unknown`
 
 If a credential that reaches some type sends a `type` filter naming a well-formed concrete type that nothing registers, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and each entry of the `type` list of `GET /events`.
@@ -373,6 +379,18 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 ## The filter expression
 
 `GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, and `POST /items/bulk-actions` takes one inside its filter. An edge term in an expression is `edges.md`'s (`edges/filter-edge`, `edges/filter-edge-full`).
+
+### `search-and-filters/filter-question-mark`
+
+When a value in a `filter` expression, a `tags` parameter or the value of a `backref[<edge type>]` parameter of `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` holds a `?`, the server MUST match the `?` as that character and as nothing else.
+
+**Tests:** `compliance/question-mark-values.test.ts › matches as itself in a filter on GET /items`, `› matches as itself in a tags parameter on GET /items`, `› matches as itself in a tags parameter on GET /items/stats, GET /search and POST /items/bulk-actions`, `› matches as itself in a filter on GET /items/stats`, `› matches as itself in a filter on GET /search`, `› matches as itself in a filter on POST /items/bulk-actions`, `› matches as itself in the anchor of an edge term, on every door that takes one`.
+
+### `search-and-filters/tag-count-question-mark`
+
+When a tag holds a `?`, the server MUST count it under its own name on `GET /metadata/tags`.
+
+**Tests:** `compliance/question-mark-values.test.ts › counts a tag holding a ? under its own name on GET /metadata/tags`.
 
 ### `search-and-filters/filter-max-length`
 

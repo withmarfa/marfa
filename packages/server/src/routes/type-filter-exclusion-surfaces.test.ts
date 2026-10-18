@@ -2,22 +2,20 @@
  * Every read surface that compiles a type filter, asked the same question by
  * the same credential.
  *
- * `computeTypeFilter` returns a grant and the exclusions that carve into it,
- * and **four compilers turn that into a predicate**, each over the shared
- * `typeFilterTerms`: `allowedTypesCondition` in the item store, which its
- * listing and `stats` share; the search store's own clause; the metadata
- * store's clause for the tag vocabulary; and, not SQL at all,
- * `matchesTypeFilter` over the SSE stream. A negative term that reached some
- * of them and not the others would leave two surfaces disagreeing about one
- * grant.
+ * `computeTypeFilter` returns a grant and the exclusions that carve into it.
+ * One SQL compiler, `typeFilterSql`, turns that into the predicate the
+ * listing, `stats`, search and the tag vocabulary each put in their own
+ * statement, and `matchesTypeFilter` answers it for the SSE stream. A
+ * negative term that reached some statements and not the others would leave
+ * two surfaces disagreeing about one grant.
  *
  * **The tag vocabulary is the sharp one and it is not obvious.** The
- * metadata store skips its type clause when the allow-list holds a global
- * wildcard and nothing is excluded beside it. A grant of
- * `{"*": "read", "<withheld>": "none"}` reaches that check carrying a
- * wildcard, so a skip keyed on the wildcard alone would compute the
- * vocabulary over every registered type, the withheld one included. Tag
- * names leak what exists even when no item behind them is readable.
+ * compiler emits no predicate when the allow-list holds a global wildcard
+ * that nothing carves into. A grant of `{"*": "read", "<withheld>": "none"}`
+ * carries a wildcard too, so a skip keyed on the wildcard alone would
+ * compute the vocabulary over every registered type, the withheld one
+ * included. Tag names leak what exists even when no item behind them is
+ * readable.
  *
  * Every case names a type that must survive as well as one that must not: an
  * assertion that only checks the withheld type is absent passes on a surface
