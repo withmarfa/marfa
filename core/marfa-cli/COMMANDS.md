@@ -1314,7 +1314,7 @@ marfa blobs url [OPTIONS] <HASH>
 
 ### marfa blobs stores
 
-Every store the instance has attached, and the copies a blob keeps at the least. Requires `blobs.manage`.
+Every store the instance has attached, and the copies a blob keeps at the least. Requires `instance.read`.
 
 ```text
 marfa blobs stores [OPTIONS]
@@ -1350,7 +1350,7 @@ marfa blobs delete-location [OPTIONS] --store <STORE> <HASH>
 
 ### marfa blobs orphans
 
-The blobs the last orphan sweep found nothing referencing. Requires `blobs.manage`.
+The blobs the last orphan sweep found nothing referencing. Requires `instance.read`.
 
 ```text
 marfa blobs orphans [OPTIONS]
