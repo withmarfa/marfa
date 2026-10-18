@@ -195,13 +195,19 @@ To hold the transaction on a machine that has the `sqlite3` command and reaches 
 sqlite3 /data/marfa.db "BEGIN; SELECT count(*) FROM sqlite_master;" ".shell cp /data/marfa.db /data/marfa.db-wal /backup/" ".shell cp -R /data/blobs /backup/" "COMMIT;"
 ```
 
+> [!WARNING]
+> With a bucket, a copy that starts under the instance's own `S3_PREFIX` becomes the newest state in the bucket. The copy is older than the replica. The entrypoint keeps a database that is already on the volume and replicates it to `<S3_PREFIX>/db`, so a restore to the latest state then holds none of the writes made after the copy. Only a point-in-time restore can still read those writes, and only until Litestream removes them with the day of snapshots it keeps. Restore a copy under a new prefix, as the steps below say.
+
 Restore from any of these like this:
 
 1. Stop the instance.
 2. Put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file, which is rebuilt at start.
-3. Start the instance with the same `API_KEY_SALT` and `MARFA_AUTH_SECRET` as before, and read `GET /health`.
+3. With a bucket, set `S3_PREFIX` to a prefix that the bucket does not hold yet, such as `restore-1/blobs`, or point the instance at a new bucket. Keep the new value from now on.
+4. Start the instance with the same `API_KEY_SALT` and `MARFA_AUTH_SECRET` as before, and read `GET /health`.
 
 The instance applies the log at start. A copy's integrity can be checked first with `sqlite3 marfa.db "PRAGMA integrity_check"`, which answers `ok`.
+
+Under the new prefix, Litestream starts a new replica of the restored database, and `blob-replicate` copies every blob in the restored blob folder to the new prefix. `GET /blobs/stores` lists the object store under the old prefix with `detached_at` set. Nothing writes under the old prefix after this, and the bucket has no lifecycle rules, so the old prefix keeps the writes made after the copy. To read them, restore the old prefix's latest state to a file as [Restoring by hand](#restoring-by-hand) shows, with `S3_PREFIX` set to the old prefix. Delete the old prefix only when you no longer need those writes.
 
 `GET /export` and `POST /restore` move data between machines and between builds that share a schema. They are not a machine backup. `conformance/spec/instance.md` states what a restore promises.
 
@@ -224,6 +230,8 @@ Replace `blobs` with the instance's own prefix when it has another.
 How fine a point can be named depends on its age. Litestream keeps every one-second sync for five minutes, then compacts them into longer segments (thirty seconds, five minutes, an hour), so a moment in the last five minutes is restorable to the second and an older one to the segment that contains it, back as far as the day of snapshots kept. The drill restores to a moment a few seconds old and asserts the item count it wrote before that moment.
 
 Then boot a server on the restored file with the same bucket and prefix and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
+
+A file restored to a point in time is older than the latest state, so the server makes it the newest state in the bucket, as it does for a [machine backup](#backing-up-the-machine). Before you boot it, restore the latest state to a second file with the first command, and keep that file. It holds the writes made after the point in time, which the bucket keeps only until Litestream removes them with the day of snapshots it keeps.
 
 ## What a point-in-time restore can and cannot promise
 
