@@ -67,6 +67,28 @@ impl WriterLock {
         Self::claim_connection(vfs.open(name, flags)?)
     }
 
+    /// Whether an exclusive holder keeps a named lock. Shared read probes
+    /// coexist, so simultaneous observers cannot pass for exclusive holders.
+    /// Never creates a missing lock file.
+    #[cfg(unix)]
+    pub(crate) fn held_named(
+        vfs: &crate::directory_vfs::DirectoryVfs,
+        name: &str,
+    ) -> Result<bool, CoreError> {
+        let probe = vfs.open(
+            name,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        probe.busy_timeout(std::time::Duration::ZERO)?;
+        match probe.query_row("SELECT count(*) FROM sqlite_schema", [], |row| {
+            row.get::<_, i64>(0)
+        }) {
+            Ok(_) => Ok(false),
+            Err(error) if is_busy(&error) => Ok(true),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     fn claim_connection(claim: Connection) -> Result<Self, CoreError> {
         // Zero: waiting would make a second opener hang instead of being told
         // it may only read.
@@ -132,6 +154,32 @@ fn is_busy(error: &rusqlite::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_probe_never_creates_a_missing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let state =
+            crate::directory::Directory::open(&temp.path().canonicalize().unwrap()).unwrap();
+        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+        let name = "request-lock";
+        assert!(WriterLock::held_named(&vfs, name).is_err());
+        assert!(!temp.path().join(name).exists());
+        let held = WriterLock::claim_named(&vfs, name, true).unwrap();
+        assert!(WriterLock::held_named(&vfs, name).unwrap());
+        drop(held);
+        assert!(!WriterLock::held_named(&vfs, name).unwrap());
+    }
+
+    #[test]
+    fn a_named_probe_preserves_non_lock_errors() {
+        let temp = tempfile::tempdir().unwrap();
+        let state =
+            crate::directory::Directory::open(&temp.path().canonicalize().unwrap()).unwrap();
+        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+        let name = "request-lock";
+        std::fs::write(temp.path().join(name), b"not a SQLite database").unwrap();
+        assert!(WriterLock::held_named(&vfs, name).is_err());
+    }
 
     #[test]
     fn a_second_opener_gets_a_reading_handle() {
