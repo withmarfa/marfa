@@ -37,7 +37,8 @@ export function dateShimInstalled(): boolean {
 
 /** Keep a library and its asynchronous work on its external peer's clock. */
 export function withRealTime<T>(run: () => T): T {
-  return installed ? realTime.run(true, run) : run();
+  // Startup can schedule library work before the shim is installed.
+  return realTime.run(true, run);
 }
 
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
