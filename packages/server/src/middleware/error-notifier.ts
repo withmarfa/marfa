@@ -84,7 +84,6 @@ export function notifyError(
   debounceMap.set(errorKey, now);
 
   runInBackground(() => {
-    // Telegram sendMessage API — format as a readable text message
     if (isTelegramUrl(webhookUrl)) {
       const time = new Date(notification.timestamp)
         .toISOString()
@@ -106,7 +105,6 @@ export function notifyError(
         signal: AbortSignal.timeout(timeoutMs),
       }).catch(() => undefined);
     } else {
-      // Generic webhook — POST JSON payload
       void fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

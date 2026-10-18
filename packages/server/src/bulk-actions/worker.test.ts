@@ -11,13 +11,8 @@ import {
 import { BulkActionWorker } from "./worker.js";
 
 /**
- * Idle-poll backoff is the only behavior under test here, so the storage
- * surface is stubbed down to the two methods the loop touches: `recoverStale`
- * (called once on `start()`) and `claimNext` (called once per tick). A queue
- * that always returns `null` from `claimNext` is "empty"; returning a row once
- * simulates a claimed job. `matched_ids: "[]"` keeps `executeJob`'s chunk loop
- * a no-op so `complete` is the only other method exercised — `runChunk` never
- * runs.
+ * Empty matched IDs isolate polling and completion from chunk execution,
+ * so these tests need no item storage or chunk-authority fixtures.
  */
 function makeRow(): BulkActionJobRow {
   return {

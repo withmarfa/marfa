@@ -110,11 +110,8 @@ async function main() {
       pollBackoffMultiplier: config.bulkActionPollBackoffMultiplier ?? 2,
     });
     startupCleanup.push(() => bulkActionWorker.stop());
-    // Enqueue wakes the worker. The route cannot hold a worker reference —
-    // the app is constructed before the worker exists — so the signal is
-    // registered here, where both are in scope. The wake is best-effort on
-    // top of the poll loop — the enqueue has already committed, so a lost
-    // wake costs latency, never the job.
+    // Enqueue has already committed, so a lost wake costs latency, never
+    // the job: polling still finds it.
     setBulkJobEnqueueListener(() => {
       bulkActionWorker.wake();
     });
