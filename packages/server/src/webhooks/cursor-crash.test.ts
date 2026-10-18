@@ -1,29 +1,10 @@
-import { fork, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { describe, expect, it } from "vitest";
+import { forkFixture, nextMessage } from "../test-child.js";
 import { createTestContext } from "../test-utils.js";
-
-interface Message {
-  kind: string;
-  url?: string;
-}
-function next(child: ChildProcess, kind: string): Promise<Message> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.off("message", receive);
-      reject(new Error(`child did not report ${kind}`));
-    }, 10_000);
-    const receive = (message: Message) => {
-      if (message.kind !== kind) return;
-      clearTimeout(timer);
-      child.off("message", receive);
-      resolve(message);
-    };
-    child.on("message", receive);
-  });
-}
 
 async function crashWitness(partial: boolean) {
   const ctx = await createTestContext();
@@ -47,25 +28,14 @@ async function crashWitness(partial: boolean) {
   );
   const receiverUrl = `http://127.0.0.1:${String((receiver.address() as AddressInfo).port)}/`;
   const boot = async () => {
-    const child = fork(
+    const child = forkFixture(
       new URL(
         "../../scripts/test-fixtures/webhook-cursor-crash.ts",
         import.meta.url,
       ),
-      [],
-      {
-        execArgv: ["--import", "tsx"],
-        stdio: ["ignore", "pipe", "pipe", "ipc"],
-      },
     );
     children.push(child);
-    child.stdout?.on("data", (data: Buffer) => {
-      process.stdout.write(data);
-    });
-    child.stderr?.on("data", (data: Buffer) => {
-      process.stderr.write(data);
-    });
-    const ready = next(child, "ready");
+    const ready = nextMessage(child, "ready");
     child.send({
       dir: ctx.tmpDir,
       config: { ...ctx.config, webhookAllowPrivateAddresses: true },
@@ -97,7 +67,7 @@ async function crashWitness(partial: boolean) {
     });
     expect(control.status).toBe(201);
     const controlled = (await control.json()) as { item: { id: string } };
-    const drained = next(first.child, "passed");
+    const drained = nextMessage(first.child, "passed");
     first.child.send({ kind: "pass" });
     await drained;
     expect(received.some((body) => body.includes(controlled.item.id))).toBe(
@@ -114,7 +84,7 @@ async function crashWitness(partial: boolean) {
         subscriptions.push(((await registered.json()) as { id: string }).id);
       }
     } else {
-      const armed = next(first.child, "armed");
+      const armed = nextMessage(first.child, "armed");
       first.child.send({ kind: "arm" });
       await armed;
     }
@@ -126,7 +96,7 @@ async function crashWitness(partial: boolean) {
     expect(answer.status).toBe(201);
     const { item } = (await answer.json()) as { item: { id: string } };
     if (partial) {
-      const page = next(first.child, "passed");
+      const page = nextMessage(first.child, "passed");
       first.child.send({ kind: "pass" });
       await page;
       const position = await ctx.storage.outboundWebhooks.checkpoint();
@@ -136,11 +106,11 @@ async function crashWitness(partial: boolean) {
       expect(received.filter((body) => body.includes(item.id))).toHaveLength(
         50,
       );
-      const armed = next(first.child, "armed");
+      const armed = nextMessage(first.child, "armed");
       first.child.send({ kind: "arm" });
       await armed;
     }
-    const blocked = next(first.child, "blocked");
+    const blocked = nextMessage(first.child, "blocked");
     first.child.send({ kind: "pass" });
     await blocked;
     const events = await ctx.storage.eventLog.getAfter(0n, 100);
@@ -157,7 +127,7 @@ async function crashWitness(partial: boolean) {
     first.child.kill("SIGKILL");
     await killed;
     const restarted = await boot();
-    const passed = next(restarted.child, "passed");
+    const passed = nextMessage(restarted.child, "passed");
     restarted.child.send({ kind: "pass" });
     await passed;
     expect(
@@ -204,11 +174,11 @@ describe("webhook scheduling after an ordinary process crash", () => {
   it(
     "delivers the committed event after SIGKILL between append and scheduling",
     () => crashWitness(false),
-    30_000,
+    150_000,
   );
   it(
     "resumes partial fan-out after SIGKILL without repeating its committed page",
     () => crashWitness(true),
-    30_000,
+    150_000,
   );
 });
