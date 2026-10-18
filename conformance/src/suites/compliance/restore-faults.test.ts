@@ -81,6 +81,7 @@ const edgeTypeOf = (id: string) => ({
 interface Carried {
   a: string;
   b: string;
+  edgeId: string;
   type: string;
   source: string;
   edgeType: string;
@@ -96,6 +97,7 @@ function carrying(bytes?: Uint8Array): Carried {
   const tag = `${String(Date.now())}${String(serial)}`;
   const a = uuidv7();
   const b = uuidv7();
+  const edgeId = uuidv7();
   const type = `user.restorefault${tag}`;
   const edgeType = `restorefault.x${tag}`;
   const blob =
@@ -125,7 +127,7 @@ function carrying(bytes?: Uint8Array): Carried {
       entry.name === "edges.ndjson"
         ? `${JSON.stringify({
             edge: {
-              id: uuidv7(),
+              id: edgeId,
               source_id: a,
               target_id: b,
               edge_type: edgeType,
@@ -138,6 +140,7 @@ function carrying(bytes?: Uint8Array): Carried {
   return {
     a,
     b,
+    edgeId,
     type,
     source,
     edgeType,
@@ -179,6 +182,58 @@ async function expectAllOf(rows: Carried): Promise<void> {
   const read = await operator.downloadBlob(rows.hash);
   expect(read.status).toBe(200);
   expect(new Uint8Array(read.data)).toEqual(rows.bytes);
+}
+
+/** The id of the newest event in the log, taken by writing one. */
+async function eventCursor(): Promise<string> {
+  const { eventId } = await baselineEventId(
+    server.apiUrl,
+    server.workingKey,
+    async () => {
+      const marker = await working.createItem({
+        type: "core.note",
+        properties: { body: "before the restore" },
+      });
+      expect(marker.status).toBe(201);
+      return marker.data.item.id;
+    },
+  );
+  return eventId;
+}
+
+function edgeIdOf(event: SseEvent): string | undefined {
+  return (event.data as { edge?: { id?: string } } | undefined)?.edge?.id;
+}
+
+/**
+ * The log from `eventId` to a write made now holds no event of the restore's
+ * rows or edge. The sentinel's own event settles the absence.
+ */
+async function expectNoEventsOf(rows: Carried, eventId: string): Promise<void> {
+  await withStream(
+    server.apiUrl,
+    server.workingKey,
+    { lastEventId: eventId },
+    async (stream) => {
+      const sentinel = await working.createItem({
+        type: "core.note",
+        properties: { body: "after the restore that did not finish" },
+      });
+      expect(sentinel.status).toBe(201);
+      const { events } = await collectUntil(
+        stream,
+        (seen) => seen.some((one) => itemIdOf(one) === sentinel.data.item.id),
+        "the sentinel write's event",
+      );
+      expect(
+        events.filter(
+          (one) =>
+            [rows.a, rows.b].includes(itemIdOf(one) ?? "") ||
+            edgeIdOf(one) === rows.edgeId,
+        ),
+      ).toEqual([]);
+    },
+  );
 }
 
 /** What is in the folder the restore spools into. */
@@ -235,18 +290,7 @@ describe("a restore that does not finish", () => {
     "leaves no row, type, edge type, blob, event or audit record when a write fails ($fault), and restores whole when it is tried again",
     async ({ fault, status }) => {
       const rows = carrying();
-      const { eventId } = await baselineEventId(
-        server.apiUrl,
-        server.workingKey,
-        async () => {
-          const marker = await working.createItem({
-            type: "core.note",
-            properties: { body: "before the restore" },
-          });
-          expect(marker.status).toBe(201);
-          return marker.data.item.id;
-        },
-      );
+      const eventId = await eventCursor();
       const since = new Date().toISOString();
       await server.setFault(fault);
       const refused = await ownerClient().restoreArchive(rows.archive);
@@ -261,31 +305,7 @@ describe("a restore that does not finish", () => {
       expect(existsSync(diskPath(server, rows.hash))).toBe(false);
       expect(spooled()).toEqual([]);
 
-      // The log from before the restore to a write made after it holds none
-      // of the restore's events: the sentinel settles the absence.
-      await withStream(
-        server.apiUrl,
-        server.workingKey,
-        { lastEventId: eventId },
-        async (stream) => {
-          const sentinel = await working.createItem({
-            type: "core.note",
-            properties: { body: "after the failed restore" },
-          });
-          expect(sentinel.status).toBe(201);
-          const { events } = await collectUntil(
-            stream,
-            (seen) =>
-              seen.some((one) => itemIdOf(one) === sentinel.data.item.id),
-            "the sentinel write's event",
-          );
-          expect(
-            events.filter((one) =>
-              [rows.a, rows.b].includes(itemIdOf(one) ?? ""),
-            ),
-          ).toEqual([]);
-        },
-      );
+      await expectNoEventsOf(rows, eventId);
 
       const again = await ownerClient().restoreArchive(rows.archive);
       expect(again.status, JSON.stringify(again.error)).toBe(200);
@@ -295,6 +315,7 @@ describe("a restore that does not finish", () => {
 
   it("leaves no row, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed", async () => {
     const rows = carrying();
+    const eventId = await eventCursor();
     const since = new Date().toISOString();
     await server.setFault("hold:restore:before-commit");
     const restoring = ownerClient()
@@ -314,6 +335,7 @@ describe("a restore that does not finish", () => {
     ({ operator, working } = clientsFor(server));
 
     await expectNothingOf(rows, since);
+    await expectNoEventsOf(rows, eventId);
     // No row names the bytes, so the cleanup of the next run removes them.
     await runJob(operator, "blob-integrity");
     expect(existsSync(diskPath(server, rows.hash))).toBe(false);
@@ -415,9 +437,14 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
 
     // The upload meets the bytes the restore placed, and waits for the restore
     // as it does for any request for the same bytes.
+    // The held restore's own spool files are already in the folder, so the
+    // upload is the one that adds a file.
+    const restoreSpools = new Set(spooled());
     const uploading = working.uploadBlob(shared, "application/octet-stream");
-    await waitFor("the upload to be spooled", () =>
-      Promise.resolve(spooled().length > 0 ? true : undefined),
+    await waitFor("the upload to be spooled behind the restore", () =>
+      Promise.resolve(
+        spooled().some((name) => !restoreSpools.has(name)) ? true : undefined,
+      ),
     );
     await server.clearFault("hold:restore:before-commit");
 
