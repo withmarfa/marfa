@@ -10,7 +10,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, ThreadId};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::catch_up::{Change, ChangeEvent, PACE, Pace};
 use crate::error::CoreError;
@@ -900,9 +900,6 @@ pub(crate) fn read_saves(
                 wait = (wait * 2).min(pace.retry_most);
             }
         }
-        let until = Instant::now() + wait;
-        while Instant::now() < until && !stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_millis(10).min(wait));
-        }
+        crate::clock::wait(stop, wait, Duration::from_millis(10));
     }
 }

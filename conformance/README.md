@@ -330,6 +330,9 @@ follows.
     before it reads the first row.
   - `recovery-drain-asked`, `recovery-drain-found-none`: a held stream's drain,
     when it asks to drain and when it finds no work left.
+  - `drain-waiting`: a drain tried to acquire the drain lock and found another
+    call holding it. The fixture can hold that waiter while the first drain's
+    request remains in flight.
   - `follow-waiting`: a follow that waits for a first hydration.
   - `answer-dropped`: an answer reached a request that nobody waited for.
   - `catalog-replacing`: a refresh of the catalog has written the item types
@@ -358,9 +361,10 @@ follows.
   has not reached, each as the milliseconds asked and the milliseconds left.
   Set it before the calls whose waits are read. A wait asked of the system
   clock is not moved to the manual one. `testClock.manual(false)` goes back.
-  Of the engine's waits, only the one between held streams and the two
-  measures of a stream's age, how long it has been held and how long it has
-  been silent, are read from it; the rest stay on the system clock.
+  The wait between held streams, the two measures of a stream's age (how
+  long it has been held and how long it has been silent), and a reading
+  handle's save polling and read-failure backoff use this clock. The rest
+  stay on the system clock.
 
 A release build has no `testHooks` and no `testClock`: a fixture that uses
 them fails on a module built `--release`, naming that. The module's build

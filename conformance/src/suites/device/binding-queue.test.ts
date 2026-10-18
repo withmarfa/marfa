@@ -12,7 +12,8 @@ import { scriptWrites } from "./harness.js";
 import {
   bindingHarness,
   createsSent,
-  quietly,
+  untilHeld,
+  untilReached,
   queueNotes,
   takeCreates,
   type Followed,
@@ -160,18 +161,23 @@ describe("two drains in one process", () => {
     await vi.waitFor(() => {
       expect(createsSent(server)).toEqual([first]);
     });
+    await device.hooks.hold("drain-waiting");
     const asked = device.drain();
-    await quietly(400);
-    expect(
-      asked.settled,
-      "a drain asked for while another ran did not wait for it",
-    ).toBe(false);
-    expect(
-      createsSent(server),
-      "the second drain sent the write the first had in flight",
-    ).toEqual([first]);
-
-    sending.open();
+    try {
+      await untilReached(device, "drain-waiting");
+      await untilHeld(device, "drain-waiting");
+      expect(
+        asked.settled,
+        "a drain asked for while another ran did not wait for it",
+      ).toBe(false);
+      expect(
+        createsSent(server),
+        "the second drain sent the write the first had in flight",
+      ).toEqual([first]);
+    } finally {
+      await device.hooks.release("drain-waiting");
+      sending.open();
+    }
     const [one, two] = await Promise.all([running, asked]);
     expect(one.ok && one.value.answered, JSON.stringify(one)).toBe(2);
     expect(
@@ -278,6 +284,10 @@ describe("a withdraw while the copy changes under it", () => {
     );
     const row = await device.get(HELD.id);
     expect(row.ok, JSON.stringify(row)).toBe(true);
+    expect(
+      row.ok && row.value,
+      "the withdraw lost the preserved row",
+    ).not.toBeNull();
     if (!row.ok || row.value === null) return;
     expect(
       [row.value.version, row.value.properties],

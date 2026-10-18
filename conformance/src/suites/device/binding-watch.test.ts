@@ -12,6 +12,7 @@ import {
   quietly,
   streamsAsked,
   untilOpen,
+  untilReached,
   untilTold,
   type Followed,
 } from "./binding.shared.js";
@@ -326,33 +327,36 @@ describe("a watch of a store opened to read", () => {
     const started = await startBindingHarness(label);
     harness = started;
     const reader = await started.reader();
+    await reader.clock.manual();
     return { ...started, reading: reader };
+  }
+
+  async function pollReader(reader: Followed["device"]) {
+    const wait = await nextWait(reader);
+    const reads = await reader.hooks.reached("data-version");
+    await reader.clock.advance(wait);
+    await untilReached(reader, "data-version", reads + 1);
+    await nextWait(reader);
   }
 
   it("tells every listener once that the watch failed where it cannot read the store's data version", async () => {
     const { reading: reader } = await reading("binding-watch-reads-failed");
     const first = await reader.watch();
     const second = await reader.watch();
-    await quietly();
+    expect(await nextWait(reader)).toBe(250);
     expect(
       first.changes,
       "a listener was told something before any save",
     ).toEqual([]);
 
     await reader.hooks.fail("data-version");
+    await pollReader(reader);
     for (const listener of [first, second]) {
       await untilTold(listener, ["watchFailed"], "the failure was not told");
     }
-    const failed = await reader.hooks.reached("data-version");
     // Reads go on failing, and the failure is not told again.
-    await vi.waitFor(
-      async () => {
-        expect(await reader.hooks.reached("data-version")).toBeGreaterThan(
-          failed + 1,
-        );
-      },
-      { timeout: 10_000, interval: 50 },
-    );
+    await pollReader(reader);
+    await pollReader(reader);
     expect(first.kinds, "a failure was told more than once").toEqual([
       "watchFailed",
     ]);
@@ -360,6 +364,7 @@ describe("a watch of a store opened to read", () => {
 
     // The witness: once it reads again the listeners are told.
     await reader.hooks.fail("data-version", false);
+    await pollReader(reader);
     for (const listener of [first, second]) {
       await untilTold(
         listener,
@@ -375,13 +380,15 @@ describe("a watch of a store opened to read", () => {
     expect(version.ok, JSON.stringify(version)).toBe(true);
     const first = await reader.watch();
     const second = await reader.watch();
-    await quietly();
+    expect(await nextWait(reader)).toBe(250);
     expect(first.changes).toEqual([]);
 
     await reader.hooks.fail("data-version");
+    await pollReader(reader);
     await untilTold(first, ["watchFailed"], "the failure was not told");
     await untilTold(second, ["watchFailed"], "the failure was not told");
     await reader.hooks.fail("data-version", false);
+    await pollReader(reader);
     for (const listener of [first, second]) {
       await untilTold(
         listener,
@@ -398,7 +405,11 @@ describe("a watch of a store opened to read", () => {
     }
     // The witness: with the reads working, a version that has not moved is
     // told to no one.
-    await quietly(800);
+    await pollReader(reader);
+    await pollReader(reader);
+    expect(await first.stop()).toBeNull();
+    expect(await second.stop()).toBeNull();
+    expect(second.kinds).toEqual(["watchFailed", "saved"]);
     expect(first.kinds).toEqual(["watchFailed", "saved"]);
   });
 });

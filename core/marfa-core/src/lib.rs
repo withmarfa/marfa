@@ -1176,6 +1176,7 @@ impl Core {
                     return Ok(poisoned.into_inner());
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
+                    fault::hold("drain-waiting");
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
