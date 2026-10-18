@@ -1517,13 +1517,16 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
     )
 }
 
-pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+/// The bytes the cache keeps for the queue: those of every upload not yet
+/// taken, and those of every taken upload a waiting write still names, which
+/// a drain under another credential sends again (`awaited_uploads`).
+pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue
           WHERE kind = ?1 AND blob IS NOT NULL
             AND (verdict IS NULL OR verdict NOT IN (?2, ?3, ?4))",
     )?;
-    let hashes = statement
+    let mut hashes = statement
         .query_map(
             [
                 WriteKind::UploadBlob.as_str(),
@@ -1534,7 +1537,61 @@ pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
             |row| row.get::<_, String>(0),
         )?
         .collect::<Result<HashSet<_>, _>>()?;
+    hashes.extend(awaited_uploads(conn)?.into_iter().map(|(_, hash)| hash));
     Ok(hashes)
+}
+
+/// The credential, as `credential_digest` names it, that every upload the
+/// queue holds as taken was sent with.
+pub const META_UPLOADS_SENT_AS: &str = "uploads_sent_as";
+
+/// Each taken upload, by its queue id and hash, that a write still
+/// unanswered or releasable waits on.
+///
+/// The server lends a file's bytes only to a write made by the credential
+/// that sent them (`blobs/proof-file-refused`), so these are the uploads a
+/// drain sends again once the copy sends with another credential.
+pub fn awaited_uploads(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT upload.id, upload.blob FROM queue AS upload
+          WHERE upload.kind = :upload AND upload.blob IS NOT NULL
+            AND upload.verdict IN (:accepted, :merged, :conflicted)
+            AND EXISTS (
+              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
+               WHERE named.value = upload.id
+                 AND (waiting.verdict IS NULL OR waiting.verdict IN (:blocked, :dead))
+            )
+          ORDER BY upload.seq",
+    )?;
+    let rows = statement
+        .query_map(
+            named_params! {
+                ":upload": WriteKind::UploadBlob.as_str(),
+                ":accepted": Verdict::Accepted.as_str(),
+                ":merged": Verdict::Merged.as_str(),
+                ":conflicted": Verdict::Conflicted.as_str(),
+                ":blocked": Verdict::Blocked.as_str(),
+                ":dead": Verdict::Dead.as_str(),
+            },
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// A taken upload made unanswered, so the next pass sends it again before
+/// the writes that wait on it. An upload carries no idempotency key: the
+/// door is idempotent by content.
+pub fn send_upload_again(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue
+            SET verdict = NULL, reason = NULL, answer = NULL,
+                conflicted_copy_id = NULL, answered_at = NULL,
+                refusals = 0, sent = 0
+          WHERE id = ?1 AND kind = ?2",
+        params![id, WriteKind::UploadBlob.as_str()],
+    )?;
+    Ok(())
 }
 
 /// A keyed create's version-zero row can still name an unseen server target.

@@ -406,6 +406,14 @@ When the CLI prints the queue as text, the CLI MUST name after `after` the write
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
+### `queue-and-verdicts/upload-sent-as-writer`
+
+Where the copy still holds an upload's bytes, when a device drains with a credential other than the one it sent that upload with and a write that waits on the upload has no verdict, is `blocked` or is `dead`, a device MUST send the upload again with its current credential before it sends that write.
+
+**Reason:** the server takes a file write only from a credential that sent its bytes or may read them (`blobs/proof-file-refused`), so a file queued under a key that was then replaced would be refused, and its item never made. A renewed app token counts as another credential here, which costs an upload the server did not need.
+
+**Tests:** `device/upload-credential-live.test.ts › sends a taken upload again under the key that replaced its sender, before the file waiting on it`.
+
 ## What a drain reports
 
 A drain is one pass over the queue. Its report says what became of each write the pass came to, in counts and in an entry for each write it settled or sent.

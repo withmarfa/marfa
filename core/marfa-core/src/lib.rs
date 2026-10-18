@@ -46,6 +46,8 @@ mod telemetry_tests;
 #[cfg(test)]
 mod tier_tests;
 mod time;
+#[cfg(test)]
+mod upload_credential_tests;
 mod validation;
 mod watch;
 #[cfg(test)]
@@ -2156,7 +2158,7 @@ impl Core {
             return;
         };
         let _held = cache.hold();
-        if let Some(mut kept) = self.unsent_blobs() {
+        if let Some(mut kept) = self.kept_blobs() {
             kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
             cache.trim(most, &kept);
         }
@@ -2173,14 +2175,14 @@ impl Core {
             return;
         }
         let _held = cache.hold();
-        if let Some(kept) = self.unsent_blobs() {
+        if let Some(kept) = self.kept_blobs() {
             cache.let_go(hash, &kept);
         }
     }
 
-    fn unsent_blobs(&self) -> Option<HashSet<String>> {
+    fn kept_blobs(&self) -> Option<HashSet<String>> {
         let conn = self.conn().ok()?;
-        let hashes = store::unsent_uploads(&conn).ok()?;
+        let hashes = store::kept_uploads(&conn).ok()?;
         Some(
             hashes
                 .iter()

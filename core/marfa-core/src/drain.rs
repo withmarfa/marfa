@@ -520,6 +520,32 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
     }
 }
 
+/// The server credits an upload to the credential that sent it, and refuses
+/// a file write whose bytes the writing credential never sent
+/// (`blobs/proof-file-refused`). So once the copy sends with another
+/// credential, each taken upload a write still waits on is sent again, ahead
+/// of that write, where the copy still holds its bytes. A renewed app token
+/// counts as another credential here, which costs an upload the server did
+/// not need, since it credits an app's grant.
+fn send_uploads_as(core: &Core, http: &Http) -> Result<()> {
+    let credential = store::credential_digest(&http.authorization());
+    let mut conn = core.conn()?;
+    if store::meta_get(&conn, store::META_UPLOADS_SENT_AS)?.as_deref() == Some(credential.as_str())
+    {
+        return Ok(());
+    }
+    let cache = core.cache().ok();
+    let tx = conn.transaction()?;
+    for (id, hash) in store::awaited_uploads(&tx)? {
+        if cache.is_some_and(|cache| cache.held(&hash).is_ok_and(|held| held.is_some())) {
+            store::send_upload_again(&tx, &id)?;
+        }
+    }
+    store::meta_set(&tx, store::META_UPLOADS_SENT_AS, &credential)?;
+    tx.commit()?;
+    Ok(())
+}
+
 /// Whether a failed request ends the drain, as an error, rather than leaving
 /// its write for the next pass.
 fn ends_the_drain(error: &CoreError) -> bool {
@@ -733,6 +759,7 @@ fn send_queue(
         // since been answered.
         store::unblock_self_clearing(&conn)?;
     }
+    send_uploads_as(core, http)?;
     // Confirmed once, and only where the pass talks to the server: a pass
     // with nothing to send, read or look up sends nothing at all, and one that cannot
     // confirm the instance is a server that cannot take writes, since a
