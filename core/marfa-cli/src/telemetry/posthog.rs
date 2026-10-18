@@ -45,7 +45,7 @@ pub enum Reading {
 pub struct Settings {
     url: String,
     token: String,
-    service: String,
+    resource: otlp::Resource,
     timeout: Duration,
 }
 
@@ -59,9 +59,13 @@ impl std::fmt::Debug for Settings {
     }
 }
 
-/// `service` and `timeout` are the trace's: the exception is reported under
-/// the same name and waited for within the same budget.
-pub fn read(get: impl Fn(&str) -> Option<String>, service: &str, timeout: Duration) -> Reading {
+/// `resource` and `timeout` are the trace's: the exception is reported under
+/// the same name and attributes and waited for within the same budget.
+pub fn read(
+    get: impl Fn(&str) -> Option<String>,
+    resource: otlp::Resource,
+    timeout: Duration,
+) -> Reading {
     let (host, token) = match (text(&get, HOST), text(&get, TOKEN)) {
         (None, None) => return Reading::Off,
         (Some(_), None) => return Reading::Said(HOST_ALONE),
@@ -72,7 +76,7 @@ pub fn read(get: impl Fn(&str) -> Option<String>, service: &str, timeout: Durati
         Some(url) => Reading::On(Settings {
             url,
             token,
-            service: service.to_string(),
+            resource,
             timeout,
         }),
         None => Reading::Said(NOT_HTTPS),
@@ -191,9 +195,14 @@ impl Reporter {
             "$exception_level": "error",
             "command": self.command,
             "exit_code": status,
-            "service.name": self.settings.service,
-            "service.version": version,
         });
+        // The binary's own keys stand over an attribute of the same name, as
+        // the exception's other fields do, except the ones the resource owns.
+        for (key, value) in self.settings.resource.attributes() {
+            if properties.get(&key).is_none() {
+                properties[key] = value.into();
+            }
+        }
         if !matches!(cause, Cause::Exit) {
             properties["error_code"] = kind.into();
         }
@@ -221,7 +230,10 @@ mod tests {
                     .find(|(set, _)| *set == name)
                     .map(|(_, value)| value.to_string())
             },
-            "marfa-cli",
+            otlp::Resource {
+                service: "marfa-cli".into(),
+                attributes: Vec::new(),
+            },
             TIMEOUT,
         )
     }
@@ -311,6 +323,23 @@ mod tests {
         assert_eq!(exception["value"], describe::error(&error));
         assert!(exception.get("stacktrace").is_none());
         assert!(!event.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn an_event_carries_the_resource_attributes_but_never_over_its_own_fields() {
+        let mut settings = on("https://eu.i.posthog.com");
+        settings.resource.attributes = vec![
+            ("deployment.environment".into(), "rehearsal".into()),
+            ("service.version".into(), "9.9.9".into()),
+            ("command".into(), "not-the-command".into()),
+        ];
+        let reporter = Reporter::new(settings, "marfa items create");
+        let event: Value = serde_json::from_slice(&reporter.event(5, Cause::Exit)).unwrap();
+        let properties = &event["properties"];
+        assert_eq!(properties["deployment.environment"], "rehearsal");
+        assert_eq!(properties["service.version"], "9.9.9");
+        assert_eq!(properties["service.name"], "marfa-cli");
+        assert_eq!(properties["command"], "items create");
     }
 
     #[test]

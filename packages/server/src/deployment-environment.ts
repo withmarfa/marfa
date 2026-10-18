@@ -1,7 +1,6 @@
 /**
  * The environment name that exported telemetry and the error notification
- * carry. A label only: nothing in the server branches on it, and it is not
- * a setting, so an instance has the one name and cannot be configured to
- * another.
+ * carry unless `OTEL_RESOURCE_ATTRIBUTES` names one. A label only: nothing
+ * in the server branches on it.
  */
-export const DEPLOYMENT_ENVIRONMENT = "production";
+export const DEFAULT_DEPLOYMENT_ENVIRONMENT = "production";

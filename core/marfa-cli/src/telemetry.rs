@@ -82,7 +82,7 @@ fn exceptions(
     settings: &Settings,
     get: &impl Fn(&str) -> Option<String>,
 ) -> Option<posthog::Reporter> {
-    match posthog::read(get, &settings.service, settings.timeout) {
+    match posthog::read(get, resource(settings), settings.timeout) {
         posthog::Reading::Off => None,
         posthog::Reading::Said(said) => {
             if !json {
@@ -94,6 +94,13 @@ fn exceptions(
     }
 }
 
+fn resource(settings: &Settings) -> otlp::Resource {
+    otlp::Resource {
+        service: settings.service.clone(),
+        attributes: settings.resource.clone(),
+    }
+}
+
 fn live(command: &str, settings: &Settings) -> Option<Live> {
     let trace_id: [u8; 16] = layer::random();
     if !settings.sampler.keeps(&trace_id) {
@@ -101,9 +108,7 @@ fn live(command: &str, settings: &Settings) -> Option<Live> {
     }
     let exporter = Arc::new(Exporter::start(
         otlp::Poster::new(settings),
-        otlp::Resource {
-            service: settings.service.clone(),
-        },
+        resource(settings),
     )?);
     let subscriber = tracing_subscriber::registry().with(layer::Export::new(
         trace_id,

@@ -39,8 +39,36 @@ pub struct Finished {
     pub error: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Resource {
     pub service: String,
+    /// What `OTEL_RESOURCE_ATTRIBUTES` named, which replaces this binary's
+    /// own attribute of the same name, except the service's.
+    pub attributes: Vec<(String, String)>,
+}
+
+impl Resource {
+    /// Every attribute the run names itself by, the service first.
+    pub fn attributes(&self) -> Vec<(String, String)> {
+        let mut out = vec![
+            ("service.name".to_string(), self.service.clone()),
+            (
+                "service.version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+            ),
+        ];
+        for (key, value) in self
+            .attributes
+            .iter()
+            .filter(|(key, _)| key != "service.name")
+        {
+            match out.iter_mut().find(|(held, _)| held == key) {
+                Some(slot) => slot.1.clone_from(value),
+                None => out.push((key.clone(), value.clone())),
+            }
+        }
+        out
+    }
 }
 
 const SCOPE: &str = "marfa-cli";
@@ -95,10 +123,9 @@ fn span(span: &Finished) -> Value {
 pub fn request(resource: &Resource, spans: &[Finished]) -> Vec<u8> {
     let body = json!({
         "resourceSpans": [{
-            "resource": { "attributes": [
-                { "key": "service.name", "value": { "stringValue": resource.service } },
-                { "key": "service.version", "value": { "stringValue": env!("CARGO_PKG_VERSION") } },
-            ] },
+            "resource": { "attributes": resource.attributes().iter().map(|(key, value)| {
+                json!({ "key": key, "value": { "stringValue": value } })
+            }).collect::<Vec<_>>() },
             "scopeSpans": [{
                 "scope": { "name": SCOPE, "version": env!("CARGO_PKG_VERSION") },
                 "spans": spans.iter().map(span).collect::<Vec<_>>(),
@@ -212,6 +239,7 @@ mod tests {
         let body: Value = serde_json::from_slice(&request(
             &Resource {
                 service: "marfa-cli".into(),
+                attributes: Vec::new(),
             },
             &sample(),
         ))
@@ -256,12 +284,34 @@ mod tests {
     }
 
     #[test]
+    fn the_resource_names_what_the_operator_named_in_place_of_what_the_binary_says() {
+        let resource = Resource {
+            service: "marfa-cli".into(),
+            attributes: vec![
+                ("deployment.environment".into(), "rehearsal".into()),
+                ("service.version".into(), "9.9.9".into()),
+                ("service.name".into(), "not-the-service".into()),
+            ],
+        };
+        let body: Value = serde_json::from_slice(&request(&resource, &sample())).unwrap();
+        assert_eq!(
+            body["resourceSpans"][0]["resource"]["attributes"],
+            json!([
+                { "key": "service.name", "value": { "stringValue": "marfa-cli" } },
+                { "key": "service.version", "value": { "stringValue": "9.9.9" } },
+                { "key": "deployment.environment", "value": { "stringValue": "rehearsal" } },
+            ])
+        );
+    }
+
+    #[test]
     fn a_span_never_ends_before_it_starts() {
         let mut spans = sample();
         spans[0].end = at(1);
         let body: Value = serde_json::from_slice(&request(
             &Resource {
                 service: "x".into(),
+                attributes: Vec::new(),
             },
             &spans,
         ))
@@ -279,6 +329,7 @@ mod tests {
         let text = String::from_utf8(request(
             &Resource {
                 service: "x".into(),
+                attributes: Vec::new(),
             },
             &spans,
         ))

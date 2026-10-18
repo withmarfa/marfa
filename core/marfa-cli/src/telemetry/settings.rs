@@ -28,6 +28,8 @@ pub struct Settings {
     pub timeout: Duration,
     pub sampler: Sampler,
     pub service: String,
+    /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`, which is `service`.
+    pub resource: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -111,12 +113,26 @@ pub fn read(get: impl Fn(&str) -> Option<String>) -> Reading {
     .and_then(|text| text.parse::<u64>().ok())
     .filter(|milliseconds| *milliseconds > 0)
     .map_or(DEFAULT_TIMEOUT, Duration::from_millis);
+    let mut resource = set("OTEL_RESOURCE_ATTRIBUTES")
+        .as_deref()
+        .map(resource_of)
+        .unwrap_or_default();
+    // The service name variable wins over the same name among the
+    // attributes, as the specification asks.
+    let named = resource
+        .iter()
+        .find(|(key, _)| key == "service.name")
+        .map(|(_, value)| value.clone());
+    resource.retain(|(key, _)| key != "service.name");
     Reading::On(Settings {
         url: address,
         headers,
         timeout,
         sampler: sampler(set("OTEL_TRACES_SAMPLER"), set("OTEL_TRACES_SAMPLER_ARG")),
-        service: set("OTEL_SERVICE_NAME").unwrap_or_else(|| DEFAULT_SERVICE.into()),
+        service: set("OTEL_SERVICE_NAME")
+            .or(named)
+            .unwrap_or_else(|| DEFAULT_SERVICE.into()),
+        resource,
     })
 }
 
@@ -164,6 +180,27 @@ fn headers_of(text: &str) -> Vec<(String, String)> {
             (token && plain && !own).then(|| (key.to_string(), value))
         })
         .collect()
+}
+
+/// `key=value,key=value`, a value percent-encoded. The specification asks
+/// that a list with any pair that cannot be read be discarded whole, so that
+/// half of what an operator wrote is not taken for all of it. A repeated key
+/// keeps its last value.
+fn resource_of(text: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for pair in text.split(',').filter(|pair| !pair.trim().is_empty()) {
+        let parsed = pair.split_once('=').and_then(|(key, value)| {
+            let key = key.trim();
+            let value = decoded(value.trim())?;
+            (!key.is_empty()).then(|| (key.to_string(), value))
+        });
+        let Some((key, value)) = parsed else {
+            return Vec::new();
+        };
+        out.retain(|(held, _)| *held != key);
+        out.push((key, value));
+    }
+    out
 }
 
 fn decoded(text: &str) -> Option<String> {
@@ -388,6 +425,54 @@ mod tests {
         assert!(!Sampler::Ratio(0.5).keeps(&id(1 << 63)));
         assert!(Sampler::On.keeps(&id(u64::MAX)));
         assert!(!Sampler::Off.keeps(&id(0)));
+    }
+
+    #[test]
+    fn resource_attributes_are_decoded_and_a_list_with_a_bad_pair_is_discarded_whole() {
+        let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
+        assert_eq!(on(&[base]).resource, Vec::new());
+        assert_eq!(
+            on(&[
+                base,
+                (
+                    "OTEL_RESOURCE_ATTRIBUTES",
+                    "deployment.environment=rehearsal, team=a%20b%2Cc,deployment.environment=last",
+                ),
+            ])
+            .resource,
+            vec![
+                ("team".to_string(), "a b,c".to_string()),
+                ("deployment.environment".to_string(), "last".to_string()),
+            ]
+        );
+        for bad in ["a=b,c", "=x", "a=%zz", "a=b,%=c,d"] {
+            assert_eq!(
+                on(&[base, ("OTEL_RESOURCE_ATTRIBUTES", bad)]).resource,
+                Vec::new(),
+                "{bad}"
+            );
+        }
+        // The witness: the same list without the bad pair is read.
+        assert_eq!(
+            on(&[base, ("OTEL_RESOURCE_ATTRIBUTES", "a=b")])
+                .resource
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_service_name_variable_wins_over_service_name_among_the_attributes() {
+        let base = ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
+        let attributes = ("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-list,a=b");
+        let from_list = on(&[base, attributes]);
+        assert_eq!(from_list.service, "from-list");
+        // `service.name` is the service, not a second copy of it.
+        assert_eq!(from_list.resource, vec![("a".to_string(), "b".to_string())]);
+        assert_eq!(
+            on(&[base, attributes, ("OTEL_SERVICE_NAME", "from-variable")]).service,
+            "from-variable"
+        );
     }
 
     #[test]

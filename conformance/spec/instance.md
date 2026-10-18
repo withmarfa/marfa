@@ -1032,6 +1032,48 @@ When the server starts, the server MUST hold no fault.
 
 **Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`, `compliance/write-faults.test.ts › does not outlive it: the write it was aimed at lands, and the fault is not listed`.
 
+## Telemetry
+
+Telemetry is on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and these rules hold where it is.
+
+### `instance/telemetry-instance-id`
+
+Where telemetry is on, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+
+**Reason:** instances sending to one collector, such as an owner's, a demo and a test, cannot otherwise be told apart. The id is the one the root answers, so an operator finds the instance an export came from by it. The instance's configured `name` is not carried, because it can change while the server runs and can be personal.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance's id on every log record and span it exports`.
+
+### `instance/telemetry-exception-id`
+
+Where telemetry is on and exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends once it has read its id, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+
+**Reason:** the id is in the database, which opens after the server starts, so an exception captured before it opens goes unnamed.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`.
+
+### `instance/telemetry-attributes`
+
+Where telemetry is on, the server MUST carry each attribute `OTEL_RESOURCE_ATTRIBUTES` names as a resource attribute of every log record and span it exports and as a property of every exception it sends, in place of its own attribute of the same name.
+
+**Reason:** the operator is the one who knows what the instance is for, and the standard variable is how an instance marks itself apart, as `deployment.environment=staging` does.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`, `› names the instance and the environment in an exception and an error notification`.
+
+### `instance/telemetry-service-name`
+
+Where telemetry is on and `OTEL_SERVICE_NAME` is set, the server MUST carry it as the resource attribute `service.name`, whatever `OTEL_RESOURCE_ATTRIBUTES` names.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`.
+
+### `instance/telemetry-error-environment`
+
+Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
+
+**Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
+
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`, `› names deployment.environment.name in an error notification before deployment.environment`.
+
 ## Settings refused at boot
 
 The server reads its settings once, when it starts, and the table at the end of this chapter gives each one's rule. A client meets a refused setting as a process that exits, so these rules are about the exit status, the log message and the files left behind.
@@ -1228,7 +1270,8 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_PLACEMENT_LOCATION`                  | None                          | Any text                                                           | Free text naming the location the server runs in, reported at `/health` as `placement.location`.                                                                                                                                                             |
 | `MARFA_PLACEMENT_COUNTRY`                   | None                          | Any text                                                           | Free text naming the country the server runs in, reported at `/health` as `placement.country`.                                                                                                                                                               |
 | `MARFA_OTEL_SAMPLE_RATIO`                   | `0.05`                        | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                       |
-| `OTEL_SERVICE_NAME`                         | `marfa-server`                | Any text                                                           | The service name on exported telemetry.                                                                                                                                                                                                                      |
+| `OTEL_SERVICE_NAME`                         | `marfa-server`                | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                             |
+| `OTEL_RESOURCE_ATTRIBUTES`                  | None                          | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.                                                  |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`               | None                          | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.                                                   |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`        | None                          | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                     |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`          | None                          | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                       |
