@@ -404,7 +404,7 @@ function waitingForTheLock(url: string): {
       untilNotBusy(() =>
         one(() => {
           const injected = takeStatementFault();
-          if (injected) return Promise.reject(injected);
+          if (injected) return Promise.reject(injected.error);
           return typeof stmtOrSql === "string"
             ? client.execute(stmtOrSql, args)
             : client.execute(stmtOrSql);
@@ -414,7 +414,7 @@ function waitingForTheLock(url: string): {
       untilNotBusy(() =>
         one(() => {
           const injected = takeStatementFault();
-          if (injected) return Promise.reject(injected);
+          if (injected) return Promise.reject(injected.error);
           return client.batch(stmts, mode);
         }),
       ),
@@ -766,7 +766,10 @@ function transactionConnections(url: string): {
       control.assertUsable();
       try {
         const injected = takeStatementFault();
-        if (injected) throw injected;
+        if (injected) {
+          if (injected.endsTransaction) await conn.execute("ROLLBACK");
+          throw injected.error;
+        }
         return typeof stmtOrSql === "string"
           ? await conn.execute(stmtOrSql, args)
           : await conn.execute(stmtOrSql);

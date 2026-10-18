@@ -5,12 +5,9 @@ import {
   transactionControl,
   reconcileCommitHooks,
 } from "./sqlite/transaction-control.js";
-import { failAt } from "../control/faults.js";
+import { failAt, faultsArmed } from "../control/faults.js";
 import { lockNotFree } from "./sqlite/connection.js";
-import {
-  armCommitFault,
-  withStatementFault,
-} from "./sqlite/injected-failure.js";
+import { auditUnderFaults } from "./sqlite/injected-failure.js";
 
 /** A null entry is an acknowledged or refused outcome with no represented write. */
 export async function runAuditedTransaction<T>(
@@ -30,15 +27,15 @@ export async function runAuditedTransaction<T>(
         result = await work();
         const record = typeof entry === "function" ? entry(result) : entry;
         if (record !== null) {
-          const log = async () => {
-            await storage.audit.log(record, id);
-          };
-          await (nested
-            ? log()
-            : withStatementFault("audit", log, record.action));
+          if (!nested && faultsArmed())
+            await auditUnderFaults(
+              storage,
+              record,
+              id,
+              transactionControl.getStore(),
+            );
+          else await storage.audit.log(record, id);
           witness.recorded = true;
-          if (!nested)
-            armCommitFault(transactionControl.getStore(), record.action);
         }
         return result;
       },

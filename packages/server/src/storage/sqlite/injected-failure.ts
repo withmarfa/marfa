@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { LibsqlError } from "@libsql/client";
 import { failAt, faultsArmed } from "../../control/faults.js";
 import type { TransactionControl } from "./transaction-control.js";
+import type { AuditLogEntry, Storage } from "../interface.js";
 
 /**
  * The failures a conformance harness asks for through the `fail:<point>`
@@ -36,6 +37,8 @@ export function injectedDatabaseError(
 
 interface Scope {
   spent: boolean;
+  /** The database ends the statement's transaction as it fails, as it may for a full or failing disk. */
+  endsTransaction: boolean;
 }
 
 const scope = new AsyncLocalStorage<Scope>();
@@ -51,20 +54,49 @@ export function withStatementFault<T>(
   point: string,
   work: () => Promise<T>,
   action?: string,
+  options: { endsTransaction?: boolean } = {},
 ): Promise<T> {
   if (!failAt(point, action)) return work();
   // Awaited inside the scope: the query layer's builders run the statement
   // when they are awaited, which would otherwise be after the scope ended.
-  return scope.run({ spent: false }, async () => await work());
+  return scope.run(
+    { spent: false, endsTransaction: options.endsTransaction ?? false },
+    async () => await work(),
+  );
 }
 
 /** The failure the statement about to run must raise, if its caller is inside {@link withStatementFault} and the fault has not acted yet. */
-export function takeStatementFault(): LibsqlError | undefined {
+export function takeStatementFault():
+  { error: LibsqlError; endsTransaction: boolean } | undefined {
   if (!faultsArmed()) return undefined;
   const pending = scope.getStore();
   if (pending === undefined || pending.spent) return undefined;
   pending.spent = true;
-  return injectedDatabaseError("SQLITE_IOERR");
+  return {
+    error: injectedDatabaseError("SQLITE_IOERR"),
+    endsTransaction: pending.endsTransaction,
+  };
+}
+
+/**
+ * Records the audit entry of a write that a fault may be aimed at: the insert
+ * is the scoped statement, and the commit that follows is armed. Reached only
+ * while a fault is set.
+ */
+export async function auditUnderFaults(
+  storage: Pick<Storage, "audit">,
+  record: AuditLogEntry,
+  id: string,
+  control: TransactionControl | undefined,
+): Promise<void> {
+  await withStatementFault(
+    "audit",
+    async () => {
+      await storage.audit.log(record, id);
+    },
+    record.action,
+  );
+  armCommitFault(control, record.action);
 }
 
 /**
@@ -76,7 +108,7 @@ export function armCommitFault(
   control: TransactionControl | undefined,
   action: string,
 ): void {
-  if (control === undefined || !faultsArmed()) return;
+  if (!faultsArmed() || control === undefined) return;
   // Each fault counts the write whether or not another acts on it.
   const refused = failAt("commit", action);
   const full = failAt("commit-full", action);

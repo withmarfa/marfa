@@ -68,6 +68,25 @@ describe("the declared points", () => {
     expect(arm("fail:housekeeping:trash-purge")).toBeUndefined();
   });
 
+  it("refuse the placeholder itself and a failure on a job that runs no statement", () => {
+    for (const name of ["hold:housekeeping:<job>", "fail:housekeeping:<job>"]) {
+      expect(arm(name), name).toMatch(/no (hold|fail) point/);
+    }
+    const withHeartbeat = [...JOBS, "heartbeat"];
+    expect(
+      faultProblem("fail:housekeeping:heartbeat", null, withHeartbeat),
+    ).toMatch(/runs no database statement/);
+    // The witness: a hold on the same job is a real point, and the same
+    // failure on a job that runs statements is armed.
+    expect(
+      faultProblem("hold:housekeeping:heartbeat", null, withHeartbeat),
+    ).toBeUndefined();
+    expect(
+      faultProblem("fail:housekeeping:trash-purge", null, JOBS),
+    ).toBeUndefined();
+    expect(activeFaults()).toEqual([]);
+  });
+
   it("refuse an argument the point does not take", () => {
     expect(arm("hold:version-thinning:item", "1")).toMatch(/no argument/);
     expect(arm("fail:lock", "0")).toMatch(/from 1/);

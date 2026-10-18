@@ -60,8 +60,15 @@ export const POINTS: {
     { name: "inbound-cleanup", arg: "nth" },
     { name: "export-read", arg: "nth" },
     { name: "housekeeping:<job>", arg: "nth" },
+    { name: "job-row", arg: "nth" },
   ],
 };
+
+/**
+ * Housekeeping jobs that run no database statement, so a `fail` fault on one
+ * could only be counted and never act.
+ */
+const JOBS_WITHOUT_STATEMENTS: readonly string[] = ["heartbeat"];
 
 const JOB_SLOT = "<job>";
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
@@ -102,8 +109,9 @@ function declared(
   text: string,
 ): { point: Point; job: string | undefined } | undefined {
   for (const point of POINTS[kind]) {
-    if (point.name === text) return { point, job: undefined };
-    if (point.name.endsWith(JOB_SLOT)) {
+    if (!point.name.endsWith(JOB_SLOT)) {
+      if (point.name === text) return { point, job: undefined };
+    } else {
       const stem = point.name.slice(0, -JOB_SLOT.length);
       if (text.startsWith(stem) && JOB_NAME.test(text.slice(stem.length)))
         return { point, job: text.slice(stem.length) };
@@ -175,6 +183,12 @@ export function faultProblem(
     kind === "deadline" ? rest : declared(kind as "hold" | "fail", rest)?.job;
   if (job !== undefined && !jobs.includes(job))
     return `no housekeeping job is named ${job}`;
+  if (
+    kind === "fail" &&
+    job !== undefined &&
+    JOBS_WITHOUT_STATEMENTS.includes(job)
+  )
+    return `the ${job} job runs no database statement to fail`;
   return undefined;
 }
 
