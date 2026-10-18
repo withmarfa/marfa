@@ -72,56 +72,61 @@ it("reauthenticates a revoked startup cookie before concurrent owner actions", a
   expect(sessions?.count).toBe(1);
 });
 
-it("shares a fresh owner session across twelve independent clients", async () => {
-  server = await bootFreshServer("shared-owner-client");
-  await server.advanceClock(OLDER_THAN_FRESH_MS);
-  const options = {
-    baseUrl: server.apiUrl,
-    ownerCookie: server.ownerCookie,
-    ownerCredentials: TEST_OWNER,
-    ownerSessionFile: `${server.stateDir}/owner-session.json`,
-    serverClockOffsetMs: server.clockOffsetMs,
-  };
-  for (let index = 0; index < 12; index++) {
-    const result = await new MarfaClient(options).restoreArchive(
-      itemsArchive([]),
+it.each([0, 86_400_000])(
+  "shares a fresh owner session across twelve independent clients with offset %i",
+  async (offset) => {
+    server = await bootFreshServer("shared-owner-client", {
+      MARFA_TEST_CLOCK_OFFSET_MS: String(offset),
+    });
+    await server.advanceClock(OLDER_THAN_FRESH_MS);
+    const options = {
+      baseUrl: server.apiUrl,
+      ownerCookie: server.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+      ownerSessionFile: `${server.stateDir}/owner-session.json`,
+      serverClockOffsetMs: server.clockOffsetMs,
+    };
+    for (let index = 0; index < 12; index++) {
+      const result = await new MarfaClient(options).restoreArchive(
+        itemsArchive([]),
+      );
+      expect(result.status).toBe(200);
+    }
+    const sessions = withInstanceDatabase(server.sqlitePath, (db) =>
+      db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
     );
-    expect(result.status).toBe(200);
-  }
-  const sessions = withInstanceDatabase(server.sqlitePath, (db) =>
-    db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-  );
-  expect(sessions?.count).toBe(2);
-  expect(statSync(options.ownerSessionFile).mode & 0o777).toBe(0o600);
+    expect(sessions?.count).toBe(2);
+    expect(statSync(options.ownerSessionFile).mode & 0o777).toBe(0o600);
 
-  await server.advanceClock(OLDER_THAN_FRESH_MS);
-  options.serverClockOffsetMs = server.clockOffsetMs;
-  const script = `
+    await server.advanceClock(OLDER_THAN_FRESH_MS);
+    options.serverClockOffsetMs = server.clockOffsetMs;
+    const script = `
     import { MarfaClient } from ${JSON.stringify(new URL("../../client/api.ts", import.meta.url).href)};
     const response = await new MarfaClient(JSON.parse(process.env.MARFA_OWNER_CLIENT_OPTIONS)).rawRequest("/keys", {
       method: "POST", body: { label: "parallel-owner", source: "parallel-owner-" + process.pid }
     });
     if (response.status !== 201) throw new Error("Owner key creation answered " + response.status);
   `;
-  await Promise.all(
-    Array.from({ length: 3 }, () =>
-      promisify(execFile)(
-        process.execPath,
-        ["--import", "tsx", "--input-type", "module", "-e", script],
-        {
-          env: {
-            ...process.env,
-            MARFA_OWNER_CLIENT_OPTIONS: JSON.stringify(options),
+    await Promise.all(
+      Array.from({ length: 3 }, () =>
+        promisify(execFile)(
+          process.execPath,
+          ["--import", "tsx", "--input-type", "module", "-e", script],
+          {
+            env: {
+              ...process.env,
+              MARFA_OWNER_CLIENT_OPTIONS: JSON.stringify(options),
+            },
           },
-        },
+        ),
       ),
-    ),
-  );
-  const afterProcesses = withInstanceDatabase(server.sqlitePath, (db) =>
-    db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
-  );
-  expect(afterProcesses?.count).toBe(3);
-});
+    );
+    const afterProcesses = withInstanceDatabase(server.sqlitePath, (db) =>
+      db.prepare("SELECT COUNT(*) AS count FROM auth_session").get(),
+    );
+    expect(afterProcesses?.count).toBe(3);
+  },
+);
 
 it("reuses the authenticated session across fixture server restarts", async () => {
   server = await bootFreshServer("restarted-owner-client");

@@ -480,7 +480,7 @@ export async function bootFreshServer(
       }
       return ended;
     },
-    clockOffsetMs: 0,
+    clockOffsetMs: Number(extraEnv.MARFA_TEST_CLOCK_OFFSET_MS ?? 0),
     async advanceClock(ms) {
       const moved = await adapter("clock", "advance", String(ms));
       if (moved.status !== 0) {

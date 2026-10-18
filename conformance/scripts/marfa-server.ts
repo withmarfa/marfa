@@ -457,10 +457,12 @@ async function startServer(args: BootOptions): Promise<Started> {
   const hooks = args.nodeEnv !== "production";
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
-  const offset = hooks ? readClockOffset(p.clock) : 0;
-  if (offset > 0) env.MARFA_TEST_CLOCK_OFFSET_MS = String(offset);
   // What the caller names wins over every default above.
   Object.assign(env, args.env);
+  // A restart inherits the latest move, never the original boot setting.
+  if (hooks && existsSync(p.clock)) {
+    env.MARFA_TEST_CLOCK_OFFSET_MS = String(readClockOffset(p.clock));
+  }
 
   rmSync(p.exit, { force: true });
   // Stdout holds the server's JSON log lines and nothing else, which is what
@@ -628,6 +630,11 @@ export async function bootServer(args: BootOptions): Promise<void> {
     url,
     retainedSession,
     TEST_OWNER,
+    () =>
+      Date.now() +
+      (existsSync(p.clock)
+        ? readClockOffset(p.clock)
+        : Number(args.env?.MARFA_TEST_CLOCK_OFFSET_MS ?? 0)),
   );
   maskInActions(
     apiKey,

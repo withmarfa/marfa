@@ -183,7 +183,7 @@ export class MarfaClient {
         this.baseUrl,
         this.ownerCookie,
         credentials,
-        Date.now() + this.serverClockOffsetMs(),
+        () => Date.now() + this.serverClockOffsetMs(),
       );
       this.ownerCookie = session.cookie;
       this.ownerAuthenticatedAt = session.authenticatedAt;
