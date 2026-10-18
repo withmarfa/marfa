@@ -67,3 +67,34 @@ describe("canonical effective read projection", () => {
     );
   });
 });
+
+describe("extension read projection follows stored permission resolution", () => {
+  it.each(["unknown", "", false, 0, null, undefined])(
+    "retains malformed exact denial %j under a wildcard",
+    (value) => {
+      const extension_permissions = {
+        "*": "read",
+        named: value,
+      } as ApiKey["extension_permissions"];
+      expect(projection({ extension_permissions })).not.toEqual(
+        projection({ extension_permissions: { "*": "read" } }),
+      );
+      expect(projection({ extension_permissions })).toEqual(
+        projection({
+          extension_permissions: {
+            "*": "read",
+            named: "none",
+          } as unknown as ApiKey["extension_permissions"],
+        }),
+      );
+    },
+  );
+  it("ignores inherited wildcard grants in the projection as in answers", () => {
+    const extension_permissions = Object.create({
+      "*": "read",
+    }) as ApiKey["extension_permissions"];
+    expect(projection({ extension_permissions })).toEqual(
+      projection({ extension_permissions: {} }),
+    );
+  });
+});

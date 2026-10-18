@@ -8,11 +8,11 @@
  * would read every other integration's data off its own write. The export
  * is not exempt either, because it is a read of the same rows.
  *
- * A management permission grants no extension or type access. A caller
+ * A management permission grants no extension or type access. A credential
  * needs both maps to read an item's extension data.
  *
- * Every door that answers a metadata row or an extensions map passes it
- * through here; `extension-door-census.test.ts` finds those doors in the
+ * Every door that answers a credential with a metadata row or extensions
+ * passes it through here; `extension-door-census.test.ts` finds those doors in the
  * OpenAPI document and drives each with a key holding one namespace.
  */
 import {

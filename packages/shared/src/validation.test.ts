@@ -8,6 +8,8 @@ import {
   RESERVED_ROOTS,
   matchesTypePattern,
   resolveTypePermission,
+  resolveExtensionPermission,
+  filterExtensionsByPermission,
 } from "./validation.js";
 import {
   NAMESPACE_TIER_ROOTS,
@@ -389,5 +391,80 @@ describe("isValidEdgeTypeIdentifier", () => {
     expect(isValidEdgeTypeIdentifier("user.mine")).toBe(true);
     expect(isValidEdgeTypeIdentifier("metadata.anything")).toBe(false);
     expect(isValidEdgeTypeIdentifier("acme")).toBe(true);
+  });
+});
+
+describe("extension permission resolution", () => {
+  const malformed = [
+    "unknown",
+    "none",
+    "",
+    false,
+    true,
+    0,
+    1,
+    null,
+    undefined,
+    {},
+    [],
+  ];
+  const asMap = (map: Record<string, unknown>) =>
+    map as Record<string, "read" | "write">;
+
+  it.each(["read", "write"] as const)(
+    "grants %s from exact and wildcard entries",
+    (level) => {
+      expect(resolveExtensionPermission("named", { named: level })).toBe(level);
+      expect(resolveExtensionPermission("missing", { "*": level })).toBe(level);
+      expect(
+        filterExtensionsByPermission({ named: { value: 1 } }, { named: level }),
+      ).toEqual({ named: { value: 1 } });
+    },
+  );
+
+  it.each(malformed.map((value) => [value]))(
+    "denies malformed exact level %j without falling through",
+    (value) => {
+      const permissions = asMap({ "*": "write", named: value });
+      expect(resolveExtensionPermission("missing", permissions)).toBe("write");
+      expect(resolveExtensionPermission("named", permissions)).toBe("none");
+      expect(
+        filterExtensionsByPermission(
+          { named: { value: 1 }, missing: { value: 2 } },
+          permissions,
+        ),
+      ).toEqual({ missing: { value: 2 } });
+    },
+  );
+
+  it.each(malformed.map((value) => [value]))(
+    "denies malformed wildcard level %j",
+    (value) => {
+      expect(resolveExtensionPermission("named", asMap({ "*": value }))).toBe(
+        "none",
+      );
+    },
+  );
+
+  it("uses only own entries, including names inherited by ordinary objects", () => {
+    expect(resolveExtensionPermission("constructor", {})).toBe("none");
+    expect(resolveExtensionPermission("missing", undefined)).toBe("none");
+    const inherited = Object.create({ named: "write", "*": "read" }) as Record<
+      string,
+      "read" | "write"
+    >;
+    expect(resolveExtensionPermission("named", inherited)).toBe("none");
+    expect(resolveExtensionPermission("missing", inherited)).toBe("none");
+    inherited["*"] = "read";
+    expect(resolveExtensionPermission("named", inherited)).toBe("read");
+    expect(resolveExtensionPermission("constructor", { "*": "read" })).toBe(
+      "read",
+    );
+    expect(
+      resolveExtensionPermission(
+        "constructor",
+        asMap({ constructor: "write" }),
+      ),
+    ).toBe("write");
   });
 });
