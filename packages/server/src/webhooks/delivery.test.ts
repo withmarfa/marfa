@@ -274,7 +274,7 @@ describe("the body a delivery sends", () => {
       expect(http.posts).toHaveLength(1);
       const post = http.posts[0]!;
       const signature = post.headers["X-Marfa-Signature"]!;
-      const timestamp = signature.match(/^t=(\d+),/)![1]!;
+      const timestamp = /^t=(\d+),/.exec(signature)![1]!;
       expect(Number(timestamp)).toBeGreaterThanOrEqual(before);
       expect(Number(timestamp)).toBeLessThanOrEqual(after);
       expect(signature).toBe(
