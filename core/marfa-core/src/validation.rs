@@ -16,9 +16,10 @@ pub(crate) const MAX_TAGS_PER_ITEM: usize = 100;
 
 /// The tags a write may carry, as the server holds them: at most
 /// `MAX_TAGS_PER_ITEM` of them, duplicates counted, each not empty, not blank
-/// as JavaScript's `trim` reads blank, and at most `MAX_TAG_LENGTH` UTF-16
-/// code units. A write the server would refuse is refused here, so it is
-/// never saved or queued only to come back refused.
+/// as JavaScript's `trim` reads blank, not `.` or `..`, which a URL path
+/// cannot name as a segment, and at most `MAX_TAG_LENGTH` UTF-16 code units.
+/// A write the server would refuse is refused here, so it is never saved or
+/// queued only to come back refused.
 pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
     let mut errors: Vec<String> = tags
         .iter()
@@ -28,6 +29,8 @@ pub(crate) fn tags(tags: &[String]) -> Result<(), CoreError> {
                 "A tag must not be empty".to_string()
             } else if tag.chars().all(js::is_space) {
                 "A tag must not be blank".to_string()
+            } else if tag == "." || tag == ".." {
+                format!("A tag must not be {tag:?}, which a URL path cannot name")
             } else if tag.encode_utf16().count() > MAX_TAG_LENGTH {
                 format!("A tag must contain at most {MAX_TAG_LENGTH} UTF-16 code units")
             } else {

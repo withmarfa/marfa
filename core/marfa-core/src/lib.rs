@@ -3205,6 +3205,8 @@ mod tests {
             (String::new(), "empty"),
             ("   ".into(), "blank"),
             ("\t\u{a0}\u{2003}\u{feff}".into(), "blank"),
+            (".".into(), "URL path"),
+            ("..".into(), "URL path"),
             ("a".repeat(MAX_TAG_LENGTH + 1), "at most"),
             ("😀".repeat(MAX_TAG_LENGTH / 2 + 1), "at most"),
         ]
@@ -3286,6 +3288,22 @@ mod tests {
         );
         store::add_tags(&core.conn().unwrap(), "row", &[String::new()]).unwrap();
         assert!(core.remove_tag("row", "").is_ok());
+        // A dot tag held from before the bound is shed by a replace, the one
+        // tag operation whose request does not name it in a URL path.
+        let dots = vec![".".to_string(), "..".to_string()];
+        store::add_tags(&core.conn().unwrap(), "row", &dots).unwrap();
+        assert_eq!(core.get("row").unwrap().unwrap().tags, dots);
+        assert!(
+            core.write_metadata(
+                "row",
+                &MetadataWrite {
+                    tags: vec!["fine".into()],
+                },
+                true,
+            )
+            .is_ok()
+        );
+        assert_eq!(core.get("row").unwrap().unwrap().tags, vec!["fine"]);
     }
 
     #[test]

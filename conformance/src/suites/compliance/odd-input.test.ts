@@ -194,6 +194,54 @@ describe("odd input is refused, never answered 500", () => {
     }
   });
 
+  it("refuses a tag that is . or .., naming it, and takes ._ and ...", async () => {
+    const id = await newNote();
+    const tags = (tag: string) => JSON.stringify({ tags: [tag] });
+    for (const tag of ["._", "..."]) {
+      expect((await send("POST", `/items/${id}/tags`, tags(tag))).status).toBe(
+        200,
+      );
+    }
+    for (const tag of [".", ".."]) {
+      for (const [method, path, body] of [
+        [
+          "POST",
+          "/items",
+          JSON.stringify({
+            type: "core.note",
+            source: ctx.source,
+            properties: { body: "x" },
+            tags: [tag],
+          }),
+        ],
+        ["POST", `/items/${id}/tags`, tags(tag)],
+        ["PUT", `/items/${id}/metadata`, tags(tag)],
+        ["PATCH", `/items/${id}/metadata`, tags(tag)],
+      ] as const) {
+        const res = await ofetch.raw<{
+          error?: {
+            code?: string;
+            details?: { errors?: { message: string }[] };
+          };
+        }>(`${baseUrl}${path}`, {
+          method,
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body,
+          ignoreResponseError: true,
+        });
+        expect(res.status, `${method} ${path} with ${tag}`).toBe(400);
+        expect(res._data?.error?.code).toBe("validation_error");
+        expect(
+          res._data?.error?.details?.errors?.map((e) => e.message),
+          `${method} ${path}`,
+        ).toContainEqual(expect.stringContaining(JSON.stringify(tag)));
+      }
+    }
+  });
+
   it("refuses a property named with no characters", async () => {
     const id = await newNote();
     expect(
