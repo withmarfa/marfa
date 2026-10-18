@@ -348,7 +348,7 @@ When an item names an `array` field whose `items_type` is a field type, the serv
 
 If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an element that a field of its `items_type` refuses, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field and the element's position in `field`, as `names.1`.
 
-**Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was.
+**Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was. An array already stored with a wrong element therefore also refuses a write that leaves it in place, because the whole resulting property set is judged, and the refusal names the element.
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› checks the elements on an update, and keeps the item as it was when it refuses`, `› checks the elements of a bulk entry, an upsert by natural key and a bulk upsert`.
 

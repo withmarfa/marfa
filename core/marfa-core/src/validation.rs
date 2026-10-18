@@ -201,32 +201,20 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
     let Some(items) = definition.get("items_type").and_then(Value::as_str) else {
         return Ok(None);
     };
-    if !FIELD_TYPES.contains(&items) {
-        return Ok(None);
-    }
     let element = serde_json::json!({ "enum_values": definition.get("enum_values") });
     for (index, value) in values.iter().enumerate() {
-        if let Some(message) = field(items, &element, value)? {
-            return Ok(Some(format!("Item {index}: {message}")));
+        match field(items, &element, value) {
+            // `field` fails only on a kind it does not know.
+            Err(CoreError::Decoding(_)) => return Ok(None),
+            checked => {
+                if let Some(message) = checked? {
+                    return Ok(Some(format!("Item {index}: {message}")));
+                }
+            }
         }
     }
     Ok(None)
 }
-
-const FIELD_TYPES: [&str; 12] = [
-    "string",
-    "number",
-    "integer",
-    "boolean",
-    "url",
-    "email",
-    "datetime",
-    "date",
-    "enum",
-    "array",
-    "object",
-    "thumbnail",
-];
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
 // HTML's broader email shape. Keep its accepted neighbours here too.
