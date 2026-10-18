@@ -8,16 +8,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { movedClock } from "../../utils/moved-clock.js";
 
 /**
- * What an `Idempotency-Key` meets that `idempotency_key_reused` alone does not
- * cover: a repeat of a request still being served, a repeat of one whose
- * answer was too large to keep, and a repeat after the server's contract
- * version changed.
- *
- * **A server of its own, for both.** The first needs a record of the
- * instance's own database arranged and the server's clock moved, so it cannot
- * share the run's server. The second needs a body the shared server's request
- * cap would refuse, because a stored answer is the request's own size and a
- * little more. The third restarts the server onto another contract version.
+ * These cases need their own server: an in-flight claim needs stored state
+ * arranged and the clock moved; an oversized answer needs a request cap above
+ * the shared server's; a changed contract needs a restart onto another version.
  */
 let server: FreshServer | undefined;
 let clock: ReturnType<typeof movedClock>;
