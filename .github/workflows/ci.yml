@@ -261,10 +261,10 @@ jobs:
       # @withmarfa/shared through its dist.
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # Only the device fixtures drive the `marfa` binary. A pull request
-      # that leaves the crates alone reuses the binary `main` built from the
-      # same sources and runs no Rust. A push, the nightly and a dispatch
-      # always build it, with the current compiler.
+      # Only the device fixtures drive the `marfa` binary and the Node
+      # module. A pull request that leaves the crates alone reuses the ones
+      # `main` built from the same sources and runs no Rust. A push, the
+      # nightly and a dispatch always build them, with the current compiler.
       - name: Key the device under test
         id: device-key
         if: ${{ matrix.device }}
@@ -280,9 +280,27 @@ jobs:
       # older than this checkout's sources; the key vouches that they match.
       - if: ${{ matrix.device && steps.device.outputs.cache-hit == 'true' }}
         run: touch core/target/debug/marfa
-      - if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' }}
+      # The Node module the binding fixtures drive, a debug build because
+      # they hold the engine at a point and move its clock, which a release
+      # build leaves out. It is compiled from the binding and from the engine,
+      # and not from the command, so its key reads the binding's sources and
+      # the generated loader and the tests beside them are left out of it.
+      - name: Key the Node module under test
+        id: module-key
+        if: ${{ matrix.device }}
+        run: echo "key=marfa-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the Node module under test
+        id: module
+        if: ${{ matrix.device && github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: core/bindings/node/*.node
+          key: ${{ steps.module-key.outputs.key }}
+      - if: ${{ matrix.device && steps.module.outputs.cache-hit == 'true' }}
+        run: touch core/bindings/node/*.node
+      - if: ${{ matrix.device && (steps.device.outputs.cache-hit != 'true' || steps.module.outputs.cache-hit != 'true') }}
         uses: dtolnay/rust-toolchain@stable
-      - if: ${{ matrix.device && steps.device.outputs.cache-hit != 'true' }}
+      - if: ${{ matrix.device && (steps.device.outputs.cache-hit != 'true' || steps.module.outputs.cache-hit != 'true') }}
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
@@ -296,8 +314,23 @@ jobs:
         with:
           path: core/target/debug/marfa
           key: ${{ steps.device-key.outputs.key }}
+      # Outside the pnpm workspace, so every call carries the flag.
+      - name: Build the Node module under test
+        if: ${{ matrix.device && steps.module.outputs.cache-hit != 'true' }}
+        working-directory: core/bindings/node
+        run: |
+          pnpm --ignore-workspace install --frozen-lockfile
+          pnpm --ignore-workspace run build:debug
+      - if: ${{ matrix.device && steps.module.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: core/bindings/node/*.node
+          key: ${{ steps.module-key.outputs.key }}
       - if: ${{ matrix.device }}
         run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
+      # The one module `napi build --platform` wrote for this machine.
+      - if: ${{ matrix.device }}
+        run: echo "MARFA_DEVICE_MODULE=$(ls "$PWD"/core/bindings/node/*.node)" >> "$GITHUB_ENV"
 
       # The object store the server attaches beside its disk, so the
       # object-store half of the blob chapters is asserted rather than

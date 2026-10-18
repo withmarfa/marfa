@@ -1651,15 +1651,21 @@ impl MarfaCore {
     /// Each time it tells `serverReachable` with work queued for a drain, it
     /// drains once, after any drain under way, and tells `queueDrained` or
     /// `queueNotDrained`; `onEnd` follows that drain's end.
+    ///
+    /// `toldUnreachable` says the caller was last told `serverUnreachable` by
+    /// an earlier follow: this one tells `serverReachable` when it has its
+    /// first stream, and does not tell `serverUnreachable` again before.
     #[napi(
-        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
+        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void, toldUnreachable?: boolean"
     )]
     pub fn follow(
         &self,
         env: Env,
         on_change: Function<Change, ()>,
         on_end: Function<Option<Unknown<'static>>, ()>,
+        told_unreachable: Option<bool>,
     ) -> Result<Subscription> {
+        let told_unreachable = told_unreachable.unwrap_or(false);
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         let tell = told_by(env, on_change, on_end, move || {
@@ -1668,7 +1674,9 @@ impl MarfaCore {
         let flag = Arc::clone(&stop);
         let core = Arc::clone(&self.inner);
         std::thread::spawn(move || {
-            let result = core.follow(&flag, false, |change| tell(Told::Change(change.into())));
+            let result = core.follow(&flag, told_unreachable, |change| {
+                tell(Told::Change(change.into()));
+            });
             // Let go of the store before saying so: an `onEnd` that opens it
             // again must find the writer's role free.
             drop(core);
@@ -1699,14 +1707,19 @@ impl MarfaCore {
     /// drain is told as `follow` tells it. An `onChange` that throws ends its
     /// listener, and `onEnd` is given an error whose `code` is
     /// `listener_threw`. Throws `no_server` for a writer with no server.
+    ///
+    /// `toldUnreachable` says the listener was last told `serverUnreachable`
+    /// by an earlier watch: it is told `serverReachable` once the server is
+    /// reached, and not `serverUnreachable` again before.
     #[napi(
-        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void"
+        ts_args_type = "onChange: (change: Change) => void, onEnd: (error: (Error & { code: string }) | null) => void, toldUnreachable?: boolean"
     )]
     pub fn watch(
         &self,
         env: Env,
         on_change: Function<Change, ()>,
         on_end: Function<Option<Unknown<'static>>, ()>,
+        told_unreachable: Option<bool>,
     ) -> Result<Subscription> {
         let leaving: Arc<OnceLock<Arc<marfa_core::Listening>>> = Arc::new(OnceLock::new());
         let leave = Arc::clone(&leaving);
@@ -1717,7 +1730,7 @@ impl MarfaCore {
         })?;
         let listening = self
             .inner
-            .watch(false, Arc::new(Telling(tell)))
+            .watch(told_unreachable.unwrap_or(false), Arc::new(Telling(tell)))
             .map_err(|error| failure(env, error))?;
         let listening = Arc::new(listening);
         let _ = leaving.set(Arc::clone(&listening));
@@ -2362,12 +2375,15 @@ impl MarfaCore {
     /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
     /// out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
-    /// one a withdraw takes.
-    #[napi]
-    pub fn withdraw(&self, env: Env, id: String) -> Result<bool> {
-        self.inner
-            .withdraw(&id)
-            .map_err(|error| failure(env, error))
+    /// one a withdraw takes. Off the JavaScript thread, because it reads each
+    /// row it puts back from the server.
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn withdraw(&self, id: String) -> AsyncTask<Withdraw> {
+        AsyncTask::new(Withdraw {
+            core: Arc::clone(&self.inner),
+            id,
+            failed: None,
+        })
     }
 
     /// Clears the writes the server has answered, and says how many went. A
@@ -2399,10 +2415,145 @@ impl MarfaCore {
     /// write still waiting on it, or a create refused onto a row its natural
     /// key names that no read has found, whose waiting writes it refuses
     /// unsent. A create's discard first waits for a drain already running to
-    /// end.
-    #[napi]
-    pub fn discard(&self, env: Env, id: String) -> Result<bool> {
-        self.inner.discard(&id).map_err(|error| failure(env, error))
+    /// end, which is why it is off the JavaScript thread.
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn discard(&self, id: String) -> AsyncTask<Discard> {
+        AsyncTask::new(Discard {
+            core: Arc::clone(&self.inner),
+            id,
+            failed: None,
+        })
+    }
+}
+
+pub struct Withdraw {
+    core: Arc<marfa_core::Core>,
+    id: String,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for Withdraw {
+    type Output = bool;
+    type JsValue = bool;
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .withdraw(&self.id)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, taken: Self::Output) -> Result<Self::JsValue> {
+        Ok(taken)
+    }
+}
+
+pub struct Discard {
+    core: Arc<marfa_core::Core>,
+    id: String,
+    failed: Option<marfa_core::CoreError>,
+}
+
+#[napi]
+impl Task for Discard {
+    type Output = bool;
+    type JsValue = bool;
+
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rethrown(env, self.failed.take(), error))
+    }
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core
+            .discard(&self.id)
+            .map_err(|error| record(&mut self.failed, error))
+    }
+
+    fn resolve(&mut self, _: Env, taken: Self::Output) -> Result<Self::JsValue> {
+        Ok(taken)
+    }
+}
+
+/// What a debug build lets a test hold and move. A release build has none of
+/// it, so the module an app ships offers nothing here.
+#[cfg(debug_assertions)]
+pub mod test_controls {
+    use std::time::Duration;
+
+    use napi_derive::napi;
+
+    /// A wait the engine has asked the test clock for.
+    #[napi(object)]
+    pub struct ClockWait {
+        /// What the engine asked to wait, in milliseconds.
+        pub asked_ms: f64,
+        /// How many milliseconds the clock has yet to be advanced by, or
+        /// null for a wait too long to add to the clock.
+        pub left_ms: Option<f64>,
+    }
+
+    /// Makes the engine wait at `point` the next time it reaches it, until
+    /// `release`.
+    #[napi(namespace = "testHooks")]
+    pub fn hold(point: String) {
+        marfa_core::fault::arm(&point);
+    }
+
+    /// Lets go of what waits at `point`, and stops holding it.
+    #[napi(namespace = "testHooks")]
+    pub fn release(point: String) {
+        marfa_core::fault::release(&point);
+    }
+
+    /// How many times the engine has reached `point`, held or not.
+    #[napi(namespace = "testHooks")]
+    pub fn reached(point: String) -> u32 {
+        u32::try_from(marfa_core::fault::reached(&point)).unwrap_or(u32::MAX)
+    }
+
+    /// How many calls wait at `point` now.
+    #[napi(namespace = "testHooks")]
+    pub fn waiting(point: String) -> u32 {
+        u32::try_from(marfa_core::fault::waiting(&point)).unwrap_or(u32::MAX)
+    }
+
+    /// Sets the clock the engine waits by to one that moves only where
+    /// `advance` moves it, or goes back to the system clock. Set it before the
+    /// calls whose waits it is to read.
+    #[napi(namespace = "testClock")]
+    pub fn manual(on: Option<bool>) {
+        marfa_core::clock::set_manual(on.unwrap_or(true));
+    }
+
+    /// Moves the manual clock forward by `ms` milliseconds and ends the waits
+    /// it reaches.
+    #[napi(namespace = "testClock")]
+    pub fn advance(ms: f64) -> napi::Result<()> {
+        if !ms.is_finite() || ms < 0.0 {
+            return Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                "the clock moves forward by a number of milliseconds, not back",
+            ));
+        }
+        marfa_core::clock::advance(Duration::from_secs_f64(ms / 1000.0));
+        Ok(())
+    }
+
+    /// The waits asked of the manual clock that it has not reached, in the
+    /// order they were asked.
+    #[napi(namespace = "testClock")]
+    pub fn waits() -> Vec<ClockWait> {
+        marfa_core::clock::waits()
+            .into_iter()
+            .map(|wait| ClockWait {
+                asked_ms: wait.asked.as_secs_f64() * 1000.0,
+                left_ms: wait.left.map(|left| left.as_secs_f64() * 1000.0),
+            })
+            .collect()
     }
 }
 

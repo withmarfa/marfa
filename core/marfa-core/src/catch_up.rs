@@ -59,7 +59,7 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
-    clock: &Instant::now,
+    clock: &crate::clock::now,
 };
 
 struct Slice {
@@ -672,7 +672,9 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     let reading = asked.clone();
     let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
     thread::spawn(move || {
-        let _ = sender.send(read(&reading));
+        if sender.send(read(&reading)).is_err() {
+            crate::fault::hold("answer-dropped");
+        }
     });
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -802,7 +804,7 @@ pub(crate) fn follow(
         on_live,
         on_contact,
         &mut |wait| {
-            wait_unless_stopped(stop, wait, poll);
+            crate::clock::wait(stop, wait, poll);
         },
     )
 }
@@ -929,7 +931,7 @@ fn follow_paced(
                 &frames,
                 stop,
                 pace,
-                &Instant::now,
+                &crate::clock::now,
                 &mut report,
                 &mut refreshed,
                 &recovery,
@@ -1240,20 +1242,6 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
                 )));
             }
         }
-    }
-}
-
-/// A wait too long to add to the clock lasts until `stop` is set.
-fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
-    let until = Instant::now().checked_add(wait);
-    while !stop.load(Ordering::Relaxed) {
-        let left = until.map_or(poll, |until| {
-            until.saturating_duration_since(Instant::now())
-        });
-        if left.is_zero() {
-            return;
-        }
-        thread::sleep(poll.min(left));
     }
 }
 
@@ -2324,27 +2312,6 @@ mod tests {
         assert_eq!(report.failed_opens, 3);
         let last = report.last_failure.expect("the failure was not recorded");
         assert!(last.contains("rate limited"), "{last}");
-    }
-
-    #[test]
-    fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
-        let stop = Arc::new(AtomicBool::new(false));
-        let (ended, done) = mpsc::channel();
-        let flag = Arc::clone(&stop);
-        let started = Instant::now();
-        thread::spawn(move || {
-            wait_unless_stopped(&flag, Duration::MAX, MS(10));
-            let _ = ended.send(());
-        });
-        thread::sleep(MS(50));
-        stop.store(true, Ordering::Relaxed);
-        done.recv_timeout(Duration::from_secs(2))
-            .expect("the wait outlasted its stop, or panicked");
-        assert!(started.elapsed() < Duration::from_secs(1));
-        // Witness: unstopped, a wait lasts as long as it was asked to.
-        let started = Instant::now();
-        wait_unless_stopped(&AtomicBool::new(false), MS(60), MS(10));
-        assert!(started.elapsed() >= MS(60));
     }
 
     fn follow_for_real(core: &Arc<Core>) -> (Arc<AtomicBool>, Receiver<Result<FollowReport>>) {

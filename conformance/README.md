@@ -10,13 +10,14 @@ reaches the server over HTTP alone: nothing under `src/suites/` imports a
 workspace package.
 
 **The device's half** is `src/suites/device/`, and it gates the `marfa` binary
-rather than the server. A device holds a working copy and a queue, and the
-verdicts it has to reach include failures the real server cannot be asked for:
-a dropped connection, a server at rest, a spent credential, a refusal
-repeated until a ceiling. So those fixtures drive a server the fixture scripts
-(`src/device/scripted-server.ts`), and `device/fidelity.test.ts` holds every
-scripted answer against the real server's for the cases the real server can
-produce. `spec/device.md` lists the cases it cannot, with a reason for each.
+and the Node module rather than the server. A device holds a working copy and
+a queue, and the verdicts it has to reach include failures the real server
+cannot be asked for: a dropped connection, a server at rest, a spent
+credential, a refusal repeated until a ceiling. So those fixtures drive a
+server the fixture scripts (`src/device/scripted-server.ts`), and
+`device/fidelity.test.ts` holds every scripted answer against the real
+server's for the cases the real server can produce. `spec/device.md` lists the
+cases it cannot, with a reason for each.
 
 **The scenario suite** is `src/suites/cli/`, and it gates the `marfa` binary
 as the reference client of an instance: every scenario is a person or an agent
@@ -51,6 +52,12 @@ pnpm marfa:up
 # after any change under `core/`.
 (cd ../core && cargo build -p marfa-cli)
 export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
+
+# Build the Node module the binding fixtures drive, a debug build: they hold
+# the engine at a point and move the clock it waits by, which a release build
+# leaves out. The device fixtures refuse a module older than its source too.
+(cd ../core/bindings/node && pnpm --ignore-workspace install && pnpm --ignore-workspace run build:debug)
+export MARFA_DEVICE_MODULE="$(ls "$PWD"/../core/bindings/node/*.node)"
 
 # Correctness, compliance, the server's write contract and the device's half
 set -a; . .marfa-state/env; set +a
@@ -124,9 +131,10 @@ corrupts a copy under it.
 | `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
 | `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
 | `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
+| `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
 | `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
-`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary you built before running `pnpm test:conformance`. Required fixture credentials and the binary fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
+`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary and `MARFA_DEVICE_MODULE` to the module you built before running `pnpm test:conformance`. Required fixture credentials, the binary and the module fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
 
 `MARFA_API_KEY` delegates content access and the seven permissions `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read` and `grants.manage`. Each test file mints its own key with a unique `source`. The server stamps each row with that source, or with one the key explicitly claims when the write names it, so each file can identify its own rows. Teardown uses the management key to revoke the file's keys. Fixtures that need direct authority use the owner session or the private socket; neither ordinary fixture key supplies it.
 
@@ -266,6 +274,64 @@ the setting under `NODE_ENV=production`, which the released image sets. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
 these rules.
 
+### The device's binding
+
+The device fixtures reach the device two ways. The `marfa` binary
+(`MARFA_DEVICE_BIN`) runs one call at a time on a working copy it holds for
+that call alone. The binding (`MARFA_DEVICE_MODULE`, the Node module `napi
+build` writes) is for the rules a command cannot reach: a call that starts
+while another waits on the same working copy, a follow told what its caller
+was last told, a call held at a point, a wait read without being spent. A
+second implementation is judged by the binding fixtures when it supplies what
+follows.
+
+- **The module.** Each fixture loads it in a new process,
+  `src/device/binding-host.mjs`, which the fixture talks to over IPC. A
+  call that blocks its thread, as the engine's synchronous ones do while they
+  read from the server, would otherwise stop the scripted server in the
+  fixture's process answering it. Each request carries an `id` and is answered
+  with the same `id` in whatever order the calls end, so two calls on one
+  working copy can be in flight at once. The module exports the working
+  copy's calls as `MarfaCore`, `Stop` and the changes a follow tells, told
+  apart by `kind` (`applied`, `catalogChanged`, `serverUnreachable`,
+  `serverReachable`, `queueDrained`, `queueNotDrained`, `saved`,
+  `watchFailed`). A call that waits on the server, `withdraw` and `discard`
+  among them, answers a promise. The adapter in
+  [`src/device/binding-adapter.ts`](src/device/binding-adapter.ts) defines the
+  calls and result shapes the fixtures use; the host translates them to the
+  module's methods.
+- **`toldUnreachable`.** `follow` and `watch` take it as an optional last
+  argument. It says the caller was last told `serverUnreachable` by an earlier
+  one, so the first stream is told `serverReachable` and `serverUnreachable`
+  is not told again before.
+- **Holds.** The engine reaches named points, and a fixture arms one so that
+  the engine waits there until the fixture releases it. `testHooks.hold(point)`
+  arms a point, `testHooks.release(point)` lets go of what waits at it and
+  disarms it, `testHooks.reached(point)` counts the times the engine has
+  reached it, armed or not, and `testHooks.waiting(point)` counts the calls
+  held at it now. A point is reached by a call on the engine's own thread, so
+  a fixture waits for `waiting` before it acts on a held call.
+  - `hydration-replacing`: after a hydration has begun to replace the copy,
+    before it reads the first row.
+  - `recovery-drain-asked`, `recovery-drain-found-none`: a held stream's drain,
+    when it asks to drain and when it finds no work left.
+  - `follow-waiting`: a follow that waits for a first hydration.
+  - `answer-dropped`: an answer reached a request that nobody waited for.
+- **The clock.** `testClock.manual()` sets the clock the engine waits by to
+  one that moves only where `testClock.advance(ms)` moves it, and
+  `testClock.waits()` lists the waits the engine has asked of it and the clock
+  has not reached, each as the milliseconds asked and the milliseconds left.
+  Set it before the calls whose waits are read. A wait asked of the system
+  clock is not moved to the manual one. `testClock.manual(false)` goes back.
+  Of the engine's waits, only the one between held streams and the two
+  measures of a stream's age, how long it has been held and how long it has
+  been silent, are read from it; the rest stay on the system clock.
+
+A release build has no `testHooks` and no `testClock`: a fixture that uses
+them fails on a module built `--release`, naming that. The module's build
+needs the `napi` command its `pnpm-lock.yaml` pins, and the fixtures refuse a
+module older than the binding's or the engine's source.
+
 ### The request log
 
 The status gate, `pnpm check:statuses`, reads the target's stdout. The target
@@ -348,7 +414,7 @@ or when the classifier skipped them all.
   than by Vitest's own split by path, which can leave one shard with far more
   of the slow files than another. A file not in the weights is still run, by
   exactly one shard. Only the device shards build or restore the `marfa`
-  binary.
+  binary and the Node module.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 - **Statuses.** Each shard holds the statuses its server answered to their

@@ -78,10 +78,9 @@ export default defineConfig({
         },
       },
       {
-        // The device's half of the contract. Every body drives the `marfa`
-        // binary against a server the fixture scripts, so a step is a process
-        // spawn rather than an HTTP round trip and the budget matches the
-        // suites above rather than the offline lane.
+        // Device fixtures spawn the `marfa` binary or a binding host against
+        // a scripted server. Process startup and engine calls need the same
+        // budget as the network suites.
         test: {
           name: "device",
           include: ["src/suites/device/**/*.test.ts"],

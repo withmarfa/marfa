@@ -202,6 +202,8 @@ pnpm --ignore-workspace run check
 pnpm --ignore-workspace run test
 ```
 
+The Node binding's `withdraw(id)` and `discard(id)` return `Promise<boolean>`: await them to read the result or catch a refusal. `withdraw` reads rows from the server, and `discard` can wait for a running drain. Both run off the JavaScript thread.
+
 Every surface names a core error by `CoreError::code`: the `code` in the binary's `--json` envelope, and `code` on an error the Node module throws or rejects with. The Node error is an `Error` whose message starts `code: `, with the properties the Swift error carries as fields: `serverCode`, `status`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it. `onEnd` of a `follow` receives that same error, or one coded `listener_threw` where an `onChange` threw. The Swift error answers `code()` with the same word, held by a test that crosses every `CoreError`. A catch-up keeps the catalog it took whatever ends it, so a failed one says whether it changed: `catalogChanged` on the Node error, `CatchUpError.Failed(error:catalogChanged:)` in Swift, and `catalog_changed` in the binary's `--json` envelope.
 
 `scripts/binding-proof.sh` drives the built Node binding through an offline write and its verdict against a real server.
