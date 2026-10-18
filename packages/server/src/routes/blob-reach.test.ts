@@ -385,8 +385,10 @@ describe("a signed-in app and the blob doors", () => {
 
 describe("what proves holding the bytes", () => {
   it("lends nothing through a digest written by a key that neither sent the bytes nor could read them", async () => {
-    const owner = await writer();
-    const { hash, bytes } = await sent(owner, "a file only files reach");
+    const { hash, bytes } = await sent(
+      ctx.workingKey,
+      "a file only files reach",
+    );
     await json(
       await request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -772,11 +774,13 @@ describe("the enrichment sweep", () => {
       "the wombat ledger, sent by its writer",
     );
     const fileWriter = await mintWorkingKey(ctx, {
-      type_permissions: { "core.file": "write" },
+      type_permissions: { "core.file": "write", "core.bookmark": "write" },
     });
     expect(await read(fileWriter, hidden.hash)).toBe(404);
 
-    const named = await json<Written>(
+    // A file write naming bytes its writer cannot prove is refused, so the
+    // digest enters on a bookmark, lending nothing, and a retype keeps it.
+    await json(
       await request(ctx.app, "POST", "/items", {
         key: fileWriter,
         body: {
@@ -784,7 +788,33 @@ describe("the enrichment sweep", () => {
           properties: { blob_ref: hidden.hash, mime_type: "text/plain" },
         },
       }),
+      404,
+    );
+    const bookmark = await json<Written>(
+      await request(ctx.app, "POST", "/items", {
+        key: fileWriter,
+        body: {
+          type: "core.bookmark",
+          properties: {
+            url: "https://example.com/planted",
+            blob_ref: hidden.hash,
+            mime_type: "text/plain",
+          },
+        },
+      }),
       201,
+    );
+    const named = await json<Written>(
+      await request(ctx.app, "PATCH", `/items/${bookmark.item.id}`, {
+        key: fileWriter,
+        body: {
+          type: "core.file",
+          retype: true,
+          properties: {},
+          version: bookmark.item.version,
+        },
+      }),
+      200,
     );
     const witness = await json<Written>(
       await request(ctx.app, "POST", "/items", {
