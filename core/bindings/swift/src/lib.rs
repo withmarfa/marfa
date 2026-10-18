@@ -2910,7 +2910,10 @@ mod tests {
             r#"{"type":"string"}"#
         );
         held.written_at = marfa_core::WrittenAt::Source;
-        assert_eq!(EdgeType::from(held.clone()).written_at, EdgeWrittenAt::Source);
+        assert_eq!(
+            EdgeType::from(held.clone()).written_at,
+            EdgeWrittenAt::Source
+        );
         held.written_at = marfa_core::WrittenAt::None;
         assert_eq!(EdgeType::from(held).written_at, EdgeWrittenAt::None);
     }
