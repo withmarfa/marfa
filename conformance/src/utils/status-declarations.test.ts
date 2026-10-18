@@ -872,6 +872,29 @@ describe("the sign-in routes", () => {
   const tokenLine = (status: number, path = "/auth/oauth2/token") =>
     logLine({ method: "POST", path, route: "/auth/*", status });
 
+  it("declare the refusal of an owner-only email-write authorization scope", () => {
+    const report = reportStatuses(
+      parseRequestLines(
+        [200, 302, 400, 418]
+          .map((status) =>
+            logLine({
+              method: "GET",
+              path: "/auth/oauth2/authorize",
+              route: "/auth/*",
+              status,
+            }),
+          )
+          .join("\n"),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(report.undeclared.map(({ status }) => status)).toEqual([418]);
+    expect(report.unexplained).toEqual([]);
+    expect([...report.unpublished.get("GET /auth/oauth2/authorize")!]).toEqual([
+      200, 302, 400, 418,
+    ]);
+  });
+
   it("hold a route the sign-in library serves under its pattern to the statuses declared for it", () => {
     const caught = reportStatuses(
       parseRequestLines([tokenLine(400), tokenLine(418)].join("\n")),
