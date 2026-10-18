@@ -95,6 +95,8 @@ describe("a conflicted copy written once", () => {
       again.headers.get("Idempotency-Replayed"),
       "the record was still there, so the repeat was answered, not executed",
     ).toBeNull();
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.conflict_resolution?.conflicted_copy_id).toBe(copy);
     expect(await copiesOf()).toEqual([copy]);
     const edges = await writer.listItemEdges(copy!, {
       edge_type: "derived-from",

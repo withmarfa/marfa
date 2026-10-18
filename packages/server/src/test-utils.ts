@@ -337,9 +337,9 @@ export async function waitForConsentLockDepth(
   authUserId: string,
   expected: number,
 ): Promise<void> {
-  const deadline = clock.nowMs() + LOCK_ARRIVAL_BUDGET_MS;
+  const deadline = clock.monotonicMs() + LOCK_ARRIVAL_BUDGET_MS;
   while (consentLockDepth(clientId, authUserId) < expected) {
-    if (clock.nowMs() >= deadline) {
+    if (clock.monotonicMs() >= deadline) {
       throw new Error(
         `competing request never reached the consent lock: depth ` +
           `${String(consentLockDepth(clientId, authUserId))}, expected ` +
