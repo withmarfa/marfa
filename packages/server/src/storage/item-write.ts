@@ -77,7 +77,7 @@ import type { ConflictMode, StaleVersionResponse } from "./conflict.js";
 import { readInstanceConfig } from "./instance-config.js";
 import { baseVersion } from "./interface.js";
 import type {
-  ArchivedDates,
+  ArchivedItemDates,
   BlobProof,
   CascadeRoot,
   ResolvedItem,
@@ -1352,7 +1352,7 @@ async function purgeRow(
 export async function finalizeArchiveItem(
   storage: Storage,
   id: string,
-  dates: ArchivedDates,
+  dates: ArchivedItemDates,
   snapshots: readonly Version[],
 ): Promise<Item> {
   await storage.versions.restore(snapshots);

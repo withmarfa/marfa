@@ -57,7 +57,8 @@ interface Chunk {
 export class FeedExpirer {
   constructor(private storage: Storage) {}
 
-  /** One sweep. Reports the items moved to the bin, the expired items held
+  /** One sweep. Reports the items moved to the bin, those a cascade took with
+   *  them included, the expired items held
    *  back, the types that have a window, and the types skipped because
    *  their chain cannot be resolved. */
   async runOnce(): Promise<{
@@ -152,7 +153,8 @@ export class FeedExpirer {
       CHUNK_SIZE,
     );
 
-    const itemIds: string[] = [];
+    // Every row the chunk put in the bin, the ones a cascade took included.
+    const itemIds = new Set<string>();
     let held = 0;
     for (const { id } of rows) {
       try {
@@ -167,7 +169,10 @@ export class FeedExpirer {
           { kind: "platform", by: null },
           { op: "delete", id },
         );
-        if (result.outcome === "moved") itemIds.push(id);
+        if (result.outcome === "moved") {
+          itemIds.add(id);
+          for (const taken of result.trashed) itemIds.add(taken.id);
+        }
       } catch (err) {
         this.storage.assertTransactionUsable();
         if (isConnectionLostError(err)) throw err;
@@ -179,9 +184,9 @@ export class FeedExpirer {
       }
     }
     return {
-      moved: itemIds.length,
+      moved: itemIds.size,
       held,
-      itemIds,
+      itemIds: [...itemIds],
       before,
       last: rows.at(-1),
       done: rows.length < CHUNK_SIZE,
@@ -208,7 +213,7 @@ export class FeedExpirer {
     const rows = await this.storage.items.getMany(others, {
       includeTrashed: true,
     });
-    const restored = await this.storage.items.restoredAmong(others);
+    const restored = await this.storage.items.restoredAtOf(others);
     for (const other of others) {
       const row = rows.get(other);
       if (!row || row.state === "trashed") continue;

@@ -410,6 +410,14 @@ The server MUST NOT move an item to the bin by the `feed-expiry` job after it ha
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › does not move an item again that was brought back from the bin, by restore or by transition`.
 
+### `housekeeping/feed-expiry-restored-archive`
+
+When an archive carries an item that had been brought back from the bin, and it is restored into an instance, the server MUST NOT move that item to the bin by the `feed-expiry` job.
+
+**Reason:** the archive is how an instance moves to a new build, and the first run there would otherwise move every item a person rescued back to the bin.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps an item brought back from the bin through an archive restored into a new instance`.
+
 ### `housekeeping/feed-expiry-unregistered`
 
 While an item's type is not registered, the server MUST NOT move the item to the bin when the `feed-expiry` job runs.
@@ -436,7 +444,7 @@ When the `feed-expiry` job moves an item to the bin, the server MUST announce it
 
 ### `housekeeping/feed-expiry-audited`
 
-When the `feed-expiry` job moves items to the bin, the server MUST record an audit entry with the action `items.feed_expired`, naming in its `details` the `type`, the number `moved` and the `item_ids`.
+When the `feed-expiry` job moves items to the bin, the server MUST record an audit entry with the action `items.feed_expired`, naming in its `details` the `type`, the number `moved` and the `item_ids`, those a cascade took with another included.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › records an audit entry naming the type and the items it moved`.
 
@@ -468,7 +476,7 @@ If an edge with `cascade_on_delete` of `block` refuses the delete of an expired 
 
 ### `housekeeping/feed-expiry-report`
 
-When a run of the `feed-expiry` job finishes, the server MUST report in its `result` the number of items it moved to the bin as `moved` and the number it held back as `held`.
+When a run of the `feed-expiry` job finishes, the server MUST report in its `result` the number of items it moved to the bin, those a cascade took with another included, as `moved` and the number it held back as `held`.
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › reports the number of items it moved to the bin and the number it held back`.
 

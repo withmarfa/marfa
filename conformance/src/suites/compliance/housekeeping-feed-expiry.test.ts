@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -342,6 +343,43 @@ describe("the feed-expiry job", () => {
     expect((await statesOf(type))[viaRestore]).toBe("active");
   });
 
+  it("keeps an item brought back from the bin through an archive restored into a new instance", async () => {
+    const type = await register({ feed_days: 2 });
+    const restored = await add(type);
+
+    await clock.advance(5 * DAY_MS);
+    await expire();
+    expect(await stateOf(type, restored)).toBe("trashed");
+    expect((await writer.restoreItem(restored)).status).toBe(200);
+    // The witness arrives after the run, so it was never in the bin.
+    const never = await add(type);
+
+    const archive = await writer.exportArchive({ type });
+    expect(archive.status, JSON.stringify(archive.error)).toBe(200);
+
+    const target = await bootFreshServer("housekeeping-feed-expiry-restore", {
+      FEED_EXPIRY_INTERVAL_MS: "3153600000000",
+    });
+    const owner = new MarfaClient({
+      baseUrl: target.apiUrl,
+      apiKey: "",
+      ownerCookie: target.ownerCookie,
+      ownerCredentials: TEST_OWNER,
+    });
+    const imported = await owner.restoreArchive(archive.data);
+    expect(imported.ok, JSON.stringify(imported.error)).toBe(true);
+    expect(imported.data.imported).toBe(2);
+    await quiet(target, ["feed-expiry"]);
+
+    // The target's clock is behind the source's; carry it a window past both.
+    await target.advanceClock(clock.now() - Date.now() + 5 * DAY_MS);
+    const run = await runJob(target, "feed-expiry");
+    expect(run.outcome, String(run.error)).toBe("ok");
+    const read = (id: string) => writerOf(target).getItem(id);
+    expect((await read(restored)).data.item.state).toBe("active");
+    expect((await read(never)).status).toBe(404);
+  });
+
   it("keeps the items of a type that was force-deleted, and judges them once it is registered again", async () => {
     const type = await register({ feed_days: 2 });
     const id = await add(type);
@@ -483,7 +521,8 @@ describe("what the move to the bin takes with it", () => {
     await parentOf(type, parent, child);
 
     await clock.advance(5 * DAY_MS);
-    await expire();
+    // Both are counted, the child the parent's cascade took as well.
+    expect((await expire()).moved).toBe(2);
     const states = await statesOf(type);
     expect(states[parent]).toBe("trashed");
     expect(states[child]).toBe("trashed");

@@ -317,6 +317,9 @@ async function collectSelection(input: {
         .filter((item) => readsHistory(item.type))
         .map((item) => ({ id: item.id, version: item.version })),
     );
+    const restoredAt = await storage.items.restoredAtOf(
+      result.data.map((item) => item.id),
+    );
     for (const item of await withCascadeMarks(
       storage,
       callerKey,
@@ -342,6 +345,7 @@ async function collectSelection(input: {
           metadata,
           versions,
           writer: writers.get(item.id) ?? null,
+          restored_at: restoredAt.get(item.id) ?? null,
           lending_blobs: lendingBlobs,
           lending_extensions: lendingExtensions,
         }),

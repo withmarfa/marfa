@@ -62,6 +62,19 @@ export function archiveDates(
   return dates;
 }
 
+/** When an item last came back from the bin, as its line carries it. */
+export function archiveRestoredAt(
+  item: Record<string, unknown>,
+  restoredAt: unknown,
+  index: number,
+): string | undefined {
+  if (restoredAt === undefined || restoredAt === null) return undefined;
+  if (!instant(restoredAt)) {
+    throw refusal("item", item, index, "restored_at", "a valid instant");
+  }
+  return normalizeTimeBound(restoredAt, "archive date");
+}
+
 /** `seenIds` spans the archive; version counters are unique only within an item. */
 export function archiveVersions(
   item: Record<string, unknown>,

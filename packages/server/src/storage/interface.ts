@@ -664,6 +664,9 @@ export type StoredCreateItemInput = CreateItemInput &
 
 export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 
+/** An item line's dates, with when the row last came back from the bin. */
+export type ArchivedItemDates = ArchivedDates & { restored_at?: string };
+
 export type StoredCreateEdgeInput = CreateEdgeInput &
   RestoredRowInput &
   ArchivedDates &
@@ -707,7 +710,7 @@ export interface CascadeRoot {
 
 export interface ItemStore {
   /** Archive finalization after metadata writes; never changes the version. */
-  restoreDates(id: string, dates: ArchivedDates): Promise<void>;
+  restoreDates(id: string, dates: ArchivedItemDates): Promise<void>;
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
   /**
@@ -871,8 +874,8 @@ export interface ItemStore {
     after?: { created_at: string; id: string },
     limit?: number,
   ): Promise<{ id: string; created_at: string }[]>;
-  /** The ids among `ids` that have been brought back from the bin. */
-  restoredAmong(ids: readonly string[]): Promise<Set<string>>;
+  /** When each of `ids` that has been brought back from the bin was, by id. */
+  restoredAtOf(ids: readonly string[]): Promise<Map<string, string>>;
   /**
    * The ids of the revoked **application** grant rows whose
    * `properties.revoked_at` is strictly older than `beforeDate`, at most

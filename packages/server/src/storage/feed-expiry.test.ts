@@ -432,7 +432,7 @@ describe("what never expires", () => {
     await link(parent, child);
 
     at(10);
-    expect((await run()).moved).toBe(1);
+    expect((await run()).moved).toBe(2);
     expect(await stateOf(child)).toBe("trashed");
     const restore = await request(ctx.app, "POST", `/items/${parent}/restore`, {
       key: ctx.workingKey,
@@ -529,20 +529,33 @@ describe("through the delete path", () => {
     expect((await run()).moved).toBe(0);
   });
 
-  it("takes a parent with its children when all of them are expired feed items", async () => {
-    const type = uniqueType("cascade_ok");
-    await declare(type, { retention_policy: { feed_days: 10 } });
-    const parent = await add(type);
-    const child = await add(type);
-    await link(parent, child);
+  it.each([
+    ["the parent arrived first", true],
+    ["the child arrived first", false],
+  ])(
+    "counts and audits a parent and its child once each when %s",
+    async (_name, parentFirst) => {
+      const type = uniqueType("cascade_ok");
+      await declare(type, { retention_policy: { feed_days: 10 } });
+      const first = await add(type);
+      const second = await add(type);
+      const [parent, child] = parentFirst ? [first, second] : [second, first];
+      await link(parent, child);
 
-    at(11);
-    const report = await run();
-    expect(report.moved).toBe(1);
-    expect(report.held).toBe(0);
-    expect(await stateOf(parent)).toBe("trashed");
-    expect(await stateOf(child)).toBe("trashed");
-  });
+      at(11);
+      const report = await run();
+      expect(report.moved).toBe(2);
+      expect(report.held).toBe(0);
+      expect(await stateOf(parent)).toBe("trashed");
+      expect(await stateOf(child)).toBe("trashed");
+      const audits = (
+        await ctx.storage.audit.list({ action: "items.feed_expired" })
+      ).data.filter((a) => a.details.type === type);
+      const named = audits.flatMap((a) => a.details.item_ids as string[]);
+      expect([...named].sort()).toEqual([parent, child].sort());
+      expect(audits.reduce((n, a) => n + Number(a.details.moved), 0)).toBe(2);
+    },
+  );
 
   it("holds a parent whose cascade would take a child that has not expired, or a library item", async () => {
     const type = uniqueType("cascade_held");
