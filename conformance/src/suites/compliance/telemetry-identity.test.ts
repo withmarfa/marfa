@@ -20,6 +20,7 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  */
 let server: FreshServer | undefined;
 let receiver: Server | undefined;
+let base = "";
 
 const notifications: Record<string, unknown>[] = [];
 const traces: Record<string, unknown>[] = [];
@@ -62,12 +63,14 @@ beforeAll(async () => {
   if (typeof address !== "object" || address === null) {
     throw new Error("the receiver did not bind to a port");
   }
-  const base = `http://127.0.0.1:${String(address.port)}`;
+  base = `http://127.0.0.1:${String(address.port)}`;
   server = await bootFreshServer("telemetry-identity", {
     ERROR_WEBHOOK_URL: `${base}/errors`,
     OTEL_EXPORTER_OTLP_ENDPOINT: base,
     MARFA_POSTHOG_HOST: base,
     MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
+    // Every trace, so a request that succeeds is exported too.
+    MARFA_OTEL_SAMPLE_RATIO: "1",
     OTEL_SERVICE_NAME: SERVICE,
     OTEL_RESOURCE_ATTRIBUTES: `deployment.environment=${ENVIRONMENT},team=a%20b`,
   });
@@ -120,6 +123,38 @@ function resourcesOf(
       ),
     ),
   );
+}
+
+/**
+ * One unhandled fault under `requestId`: a table the write reaches is renamed
+ * in the stored file and put back, as `fault-reports.test.ts` does.
+ */
+async function faulted(target: FreshServer, requestId: string): Promise<void> {
+  const post = (request: string) =>
+    fetch(`${target.apiUrl}/items`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${target.workingKey}`,
+        "Content-Type": "application/json",
+        "X-Request-ID": request,
+      },
+      body: JSON.stringify({
+        type: "core.note",
+        properties: { body: "telemetry identity" },
+      }),
+    });
+  // The witness: with the table there the write lands.
+  expect((await post(`${requestId}-landed`)).status).toBe(201);
+  withInstanceDatabase(target.sqlitePath, (db) => {
+    db.exec("ALTER TABLE event_log RENAME TO event_log_gone");
+  });
+  try {
+    expect((await post(requestId)).status).toBe(500);
+  } finally {
+    withInstanceDatabase(target.sqlitePath, (db) => {
+      db.exec("ALTER TABLE event_log_gone RENAME TO event_log");
+    });
+  }
 }
 
 async function instanceId(): Promise<string> {
@@ -182,31 +217,7 @@ describe("what a server's telemetry says of where it came from", () => {
     async () => {
       const id = await instanceId();
       const requestId = "telemetry-identity-faulted";
-      // The witness: with the table there the write lands.
-      const post = (request: string) =>
-        fetch(`${server!.apiUrl}/items`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${server!.workingKey}`,
-            "Content-Type": "application/json",
-            "X-Request-ID": request,
-          },
-          body: JSON.stringify({
-            type: "core.note",
-            properties: { body: "telemetry identity" },
-          }),
-        });
-      expect((await post("telemetry-identity-landed")).status).toBe(201);
-      withInstanceDatabase(server!.sqlitePath, (db) => {
-        db.exec("ALTER TABLE event_log RENAME TO event_log_gone");
-      });
-      try {
-        expect((await post(requestId)).status).toBe(500);
-      } finally {
-        withInstanceDatabase(server!.sqlitePath, (db) => {
-          db.exec("ALTER TABLE event_log_gone RENAME TO event_log");
-        });
-      }
+      await faulted(server!, requestId);
 
       type Event = {
         event: string;
@@ -233,5 +244,29 @@ describe("what a server's telemetry says of where it came from", () => {
       expect(notification.environment).toBe(ENVIRONMENT);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
+  );
+  it(
+    "names deployment.environment.name in an error notification before deployment.environment",
+    async () => {
+      // A server of its own, with telemetry off: the environment an alert
+      // names comes from the attributes either way. The first server's
+      // table cannot be put back in a state it will boot from again.
+      const named = await bootFreshServer("telemetry-identity-name", {
+        ERROR_WEBHOOK_URL: `${base}/errors`,
+        OTEL_RESOURCE_ATTRIBUTES:
+          "deployment.environment=old,deployment.environment.name=named",
+      });
+      try {
+        const requestId = "telemetry-identity-named";
+        await faulted(named, requestId);
+        const notification = await until("the error notification", () =>
+          notifications.find((entry) => entry.request_id === requestId),
+        );
+        expect(notification.environment).toBe("named");
+      } finally {
+        await named.stop();
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS + FRESH_SERVER_TIMEOUT_MS,
   );
 });

@@ -1000,7 +1000,7 @@ Telemetry is on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and these rules hold 
 
 ### `instance/telemetry-instance-id`
 
-Where telemetry is on, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports.
+Where telemetry is on, the server MUST carry the instance's `instance_id` as the resource attribute `service.instance.id` of every log record and span it exports, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
 
 **Reason:** instances sending to one collector, such as an owner's, a demo and a test, cannot otherwise be told apart. The id is the one the root answers, so an operator finds the instance an export came from by it. The instance's configured `name` is not carried, because it can change while the server runs and can be personal.
 
@@ -1008,7 +1008,9 @@ Where telemetry is on, the server MUST carry the instance's `instance_id` as the
 
 ### `instance/telemetry-exception-id`
 
-Where telemetry is on and exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends.
+Where telemetry is on and exceptions go to error tracking, the server MUST carry the instance's `instance_id` as the property `service.instance.id` of every exception it sends once it has read its id, unless `OTEL_RESOURCE_ATTRIBUTES` names `service.instance.id`, which stands in its place.
+
+**Reason:** the id is in the database, which opens after the server starts, so an exception captured before it opens goes unnamed.
 
 **Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`.
 
@@ -1028,11 +1030,11 @@ Where telemetry is on and `OTEL_SERVICE_NAME` is set, the server MUST carry it a
 
 ### `instance/telemetry-error-environment`
 
-Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment`, the server MUST name that value as the `environment` of each notification it posts.
+Where `ERROR_WEBHOOK_URL` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
 
 **Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
 
-**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`.
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`, `› names deployment.environment.name in an error notification before deployment.environment`.
 
 ## Settings refused at boot
 

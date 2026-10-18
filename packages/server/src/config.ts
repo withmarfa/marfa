@@ -775,6 +775,7 @@ const origins: Parser<string[]> = {
 /**
  * `key=value` pairs separated by commas, values percent-decoded, as the OTLP
  * exporters read the `OTEL_EXPORTER_OTLP_*_HEADERS` variables themselves.
+ * Every pair has a value, as a header does.
  */
 const otlpHeaders: Parser<Record<string, string>> = {
   rule: { kind: "headers" },
@@ -792,6 +793,35 @@ const otlpHeaders: Parser<Record<string, string>> = {
         decoded = undefined;
       }
       if (!key || !raw || decoded === undefined) {
+        throw new Error(
+          "must be comma-separated key=value pairs with percent-encoded values",
+        );
+      }
+      out[key] = decoded;
+    }
+    return out;
+  },
+};
+
+/**
+ * `OTEL_RESOURCE_ATTRIBUTES`: the same pairs, in the W3C Baggage format the
+ * OpenTelemetry specification names, in which a value may be empty.
+ */
+const resourceAttributes: Parser<Record<string, string>> = {
+  rule: { kind: "headers" },
+  parse: (value) => {
+    const out: Record<string, string> = {};
+    for (const pair of value.split(",")) {
+      if (pair.trim() === "") continue;
+      const eq = pair.indexOf("=");
+      const key = eq > 0 ? pair.slice(0, eq).trim() : "";
+      let decoded: string | undefined;
+      try {
+        decoded = decodeURIComponent(pair.slice(eq + 1).trim());
+      } catch {
+        decoded = undefined;
+      }
+      if (eq < 0 || !key || decoded === undefined) {
         throw new Error(
           "must be comma-separated key=value pairs with percent-encoded values",
         );
@@ -1370,7 +1400,7 @@ const settingsShape = {
     "`marfa-server`",
   ),
   OTEL_RESOURCE_ATTRIBUTES: setting<Record<string, string>>(
-    otlpHeaders,
+    resourceAttributes,
     () => ({}),
     "Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.",
   ),
@@ -1613,12 +1643,24 @@ function otlpSignalUrl(
   return `${general.endsWith("/") ? general : `${general}/`}${path}`;
 }
 
-function withoutKey(
+/**
+ * What `OTEL_RESOURCE_ATTRIBUTES` names, less `service.name`, which is the
+ * service name, and less an empty value for the environment, which names
+ * none and leaves the default standing.
+ */
+function namedAttributes(
   attributes: Record<string, string>,
-  key: string,
 ): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(attributes).filter(([name]) => name !== key),
+    Object.entries(attributes).filter(
+      ([name, value]) =>
+        name !== "service.name" &&
+        !(
+          value === "" &&
+          (name === "deployment.environment" ||
+            name === "deployment.environment.name")
+        ),
+    ),
   );
 }
 
@@ -1630,10 +1672,10 @@ function otelSettings(
   if (general === undefined) return undefined;
   return {
     serviceName:
-      s.OTEL_SERVICE_NAME ??
-      s.OTEL_RESOURCE_ATTRIBUTES["service.name"] ??
+      s.OTEL_SERVICE_NAME ||
+      s.OTEL_RESOURCE_ATTRIBUTES["service.name"] ||
       "marfa-server",
-    resourceAttributes: withoutKey(s.OTEL_RESOURCE_ATTRIBUTES, "service.name"),
+    resourceAttributes: namedAttributes(s.OTEL_RESOURCE_ATTRIBUTES),
     tracesEndpoint: otlpSignalUrl(
       s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
       general,
@@ -1787,8 +1829,8 @@ export function loadConfig(
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
     deploymentEnvironment:
-      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"] ??
-      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"] ??
+      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"] ||
+      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"] ||
       DEFAULT_DEPLOYMENT_ENVIRONMENT,
     errorWebhookUrl: s.ERROR_WEBHOOK_URL,
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,

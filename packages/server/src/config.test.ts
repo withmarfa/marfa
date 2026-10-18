@@ -461,8 +461,20 @@ describe("OpenTelemetry settings", () => {
       );
     });
 
-    it("refuses a pair with no key, no value or a broken percent sign, naming the setting", () => {
-      for (const bad of ["=x", "a=", "novalue", "a=%zz"]) {
+    it("takes a pair with an empty value, with telemetry on or off, and leaves the defaults standing for an empty environment or service name", () => {
+      const named = {
+        OTEL_RESOURCE_ATTRIBUTES:
+          "team=,deployment.environment=,deployment.environment.name=,service.name=",
+      };
+      expect(refusal(named)).toBe("");
+      const config = loadConfig({ ...withEndpoint, ...named });
+      expect(config.otel?.resourceAttributes).toEqual({ team: "" });
+      expect(config.otel?.serviceName).toBe("marfa-server");
+      expect(config.deploymentEnvironment).toBe("production");
+    });
+
+    it("refuses a pair with no key, no equals sign or a broken percent sign, naming the setting", () => {
+      for (const bad of ["=x", "novalue", "a=%zz", "a=b,c"]) {
         expect(
           refusal({ ...withEndpoint, OTEL_RESOURCE_ATTRIBUTES: bad }),
           bad,
