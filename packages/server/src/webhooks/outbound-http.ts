@@ -210,7 +210,6 @@ export async function refuseNonPublicHost(
   return `url's host resolves to an address that is not public. ${SETTING_HINT}`;
 }
 
-/** A scripted answer's addresses as a lookup returns them. */
 function named(addresses: string[]): LookupAddress[] {
   return addresses.map((address) => ({ address, family: isIP(address) }));
 
@@ -275,10 +274,6 @@ function settle(
   callback(null, first.address, first.family);
 }
 
-/**
- * Resolve as the system resolver does, or as a test fault scripts the name,
- * and connect only to a public address.
- */
 const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
   const scripted = scriptedAnswer(hostname);
   if (scripted !== undefined) {

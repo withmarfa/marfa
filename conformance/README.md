@@ -151,15 +151,15 @@ the same commands and output.
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.
 
-| Command                                                          | What it does                                                                                                                                                                                                       |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                       |
-| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                 |
-| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                             |
-| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                            |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                |
-| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                               |
-| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted. |
+| Command                                                          | What it does                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                                                         |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                   |
+| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                                                               |
+| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                              |
+| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                  |
+| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                 |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted or a `resolve` fault has answered. |
 
 ### The env file
 
@@ -265,8 +265,8 @@ the answer stored for a repeated request.
 
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
-A name is `hold:<point>`, `fail:<point>`, `deadline:<job>` or `free:<volume>`, and the points
-are the ones below: the target refuses any other name, an argument a point does
+A name is `hold:<point>`, `fail:<point>`, `deadline:<job>`, `free:<volume>` or
+`resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
 
@@ -287,8 +287,10 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
 | `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
 | `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms.                   |
-| `hold:webhook-schedule:queued` | A run of the `webhook-schedule` job that has queued deliveries waits, before it records its place in the event log.                                                                                                                                                                         |
-| `resolve:<hostname>=<answers>` | Makes an outbound webhook delivery resolve the name to the addresses scripted. `<answers>` has one answer for each lookup of the name, separated by `;`, each a list of addresses separated by `,`, and the last answer repeats. An address written `<checked>><connected>` is judged by the address check as the first and connected to as the second, so a fixture can have a public address reach a receiver on loopback without a packet leaving the machine. The check still applies to what the fault answers, and `fired` counts the lookups answered. |
+| `hold:webhook-schedule:queued` | The `webhook-schedule` job waits inside its transaction after queuing deliveries and before recording its position in the event log. |
+| `resolve:<hostname>=<answers>` | Supplies scripted answers for an outbound webhook's name lookups.                                                                    |
+
+For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. The normal address check applies to the checked addresses, including rejecting private addresses when the instance disallows them.
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component

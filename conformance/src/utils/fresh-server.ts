@@ -98,8 +98,9 @@ export interface FreshServer {
   /**
    * Arms a fault, through `fault set`: `hold:<point>` waits at a point until
    * cleared, `fail:<point>[=<arg>]` fails the target at a point once,
-   * `deadline:<job>=<ms>` shortens a job's run deadline, and
-   * `free:<volume>=<bytes>` sets the reported free space. The points are
+   * `deadline:<job>=<ms>` shortens a job's run deadline,
+   * `free:<volume>=<bytes>` sets the reported free space, and
+   * `resolve:<hostname>=<answers>` scripts webhook name lookups. The points are
    * stated in `conformance/README.md`, "Faults". The fault is cleared by
    * `clearFault`, by `restart`, and by `stop`, so none outlives the fixture
    * that set it.
@@ -124,7 +125,7 @@ export interface ArmedFault {
   arg: string | null;
   /** Callers waiting at a `hold:` fault now. */
   waiting: number;
-  /** Times a `fail:` fault has acted. */
+  /** Times a `fail:` fault has acted or a `resolve:` fault has answered. */
   fired: number;
 }
 

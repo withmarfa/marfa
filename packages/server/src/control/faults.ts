@@ -5,8 +5,8 @@
  * stays empty and each fault point below returns at once, after one read of
  * the table's size.
  *
- * A fault is named for what it does and where it acts, and every point a
- * fault may name is declared once, in {@link POINTS}:
+ * A fault is named for what it does and where it acts. Hold and fail points
+ * are declared in {@link POINTS}; deadlines name jobs and lookups name hosts:
  *
  * - `hold:<point>` makes the server wait at the point until the fault is
  *   cleared.
@@ -56,7 +56,7 @@ interface Point {
   arg: ArgShape;
 }
 
-/** Every point a fault may name. */
+/** Every point a hold or fail fault may name. */
 export const POINTS: {
   hold: readonly Point[];
   fail: readonly Point[];
@@ -120,7 +120,7 @@ export interface ActiveFault {
   arg: string | null;
   /** How many callers are waiting at a `hold` fault now. */
   waiting: number;
-  /** How many times a `fail` fault has acted. */
+  /** How many times a `fail` fault has acted or a `resolve` fault has answered. */
   fired: number;
 }
 
