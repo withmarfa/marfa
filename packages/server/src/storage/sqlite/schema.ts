@@ -1362,7 +1362,7 @@ export const inboundDeliveries = sqliteTable(
     received_at: text("received_at").notNull(),
     method: text("method").notNull(),
     query: text("query").notNull(),
-    /** `[name, value]` pairs in the order and case they arrived. */
+    /** `[name, value]` pairs in the order and case they arrived, less any `Tailscale-` header. */
     headers: text("headers").notNull(),
     size: integer("size").notNull(),
     stored_bytes: integer("stored_bytes").notNull(),

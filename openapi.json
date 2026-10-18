@@ -5241,7 +5241,7 @@
                 }
               ]
             },
-            "description": "`[name, value]` pairs in the order and case they arrived."
+            "description": "`[name, value]` pairs in the order and case they arrived, without any header whose name begins with `Tailscale-`."
           },
           "size": {
             "type": "integer",

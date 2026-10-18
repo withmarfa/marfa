@@ -504,6 +504,36 @@ describe("the receiving door", () => {
     ).toBe("delivery_not_found");
   });
 
+  it("leaves out the identity headers a Tailscale proxy adds, and stores every other header", async () => {
+    const owner = await connector("door-tailscale");
+    const made = await endpoint(owner);
+    const answer = await send(apiUrl, made.path, Buffer.from("proxied"), [
+      "Content-Type",
+      "application/json",
+      "Tailscale-User-Login",
+      "owner@example.test",
+      "Tailscale-User-Name",
+      "An Owner",
+      "tailscale-user-profile-pic",
+      "https://example.test/pic.png",
+      "TAILSCALE-APP-CAPABILITIES",
+      "{}",
+      // The witness: a name that only mentions Tailscale is stored, as is
+      // every header around the ones left out.
+      "X-Tailscale-Note",
+      "kept",
+    ]);
+    const id = idOf(answer);
+
+    const listed = await owner.client.listInboundDeliveries(owner.id);
+    const stored = listed.data.data.find((delivery) => delivery.id === id);
+    const names = (stored?.headers ?? []).map(([name]) => name.toLowerCase());
+    expect(names).toContain("content-type");
+    expect(names).toContain("x-tailscale-note");
+    expect(names.filter((name) => name.startsWith("tailscale-"))).toEqual([]);
+    expect(JSON.stringify(stored?.headers)).not.toContain("owner@example.test");
+  });
+
   it("stores a signed delivery whose signature verifies over the stored bytes", async () => {
     const owner = await connector("door-signed");
     const made = await endpoint(owner, {
