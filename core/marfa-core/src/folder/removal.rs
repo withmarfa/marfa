@@ -127,6 +127,7 @@ impl Folder {
             }
             let conn = self.core.conn()?;
             state::journal_clear(&conn, path)?;
+            marked.push((path, bound.item_id.clone()));
             state::bind(
                 &conn,
                 &state::Bound {
@@ -134,7 +135,6 @@ impl Folder {
                     ..bound
                 },
             )?;
-            marked.push(path);
         }
         let mut restored = 0;
         for path in &pull {
@@ -169,24 +169,35 @@ impl Folder {
         }
         let pull = self.pull()?;
         let mut not_written_back = Vec::new();
-        for path in &marked {
-            if self.exists(self.root.join(path)) {
+        for (path, item_id) in &marked {
+            // Written where its binding holds the bytes the pull wrote, at
+            // this path or one the item moved to; a file at the path proves
+            // nothing, since it can be somebody else's.
+            let conn = self.core.conn()?;
+            if state::every_bound_to_item(&conn, item_id)?
+                .iter()
+                .any(|bound| bound.content_hash != PUT_BACK)
+            {
                 continue;
             }
             // Bound, the missing file would be read as deleted by the next
             // scan, and its item sent to the bin. Unbound, it is an item the
             // folder has not written yet, which every pull tries again.
-            state::unbind(&*self.core.conn()?, path)?;
+            if state::bound_at(&conn, path)?
+                .is_some_and(|bound| &bound.item_id == item_id && bound.content_hash == PUT_BACK)
+            {
+                state::unbind(&conn, path)?;
+            }
             not_written_back.push(
                 pull.flagged
                     .iter()
-                    .find(|file| &file.path == *path)
+                    .find(|file| file.item.as_ref() == Some(item_id) || &file.path == *path)
                     .cloned()
                     .unwrap_or_else(|| Flagged {
                         path: (*path).clone(),
-                        flag: "absent",
+                        flag: "unwritten",
                         reason: "the pull did not write it".into(),
-                        item: None,
+                        item: Some(item_id.clone()),
                     }),
             );
         }

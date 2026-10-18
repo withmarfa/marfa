@@ -4652,6 +4652,38 @@ describe("large removals, status and size", () => {
     expect(readFileSync(join(harness.dir, name(0)))).toEqual(lost);
   });
 
+  it("does not count as put back a file somebody else's file stands in for", async () => {
+    harness = await folderHarness("folder-removal-restore-foreign", {
+      rows: { "core.note": [0, 1, 2, 3, 4, 5].map(noteRow) },
+      settings: tight,
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    for (let n = 0; n < 3; n += 1) {
+      rmSync(join(harness.dir, `Note ${String(n)}.md`));
+    }
+    const paused = await harness.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(3);
+    // Another file arrives at one of the three paths while the removal waits.
+    const foreign = "---\ntitle: Something else\n---\nnot the note\n";
+    put(harness, "Note 0.md", foreign);
+    const restored = await harness.folder.restore();
+    expect(restored.ok, JSON.stringify(restored)).toBe(true);
+    if (!restored.ok) return;
+    // The witness: the two other files came back.
+    for (const n of [1, 2]) {
+      expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
+    }
+    expect(read(harness, "Note 0.md")).toBe(foreign);
+    expect(
+      restored.value.put_back,
+      "a file the restore did not write was counted as put back",
+    ).toBe(2);
+    expect(
+      restored.value.not_written_back.map((file) => [file.path, file.flag]),
+    ).toEqual([["Note 0.md", "unwritten"]]);
+  });
+
   it("pauses a large removal from another device", async () => {
     const rows = [0, 1, 2, 3, 4, 5].map(noteRow);
     const trashed = rows
