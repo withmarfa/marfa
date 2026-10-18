@@ -57,7 +57,8 @@ A command sends one trace to an OpenTelemetry collector when the environment nam
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers to send, as comma-separated `key=value` pairs with percent-encoded values. The traces variable overrides the other for a header both name. |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
-| `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. |
+| `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off. |
 | `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN` and an OTLP endpoint. |
 | `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST` and an OTLP endpoint. |
