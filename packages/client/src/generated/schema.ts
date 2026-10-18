@@ -23971,7 +23971,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
                     events: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];
@@ -24479,7 +24479,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery. */
+                    /** @description The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery. */
                     url?: string;
                     /** @description The events to send. Name each one: there's no wildcard. */
                     events?: ("item.created" | "item.updated" | "item.deleted" | "item.restored" | "item.purged" | "item.state_changed" | "metadata.changed" | "edge.created" | "edge.updated" | "edge.deleted")[];

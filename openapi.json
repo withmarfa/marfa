@@ -46932,7 +46932,7 @@
                   "url": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery."
+                    "description": "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery."
                   },
                   "events": {
                     "type": "array",
@@ -47879,7 +47879,7 @@
                 "properties": {
                   "url": {
                     "type": "string",
-                    "description": "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address, which Marfa checks again at each delivery."
+                    "description": "The URL Marfa posts events to: `http` or `https`, with no user name or password. Unless the instance allows private addresses, it must reach a public address: Marfa refuses a URL whose host resolves to a private one, and checks again at each delivery."
                   },
                   "events": {
                     "type": "array",

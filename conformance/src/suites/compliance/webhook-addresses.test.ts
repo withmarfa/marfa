@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import type { WebhookDelivery } from "../../client/types.js";
 import { createNote } from "../../generators/items.js";
 import {
   bootFreshServer,
@@ -13,7 +14,14 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * ones. The run's own server allows them, because every other webhook
  * fixture delivers to a receiver on loopback, so this file boots a server
  * with the setting at its default.
+ *
+ * A name is checked twice: when the subscription is registered, so the
+ * person is told then, and at every attempt, since a name can come to
+ * resolve elsewhere. The second can only be reached here by registering
+ * the subscription under a server that allows private addresses and then
+ * starting the same data again under one that does not.
  */
+const SETTING = "MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES";
 let server: FreshServer | undefined;
 let working: MarfaClient;
 let receiver: Receiver;
@@ -50,6 +58,7 @@ describe("webhook addresses", () => {
       });
       expect(refused.status, url).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message, url).toContain(SETTING);
     }
   });
 
@@ -71,9 +80,36 @@ describe("webhook addresses", () => {
     }
   });
 
+  it("refuses a subscription whose host name resolves to an address that is not public, naming the setting", async () => {
+    const port = new URL(receiver.url).port;
+    for (const url of [
+      `http://localhost:${port}/hook`,
+      `https://localhost:${port}/hook`,
+    ]) {
+      const refused = await working.createWebhook({
+        url,
+        events: ["item.created"],
+      });
+      expect(refused.status, url).toBe(400);
+      expect(refused.error?.error.code, url).toBe("validation_error");
+      expect(refused.error?.error.message, url).toContain(SETTING);
+    }
+    expect((await working.listWebhooks()).data.data).toEqual([]);
+  });
+
+  it("accepts a name that does not resolve, which delivery looks up again", async () => {
+    // The witness for the refusals above: the same door takes a name that
+    // answers nothing.
+    const created = await working.createWebhook({
+      url: "http://receiver.invalid/hook/unresolved",
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+    await working.deleteWebhook(created.data.id);
+  });
+
   it("refuses to point a subscription at an address that is not public, leaving the stored url", async () => {
-    // A name is not resolved at registration, so this one is accepted and
-    // never reached.
+    // A name that does not resolve is accepted and never reached.
     const stored = "http://receiver.invalid/hook/stored";
     const created = await working.createWebhook({
       url: stored,
@@ -85,6 +121,7 @@ describe("webhook addresses", () => {
         receiver.url,
         "http://10.0.0.1/hook",
         "http://[::ffff:127.0.0.1]/hook",
+        `http://localhost:${new URL(receiver.url).port}/hook`,
       ]) {
         const refused = await working.updateWebhook(created.data.id, { url });
         expect(refused.status, url).toBe(400);
@@ -103,29 +140,51 @@ describe("webhook addresses", () => {
     }
   });
 
-  it("sends nothing to a name that resolves to loopback, and records why", async () => {
-    const port = new URL(receiver.url).port;
-    const created = await working.createWebhook({
-      url: `http://localhost:${port}/hook/by-name`,
-      events: ["item.created"],
-    });
-    expect(created.status).toBe(201);
+  it(
+    "sends nothing to a name that resolves to loopback, records why, and gives up at once",
+    async () => {
+      const port = new URL(receiver.url).port;
+      // Registered under a server that allows it, as a name that resolved
+      // elsewhere would have been, and then met by one that does not.
+      await server!.restart({ env: { [SETTING]: "true" } });
+      working = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: server!.workingKey,
+      });
+      const created = await working.createWebhook({
+        url: `http://localhost:${port}/hook/by-name`,
+        events: ["item.created"],
+      });
+      expect(created.status).toBe(201);
 
-    const note = await working.createItem(
-      createNote({ properties: { body: "to a name on loopback" } }),
-    );
-    expect(note.ok).toBe(true);
+      await server!.restart();
+      working = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: server!.workingKey,
+      });
+      const note = await working.createItem(
+        createNote({ properties: { body: "to a name on loopback" } }),
+      );
+      expect(note.ok).toBe(true);
 
-    // The attempt is recorded, which is what says the event was dispatched.
-    const deadline = Date.now() + 30_000;
-    let error: string | null = null;
-    while (Date.now() < deadline && error === null) {
-      const log = await working.listWebhookDeliveries(created.data.id);
-      expect(log.ok).toBe(true);
-      error = log.data.data[0]?.error ?? null;
-      if (error === null) await new Promise((r) => setTimeout(r, 100));
-    }
-    expect(error).toBe("The receiver's address is not public.");
-    expect(receiver.received).toHaveLength(0);
-  });
+      // A delivery is queued before it is attempted, and is settled once it
+      // has been.
+      const deadline = Date.now() + 30_000;
+      let delivery: WebhookDelivery | undefined;
+      while (Date.now() < deadline && delivery?.status !== "dead_letter") {
+        const log = await working.listWebhookDeliveries(created.data.id);
+        expect(log.ok).toBe(true);
+        delivery = log.data.data[0];
+        if (delivery?.status !== "dead_letter")
+          await new Promise((r) => setTimeout(r, 100));
+      }
+      expect(delivery).toMatchObject({
+        status: "dead_letter",
+        error: "The receiver's address is not public.",
+        attempt: 1,
+      });
+      expect(receiver.received).toHaveLength(0);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

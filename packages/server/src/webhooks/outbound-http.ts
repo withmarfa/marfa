@@ -7,17 +7,20 @@
  * post to its own loopback, the host's private network or a cloud metadata
  * address, and read back from the delivery log whether something answered.
  *
- * The check is made where the connection is opened, not where the URL is
- * stored: a name that resolved to a public address at registration can
- * resolve to a private one at delivery. The address the check passes is the
- * one the socket connects to, so a second resolution cannot swap it, and a
- * redirect is not followed, since following one would connect to an address
- * nobody checked.
+ * The guard is the check made where the connection is opened: a name that
+ * resolved to a public address at registration can resolve to a private one
+ * at delivery. The address the check passes is the one the socket connects
+ * to, so a second resolution cannot swap it, and a redirect is not
+ * followed, since following one would connect to an address nobody checked.
+ * Registration makes the same check ahead of time, so a person told their
+ * receiver is unreachable hears it when they register it and not hours
+ * later from the delivery log.
  *
  * An operator running receivers on a private network turns the check off
  * with `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`.
  */
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import { lookup as dnsLookupAll } from "node:dns/promises";
 import type { LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
 import { Agent, fetch } from "undici";
@@ -59,6 +62,10 @@ export function isPublicAddress(address: string): boolean {
   return parsed.range() === "unicast";
 }
 
+/** What a refusal at registration says, for an address written out or a name. */
+const SETTING_HINT =
+  "An operator whose receivers run on a private network can allow it with MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES.";
+
 /** The host of `url` as an address, or null where it is a name. */
 function literalAddress(url: URL): string | null {
   const host = url.hostname.replace(/^\[(.*)\]$/, "$1");
@@ -92,9 +99,68 @@ export function refuseWebhookUrl(
   if (allowPrivateAddresses) return null;
   const literal = literalAddress(url);
   if (literal !== null && !isPublicAddress(literal)) {
-    return "url must name a public address";
+    return `url must name a public address. ${SETTING_HINT}`;
   }
   return null;
+}
+
+/** How long registration waits for a name to resolve before leaving it to delivery. */
+export const REGISTRATION_LOOKUP_TIMEOUT_MS = 3_000;
+
+async function systemResolve(hostname: string): Promise<string[]> {
+  return (await dnsLookupAll(hostname, { all: true })).map((a) => a.address);
+}
+
+/**
+ * What registration refuses of a host written as a name: one that resolves,
+ * now, to any address a delivery would refuse. Any rather than every, since
+ * the delivery check refuses a name with one non-public address among
+ * public ones, so such a subscription could never be delivered to.
+ *
+ * Only a definite answer refuses. A name that does not resolve, answers
+ * nothing or takes longer than `timeoutMs` is stored: the receiver may not
+ * exist yet, a resolver that fails here proves nothing about the one
+ * delivery uses, and the guard that holds is the delivery's, which looks
+ * again at every attempt. A host written as an address is
+ * `refuseWebhookUrl`'s.
+ *
+ * Answers the reason, or null where the URL may be stored. Call it only
+ * where private addresses are not allowed.
+ */
+export async function refuseNonPublicHost(
+  raw: string,
+  options: {
+    resolve?: (hostname: string) => Promise<string[]>;
+    timeoutMs?: number;
+  } = {},
+): Promise<string | null> {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (literalAddress(url) !== null) return null;
+  const resolve = options.resolve ?? systemResolve;
+  const timeoutMs = options.timeoutMs ?? REGISTRATION_LOOKUP_TIMEOUT_MS;
+  let timer: NodeJS.Timeout | undefined;
+  let addresses: string[];
+  try {
+    addresses = await Promise.race([
+      resolve(url.hostname),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("lookup timed out"));
+        }, timeoutMs);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (addresses.every(isPublicAddress)) return null;
+  return `url's host resolves to an address that is not public. ${SETTING_HINT}`;
 }
 
 /**
@@ -133,10 +199,15 @@ export interface WebhookPost {
   timeoutMs: number;
 }
 
-/** What one attempt came to: an HTTP answer, or no answer and why. */
+/**
+ * What one attempt came to: an HTTP answer, or no answer and why. `refused`
+ * is no answer that another attempt would not repeat, because the
+ * connection was never opened: the instance's own rule forbids it.
+ */
 export type WebhookPostOutcome =
   | { kind: "answered"; status: number; retryAfter: string | null }
   | { kind: "redirected"; status: number }
+  | { kind: "refused"; error: string }
   | { kind: "failed"; error: string };
 
 export interface WebhookHttpClient {
@@ -206,7 +277,7 @@ export function createWebhookHttpClient(options: {
         literal !== null &&
         !isPublicAddress(literal)
       ) {
-        return { kind: "failed", error: DELIVERY_FAILURE.notPublic };
+        return { kind: "refused", error: DELIVERY_FAILURE.notPublic };
       }
       const abort = new AbortController();
       try {
@@ -240,7 +311,10 @@ export function createWebhookHttpClient(options: {
           retryAfter,
         };
       } catch (err) {
-        return { kind: "failed", error: failureReason(err) };
+        const error = failureReason(err);
+        return error === DELIVERY_FAILURE.notPublic
+          ? { kind: "refused", error }
+          : { kind: "failed", error };
       }
     },
   };
