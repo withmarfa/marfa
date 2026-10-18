@@ -46,6 +46,9 @@ impl Folder {
     /// the end of one.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
+    /// Blocks while the server's rate limit lasts: where a drain leaves
+    /// writes undelivered and names a wait, it sleeps that long, up to 300
+    /// seconds, and drains again, for as long as each drain answers a write.
     pub fn sync(&self) -> Result<Synced> {
         let result = self.sync_observed();
         match &result {
@@ -94,7 +97,7 @@ impl Folder {
     /// the directory and removes none. A copy that never hydrated hydrates
     /// first, which writes only the store. A later `sync` pulls what this
     /// left. Refused while the first sync waits to be confirmed, before
-    /// anything is sent.
+    /// anything is sent. Blocks for the server's rate limit as `sync` does.
     pub fn send_only(&self) -> Result<SendReport> {
         self.refuse_while_waiting()?;
         let result = self.send_only_observed();

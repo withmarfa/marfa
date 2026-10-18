@@ -309,10 +309,10 @@ impl Folder {
             }
             // No "was there a change" flag: it would stop the journal being
             // swept in a folder that went quiet after a delete.
-            // Passes wait out the server's rate limit: a write sent before
-            // it ends is refused again, and the folder's own changes only
-            // queue meanwhile. When it ends a pass is due at once, not at
-            // the next change or full pass.
+            // No pass runs while the server's rate limit lasts, since a write
+            // sent before it ends is refused again: changes on disk wait
+            // unscanned and nothing is pulled. When it ends a pass is due at
+            // once, not at the next change or full pass.
             let rate_limit_over = match send_again_at {
                 Some(at) if Instant::now() < at => continue,
                 Some(_) => true,
