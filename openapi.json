@@ -926,6 +926,20 @@
         "additionalProperties": {},
         "description": "How long Marfa keeps the versions of a type's items. A field you leave out comes from the parent type, then from the instance defaults."
       },
+      "RetentionPolicy": {
+        "type": "object",
+        "properties": {
+          "feed_days": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "How many days Marfa keeps a feed item, counted from when it arrived: a whole number from 1 to 36,500. After that Marfa moves the item to the trash. `null` keeps feed items although a parent type expires them. Library items never expire."
+          }
+        },
+        "additionalProperties": {},
+        "description": "How long Marfa keeps the feed items of a type. A part you leave out comes from the parent type. A type that no type in its chain gives a window keeps its items."
+      },
       "ConnectorProblems": {
         "type": "object",
         "additionalProperties": {
@@ -3217,6 +3231,16 @@
                 "description": "How Marfa merges conflicting edits to the type's items."
               }
             ]
+          },
+          "retention_policy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the type's items in the feed tier."
+              }
+            ]
           }
         },
         "required": [
@@ -3581,6 +3605,16 @@
               }
             ]
           },
+          "retention_policy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the type's items in the feed tier."
+              }
+            ]
+          },
           "id": {
             "type": "string",
             "description": "The type's identifier, such as `acme.deal` or `user.recipe`."
@@ -3806,6 +3840,16 @@
               },
               {
                 "description": "How Marfa merges conflicting edits to the type's items."
+              }
+            ]
+          },
+          "retention_policy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RetentionPolicy"
+              },
+              {
+                "description": "How long Marfa keeps the type's items in the feed tier."
               }
             ]
           },

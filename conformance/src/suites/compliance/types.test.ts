@@ -562,23 +562,26 @@ describe("type registration and listing", () => {
         mended: { fields: { title: { type: "string", maxLength: 10 } } },
       },
       {
-        what: "a key in display_hints, version_policy and merge_policy",
+        what: "a key in display_hints, version_policy, merge_policy and retention_policy",
         bad: {
           fields,
           display_hints: { title_field: "title", subtitle: "title" },
           version_policy: { max_versions: 5, keep_forever: true },
           merge_policy: { default: "last_writer_wins", fallback: "x" },
+          retention_policy: { feed_days: 30, library_days: 5 },
         },
         paths: [
           "display_hints.subtitle",
           "version_policy.keep_forever",
           "merge_policy.fallback",
+          "retention_policy.library_days",
         ],
         mended: {
           fields,
           display_hints: { title_field: "title" },
           version_policy: { max_versions: 5 },
           merge_policy: { default: "last_writer_wins" },
+          retention_policy: { feed_days: 30 },
         },
       },
     ];

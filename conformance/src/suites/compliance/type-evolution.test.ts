@@ -175,6 +175,11 @@ describe("a key whose type map reaches a type evolves it", () => {
         }),
       "merge_policy",
     ],
+    [
+      "a retention_policy",
+      (id) => replaced(id, { retention_policy: { feed_days: 30 } }),
+      "retention_policy",
+    ],
     ["the roles", (id) => replaced(id, { roles: [] }), "roles"],
     ["the parent", (id) => replaced(id, { parent: "core.note" }), "parent"],
     [

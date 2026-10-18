@@ -17,6 +17,7 @@ import {
   planArchiveTypes,
   writeArchiveTypes,
 } from "../routes/restore-archive-types.js";
+import { FeedExpirer } from "../storage/feed-expiry.js";
 import { itemWrites } from "../storage/item-writes.js";
 import { TrashPurger } from "../storage/retention.js";
 import { VersionThinner } from "../storage/version-thinner.js";
@@ -542,6 +543,42 @@ describe("external and background audit units with real SQLite and disk", () => 
     await allow();
     expect(await purger.runOnce()).toBe(1);
     expect((await audits("items.trash_purged")).data).toHaveLength(1);
+  });
+
+  it("rolls back a feed expiry chunk on refused audit", async () => {
+    const type = "test.feed_audit_refusal";
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: {
+        id: type,
+        version: 1,
+        fields: { title: { type: "string" } },
+        retention_policy: { feed_days: 1 },
+      },
+    });
+    expect(registered.status, await registered.clone().text()).toBe(201);
+    const item = await itemWrites(ctx.storage).create({
+      writer: null,
+      type,
+      properties: { title: "old feed" },
+      tier: "feed",
+    });
+    await sql("UPDATE items SET created_at = ? WHERE id = ?", [
+      "2020-01-01T00:00:00.000Z",
+      item.id,
+    ]);
+    const events = await ctx.storage.eventLog.getAfter(0n, 100);
+    const expirer = new FeedExpirer(ctx.storage);
+    await refuse("items.feed_expired");
+    await expect(expirer.runOnce()).rejects.toThrow();
+    expect((await ctx.storage.items.get(item.id))?.state).toBe("active");
+    expect(await ctx.storage.eventLog.getAfter(0n, 100)).toEqual(events);
+    await allow();
+    expect((await expirer.runOnce()).moved).toBe(1);
+    expect((await audits("items.feed_expired")).data).toHaveLength(1);
+    expect((await ctx.storage.items.getIncludingTrashed(item.id))?.state).toBe(
+      "trashed",
+    );
   });
 
   it("rolls back version thinning on refused audit", async () => {

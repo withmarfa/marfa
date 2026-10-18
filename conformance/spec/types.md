@@ -166,17 +166,17 @@ When `POST /types` or `PUT /types/{id}` names a non-empty `label`, the server MU
 
 ### `types/read`
 
-When a credential sends `GET /types/{id}` for a registered type, the server MUST answer it with the fields, `version_policy` and `merge_policy` its parents give it merged beside its own.
+When a credential sends `GET /types/{id}` for a registered type, the server MUST answer it with the fields, `version_policy`, `merge_policy` and `retention_policy` its parents give it merged beside its own.
 
-**Tests:** `compliance/type-inheritance.test.ts › a child reads back with the parent's fields merged beside its own`, `compliance/types.test.ts › a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`.
+**Tests:** `compliance/type-inheritance.test.ts › a child reads back with the parent's fields merged beside its own`, `compliance/types.test.ts › a runtime-registered custom child type inherits the parent's resolved merge_policy on GET`, `compliance/version-policy.test.ts › reads back field by field from the parent, a field the child declares overriding`, `compliance/retention-policy.test.ts › reads back the window a parent declares, a child's own or null replacing it`.
 
 ### `types/list-declared-policy`
 
-When `GET /types` lists a type, the server MUST answer the `version_policy` and `merge_policy` the type itself declares, and none it only inherits.
+When `GET /types` lists a type, the server MUST answer the `version_policy`, `merge_policy` and `retention_policy` the type itself declares, and none it only inherits.
 
 **Reason:** `GET /types/{id}` answers the policies a type is held to (`types/read`); the listing shows what each registration says.
 
-**Tests:** `compliance/version-order.test.ts › lists the version_policy and merge_policy a type declares, and answers the resolved ones for the type itself`.
+**Tests:** `compliance/version-order.test.ts › lists the version_policy and merge_policy a type declares, and answers the resolved ones for the type itself`, `compliance/retention-policy.test.ts › lists the window a type declares and none it only inherits`.
 
 ### `types/read-display-hints`
 
@@ -286,7 +286,7 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 ### `types/unknown-key`
 
-If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `items_type`, `format`, `searchable`, `maxLength` and `maxItems`), or in `display_hints`, `version_policy` or `merge_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `description`, `required`, `enum_values`, `items_type`, `format`, `searchable`, `maxLength` and `maxItems`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** a key the server ignored would let a misspelled rule, or a `minimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse. No field definition has a `minimum` or a `maximum`.
 
@@ -516,7 +516,7 @@ If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types
 
 If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, changing anything `types/evolve-free` does not name, then the server MUST answer `403 forbidden`.
 
-**Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `compatible_with` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
+**Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy`, `retention_policy` or `compatible_with` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
 
 **Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a change to compatible_with, a kept field's constraint, required or searchable to a key without schema.write, and lands it with it`, `› refuses a key on metadata.types:write alone a change of parent as a schema change`.
 
@@ -635,6 +635,26 @@ If a type's `version_policy` names a `recent_days`, `daily_snapshot_days`, `week
 If a type's `version_policy` names a window that ends sooner than an earlier one it names, in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`, then the server MUST answer `400 invalid_schema` naming the window that ends too soon.
 
 **Tests:** `compliance/version-policy.test.ts › refuses windows out of order, naming the one that ends too soon`, `› registers a policy of whole positive numbers in order`, `› refuses the same on a replacement and keeps the type as it was`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+
+## Retention policy
+
+A type's `retention_policy` sets how long the items it holds stay in the feed tier. Its one key, `feed_days`, is read by the `feed-expiry` job (`housekeeping/feed-expiry-window`).
+
+### `types/retention-policy-values`
+
+If a type's `retention_policy` names a `feed_days` that is neither `null` nor a whole number from 1 to 36500, or is itself not an object, then the server MUST answer `400 invalid_schema` naming it.
+
+**Reason:** 36500 days, a hundred years, is the largest window an instance setting takes, and it keeps the date a job computes from it inside what a date can hold.
+
+**Tests:** `compliance/retention-policy.test.ts › refuses a feed_days that is not a whole number of days from 1 to 36500 or null, naming the field`, `› accepts a window of 1 day, of 36500 days and null`.
+
+### `types/retention-policy-merge`
+
+When a type names a `retention_policy`, the server MUST store it and answer it on `GET /types/{id}` merged through the parent chain key by key, a `feed_days` the type names, `null` included, replacing its parents'.
+
+**Reason:** a child that names `null` keeps its feed items although its parent expires them, and a type that names no `feed_days` takes its parent's.
+
+**Tests:** `compliance/retention-policy.test.ts › reads back the window a parent declares, a child's own or null replacing it`, `› registers a policy on a child and answers it on a replacement`.
 
 ## Enforcement levers
 

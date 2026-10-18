@@ -84,6 +84,23 @@ export interface VersionPolicy {
 }
 
 /**
+ * How long a type keeps the items it holds in the feed tier.
+ *
+ * Inherited by descendant types, key by key: a child's `feed_days` replaces
+ * the parent's, and a child that sets it to `null` keeps its items although
+ * its parent expires them.
+ */
+export interface RetentionPolicy {
+  /**
+   * Whole days a feed item is kept, counted from when it arrived. Past them
+   * the housekeeping job moves the item to the bin. `null` keeps feed items
+   * for good, and so does leaving the key out when no ancestor sets it.
+   * Library items never expire.
+   */
+  feed_days?: number | null;
+}
+
+/**
  * Declarative hints for generic renderers that consume items of this type
  * without type-specific code. Readers consult these first, then fall back in
  * a fixed order: title → name → first non-empty string field → type id.
@@ -161,6 +178,7 @@ export interface TypeSchema {
   link_field?: string;
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
+  retention_policy?: RetentionPolicy;
   /**
    * Sibling-type compatibility declarations. For each named target this type
    * asserts a structural-superset relationship — every required field on the

@@ -15,6 +15,7 @@ import {
 import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
 import { HeartbeatPinger } from "../heartbeat.js";
 import { VersionThinner } from "../storage/version-thinner.js";
+import { FeedExpirer } from "../storage/feed-expiry.js";
 import {
   RevokedGrantPurger,
   GrantInactivityRetirer,
@@ -189,6 +190,17 @@ export function registerHousekeepingJobs(
     deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 5_000,
     run: () => versionThinner.runOnce(),
+  });
+
+  // An item this job moves to the bin starts the trash retention there, so
+  // it stays recoverable for as long as any deleted item does.
+  const feedExpirer = new FeedExpirer(storage);
+  housekeeping.register({
+    name: "feed-expiry",
+    intervalMs: config.feedExpiryIntervalMs,
+    deadlineMs: LONG_RUN_DEADLINE_MS,
+    firstRunDelayMs: 5_000,
+    run: () => feedExpirer.runOnce(),
   });
 
   // Registered whatever the instance default, because the retention can

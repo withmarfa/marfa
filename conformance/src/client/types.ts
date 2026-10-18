@@ -146,6 +146,8 @@ export interface TypeSchema {
    * in 409 conflict responses.
    */
   merge_policy?: MergePolicy;
+  /** How long the type's items stay in the feed tier. `null` keeps them. */
+  retention_policy?: { feed_days?: number | null };
   /**
    * Sibling-type compatibility declaration. When set, the type asserts a
    * structural-superset relationship with the named target — the server
