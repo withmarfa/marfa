@@ -3,7 +3,7 @@ import { createApp } from "../app.js";
 import { clockOffsetMs, resetClockForTests } from "../clock.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
-import { activeFaults, clearFaults, holdAt } from "./faults.js";
+import { activeFaults, clearFaults, holdAt, scriptedAnswer } from "./faults.js";
 
 let ctx: TestContext;
 let instanceId: string;
@@ -177,6 +177,13 @@ describe("the fault routes", () => {
       { name: "fail:lock", arg: "items.bulk@2" },
       { name: "fail:commit", arg: "items.bulk@0" },
       { name: "fail:housekeeping:no-such-job" },
+      { name: "hold:<job>" },
+      { name: "resolve:rebind.test" },
+      { name: "resolve:rebind.test", arg: "not-an-address" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1;" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1>" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1>2.2.2.2>3.3.3.3" },
+      { name: "resolve:Not A Host", arg: "1.1.1.1" },
       {},
     ]) {
       const refused = await app.request("/_control/test/faults", {
@@ -197,6 +204,8 @@ describe("the fault routes", () => {
       { name: "hold:read-snapshot" },
       { name: "fail:stream-credential", arg: "3" },
       { name: "unfold-deadline", arg: "1" },
+      { name: "hold:webhook-schedule:queued" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1,::1;127.0.0.1" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",
@@ -224,5 +233,33 @@ describe("the fault routes", () => {
     expect(activeFaults().map((fault) => fault.name)).toEqual([
       "hold:version-thinning:item",
     ]);
+  });
+});
+
+describe("the resolve fault", () => {
+  it("answers one scripted answer per lookup, repeats the last, and counts the lookups", async () => {
+    const app = appFor(true, true);
+    expect(scriptedAnswer("rebind.test")).toBeUndefined();
+    const armed = await app.request("/_control/test/faults", {
+      method: "PUT",
+      body: JSON.stringify({
+        name: "resolve:rebind.test",
+        arg: "1.1.1.1>127.0.0.1,2606:4700:4700::1111;::1",
+      }),
+    });
+    expect(armed.status).toBe(200);
+    expect(scriptedAnswer("rebind.test")).toEqual({
+      checked: ["1.1.1.1", "2606:4700:4700::1111"],
+      connected: ["127.0.0.1", "2606:4700:4700::1111"],
+    });
+    expect(scriptedAnswer("REBIND.test")?.checked).toEqual(["::1"]);
+    expect(scriptedAnswer("rebind.test")?.checked).toEqual(["::1"]);
+    expect(scriptedAnswer("other.test")).toBeUndefined();
+    expect(activeFaults()[0]).toMatchObject({
+      name: "resolve:rebind.test",
+      fired: 3,
+    });
+    clearFaults();
+    expect(scriptedAnswer("rebind.test")).toBeUndefined();
   });
 });

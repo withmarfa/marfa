@@ -287,6 +287,8 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
 | `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
 | `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms.                   |
+| `hold:webhook-schedule:queued` | A run of the `webhook-schedule` job that has queued deliveries waits, before it records its place in the event log.                                                                                                                                                                         |
+| `resolve:<hostname>=<answers>` | Makes an outbound webhook delivery resolve the name to the addresses scripted. `<answers>` has one answer for each lookup of the name, separated by `;`, each a list of addresses separated by `,`, and the last answer repeats. The address check still applies to what the fault answers. |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component
@@ -360,8 +362,11 @@ blob fault boots a server with the disk store alone (`DISK_ONLY` in
 `src/utils/own-blob-server.ts`), or waits until replication has nothing left
 to copy, as `blob-cleanup-faults.test.ts` does.
 
-A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
-the target does not fake them.
+A webhook receiver's answers, status and `Retry-After` header alike, are the
+harness's own (`src/utils/webhook-receiver.ts`); the target does not fake them.
+The one thing a target scripts for a delivery is a name lookup, with `resolve`,
+so that a fixture can answer the same name differently on each lookup and see
+which address the delivery connects to.
 
 ### Who can reach the hooks
 

@@ -21,10 +21,11 @@
  */
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { lookup as dnsLookupAll } from "node:dns/promises";
-import type { LookupFunction } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
 import { Agent, fetch } from "undici";
 import { log } from "../middleware/logger.js";
+import { scriptedAnswer } from "../control/faults.js";
 
 /** Why a delivery reached no receiver, as the delivery log records it. */
 export const DELIVERY_FAILURE = {
@@ -209,32 +210,85 @@ export async function refuseNonPublicHost(
   return `url's host resolves to an address that is not public. ${SETTING_HINT}`;
 }
 
+/** A scripted answer's addresses as a lookup returns them. */
+function named(addresses: string[]): LookupAddress[] {
+  return addresses.map((address) => ({ address, family: isIP(address) }));
+
+}
+
 /**
- * Resolve as the system resolver does, and refuse the connection unless
- * every address the name resolves to is public. Every rather than any,
- * because a name answering one public and one private address would let
- * the connection land on whichever the socket tried first.
+ * The lookup of an instance that allows private addresses. It is the system
+ * resolver, unless a test fault scripts the name.
+ */
+const systemLookup: LookupFunction = (hostname, options, callback) => {
+  const scripted = scriptedAnswer(hostname);
+  if (scripted === undefined) {
+    dnsLookup(hostname, options, callback);
+    return;
+  }
+  const all = named(scripted.connected);
+  if (options.all === true) {
+    (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
+    return;
+  }
+  const first = all[0] as LookupAddress;
+  callback(null, first.address, first.family);
+};
+
+/**
+ * Refuse the connection unless every address that was checked is public, and
+ * connect to the addresses of the same lookup. Every rather than any, because
+ * a name answering one public and one private address would let the
+ * connection land on whichever the socket tried first.
+ */
+function settle(
+  err: NodeJS.ErrnoException | null,
+  checked: LookupAddress[],
+  all: LookupAddress[],
+  options: Parameters<LookupFunction>[1],
+  callback: Parameters<LookupFunction>[2],
+): void {
+  if (err) {
+    callback(err, "", 0);
+    return;
+  }
+  if (
+    checked.length === 0 ||
+    !checked.every((a) => isPublicAddress(a.address))
+  ) {
+    callback(new AddressNotPublicError(), "", 0);
+    return;
+  }
+  if (options.all === true) {
+    (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
+    return;
+  }
+  const first = all[0];
+  if (first === undefined) {
+    callback(new AddressNotPublicError(), "", 0);
+    return;
+  }
+  callback(null, first.address, first.family);
+}
+
+/**
+ * Resolve as the system resolver does, or as a test fault scripts the name,
+ * and connect only to a public address.
  */
 const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
+  const scripted = scriptedAnswer(hostname);
+  if (scripted !== undefined) {
+    settle(
+      null,
+      named(scripted.checked),
+      named(scripted.connected),
+      options,
+      callback,
+    );
+    return;
+  }
   dnsLookup(hostname, { ...options, all: true }, (err, all) => {
-    if (err) {
-      callback(err, "", 0);
-      return;
-    }
-    if (all.length === 0 || !all.every((a) => isPublicAddress(a.address))) {
-      callback(new AddressNotPublicError(), "", 0);
-      return;
-    }
-    if (options.all === true) {
-      (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
-      return;
-    }
-    const first = all[0];
-    if (first === undefined) {
-      callback(new AddressNotPublicError(), "", 0);
-      return;
-    }
-    callback(null, first.address, first.family);
+    settle(err, all, all, options, callback);
   });
 };
 
@@ -302,7 +356,9 @@ export function createWebhookHttpClient(options: {
   allowPrivateAddresses: boolean;
 }): WebhookHttpClient {
   const dispatcher = new Agent({
-    connect: options.allowPrivateAddresses ? {} : { lookup: publicOnlyLookup },
+    connect: {
+      lookup: options.allowPrivateAddresses ? systemLookup : publicOnlyLookup,
+    },
   });
   return {
     async post(request) {

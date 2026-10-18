@@ -23,6 +23,14 @@
  *   cleared or set again. Setting it again while a body streams in is how
  *   a volume fills as the bytes arrive.
  * - `unfold-deadline=<ms>` shortens the time one series may take to unfold.
+ * - `resolve:<hostname>=<answers>` makes an outbound webhook delivery resolve
+ *   that name to scripted addresses. `<answers>` is one answer per lookup,
+ *   separated by `;`, each a list of addresses separated by `,`; the last
+ *   answer repeats, and `fired` counts the lookups answered. The delivery
+ *   checks the addresses an answer names as it does a real answer. An
+ *   address may be written `<checked>><connected>`: the check judges the
+ *   first, and the socket connects to the second, so a fixture can have a
+ *   public address reach a receiver on loopback.
  *
  * The routes refuse a name that answers to no point, an argument the point
  * does not take, and a job the scheduler has not registered, so a typo cannot
@@ -30,6 +38,8 @@
  *
  * Nothing persists: a restart starts with no fault.
  */
+
+import ipaddr from "ipaddr.js";
 
 /** What follows `=` in the name of a fault, by the point it is set on. */
 type ArgShape =
@@ -62,6 +72,7 @@ export const POINTS: {
     { name: "stream-drain", arg: "none" },
     { name: "announce", arg: "none" },
     { name: "read-snapshot", arg: "none" },
+    { name: "webhook-schedule:queued", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -97,6 +108,7 @@ const VOLUMES = ["database", "blobs"] as const;
 export type Volume = (typeof VOLUMES)[number];
 
 const JOB_SLOT = "<job>";
+const HOST_NAME = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/;
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
 const ACTION = /^[a-z][a-z0-9_.-]*$/;
 /** The longest delay a timer takes. */
@@ -168,6 +180,42 @@ function aim(point: Point, arg: string | null): Target | string {
   return { action, nth: count };
 }
 
+/** An address a `resolve` fault may script. */
+function isAddress(text: string): boolean {
+  return ipaddr.IPv4.isValidFourPartDecimal(text) || ipaddr.IPv6.isValid(text);
+}
+
+/** What one lookup of a scripted name is answered with. */
+export interface ScriptedAnswer {
+  /** The addresses the delivery's check judges. */
+  checked: string[];
+  /** The addresses its socket connects to; the checked ones unless scripted. */
+  connected: string[];
+}
+
+/** The answers a `resolve` argument scripts, or undefined where it is not one. */
+function answers(arg: string | null): ScriptedAnswer[] | undefined {
+  if (arg === null || arg === "") return undefined;
+  const steps: ScriptedAnswer[] = [];
+  for (const step of arg.split(";")) {
+    const answer: ScriptedAnswer = { checked: [], connected: [] };
+    for (const item of step.split(",")) {
+      const [checked, connected, ...extra] = item.split(">");
+      if (
+        extra.length > 0 ||
+        checked === undefined ||
+        !isAddress(checked) ||
+        (connected !== undefined && !isAddress(connected))
+      )
+        return undefined;
+      answer.checked.push(checked);
+      answer.connected.push(connected ?? checked);
+    }
+    steps.push(answer);
+  }
+  return steps;
+}
+
 function shapeProblem(name: string, arg: string | null): string | undefined {
   const colon = name.indexOf(":");
   const kind = colon < 0 ? name : name.slice(0, colon);
@@ -201,7 +249,13 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "an unfold-deadline fault takes a whole number of milliseconds from 1";
     return undefined;
   }
-  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume> or unfold-deadline";
+  if (kind === "resolve") {
+    if (!HOST_NAME.test(rest)) return `${rest} is not a host name`;
+    return answers(arg) === undefined
+      ? "a resolve fault takes addresses: one answer per lookup, separated by ;, each a list of addresses separated by ,"
+      : undefined;
+  }
+  return "a fault is named hold:<point>, fail:<point>, deadline:<job>, free:<volume>, unfold-deadline or resolve:<hostname>";
 }
 
 /**
@@ -378,4 +432,18 @@ export function freeFault(volume: Volume): number | undefined {
 export function unfoldDeadlineFault(): number | undefined {
   const arg = faults.get("unfold-deadline")?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/**
+ * The answer the next lookup of `hostname` is to be given, if a `resolve`
+ * fault scripts it. Each call takes the next answer, and the last repeats.
+ */
+export function scriptedAnswer(hostname: string): ScriptedAnswer | undefined {
+  if (faults.size === 0) return undefined;
+  const entry = faults.get(`resolve:${hostname.toLowerCase()}`);
+  const steps = entry === undefined ? undefined : answers(entry.arg);
+  if (entry === undefined || steps === undefined) return undefined;
+  const answer = steps[Math.min(entry.fired, steps.length - 1)];
+  entry.fired += 1;
+  return answer;
 }

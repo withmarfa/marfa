@@ -6,9 +6,11 @@ import {
   activeFaults,
   clearFaults,
   setFault,
+  scriptedAnswer,
   unfoldDeadlineFault,
 } from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import { WebhookScheduler } from "../webhooks/delivery.js";
 import {
   createTestContext,
   collectItemEvents,
@@ -52,6 +54,7 @@ vi.mock("../control/event-faults.js", async (importOriginal) => {
     },
   };
 });
+import { WebhookScheduler } from "../webhooks/delivery.js";
 vi.mock("../control/faults.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../control/faults.js")>();
   return {
@@ -468,4 +471,40 @@ it("holds an archive restore's announcements and later writes until the hold is 
     abort.abort();
     await observed.done;
   }
+});
+it("passes the webhook scheduler's hold point by without a call with no fault set, and reaches it once one is", async () => {
+  const sub = await request(ctx.app, "POST", "/webhooks", {
+    key: ctx.workingKey,
+    body: { url: "http://receiver.invalid/hook", events: ["item.created"] },
+  });
+  expect(sub.status).toBe(201);
+  const scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
+  const note = async () => {
+    const made = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "scheduled" } },
+    });
+    expect(made.status).toBe(201);
+  };
+  await note();
+  expect((await scheduler.runOnce()).scheduled).toBe(1);
+  expect(spies.hold).not.toHaveBeenCalled();
+
+  // The witness: with any fault set, the same run reaches the point.
+  setFault("fail:job-row", null);
+  await note();
+  expect((await scheduler.runOnce()).scheduled).toBe(1);
+  expect(spies.hold).toHaveBeenCalledTimes(1);
+});
+
+it("answers no lookup from a script with no fault set, and one once a resolve fault is", () => {
+  expect(scriptedAnswer("rebind.test")).toBeUndefined();
+  setFault("resolve:rebind.test", "1.1.1.1");
+  expect(scriptedAnswer("rebind.test")).toEqual({
+    checked: ["1.1.1.1"],
+    connected: ["1.1.1.1"],
+  });
 });

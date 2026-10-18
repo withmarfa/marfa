@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
+import { activeFaults, clearFaults, setFault } from "../control/faults.js";
 import {
   DELIVERY_FAILURE,
   createWebhookHttpClient,
@@ -12,6 +13,7 @@ import {
 const servers: Server[] = [];
 
 afterEach(async () => {
+  clearFaults();
   await Promise.all(
     servers.splice(0).map(
       (s) =>
@@ -355,6 +357,29 @@ describe("the delivery client", () => {
       });
     }
     expect(r.hits()).toBe(1);
+  });
+
+  it("connects to the address its check passed, not to a second answer", async () => {
+    const r = await receiver();
+    const url = `http://rebind.test:${String(r.port)}/hook`;
+    const guarded = createWebhookHttpClient({ allowPrivateAddresses: false });
+    // The witness: a name scripted to loopback reaches the receiver where
+    // private addresses are allowed, and is refused where they are not.
+    setFault("resolve:rebind.test", "127.0.0.1");
+    const allowed = createWebhookHttpClient({ allowPrivateAddresses: true });
+    expect(await allowed.post(post(url))).toMatchObject({ status: 200 });
+    expect(await guarded.post(post(url))).toEqual({
+      kind: "failed",
+      error: DELIVERY_FAILURE.notPublic,
+    });
+    expect(r.hits()).toBe(1);
+
+    // A public address that the socket reaches on loopback: the delivery
+    // goes to the receiver, and the lookup was asked once.
+    setFault("resolve:rebind.test", "93.184.216.34>127.0.0.1;::1");
+    expect(await guarded.post(post(url))).toMatchObject({ status: 200 });
+    expect(r.hits()).toBe(2);
+    expect(activeFaults()[0]).toMatchObject({ fired: 1 });
   });
 
   it("does not follow a redirect", async () => {
