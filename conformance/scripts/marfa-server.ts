@@ -379,7 +379,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // needs either lever to avoid a collision.
   const port =
     args.port ??
-    namedPort(args.env.PORT) ??
+    namedPort(args.env?.PORT) ??
     namedPort(process.env.PORT) ??
     (await freePort());
   const url = `http://127.0.0.1:${String(port)}`;
