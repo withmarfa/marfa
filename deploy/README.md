@@ -91,12 +91,12 @@ docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover
 
 Enter the replacement password at the hidden prompt, or use `owner recover --stdin` with a JSON object containing `password`. Recovery changes the existing owner's password and revokes browser sessions. Ordinary keys and approved app access remain in force.
 
-If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets:
+If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets, from the image the instance runs (`<image>`):
 
 ```bash
 docker stop marfa
 docker run -d --name marfa-recovery -v marfa-data:/data \
-  --env-file <your-env-file> ghcr.io/withmarfa/marfa-server:<version> control-only
+  --env-file <your-env-file> <image> control-only
 docker exec -it marfa-recovery marfa --socket /data/control/marfa.sock owner recover
 docker stop marfa-recovery
 docker rm marfa-recovery

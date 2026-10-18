@@ -10,19 +10,19 @@ name: Release
 #
 # A dispatch with a `version` is a dry run: it runs the same build a tag
 # would, the image's included, and skips only the publish job and the image's
-# push. It is how the workflow is exercised
-# without a tag, which only the maintainer makes; the tag path reads the
-# version off the tag and never off an input.
+# push. It is how the workflow is exercised without a tag, which only the
+# maintainer makes; the tag path reads the version off the tag and never off
+# an input.
 #
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
 # the repository holds one (`ci/version-fields.test.ts`).
 #
-# The image is built and booted on a runner of each platform, which pushes
-# it untagged, by digest. The publish job then tags one manifest for both,
-# `<version>` and `latest`, and boots the tag as a stranger pulls it, signed
-# out, before the release is made public. The registry is written with the
-# job's own token, `packages: write`.
+# The image is built and booted on a runner of each platform, and for a tag
+# each runner pushes it untagged, by digest. The publish job then tags one
+# manifest for both, `<version>` and `latest`, and boots the tag as a stranger
+# pulls it, signed out, before the release is made public. The registry is
+# written with the job's own token, `packages: write`.
 #
 # npm publishes by trusting this workflow's OIDC identity, with no stored
 # token; the GitHub release uses the job's own token. Trusted publishing is

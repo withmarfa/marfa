@@ -10,7 +10,10 @@
 #    the commit the image was built from and, for a release, the release,
 #    the packaged `marfa` reports that release, and `docker stop` ends it
 #    with status 0 inside the grace a runtime gives it;
-# 2. a volume holding a database another build wrote: the container stays up
+# 2. the same volume with only the private control listener, which recovers
+#    the owner with no public listener, after which the public server starts
+#    again on the new password;
+# 3. a volume holding a database another build wrote: the container stays up
 #    and unhealthy with the server's message in its log, rather than ending
 #    and being started again, and `docker stop` still ends it with status 0.
 set -euo pipefail
