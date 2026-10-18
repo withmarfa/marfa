@@ -128,11 +128,12 @@ async function send(
   const [method, template] = door.split(" ") as [string, string];
   const path =
     options.path ?? template.replace(/\{[^}]+\}/g, () => randomUUID());
-  // The owner's sign-in doors refuse every key, so they are asked as the
-  // owner's browser, which is what reaches their body.
-  const credential: Record<string, string> = template.startsWith("/owner/")
-    ? { cookie: ownerCookie(), origin: new URL(apiUrl).origin }
-    : { Authorization: `Bearer ${key}` };
+  // Owner updates and sign-in management refuse every key, so the owner's
+  // browser is what reaches their body. Public claims keep their own proof.
+  const credential: Record<string, string> =
+    door === "PATCH /owner" || template.startsWith("/owner/")
+      ? { cookie: ownerCookie(), origin: new URL(apiUrl).origin }
+      : { Authorization: `Bearer ${key}` };
   return fetch(`${apiUrl}${path}`, {
     method,
     headers: { ...credential, ...way.headers },
@@ -494,6 +495,28 @@ describe("a request the door would refuse before it reads the body", () => {
     }
     expect(wrong).toEqual([]);
   }, 120_000);
+
+  it("keeps owner update behind direct authority before body validation", async () => {
+    for (const contentType of ["text/plain", "application/json"]) {
+      const refused = await fetch(`${apiUrl}/owner`, {
+        method: "PATCH",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": contentType,
+        },
+        body: JSON.stringify({ name: "Not the owner" }),
+      });
+      expect(refused.status, contentType).toBe(403);
+      expect(await refused.json(), contentType).toMatchObject({
+        error: { code: "forbidden" },
+      });
+    }
+    const reached = await send("PATCH /owner", plainTextWay(), apiKey);
+    expect(reached.status).toBe(400);
+    expect(await reached.json()).toMatchObject({
+      error: { code: "validation_error" },
+    });
+  });
 
   it("answers 403 forbidden to a key lacking the standing permission a door checks, where a key holding it is answered 400 for the same body", async () => {
     const doors: { door: string; permission: string }[] = [
