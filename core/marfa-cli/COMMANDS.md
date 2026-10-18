@@ -240,7 +240,7 @@ marfa owner passkeys remove [OPTIONS] <ID>
 
 ### marfa owner passkeys add
 
-Open the owner's passkey page through a fresh browser sign-in (private socket required).
+Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
 
 ```text
 marfa owner passkeys add [OPTIONS]
@@ -1765,7 +1765,7 @@ marfa audit [OPTIONS]
 
 ## events
 
-The event stream, one frame per line.
+The event stream, one frame per line. It ends with an error and a non-zero exit when the stream closes on `cursor_ahead`, `catchup_too_old` or `stream_incomplete`.
 
 ### marfa events
 
@@ -1778,7 +1778,7 @@ marfa events [OPTIONS]
 | `--type <TYPE>` | A type identifier to narrow to, repeatable up to ten; subtypes are included. |
 | `--edges <EDGES>` | Whether edge events ride along: `all` (the default) or `none`. One of `all`, `none`. |
 | `--from <CURSOR>` | Resume from this cursor, replaying what the log holds after it. |
-| `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until interrupted. |
+| `--for <SECONDS>` | Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends. |
 
 ## housekeeping
 

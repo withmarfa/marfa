@@ -1654,6 +1654,78 @@ When `keys forget` runs, the CLI MUST forget the credential kept for the server 
 
 **Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
 
+### `device/command-keys-keep-checks-current-key`
+
+When `keys keep` is given a key, the CLI MUST check the key with `GET /keys/current` and no other request before it keeps the key.
+
+**Reason:** every key may read itself, whatever permissions and types it holds (`keys-and-oauth/current-key`). A check through an item route would refuse a key that holds only permissions, which works from `MARFA_API_KEY` all the same (`keys-and-oauth/permissions-no-content`).
+
+**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
+
+### `device/command-keys-keep-keeps-key-without-type`
+
+When the server answers `GET /keys/current` to a key that reaches no type, the CLI MUST keep the key for the server.
+
+**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
+
+### `device/command-keys-keep-refuses-spent-key`
+
+If the server answers the check of `keys keep` `401 unauthorized`, as it does for a key that is revoked, expired or unknown, then the CLI MUST keep nothing and exit 5.
+
+**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
+
+### `device/command-keys-keep-refuses-access-token`
+
+If the server answers the check of `keys keep` `403 forbidden`, as it does for an app's access token (`keys-and-oauth/current-key-app`), then the CLI MUST keep nothing and refuse it `invalid` with exit 1, saying the credential is not a key.
+
+**Reason:** an access token ends within the hour, and `login` keeps a sign-in that renews it.
+
+**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
+
+### `device/command-keys-keep-refuses-wrong-server`
+
+If the answer to the check of `keys keep` names another contract than the CLI was built for or none, then the CLI MUST keep nothing and refuse it as it refuses any such answer (`device/command-contract-mismatch`, `device/command-unnamed-refusal`).
+
+**Tests:** `device/credential-locks.test.ts › keeps no key for $name, refusing it with exit $exit`.
+
+### `device/command-events-refuses-cursor`
+
+If the stream that `events` reads sends a `cursor_ahead` or `catchup_too_old` frame (`events/cursor-ahead`, `events/catchup-too-old`), then the CLI MUST end the command `invalid` with exit 1, saying the cursor is not one the server's log holds.
+
+**Reason:** the server answers `200` and ends the stream with the frame, so the status of the answer says nothing of the refusal, and a script that reads only the exit status would take a refused cursor for a stream that ended well.
+
+**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`.
+
+### `device/command-events-prints-refusing-frame`
+
+When the CLI ends `events` for a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame, the CLI MUST print the frame it read on standard output before it ends.
+
+**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`, `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-events-refuses-incomplete`
+
+If the stream that `events` reads sends a `stream_incomplete` frame whose `reason` is not `credential_ended` (`events/incomplete-closes`), then the CLI MUST end the command `stream_incomplete` with exit 3.
+
+**Reason:** the stream can no longer deliver what it opened with, and the answer's status says nothing of it. A script that reads only the exit status would take a stream that stopped early for one that ended well. Exit 3 tells it to follow again from the frame's `cursor`.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-stream-credential-ended`
+
+If the stream that a command reads sends a `stream_incomplete` frame whose `reason` is `credential_ended` (`events/credential-revoked`), then the CLI MUST end the command `unauthorized` with exit 5, whichever command reads the stream.
+
+**Reason:** the key or token that held the stream has ended, so reading again with it will not work. Exit 5 says to get a new credential, where exit 3 would send a script to retry. One place decides it, so `events`, `hydrate` and `catch-up` agree.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`, `device/cli-outcomes.test.ts › ends $command on a stream_incomplete frame for credential_ended with exit 5`.
+
+### `device/command-events-frame-name-decides`
+
+If a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame that `events` reads carries no data, or data that is not JSON, then the CLI MUST end the command as it does for the frame with its data, with the details the data would have named reported as unknown.
+
+**Reason:** the frame's name alone says the stream is over, so a frame the CLI cannot read must not read as a stream that ended well.
+
+**Tests:** `device/contract.test.ts › ends the command on a $event frame whose data is $data as it does for the frame with its data`.
+
 ### `device/command-cleartext-warning`
 
 If the CLI is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends the credential.

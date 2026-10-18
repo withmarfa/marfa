@@ -470,6 +470,9 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
 }
 
 /// Checked against the server first, so a wrong key fails here, not later.
+/// The check is the key reading itself, which every key may do whatever it
+/// holds (`keys-and-oauth/current-key`): a key that reaches no type is kept
+/// as readily as one that reaches them all.
 fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let key = match remote.credential() {
         Some(source) if source != crate::remote::CredentialSource::Keychain => remote.bearer(),
@@ -483,7 +486,20 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     };
     crate::auth::with_credential_lock(remote.origin(), || {
         let checked = Remote::keyed(remote.url(), &key)?;
-        checked.json(&Request::get(&["items", "stats"]))?;
+        match checked.json(&current_request()) {
+            Ok(_) => {}
+            // The server refuses an app's access token this answer
+            // (`keys-and-oauth/current-key-app`). It is not a key, and it
+            // ends within the hour, so a keychain is no place for it.
+            Err(CliError::Refused {
+                status: 403, code, ..
+            }) if code == "forbidden" => {
+                return Err(CliError::Invalid(
+                    "the server says this is not a key, so it cannot be kept; an app's access token is not a key. `marfa login` keeps a sign-in".into(),
+                ));
+            }
+            Err(error) => return Err(error),
+        }
         credentials::keep(remote.origin(), &Kept::Key { key })
     })?;
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
