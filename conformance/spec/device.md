@@ -2250,7 +2250,15 @@ While a device holds a watch of a store opened to read, a device MUST tell each 
 
 **Reason:** a reader that polls tells saves made within one poll once, and a listener that joined after a save read its version when it joined.
 
-**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`.
+**Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`, `device/reader-watch-live.test.ts › tells a never-hydrated reader about a concurrent save without a hydration warning or server contact`.
+
+### `device/reader-watch-no-hydration-hint`
+
+While a store is opened to read, when a caller runs `device watch` before a first hydration, the CLI MUST omit the hint to hydrate first.
+
+**Reason:** a reader watches local saves without holding the writer handle or asking the server, so hydration is not needed.
+
+**Tests:** `device/reader-watch-live.test.ts › tells a never-hydrated reader about a concurrent save without a hydration warning or server contact`.
 
 ### `device/watch-reads-failed`
 
