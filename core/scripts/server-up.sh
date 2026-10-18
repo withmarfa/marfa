@@ -10,7 +10,7 @@
 # MARFA_SERVER_REPO: the checkout to boot; this one by default.
 # MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
 # secrets, data and keys; server-down.sh leaves it in place.
-# PORT: a free one by default.
+# PORT: the operating system assigns one by default.
 #
 # A boot also creates an owner, so sign-in and the owner's pages can be tried
 # by hand. Its throwaway email and password come from test-owner.example.env
@@ -19,20 +19,6 @@ set -euo pipefail
 umask 077
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# Asked on the address the server binds (`::` dual-stack, else `0.0.0.0`),
-# not the URL's: a port free on `127.0.0.1` alone can be held on IPv6.
-free_port() {
-  python3 -c 'import socket
-try:
-    s = socket.socket(socket.AF_INET6)
-    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
-    s.bind(("::", 0))
-except OSError:
-    s = socket.socket()
-    s.bind(("0.0.0.0", 0))
-print(s.getsockname()[1])
-s.close()'
-}
 keep=""
 if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
   state="${MARFA_SERVER_KEEP}"
@@ -42,6 +28,21 @@ else
   state="$(mktemp -d "/tmp/marfa-core-server.XXXXXX")"
 fi
 state="$(cd "${state}" && pwd -P)"
+
+# flock belongs to the inherited open file description. The real Node process
+# keeps both reservations until it exits, including after this helper returns.
+reserve_fd() {
+  python3 -c 'import fcntl,sys
+try:
+    fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    print("server-up: " + sys.argv[2] + " is already in use", file=sys.stderr)
+    sys.exit(1)' "$1" "$2"
+}
+exec 9>>"${state}/server.lock"
+reserve_fd 9 "server state ${state}"
+env_file="${MARFA_SERVER_ENV:-${state}/env}"
+
 boot="${state}/boot.env"
 kept_key=""
 owner_email=""
@@ -61,30 +62,18 @@ if [[ -f "${boot}" ]]; then
     exit 1
   fi
 fi
-port="${PORT:-$(free_port)}"
+exec 8>>"${env_file}"
+reserve_fd 8 "server env file ${env_file}"
+port="${PORT:-0}"
 url="http://127.0.0.1:${port}"
 log="${state}/server.log"
 
 export SQLITE_PATH="${state}/marfa.db"
 export BLOB_PATH="${state}/blobs"
 export PORT="${port}"
+export MARFA_LISTEN_HOST="127.0.0.1"
 export MARFA_AUTH_SECRET="${MARFA_AUTH_SECRET:-$(openssl rand -hex 32)}"
 export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
-
-# A silent listener on `127.0.0.1` would still let the server bind `::`, and
-# every health check would reach the silent one; curl exits 28 for it.
-probe=0
-curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || probe=$?
-if [[ "${probe}" -eq 0 ]]; then
-  echo "server-up: something is already answering ${url}/health" >&2
-  echo "server-up: stop it, or set PORT to boot somewhere else" >&2
-  exit 1
-fi
-if [[ "${probe}" -eq 28 ]]; then
-  echo "server-up: something at ${url} takes connections and does not answer" >&2
-  echo "server-up: stop it, or set PORT to boot somewhere else" >&2
-  exit 1
-fi
 
 # A kept data directory can exceed the Unix socket path limit, especially
 # under macOS temporary roots. The private listener gets its own short path.
@@ -92,14 +81,12 @@ control_dir="$(mktemp -d "/tmp/marfa-core-control.XXXXXX")"
 control_dir="$(cd "${control_dir}" && pwd -P)"
 export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
-# The pid is pnpm's, two levels above node; server-down.sh walks the tree.
+# The recorded process owns the listener and both file reservations.
 (
-  cd "${repo}"
-  exec pnpm --filter @withmarfa/server exec tsx --import ./src/instrumentation.ts src/index.ts
+  cd "${repo}/packages/server"
+  exec node --import tsx --import ./src/instrumentation.ts src/index.ts
 ) >"${log}" 2>&1 &
 pid=$!
-
-env_file="${MARFA_SERVER_ENV:-${state}/env}"
 
 # Written before the server is up, so a failed boot can still be stopped.
 write_env() {
@@ -132,7 +119,10 @@ fail() {
 }
 
 for _ in $(seq 1 120); do
-  if curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1; then
+  assigned_port="$(sed -nE 's/.*Marfa server listening on port ([0-9]+).*/\1/p' "${log}")"
+  if [[ -n "${assigned_port}" ]]; then
+    port="${assigned_port}"
+    url="http://127.0.0.1:${port}"
     break
   fi
   if ! kill -0 "${pid}" 2>/dev/null; then

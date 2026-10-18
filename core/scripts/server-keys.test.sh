@@ -58,6 +58,7 @@ PY
 }
 
 up
+first_url="${MARFA_TEST_URL}"
 first_working="${MARFA_TEST_KEY}"
 first_socket="${MARFA_TEST_SOCKET}"
 first_owner="${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}"
@@ -66,10 +67,12 @@ chmod 644 "${MARFA_SERVER_KEEP}/boot.env"
 : >"${MARFA_SERVER_ENV}"
 chmod 644 "${MARFA_SERVER_ENV}"
 up
+[[ "${MARFA_TEST_URL}" == "${first_url}" ]]
 [[ "${MARFA_TEST_KEY}" == "${first_working}" ]]
-[[ "${MARFA_TEST_SOCKET}" == "${first_socket}" ]]
+[[ "${MARFA_TEST_SOCKET}" != "${first_socket}" ]]
+[[ ! -e "${first_socket}" ]]
 [[ "${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}" == "${first_owner}" ]]
-echo "The working key, private control socket and test owner survive a kept-server restart."
+echo "The working key, public URL and test owner survive a kept-server restart."
 
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
 python3 - "${MARFA_SERVER_KEEP}/boot.env" <<'PY'
@@ -90,3 +93,5 @@ if curl -fsS --max-time 2 "${MARFA_TEST_URL}/health" >/dev/null 2>&1; then
   exit 1
 fi
 echo "Incomplete kept state is refused before starting a server."
+
+python3 "${scripts}/server-start.test.py"

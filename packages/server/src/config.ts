@@ -83,6 +83,8 @@ export interface AppConfig {
    *  non-production. `loadConfig` always populates it. */
   isProduction?: boolean;
   port: number;
+  /** Unset keeps the runtime's unspecified listening address. */
+  listenHost?: string;
   sqlitePath: string;
   controlSocket?: string;
   controlOnly?: boolean;
@@ -329,6 +331,8 @@ export interface AppConfig {
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
   authBaseUrl: string;
+  /** The implicit development origin follows the port assigned by the listener. */
+  authBaseUrlFromPort?: boolean;
   /** Signs Better Auth's cookies and authorize query, and keys the blob
    *  link. Required in production; minted per process otherwise. */
   authSecret: string;
@@ -894,7 +898,14 @@ const settingsShape = {
     () => "development" as const,
     "The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.",
   ),
-  PORT: count(8600, "The port the server listens on.", { max: 65_535 }),
+  PORT: count(
+    8600,
+    "The port the server listens on. Zero lets the operating system assign a port.",
+    { min: 0, max: 65_535 },
+  ),
+  MARFA_LISTEN_HOST: optionalText(
+    "The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.",
+  ),
   SQLITE_PATH: setting(
     text,
     () => "./data/marfa.db",
@@ -1089,7 +1100,7 @@ const settingsShape = {
     SECRET_MIN_LENGTH,
   ),
   MARFA_AUTH_BASE_URL: optionalUrl(
-    "The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL falls back to `http://localhost:<PORT>`.",
+    "The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL uses `http://localhost:<port>` with the actual listening port.",
     "None. Required in production.",
   ),
   CORS_ORIGINS: setting(
@@ -1678,6 +1689,7 @@ export function loadConfig(
   return {
     isProduction: s.NODE_ENV === "production",
     port: s.PORT,
+    listenHost: s.MARFA_LISTEN_HOST,
     sqlitePath: s.SQLITE_PATH,
     controlSocket:
       s.MARFA_CONTROL_SOCKET ||
@@ -1752,6 +1764,7 @@ export function loadConfig(
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
     trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,
     trustedProxyHeader: s.TRUSTED_PROXY_HEADER,
+    authBaseUrlFromPort: s.MARFA_AUTH_BASE_URL === undefined,
     authBaseUrl: s.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(s.PORT)}`,
     // Minted per process outside production, where a restart ending every
     // session is the documented behavior; production refuses to boot

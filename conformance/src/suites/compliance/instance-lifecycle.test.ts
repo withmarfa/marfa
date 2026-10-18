@@ -1090,7 +1090,7 @@ describe("starting on a database another build wrote", () => {
         try {
           expect(refused).toMatchObject({ code: 1, signal: null });
           expect(listened(refused)).toBe(false);
-          expect(refused.output).toContain("Shutting down...");
+          expect(refused.output).toContain("EADDRINUSE");
           const controlDirectory = readFileSync(
             join(refused.stateDir, "control-directory"),
             "utf8",
