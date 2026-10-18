@@ -208,7 +208,28 @@ wait, a stream's heartbeat and the server's uptime do not follow the clock. A
 fixture moves the clock and then runs the job it tests with
 `POST /housekeeping/{name}/run`.
 
-Protocols checked by an external peer stay on real time:
+The model is "time passed": the target and every party the harness controls
+use the stated clock. A fixture's process keeps its real clock, so clients
+apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
+when creating or checking protocol timestamps. `MarfaClient` and `DpopClient`
+accept `serverClockOffsetMs` as a number or a callback; use the callback when
+a client outlives a clock advance. DPoP proofs and other client assertions,
+explicit HTTP `Date` headers and signed timestamps must use that stated time.
+The server's DPoP proof-age checks remain unchanged: a real-time proof is stale
+after the stated time advances beyond its validity window.
+
+Webhook receivers and OAuth relying parties in the harness also use the
+stated clock. Webhook signature timestamps, event-body timestamps, absolute
+`Retry-After` dates and retry scheduling follow it. OAuth ID-token `iat`,
+`exp`, `nbf` (when present) and `auth_time` claims follow it, just as opaque
+tokens and sessions do.
+
+Packed-attestation certificate validity follows the stated clock. A fixture
+that moves the clock must issue any certificates it presents on that clock,
+with validity dates covering the intended presentation time. Existing passkey
+fixtures use `none` attestation and present no certificate.
+
+Only peers the harness cannot move stay on real time:
 
 - S3 requests and store-signed blob links use the object store's real clock.
   Their stated lifetime elapses in real seconds, including when the target
@@ -217,37 +238,18 @@ Protocols checked by an external peer stay on real time:
   The installed SDK's `systemClockOffset` affects request signing but not
   presigning; a constructor offset alone would also miss later clock moves.
   Links served by the target itself still expire on the target's clock.
-- Webhook signature timestamps and absolute `Retry-After` dates use real time.
-  Event-body timestamps and retry scheduling still follow the target's clock;
-  a receiver's date is converted to a delay before that delay is scheduled.
-- OAuth ID tokens are signed with real-time `iat`, `exp`, `nbf` and `auth_time`
-  claims for external verifiers. Their lifetime and the simulated age of an
-  authentication are preserved. Opaque tokens verified by the target still
-  follow its clock.
-- Node's automatic HTTP `Date` headers and native TLS certificate checks use
-  the runtime's real clock, unaffected by the JavaScript `Date` replacement.
-- OTLP export retries and PostHog transport use real time. Marfa log records
-  keep their target-clock event timestamps; those timestamps are observations,
-  not credential lifetimes. Traces use the runtime's monotonic time base.
+- OTLP export retries and PostHog transport use real time because a deployed
+  telemetry collector is outside the harness's clock control. A fixture
+  standing in for that external collector uses real time for transport
+  responses, including `Retry-After`. Marfa log records keep their stated-clock
+  event timestamps; those timestamps are observations, not credential
+  lifetimes. Traces use the runtime's monotonic time base.
 
-A fixture's own machine keeps real time. A client that judges how old a
-sign-in is takes the target's time from `FreshServer.clockOffsetMs`, the boot
-offset plus subsequent advances, because the age it reads is the target's.
-
-Two external-verifier paths remain unsupported by the clock adapter:
-
-- The OAuth provider checks DPoP proofs with the process's `Date`. A valid
-  real-time proof can fail after the target clock advances. Its token and
-  userinfo handlers expose no clock or verifier callback; widening the proof
-  age window would incorrectly admit stale proofs.
-- The passkey verifier checks packed-attestation certificate validity with
-  the process's `Date` and has no callback for that check. Marfa requests
-  `none` attestation, which has no certificate-time check, but the verifier
-  also accepts authenticator-supplied packed attestation.
-
-Fixtures using the moved clock must not claim coverage of real-time DPoP
-proof acceptance or packed certificate validity. Production does not install
-the shim.
+Node's automatic HTTP `Date` headers and native TLS certificate checks use
+the runtime's real clock, unaffected by the JavaScript `Date` replacement.
+Fixtures that send a protocol timestamp explicitly must set it from the
+stated clock rather than use an automatic header as the clock's witness.
+Production does not install the shim.
 
 ### The contract version
 

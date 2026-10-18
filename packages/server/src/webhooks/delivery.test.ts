@@ -75,11 +75,11 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter(past)).toBeNull();
   });
 
-  it("reads the receiver's HTTP date against real time after the clock moves", () => {
-    const future = new Date(Date.now() + 45_000).toUTCString();
+  it("reads the receiver's HTTP date on the stated clock after it moves", () => {
     try {
       clock.installDateShim();
       clock.advanceClock(86_400_000);
+      const future = new Date(clock.nowMs() + 45_000).toUTCString();
       expect(parseRetryAfter(future)).toBeGreaterThan(40_000);
       expect(parseRetryAfter(future)).toBeLessThanOrEqual(45_000);
     } finally {
@@ -255,10 +255,9 @@ function sentBodies(http: Recorder): Record<string, unknown>[] {
 // ---------------------------------------------------------------------------
 
 describe("the body a delivery sends", () => {
-  it("signs on the receiver's real clock while the body follows server time", async () => {
+  it("signs and timestamps the body on the stated clock", async () => {
     const { id } = await owner();
     const webhook = await subscription(id, ["item.created"]);
-    const realNow = Date.now.bind(Date);
     try {
       clock.installDateShim();
       clock.advanceClock(86_400_000);
@@ -268,9 +267,9 @@ describe("the body a delivery sends", () => {
         "item.created",
       );
       const http = recorder();
-      const before = Math.floor(realNow() / 1000);
+      const before = Math.floor(clock.nowMs() / 1000);
       await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
-      const after = Math.floor(realNow() / 1000);
+      const after = Math.floor(clock.nowMs() / 1000);
       expect(http.posts).toHaveLength(1);
       const post = http.posts[0]!;
       const signature = post.headers["X-Marfa-Signature"]!;
@@ -281,9 +280,7 @@ describe("the body a delivery sends", () => {
         buildSignatureHeader(timestamp, post.body, SECRET),
       );
       const body = JSON.parse(post.body) as { delivered_at: string };
-      expect(Date.parse(body.delivered_at)).toBeGreaterThan(
-        before * 1000 + 86_399_000,
-      );
+      expect(Date.parse(body.delivered_at)).toBeGreaterThan(before * 1000 - 1);
     } finally {
       clock.resetClockForTests();
     }

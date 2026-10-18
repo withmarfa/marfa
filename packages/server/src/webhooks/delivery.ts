@@ -83,7 +83,7 @@ export function parseRetryAfter(headerValue: string | null): number | null {
   // HTTP-date form
   const dateMs = Date.parse(trimmed);
   if (!isNaN(dateMs)) {
-    const delta = dateMs - clock.realNowMs();
+    const delta = dateMs - clock.nowMs();
     if (delta > 0) return Math.min(delta, RETRY_AFTER_CEILING_MS);
   }
 
@@ -218,7 +218,7 @@ export async function deliverWebhookAttempt(
       return;
     }
 
-    const timestamp = Math.floor(clock.realNowMs() / 1000).toString();
+    const timestamp = Math.floor(clock.nowMs() / 1000).toString();
     const outcome = await context.http.post({
       url: delivery.webhook_url,
       headers: {

@@ -59,7 +59,7 @@ export interface MarfaClientOptions {
   ownerCredentials?: { email: string; password: string };
   /**
    * How far the server's clock is ahead of this machine's, in milliseconds.
-   * The client judges how old the owner's sign-in is by the server's time, so
+   * Clients issue protocol timestamps and judge sign-in age on this clock, so
    * a fixture that has moved the server's clock names it here, as a number
    * or as a function for a client that outlives a move.
    */

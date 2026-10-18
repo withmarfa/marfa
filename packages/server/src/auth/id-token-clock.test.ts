@@ -20,10 +20,10 @@ afterEach(async () => {
   await context?.cleanup();
 });
 
-it("issues externally verifiable ID tokens on real time and opaque tokens on server time", async () => {
-  const realNow = Date.now.bind(Date);
+it("issues ID tokens and opaque tokens on the stated clock", async () => {
   clock.installDateShim();
   clock.advanceClock(86_400_000);
+  const signedInAfter = Math.floor(clock.nowMs() / 1000);
   const ctx = (context = await createTestContext());
   const origin = new URL(ctx.config.authBaseUrl).origin;
   const callback = "https://client.example.test/callback";
@@ -73,7 +73,7 @@ it("issues externally verifiable ID tokens on real time and opaque tokens on ser
   const code = new URL(consent.headers.get("location")!).searchParams.get(
     "code",
   )!;
-  const before = Math.floor(realNow() / 1000);
+  const before = Math.floor(clock.nowMs() / 1000);
   const response = await request(ctx.app, "POST", "/auth/oauth2/token", {
     form: {
       client_id: clientId,
@@ -117,9 +117,12 @@ it("issues externally verifiable ID tokens on real time and opaque tokens on ser
     ),
   ).toBe(true);
   expect(claims.iat).toBeGreaterThanOrEqual(before);
-  expect(claims.iat).toBeLessThanOrEqual(Math.floor(realNow() / 1000));
+  expect(claims.iat).toBeLessThanOrEqual(Math.floor(clock.nowMs() / 1000));
   expect(claims.exp - claims.iat).toBe(36_000);
-  expect(claims.auth_time).toBeLessThanOrEqual(Math.floor(realNow() / 1000));
+  expect(claims.auth_time).toBeGreaterThanOrEqual(signedInAfter);
+  expect(claims.auth_time).toBeLessThanOrEqual(
+    Math.floor(clock.nowMs() / 1000),
+  );
   const current = await request(ctx.app, "GET", "/items?type=core.note", {
     key: tokens.access_token,
   });
@@ -128,5 +131,5 @@ it("issues externally verifiable ID tokens on real time and opaque tokens on ser
     tokens.access_token.slice(ACCESS_TOKEN_PREFIX.length),
   );
   const access = await ctx.storage.oauthProvider!.validateAccessToken(digest);
-  expect(access?.expiresAtMs).toBeGreaterThan((before + 86_400) * 1000);
+  expect(access?.expiresAtMs).toBeGreaterThan(before * 1000);
 });

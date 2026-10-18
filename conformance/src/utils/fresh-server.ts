@@ -90,9 +90,9 @@ export interface FreshServer {
    */
   advanceClock(ms: number): Promise<string>;
   /**
-   * The sum of the steps `advanceClock` has taken: how far the target's clock
+   * The boot offset plus the steps `advanceClock` has taken: how far the target's clock
    * is ahead of this machine's, give or take the milliseconds the two differ
-   * by. A client that judges the age of a sign-in takes it from here.
+   * by. Clients use it for protocol timestamps and sign-in age.
    */
   clockOffsetMs: number;
   /**
