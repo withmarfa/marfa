@@ -240,7 +240,7 @@ marfa owner passkeys remove [OPTIONS] <ID>
 
 ### marfa owner passkeys add
 
-Open the owner's passkey page through a fresh browser sign-in (private socket required).
+Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
 
 ```text
 marfa owner passkeys add [OPTIONS]

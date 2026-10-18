@@ -21,7 +21,7 @@ pub enum PasskeysCommand {
         /// The passkey's ID.
         id: String,
     },
-    /// Open the owner's passkey page through a fresh browser sign-in (private socket required).
+    /// Open the owner sign-in page, where you sign in yourself and then reach the passkey page (private socket required).
     Add {
         /// Print the sign-in URL without opening a browser.
         #[arg(long)]
