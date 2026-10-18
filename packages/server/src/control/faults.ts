@@ -157,7 +157,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
 }
 
 /**
- * Why a fault name or argument is refused, or `undefined` when it is armed.
+ * Why a fault name or argument is refused, or `undefined` when it is valid.
  * `jobs` are the housekeeping jobs the scheduler has registered: a fault on
  * any other job would never act.
  */

@@ -221,10 +221,16 @@ listed with the number of times it acted (`fired`), so a fixture can tell that
 it acted, and a fault that never acted is not mistaken for a pass. A fault
 that has acted does not act again until it is set again.
 
+`<n>` is a decimal integer from 1 through 1000000, without leading zeros.
+`<ms>` is a whole number from 1 through 2147483647. An action argument
+starts with a lowercase ASCII letter and contains only lowercase ASCII
+letters, digits, underscores, periods, or hyphens. The target validates this
+syntax; an action that no write records never fires.
+
 A _write_ is one change made for a caller: a request that changes stored
 state, or one entry of a page sent with `atomic: false`. An atomic page is one
 write. A write that records an audit entry names it by the entry's `action`
-(`events.md`, "The audit log"), and a write point may take that action in its
+([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
 argument as `<action>`, for the first such write, or `<action>@<n>`, so a
 request that makes other writes first does not shift the count: a
 `POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,

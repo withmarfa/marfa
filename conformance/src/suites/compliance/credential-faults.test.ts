@@ -184,7 +184,7 @@ describe("a key change", () => {
       apiKey: target.data.key,
     });
     expect((await bearer.getCurrentKey()).status).toBe(200);
-    // The witness: with its log back, the same revoke takes effect.
+    // The witness: after the one-shot fault, the same revoke takes effect.
     expect((await management.revokeKey(target.data.id)).status).toBe(200);
     expect((await bearer.getCurrentKey()).status).toBe(401);
   });
@@ -348,7 +348,7 @@ describe("a grant's withdrawal", () => {
       expect(await grantFor(app.clientId)).toBe(grant);
       expect(await itemsStatus(server, issued.access_token!)).toBe(200);
 
-      // The witness: with its log back, the same withdrawal takes effect and
+      // The witness: after the one-shot fault, the same withdrawal takes effect and
       // is announced on this stream.
       expect((await withdraw()).status).toBe(204);
       await collectUntil(

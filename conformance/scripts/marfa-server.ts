@@ -452,9 +452,8 @@ async function startServer(args: BootOptions): Promise<Started> {
       else env[name] = process.env[name];
     }
   }
-  // The test hooks are the adapter's means of moving the clock and holding a
-  // job, so every boot has them but one told to run as production, which the
-  // server would refuse for them.
+  // Production refuses test hooks, so only nonproduction boots enable them
+  // by default. Explicit settings below can exercise that refusal.
   const hooks = args.nodeEnv !== "production";
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;

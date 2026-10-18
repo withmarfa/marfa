@@ -36,7 +36,7 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * **Faults the target makes.** A fault met after a response began, or by
  * work no request waits on, has no arrangement in the stored file that does
  * not depend on timing, so those are set through the target's `fail` faults
- * and held in `fault-reports-timing.test.ts`.
+ * and held in `fault-reports-detached.test.ts`.
  */
 let server: FreshServer | undefined;
 let sinks: FaultSinks | undefined;
