@@ -1449,7 +1449,7 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that resolves to any address that is not public, then the server MUST answer `400 validation_error`.
 
-**Reason:** a subscription the server would refuse to deliver to at every attempt is better refused when it is registered than left `pending` until its attempts run out. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well. A receiver reached by a name on a Tailscale network or a home network resolves to a carrier-grade NAT or private address, so this is the refusal such a person meets first.
+**Reason:** a subscription that no attempt could deliver, such as one to a name on a Tailscale or home network, is better refused when it is registered than found later in the delivery log. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well.
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
 

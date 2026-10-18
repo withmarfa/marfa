@@ -130,7 +130,7 @@ describe("webhook addresses", () => {
           stored,
         );
       }
-      // The witness: a public name is accepted on the same door.
+      // The witness: the same door accepts a name that does not resolve.
       const accepted = await working.updateWebhook(created.data.id, {
         url: "http://receiver.invalid/hook/moved",
       });

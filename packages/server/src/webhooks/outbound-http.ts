@@ -12,9 +12,9 @@
  * at delivery. The address the check passes is the one the socket connects
  * to, so a second resolution cannot swap it, and a redirect is not
  * followed, since following one would connect to an address nobody checked.
- * Registration makes the same check ahead of time, so a person told their
- * receiver is unreachable hears it when they register it and not hours
- * later from the delivery log.
+ * Registration also resolves a name, so a person whose receiver has a
+ * private address is told when they register it, not hours later by the
+ * delivery log.
  *
  * An operator running receivers on a private network turns the check off
  * with `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`.
@@ -76,7 +76,7 @@ function literalAddress(url: URL): string | null {
  * What registration refuses outright: a URL that does not parse, a scheme
  * other than `http` or `https`, credentials in the URL, or, unless private
  * addresses are allowed, a host written as an address that is not public.
- * A name is not resolved here; delivery resolves it each time.
+ * A host written as a name is `refuseNonPublicHost`'s.
  *
  * Answers the reason, or null where the URL may be stored.
  */
