@@ -8,6 +8,20 @@ A device does not write to the server directly. It writes to its working copy, q
 
 A device queues a write before it sends it, and the queue outlives the process that made it.
 
+### `queue-and-verdicts/json-depth-limit`
+
+When a caller queues an item create, item update, edge create, edge update or extension write whose request body contains at most 64 nested arrays or objects, counting the request wrapper and excluding brackets inside strings, a device MUST accept that nesting depth.
+
+**Tests:** `device/json-depth.test.ts › accepts 64 containers and refuses 65 without changing the queue or held rows`.
+
+### `queue-and-verdicts/json-depth-refusal`
+
+If an item create, item update, edge create, edge update or extension write would nest its request body beyond 64 arrays or objects, counting the request wrapper and excluding brackets inside strings, then a device MUST refuse it `invalid` before changing the queue or held rows.
+
+**Reason:** the server refuses a request body beyond this bound (`items/json-depth`), so queuing it would show a write that cannot reach the server.
+
+**Tests:** `device/json-depth.test.ts › accepts 64 containers and refuses 65 without changing the queue or held rows`.
+
 ### `queue-and-verdicts/queue-survives-restart`
 
 When the process that queued a write ends before the write is answered, a device MUST report the same write, with the same id and idempotency key, to the next process that opens the store.

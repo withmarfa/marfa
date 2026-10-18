@@ -87,7 +87,10 @@ pub enum DeviceCommand {
     ///
     /// The watch is the one an app's listeners share, so a hydration or
     /// catch-up an app calls would take its stream and give it back. This
-    /// process holds the store, so none can run meanwhile. When the watch
+    /// process holds the store on a writer handle, so none can run meanwhile.
+    /// A reader watches local saves without hydration or server
+    /// contact. A writer on a never-hydrated or interrupted copy waits for
+    /// hydration and prints a hint to hydrate first. When the watch
     /// fails, it prints `watch.failed` and ends with that error, since nothing
     /// in this process would start it again. Each time the server is reachable
     /// again after it was lost, or after a drain left a write undelivered,
@@ -884,6 +887,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let core = Arc::new(store.open_with_server(named)?);
             let stop = stop_after(r#for);
             if !json
+                && core.handle() == marfa_core::Handle::Writer
                 && matches!(
                     core.status()?.hydration,
                     marfa_core::Hydration::Never | marfa_core::Hydration::InProgress

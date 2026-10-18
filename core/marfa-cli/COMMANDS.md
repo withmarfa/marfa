@@ -2174,7 +2174,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Hold the store's watch open and print a line for each change, as a held stream of an app does: what `follow` prints, and, with `--reader`, a line for each save another process makes.
 
-The watch is the one an app's listeners share, so a hydration or catch-up an app calls would take its stream and give it back. This process holds the store, so none can run meanwhile. When the watch fails, it prints `watch.failed` and ends with that error, since nothing in this process would start it again. Each time the server is reachable again after it was lost, or after a drain left a write undelivered, it drains the queue once where writes wait.
+The watch is the one an app's listeners share, so a hydration or catch-up an app calls would take its stream and give it back. This process holds the store on a writer handle, so none can run meanwhile. A reader watches local saves without hydration or server contact. A writer on a never-hydrated or interrupted copy waits for hydration and prints a hint to hydrate first. When the watch fails, it prints `watch.failed` and ends with that error, since nothing in this process would start it again. Each time the server is reachable again after it was lost, or after a drain left a write undelivered, it drains the queue once where writes wait.
 
 ```text
 marfa device watch [OPTIONS]
