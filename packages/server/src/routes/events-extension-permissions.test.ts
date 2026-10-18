@@ -3,9 +3,10 @@
  *
  * **Both delivery paths, because they are two different pieces of code.**
  * The live path serializes from the in-memory event; the `Last-Event-ID`
- * replay re-sends the stored `payload` string from `event_log` without
- * parsing it. A fix to one is not a fix.
+ * replay parses and filters the stored `payload` from `event_log`.
  */
+import type { ApiKey } from "@withmarfa/shared";
+import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { initEventLog } from "../pubsub.js";
@@ -18,6 +19,7 @@ import {
   request,
   seedOauthBearer,
   settle,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -242,8 +244,7 @@ describe("an OAuth-derived subscriber", () => {
 
 describe("metadata.changed on the Last-Event-ID replay", () => {
   it("carries only the namespaces the subscriber may read", async () => {
-    // The replay re-sends the stored payload string without parsing it,
-    // so it is a second, independent copy of the same disclosure.
+    // Replay filters a stored payload rather than the live event object.
     const { id } = await itemWithTwoNamespaces();
     // The cursor is taken from the log rather than guessed: a fixed "1"
     // trips the retention check on a log that has been trimmed, and the
@@ -435,4 +436,49 @@ describe("the replay's shape guard", () => {
     expect(text).toContain("shape-after-unparseable");
     expect(text).not.toContain("ZZunparseableZZ");
   });
+});
+
+describe("stored malformed extension levels on replay", () => {
+  it.each(["unknown", null])(
+    "denies an exact %j level beneath a wildcard",
+    async (level) => {
+      const key = await mintWorkingKey(ctx);
+      const stored = await ctx.storage.keys.validate(
+        hashApiKey(key, TEST_API_KEY_SALT),
+      );
+      expect(stored).not.toBeNull();
+      await ctx.storage.keys.update(stored!.id, {
+        extension_permissions: {
+          "*": "read",
+          theirs: level,
+        } as ApiKey["extension_permissions"],
+      });
+      const { id } = await itemWithTwoNamespaces();
+      const before = await ctx.storage.eventLog.getAfter(0n, 1000);
+      const cursor = before
+        .map((row) => row.id)
+        .reduce((a, b) => (a > b ? a : b), 0n);
+      expect(
+        (
+          await request(ctx.app, "PUT", `/items/${id}/extensions/mine`, {
+            key: ctx.workingKey,
+            body: { visible: "replayed" },
+          })
+        ).status,
+      ).toBe(200);
+      for (const bearer of [ctx.workingKey, key]) {
+        const stream = await request(ctx.app, "GET", "/events", {
+          key: bearer,
+          headers: { "Last-Event-ID": String(cursor) },
+        });
+        expect(stream.status).toBe(200);
+        const { text } = await readSse(stream, {
+          until: (seen) => seen.includes("metadata.changed"),
+        });
+        expect(text).toContain("replayed");
+        if (bearer === ctx.workingKey) expect(text).toContain("not for you");
+        else expect(text).not.toContain("not for you");
+      }
+    },
+  );
 });

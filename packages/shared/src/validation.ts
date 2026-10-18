@@ -217,24 +217,23 @@ export function resolveTypePermission(
 
 /**
  * The level an extension map grants on a namespace: its exact entry, else its
- * `*` entry, else `"none"`.
+ * `*` entry, else `"none"`. Stored levels other than `read` or `write`
+ * deny access, including an exact entry that would otherwise fall through
+ * to a wildcard grant.
  */
 export function resolveExtensionPermission(
   namespace: string,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
 ): import("./types.js").ExtensionPermission | "none" {
-  if (permissions) {
-    const exact = Object.hasOwn(permissions, namespace)
+  const level: unknown = permissions
+    ? Object.hasOwn(permissions, namespace)
       ? permissions[namespace]
-      : undefined;
-    if (exact) return exact;
-    const wildcard = Object.hasOwn(permissions, "*")
-      ? permissions["*"]
-      : undefined;
-    if (wildcard) return wildcard;
-  }
-  return "none";
+      : Object.hasOwn(permissions, "*")
+        ? permissions["*"]
+        : undefined
+    : undefined;
+  return level === "read" || level === "write" ? level : "none";
 }
 
 /**

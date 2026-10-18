@@ -29,6 +29,7 @@
  */
 import {
   firstReachBeyondMap,
+  resolveExtensionPermission,
   grantCoversScope,
   GLOBAL_TYPE_WILDCARD,
   typeMatchesPattern,
@@ -164,7 +165,7 @@ function resolveRequestedLevel(
  * family is refused outright for a session and compared directly here. A grant
  * carries no literal for an extension namespace, so there is nothing to
  * compare it against; a key carries a map of exactly the same shape as the one
- * being requested, so the comparison is a lookup.
+ * being requested, so their effective reach can be compared.
  *
  * `write` covers `read`, matching every other family. A namespace absent from
  * the creator's map is not held at any level.
@@ -173,17 +174,18 @@ export function firstUncoveredExtension(
   held: Record<string, ExtensionPermission> | undefined,
   requested: Record<string, ExtensionPermission> | undefined,
 ): string | null {
-  for (const [namespace, level] of Object.entries(requested ?? {})) {
-    const mine =
-      held === undefined
-        ? undefined
-        : Object.hasOwn(held, namespace)
-          ? held[namespace]
-          : Object.hasOwn(held, "*")
-            ? held["*"]
-            : undefined;
-    if (mine === undefined) return namespace;
-    if (level === "write" && mine !== "write") return namespace;
+  // The holder may name a denial beneath a wildcard the request preserves.
+  // Compare both maps' own names so minting cannot discard that denial.
+  const namespaces = new Set([
+    ...Object.keys(requested ?? {}),
+    ...Object.keys(held ?? {}),
+  ]);
+  for (const namespace of namespaces) {
+    const level = resolveExtensionPermission(namespace, requested);
+    if (level === "none") continue;
+    const mine = resolveExtensionPermission(namespace, held);
+    if (mine === "none" || (level === "write" && mine !== "write"))
+      return namespace;
   }
   return null;
 }

@@ -73,7 +73,7 @@ export function canonicalReadProjection(
     .filter((name) => name !== "*")
     .sort();
   const extensionDefault =
-    extensionMap["*"] === "read" || extensionMap["*"] === "write";
+    resolveExtensionPermission("*", extensionMap) !== "none";
   const extensions = extensionNames
     .map((name): [string, boolean] => [
       name,

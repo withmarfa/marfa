@@ -16,6 +16,8 @@
  * are not walked, and a field typed as an open record could carry extension
  * data without being found here.
  */
+import type { ApiKey } from "@withmarfa/shared";
+import { hashApiKey } from "../middleware/auth.js";
 import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
@@ -30,12 +32,14 @@ import {
   mintWorkingKey,
   readSseWriting,
   request,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 /** Reaches the seen namespace and a scratch one, and not the unseen one. */
 let narrowKey: string;
+const storedMalformedKeys: string[] = [];
 
 const SEEN = "census-seen";
 const UNSEEN = "census-unseen";
@@ -48,6 +52,22 @@ const SEARCH_WORD = "extensioncensusword";
 beforeAll(async () => {
   ctx = await createTestContext();
   initEventLog(ctx.storage.eventLog);
+  for (const level of ["unknown", null]) {
+    const key = await mintWorkingKey(ctx);
+    const stored = await ctx.storage.keys.validate(
+      hashApiKey(key, TEST_API_KEY_SALT),
+    );
+    expect(stored).not.toBeNull();
+    await ctx.storage.keys.update(stored!.id, {
+      extension_permissions: {
+        "*": "write",
+        [SEEN]: "write",
+        [SCRATCH]: "write",
+        [UNSEEN]: level,
+      } as ApiKey["extension_permissions"],
+    });
+    storedMalformedKeys.push(key);
+  }
   narrowKey = await mintWorkingKey(ctx, {
     extension_permissions: { [SEEN]: "write", [SCRATCH]: "write" },
   });
@@ -493,11 +513,13 @@ describe("every door answering extension data is held to the extension map", () 
       expect(witness.status, "the full key").toBeLessThan(300);
       expect(witness.text, "the full key").toContain(UNSEEN_MARK);
 
-      const narrowed = await drive(narrowKey);
-      expect(narrowed.status, "the narrow key").toBeLessThan(300);
-      expect(narrowed.text, "the narrow key").toContain(SEEN_MARK);
-      expect(narrowed.text, "the narrow key").not.toContain(UNSEEN_MARK);
-      expect(narrowed.text, "the narrow key").not.toContain(UNSEEN);
+      for (const key of [narrowKey, ...storedMalformedKeys]) {
+        const narrowed = await drive(key);
+        expect(narrowed.status, "the narrow key").toBeLessThan(300);
+        expect(narrowed.text, "the narrow key").toContain(SEEN_MARK);
+        expect(narrowed.text, "the narrow key").not.toContain(UNSEEN_MARK);
+        expect(narrowed.text, "the narrow key").not.toContain(UNSEEN);
+      }
     });
   }
 
@@ -518,12 +540,26 @@ describe("every door answering extension data is held to the extension map", () 
       }),
     );
     expect(witness.text).toContain(UNSEEN_MARK);
-    const narrowed = await answer(
+    for (const key of [narrowKey, ...storedMalformedKeys]) {
+      for (const method of ["GET", "PUT", "DELETE"]) {
+        const narrowed = await request(
+          ctx.app,
+          method,
+          `/items/${id}/extensions/${UNSEEN}`,
+          {
+            key,
+            ...(method === "PUT" ? { body: { value: "replacement" } } : {}),
+          },
+        );
+        expect(narrowed.status).toBe(403);
+        expect(await narrowed.text()).not.toContain(UNSEEN_MARK);
+      }
+    }
+    const unchanged = await answer(
       await request(ctx.app, "GET", `/items/${id}/extensions/${UNSEEN}`, {
-        key: narrowKey,
+        key: ctx.workingKey,
       }),
     );
-    expect(narrowed.status).toBe(403);
-    expect(narrowed.text).not.toContain(UNSEEN_MARK);
+    expect(unchanged.text).toContain(UNSEEN_MARK);
   });
 });

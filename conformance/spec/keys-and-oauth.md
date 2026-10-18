@@ -189,6 +189,18 @@ The server MUST give a key reach on an extension namespace only through its exte
 
 **Tests:** `compliance/extensions.test.ts › grants no namespace to a key relabeled with its name`, `› grants no namespace to a key minted with its name for a label`, `› is reached only by a key whose extension map names it`, `› is not granted by a key whose extension map does not name it`.
 
+### `keys-and-oauth/extension-known-levels`
+
+When the server resolves a stored extension map entry, the server MUST grant access only for the levels `read` and `write`.
+
+**Tests:** `compliance/extension-permission-levels.test.ts › grants a normal %s level`, `› denies malformed wildcard level %j`.
+
+### `keys-and-oauth/extension-exact-precedence`
+
+When a stored extension map contains an entry for a namespace, the server MUST use that entry instead of `*`, including when the entry grants no access.
+
+**Tests:** `compliance/extension-permission-levels.test.ts › denies malformed exact level %j ahead of wildcard access`.
+
 ## Minting
 
 ### `keys-and-oauth/mint-answer`
@@ -221,7 +233,7 @@ If a working key's mint names a permission, or a type, edge, metadata or profile
 
 If a working key's mint or update names an extension namespace at a level the caller does not hold, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`, `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
+**Tests:** `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`, `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`, `compliance/extension-permission-levels.test.ts › keeps an exact read ceiling when minting or updating wildcard write`.
 
 ### `keys-and-oauth/plaintext-once`
 
