@@ -1,3 +1,4 @@
+import { HOUSEKEEPING_JOBS } from "./metadata.js";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { AppConfig } from "../config.js";
@@ -72,7 +73,7 @@ export function registerHousekeepingJobs(
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
   housekeeping.register({
-    name: "event-log-cleanup",
+    name: HOUSEKEEPING_JOBS["event-log-cleanup"].name,
     intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
     firstRunDelayMs: 10_000,
     run: async () => {
@@ -103,7 +104,7 @@ export function registerHousekeepingJobs(
   });
 
   housekeeping.register({
-    name: "audit-cleanup",
+    name: HOUSEKEEPING_JOBS["audit-cleanup"].name,
     intervalMs: config.auditCleanupIntervalMs,
     firstRunDelayMs: 5_000,
     run: async () => {
@@ -134,7 +135,7 @@ export function registerHousekeepingJobs(
     wakePoller: () => housekeeping.wake("webhook-poll"),
   });
   housekeeping.register({
-    name: "webhook-schedule",
+    name: HOUSEKEEPING_JOBS["webhook-schedule"].name,
     intervalMs: 1_000,
     deadlineMs: 60_000,
     firstRunDelayMs: 0,
@@ -150,7 +151,7 @@ export function registerHousekeepingJobs(
     }),
   });
   housekeeping.register({
-    name: "webhook-poll",
+    name: HOUSEKEEPING_JOBS["webhook-poll"].name,
     intervalMs: WEBHOOK_POLL_INTERVAL_MS,
     deadlineMs: 120_000,
     firstRunDelayMs: 0,
@@ -170,7 +171,7 @@ export function registerHousekeepingJobs(
   if (config.heartbeatUrl) {
     const heartbeat = new HeartbeatPinger(config.heartbeatUrl);
     housekeeping.register({
-      name: "heartbeat",
+      name: HOUSEKEEPING_JOBS.heartbeat.name,
       intervalMs: config.heartbeatIntervalMs ?? 60_000,
       deadlineMs: 30_000,
       firstRunDelayMs: 0,
@@ -185,7 +186,7 @@ export function registerHousekeepingJobs(
     maxVersions: config.versionMaxVersions,
   });
   housekeeping.register({
-    name: "version-thinning",
+    name: HOUSEKEEPING_JOBS["version-thinning"].name,
     intervalMs: config.versionThinningIntervalMs,
     deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 5_000,
@@ -196,7 +197,7 @@ export function registerHousekeepingJobs(
   // it stays recoverable for as long as any deleted item does.
   const feedExpirer = new FeedExpirer(storage);
   housekeeping.register({
-    name: "feed-expiry",
+    name: HOUSEKEEPING_JOBS["feed-expiry"].name,
     intervalMs: config.feedExpiryIntervalMs,
     deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 5_000,
@@ -212,7 +213,7 @@ export function registerHousekeepingJobs(
     trashOverride,
   );
   housekeeping.register({
-    name: "trash-purge",
+    name: HOUSEKEEPING_JOBS["trash-purge"].name,
     intervalMs: config.trashPurgeIntervalMs,
     firstRunDelayMs: 5_000,
     run: async () => ({ deleted: await trashPurger.runOnce() }),
@@ -230,7 +231,7 @@ export function registerHousekeepingJobs(
       revokedGrantRetentionDays,
     );
     housekeeping.register({
-      name: "revoked-grant-purge",
+      name: HOUSEKEEPING_JOBS["revoked-grant-purge"].name,
       intervalMs: 3_600_000,
       firstRunDelayMs: 20_000,
       run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
@@ -251,7 +252,7 @@ export function registerHousekeepingJobs(
       grantInactivityDays,
     );
     housekeeping.register({
-      name: "grant-inactivity-retirement",
+      name: HOUSEKEEPING_JOBS["grant-inactivity-retirement"].name,
       intervalMs: 86_400_000,
       firstRunDelayMs: 40_000,
       run: async () => ({ retired: await grantInactivityRetirer.runOnce() }),
@@ -260,7 +261,7 @@ export function registerHousekeepingJobs(
 
   const revokedKeyReaper = new RevokedKeyReaper(storage);
   housekeeping.register({
-    name: "revoked-key-reap",
+    name: HOUSEKEEPING_JOBS["revoked-key-reap"].name,
     intervalMs: 3_600_000,
     firstRunDelayMs: 45_000,
     run: async () => ({ deleted: await revokedKeyReaper.runOnce() }),
@@ -270,7 +271,7 @@ export function registerHousekeepingJobs(
   if (storage.authSessions) {
     const authSessionCleaner = new AuthSessionCleaner(storage.authSessions);
     housekeeping.register({
-      name: "auth-session-cleanup",
+      name: HOUSEKEEPING_JOBS["auth-session-cleanup"].name,
       intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
       firstRunDelayMs: 10_000,
       run: async () => ({ deleted: await authSessionCleaner.runOnce() }),
@@ -281,7 +282,7 @@ export function registerHousekeepingJobs(
   // overwrites them transparently).
   const rateLimitCleaner = new RateLimitWindowCleaner(storage);
   housekeeping.register({
-    name: "rate-limit-cleanup",
+    name: HOUSEKEEPING_JOBS["rate-limit-cleanup"].name,
     intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
     firstRunDelayMs: 20_000,
     run: async () => ({ deleted: await rateLimitCleaner.runOnce() }),
@@ -289,7 +290,7 @@ export function registerHousekeepingJobs(
 
   const inbound = config.inbound ?? DEFAULT_INBOUND_LIMITS;
   housekeeping.register({
-    name: "inbound-delivery-cleanup",
+    name: HOUSEKEEPING_JOBS["inbound-delivery-cleanup"].name,
     intervalMs: inbound.cleanupIntervalMs,
     firstRunDelayMs: 30_000,
     run: async () => {
@@ -313,7 +314,7 @@ export function registerHousekeepingJobs(
   if (dcrRetentionDays > 0 && storage.oauthProvider) {
     const dcrClientCleaner = new DcrClientCleaner(storage, dcrRetentionDays);
     housekeeping.register({
-      name: "dcr-client-cleanup",
+      name: HOUSEKEEPING_JOBS["dcr-client-cleanup"].name,
       intervalMs: config.dcrClientCleanupIntervalMs ?? 3_600_000,
       firstRunDelayMs: 25_000,
       run: async () => ({ deleted: await dcrClientCleaner.runOnce() }),
@@ -334,7 +335,7 @@ export function registerHousekeepingJobs(
     maxBytes: config.blobReplicateBatchBytes ?? 1024 * 1024 * 1024,
   });
   housekeeping.register({
-    name: "blob-replicate",
+    name: HOUSEKEEPING_JOBS["blob-replicate"].name,
     intervalMs: config.blobReplicateIntervalMs ?? 60_000,
     deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 15_000,
@@ -351,7 +352,7 @@ export function registerHousekeepingJobs(
     maxBytes: config.blobIntegrityBatchBytes ?? 1024 * 1024 * 1024,
   });
   housekeeping.register({
-    name: "blob-integrity",
+    name: HOUSEKEEPING_JOBS["blob-integrity"].name,
     intervalMs: config.blobIntegrityIntervalMs ?? 3_600_000,
     deadlineMs: LONG_RUN_DEADLINE_MS,
     firstRunDelayMs: 60_000,
@@ -376,7 +377,7 @@ export function registerHousekeepingJobs(
       config.blobCleanupGraceMs ?? 86_400_000,
     );
     housekeeping.register({
-      name: "blob-orphans",
+      name: HOUSEKEEPING_JOBS["blob-orphans"].name,
       intervalMs: blobCleanupIntervalMs,
       firstRunDelayMs: 30_000,
       run: () => orphans.runOnce(),
@@ -409,7 +410,7 @@ export function registerHousekeepingJobs(
       maxMemoryBytes: config.enrichmentMaxMemoryBytes ?? 256 * 1024 * 1024,
     });
     housekeeping.register({
-      name: "enrichment-sweep",
+      name: HOUSEKEEPING_JOBS["enrichment-sweep"].name,
       intervalMs: config.enrichmentIntervalMs ?? 30_000,
       firstRunDelayMs: 20_000,
       run: () => enrichmentSweeper.runOnce(),
@@ -426,7 +427,7 @@ export function registerHousekeepingJobs(
       bulkActionJobRetentionMs,
     );
     housekeeping.register({
-      name: "bulk-action-gc",
+      name: HOUSEKEEPING_JOBS["bulk-action-gc"].name,
       intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
       firstRunDelayMs: 60_000,
       run: async () => ({ deleted: await bulkActionGc.runOnce() }),
