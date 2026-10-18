@@ -196,7 +196,7 @@ sqlite3 /data/marfa.db "BEGIN; SELECT count(*) FROM sqlite_master;" ".shell cp /
 ```
 
 > [!WARNING]
-> With a bucket, a copy that starts under the instance's own `S3_PREFIX` becomes the newest state in the bucket. The copy is older than the replica. The entrypoint keeps a database that is already on the volume and replicates it to `<S3_PREFIX>/db`, so a restore to the latest state then holds none of the writes made after the copy. Only a point-in-time restore can still read those writes, and only until Litestream removes them with the day of snapshots it keeps. Restore a copy under a new prefix, as the steps below say.
+> With a bucket, do not start a copy under the instance's own `S3_PREFIX`. The entrypoint keeps a database that is already on the volume and replicates it to `<S3_PREFIX>/db`. The older copy then becomes the newest state in the bucket, and a restore to the latest state holds none of the writes made after the copy. Only a point-in-time restore can still read those writes, until Litestream removes them with the day of snapshots it keeps.
 
 Restore from any of these like this:
 
