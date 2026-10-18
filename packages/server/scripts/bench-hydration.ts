@@ -46,6 +46,7 @@ async function main(): Promise<void> {
       auditCleanupIntervalMs: 86400000,
       eventLogRetentionHours: 168,
       versionThinningIntervalMs: 3600000,
+      feedExpiryIntervalMs: 3600000,
       versionRecentDays: 30,
       versionDailySnapshotDays: 90,
       versionWeeklySnapshotDays: 365,

@@ -1,9 +1,9 @@
 import { softDeleteState, type ItemState } from "@withmarfa/shared";
 
 /**
- * The `trashed_at` half of a state write, computed once so the four write
- * paths that set it — `create`, `delete`, `restore` and `transition` —
- * cannot disagree about it.
+ * The `trashed_at` and `restored_at` part of a state write, computed once so
+ * the four write paths that set them — `create`, `delete`, `restore` and
+ * `transition` — cannot disagree about them.
  *
  * `trashed_at` records when an item entered its soft-deleted state, and the
  * retention sweep is its only reader. `updated_at` cannot stand in for it:
@@ -18,6 +18,10 @@ import { softDeleteState, type ItemState } from "@withmarfa/shared";
  * long rather than "when it entered the bin, except for the states where it
  * means nothing".
  *
+ * Leaving the soft-deleted state also stamps `restored_at`, which the
+ * feed-expiry job reads and nothing clears: a row a person brought back is
+ * not expired again by the age that expired it.
+ *
  * Returns an empty patch when the write moves between two states that are
  * both outside the soft-deleted one, so `active → archived` leaves the
  * column alone rather than clearing something that is already null.
@@ -27,11 +31,14 @@ export function softDeleteClock(
   from: ItemState,
   to: ItemState,
   now: string,
-): { trashed_at: string | null } | Record<string, never> {
+):
+  | { trashed_at: string }
+  | { trashed_at: null; restored_at: string }
+  | Record<string, never> {
   const softState = softDeleteState(type);
   if (to === softState) return { trashed_at: now };
   // Clearing on the way out is what makes a restore-then-re-delete start a
   // fresh window instead of inheriting the first one's.
-  if (from === softState) return { trashed_at: null };
+  if (from === softState) return { trashed_at: null, restored_at: now };
   return {};
 }

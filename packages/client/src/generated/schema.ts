@@ -2049,6 +2049,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** @description How long Marfa keeps the feed items of a type. A part you leave out comes from the parent type. A type that no type in its chain gives a window keeps its items. */
+        RetentionPolicy: {
+            /** @description How many days Marfa keeps a feed item, counted from when it arrived: a whole number from 1 to 36,500. After that Marfa moves the item to the trash. `null` keeps feed items although a parent type expires them. Library items never expire. */
+            feed_days?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
         ConnectorProblems: {
             [key: string]: string;
@@ -2961,6 +2968,7 @@ export interface components {
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
+            retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
         };
         /**
          * @description A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.
@@ -3097,6 +3105,7 @@ export interface components {
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
+            retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
             /** @description The type's identifier, such as `acme.deal` or `user.recipe`. */
             id: string;
         };
@@ -3180,6 +3189,7 @@ export interface components {
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
+            retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
             /** @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing. */
             id?: string;
         };

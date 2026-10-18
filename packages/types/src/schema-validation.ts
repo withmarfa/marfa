@@ -19,6 +19,7 @@ import type {
   FieldFormat,
   FieldType,
   MergePolicy,
+  RetentionPolicy,
   TypeRole,
   TypeSchema,
   VersionPolicy,
@@ -89,6 +90,13 @@ const FORMAT_TO_FIELD_TYPE: Readonly<Partial<Record<FieldFormat, FieldType>>> =
     date: "date",
     thumbnail: "thumbnail",
   };
+
+/**
+ * The most days `retention_policy.feed_days` may name: the largest window
+ * an instance setting takes (`MAX_RETENTION_DAYS`), which keeps the cutoff
+ * a job computes inside the range of a date.
+ */
+export const MAX_FEED_DAYS = 36_500;
 
 /**
  * The property names full-text search indexes whatever their field type. A
@@ -858,6 +866,7 @@ export function validateTypeSchema(
   validateLinkField(obj, fields, requiredNames, ancestorFields, errors);
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
+  validateRetentionPolicy(obj, errors);
   validateCompatibleWith(
     obj,
     fields,
@@ -925,6 +934,10 @@ export function validateTypeSchema(
   const mergePolicy = asRecord(obj.merge_policy);
   if (mergePolicy) {
     schema.merge_policy = mergePolicy;
+  }
+  const retentionPolicy = asRecord(obj.retention_policy);
+  if (retentionPolicy) {
+    schema.retention_policy = retentionPolicy;
   }
 
   return { success: true, data: schema };
@@ -1459,6 +1472,59 @@ function validateMergePolicy(
         expected: `one of: ${MERGE_STRATEGIES.join(", ")}`,
         actual: describe(mp.default),
         hint: "Omit default to fall back to last_writer_wins.",
+      }),
+    );
+  }
+}
+
+/**
+ * `feed_days` is a whole number of days from 1 to `MAX_FEED_DAYS`, or `null`
+ * to keep feed items although a parent expires them. A type in the `system`
+ * namespace takes no retention at all: its items have no feed tier, so a
+ * window on it would never act and would read as if it did.
+ */
+function validateRetentionPolicy(
+  obj: Record<string, unknown>,
+  errors: SchemaValidationIssue[],
+): void {
+  if (obj.retention_policy === undefined) return;
+  const rp = asRecord(obj.retention_policy);
+  if (!rp) {
+    errors.push(
+      issue({
+        field: "retention_policy",
+        expected: "an object, or nothing",
+        actual: describe(obj.retention_policy),
+        hint: 'Write retention_policy as { "feed_days": 30 }.',
+      }),
+    );
+    return;
+  }
+  if (typeof obj.id === "string" && obj.id.split(".", 1)[0] === "system") {
+    errors.push(
+      issue({
+        field: "retention_policy",
+        expected: "no retention_policy on a system type",
+        actual: describe(obj.retention_policy),
+        hint: "System items have no feed tier, so there is nothing to expire. Drop retention_policy.",
+      }),
+    );
+    return;
+  }
+  const days = rp.feed_days;
+  if (days === undefined || days === null) return;
+  if (
+    typeof days !== "number" ||
+    !Number.isInteger(days) ||
+    days < 1 ||
+    days > MAX_FEED_DAYS
+  ) {
+    errors.push(
+      issue({
+        field: "retention_policy.feed_days",
+        expected: `a whole number of days from 1 to ${String(MAX_FEED_DAYS)}, or null`,
+        actual: describe(days),
+        hint: "Set null to keep feed items; omit retention_policy to inherit the parent's window.",
       }),
     );
   }
@@ -2002,6 +2068,7 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
     link_field: true,
     version_policy: true,
     merge_policy: true,
+    retention_policy: true,
     compatible_with: true,
   } satisfies Record<keyof TypeSchema, true>),
   "required",
@@ -2046,6 +2113,13 @@ export const MERGE_POLICY_KEYS: ReadonlySet<string> = new Set(
     fields: true,
     default: true,
   } satisfies Record<keyof MergePolicy, true>),
+);
+
+/** Every key of a type's `retention_policy`, held the same way. */
+export const RETENTION_POLICY_KEYS: ReadonlySet<string> = new Set(
+  Object.keys({
+    feed_days: true,
+  } satisfies Record<keyof RetentionPolicy, true>),
 );
 
 /**
@@ -2151,8 +2225,8 @@ function unreadKeysOf(
 /**
  * One issue per key a schema carries that its validator does not read, at the
  * top level and inside each object the schema declares: a type's fields,
- * `display_hints`, `version_policy` and `merge_policy`, and an edge type's
- * properties. The issue's `field` is the key's path, such as
+ * `display_hints`, `version_policy`, `merge_policy` and `retention_policy`, and
+ * an edge type's properties. The issue's `field` is the key's path, such as
  * `fields.title.minimum`.
  *
  * Both validators call it, so the wire, an archive restore and the in-tree
@@ -2208,6 +2282,7 @@ export function unreadKeys(
     ["display_hints", DISPLAY_HINTS_KEYS],
     ["version_policy", VERSION_POLICY_KEYS],
     ["merge_policy", MERGE_POLICY_KEYS],
+    ["retention_policy", RETENTION_POLICY_KEYS],
   ] as const) {
     const record = asRecord(obj[key]);
     if (record) issues.push(...unreadKeysOf(record, key, read, key));

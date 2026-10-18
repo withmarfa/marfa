@@ -27,6 +27,8 @@ const NOBODY = /\bby:\s*null\b/;
 const NOBODY_WRITES: Record<string, string> = {
   "enrichment/sweeper.ts":
     "the enrichment sweep, which no request asks for (`versions/writer-none`)",
+  "storage/feed-expiry.ts":
+    "the feed-expiry job's moves to the bin, which write no version and which no request asks for",
   "storage/retention.ts":
     "the retention sweep's purges, which write no version, and the retirement of an app unused past its window, which no request asks for",
 };

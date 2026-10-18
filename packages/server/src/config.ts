@@ -162,6 +162,7 @@ export interface AppConfig {
    *  `housekeeping/registrations.ts` applies the 1h fallback when unset. */
   eventLogCleanupIntervalMs?: number;
   versionThinningIntervalMs: number;
+  feedExpiryIntervalMs: number;
   versionRecentDays: number;
   versionDailySnapshotDays: number;
   versionWeeklySnapshotDays: number;
@@ -1229,6 +1230,11 @@ const settingsShape = {
     "How often the `version-thinning` job runs.",
     { max: MAX_RETENTION_MS, unit: "ms" },
   ),
+  FEED_EXPIRY_INTERVAL_MS: count(
+    3_600_000,
+    "How often the `feed-expiry` job runs.",
+    { max: MAX_RETENTION_MS, unit: "ms" },
+  ),
   VERSION_RECENT_DAYS: count(
     30,
     "The window in which the version policy keeps every version of an item.",
@@ -1701,6 +1707,7 @@ export function loadConfig(
     eventLogRetentionHours: s.MARFA_EVENT_LOG_RETENTION_HOURS,
     eventLogCleanupIntervalMs: s.MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS,
     versionThinningIntervalMs: s.VERSION_THINNING_INTERVAL_MS,
+    feedExpiryIntervalMs: s.FEED_EXPIRY_INTERVAL_MS,
     versionRecentDays: s.VERSION_RECENT_DAYS,
     versionDailySnapshotDays: s.VERSION_DAILY_SNAPSHOT_DAYS,
     versionWeeklySnapshotDays: s.VERSION_WEEKLY_SNAPSHOT_DAYS,

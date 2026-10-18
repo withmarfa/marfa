@@ -156,6 +156,8 @@ const DisplayHintsSchema = z
 const MERGE_POLICY = "How Marfa merges conflicting edits to the type's items.";
 const DISPLAY_HINTS = "Which fields clients show as an item's title and body.";
 const VERSION_POLICY = "How long Marfa keeps the versions of the type's items.";
+const RETENTION_POLICY =
+  "How long Marfa keeps the type's items in the feed tier.";
 const COMPATIBLE_WITH = "The types this one is a structural superset of.";
 
 const LinkFieldSchema = z
@@ -196,12 +198,28 @@ const VersionPolicySchema = z
   )
   .openapi("VersionPolicy");
 
+const RetentionPolicySchema = z
+  .looseObject({
+    feed_days: z
+      .number()
+      .nullable()
+      .optional()
+      .describe(
+        "How many days Marfa keeps a feed item, counted from when it arrived: a whole number from 1 to 36,500. After that Marfa moves the item to the trash. `null` keeps feed items although a parent type expires them. Library items never expire.",
+      ),
+  })
+  .describe(
+    "How long Marfa keeps the feed items of a type. A part you leave out comes from the parent type. A type that no type in its chain gives a window keeps its items.",
+  )
+  .openapi("RetentionPolicy");
+
 /** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
 export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
   Record<string, z.ZodType>
 > = {
   DisplayHints: DisplayHintsSchema,
   VersionPolicy: VersionPolicySchema,
+  RetentionPolicy: RetentionPolicySchema,
 };
 
 /**
@@ -278,6 +296,7 @@ const typeDefinitionBody = {
   link_field: LinkFieldSchema.optional(),
   version_policy: VersionPolicySchema.optional().describe(VERSION_POLICY),
   merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
+  retention_policy: RetentionPolicySchema.optional().describe(RETENTION_POLICY),
 };
 
 // `fields` leads the shape, and `id` follows it, because a refusal names
@@ -438,6 +457,8 @@ const TypeSchemaResponse = z
     link_field: LinkFieldSchema.optional(),
     version_policy: VersionPolicySchema.optional().describe(VERSION_POLICY),
     merge_policy: MergePolicySchema.optional().describe(MERGE_POLICY),
+    retention_policy:
+      RetentionPolicySchema.optional().describe(RETENTION_POLICY),
   })
   .describe(
     "A type says which fields the items of that type hold, and what else Marfa does for them.",

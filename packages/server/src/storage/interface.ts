@@ -664,6 +664,9 @@ export type StoredCreateItemInput = CreateItemInput &
 
 export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 
+/** An item line's dates, with when the row last came back from the bin. */
+export type ArchivedItemDates = ArchivedDates & { restored_at?: string };
+
 export type StoredCreateEdgeInput = CreateEdgeInput &
   RestoredRowInput &
   ArchivedDates &
@@ -707,7 +710,7 @@ export interface CascadeRoot {
 
 export interface ItemStore {
   /** Archive finalization after metadata writes; never changes the version. */
-  restoreDates(id: string, dates: ArchivedDates): Promise<void>;
+  restoreDates(id: string, dates: ArchivedItemDates): Promise<void>;
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
   /**
@@ -853,6 +856,26 @@ export interface ItemStore {
    * in the bin.
    */
   listTrashedOlderThan(beforeDate: string, limit?: number): Promise<string[]>;
+  /**
+   * The active feed items of `type` that arrived strictly before
+   * `beforeDate` (an ISO 8601 timestamp), oldest first, at most `limit` (200
+   * by default), for the feed-expiry job. `after` is the last row of the
+   * previous page, so a row the job leaves in place is not read again within
+   * a run.
+   *
+   * The age is `created_at`, which a natural-key upsert keeps. Only `active`
+   * rows are listed: an archived feed item has been put away, and a row in
+   * the bin is already there. A row that has been brought back from the bin
+   * is not listed, so an expiry moves a row to the bin at most once.
+   */
+  listExpiredFeed(
+    type: string,
+    beforeDate: string,
+    after?: { created_at: string; id: string },
+    limit?: number,
+  ): Promise<{ id: string; created_at: string }[]>;
+  /** When each of `ids` that has been brought back from the bin was, by id. */
+  restoredAtOf(ids: readonly string[]): Promise<Map<string, string>>;
   /**
    * The ids of the revoked **application** grant rows whose
    * `properties.revoked_at` is strictly older than `beforeDate`, at most

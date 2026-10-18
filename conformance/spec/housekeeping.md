@@ -20,7 +20,7 @@ When a key or app token lacking `instance.read` sends `GET /housekeeping`, the s
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate` and `blob-integrity` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate` and `blob-integrity` on every instance, whatever its settings and its `/config`.
 
 **Reason:** these jobs have no off switch. A job whose retention `/config` can set still runs when that retention is 0, and keeps everything.
 
@@ -327,6 +327,166 @@ When an item's type is no longer registered, the server MUST thin the item by th
 When a type is replaced while the `version-thinning` job thins its items, the server MUST thin each item by the policy as it stands when its snapshots are removed.
 
 **Tests:** `compliance/housekeeping-thinning.test.ts › thins each item by the policy as it stands when its snapshots are removed`.
+
+## Feed expiry
+
+The `feed-expiry` job moves feed items to the bin by their type's `retention_policy` (`types/retention-policy-merge`). Its interval is `FEED_EXPIRY_INTERVAL_MS`. A moved item is in the bin as a deleted one is, and the `trash-purge` job removes it for good after the trash's own retention.
+
+### `housekeeping/feed-expiry-window`
+
+When the `feed-expiry` job runs, the server MUST move to the bin each active feed item once more than the resolved `feed_days` of its type has passed, in days, since the item's `created_at`.
+
+**Reason:** a type of feed items that arrive in volume, such as a feed's entries, would otherwise grow without bound.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › moves a feed item to the bin once its type's days have passed since it arrived, and not before`.
+
+### `housekeeping/feed-expiry-early`
+
+While no more than the resolved `feed_days` of an item's type has passed, in days, since the item's `created_at`, the server MUST NOT move the item to the bin when the `feed-expiry` job runs.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › moves a feed item to the bin once its type's days have passed since it arrived, and not before`.
+
+### `housekeeping/feed-expiry-arrival`
+
+The server MUST count the age of a feed item for the `feed-expiry` job from the item's `created_at`, which a natural-key upsert of the item keeps.
+
+**Reason:** a connector that refreshes an entry on every sync would otherwise keep resetting its clock.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › counts from arrival, which a natural-key upsert keeps`.
+
+### `housekeeping/feed-expiry-tier-move`
+
+When an item that arrived in the library is moved to the feed, the server MUST judge it at the next run of the `feed-expiry` job by its `created_at`.
+
+**Reason:** a person who moves an old item to the feed has put it in the tier that expires, and the bin keeps it recoverable.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › judges an item moved from the library to the feed by its arrival, at the next run`.
+
+### `housekeeping/feed-expiry-library`
+
+The server MUST NOT move a library item to the bin when the `feed-expiry` job runs, whatever its age.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps a library item past the window, and the feed item beside it goes`.
+
+### `housekeeping/feed-expiry-no-window`
+
+While the resolved `feed_days` of a type is absent or `null`, the server MUST NOT move an item of the type to the bin when the `feed-expiry` job runs.
+
+**Reason:** a type that declares no window, and every type that existed before the policy did, keeps its items.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps the items of a type whose window is absent or null, and a child's own window applies`.
+
+### `housekeeping/feed-expiry-inherited`
+
+When a type names no `feed_days` of its own, the server MUST expire its feed items by the `feed_days` its nearest ancestor naming one gives it, as `GET /types/{id}` answers it.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › takes a child's window from its parent, and a grandchild's from the chain`, `› keeps the items of a type whose window is absent or null, and a child's own window applies`.
+
+### `housekeeping/feed-expiry-current-window`
+
+When a type's `retention_policy` is replaced, the server MUST expire the type's feed items at the next run of the `feed-expiry` job by the window as it stands then.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › applies the window a type has at the next run when it is changed after the items arrived`.
+
+### `housekeeping/feed-expiry-archived`
+
+The server MUST NOT move an archived feed item to the bin when the `feed-expiry` job runs.
+
+**Reason:** a feed item is transitory until it is promoted or archived, so a person who archived it has kept it.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps a feed item a person archived, and the active one beside it goes`.
+
+### `housekeeping/feed-expiry-in-bin`
+
+The server MUST leave a feed item that is already in the bin where it is when the `feed-expiry` job runs, and announce nothing for it.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › leaves an item already in the bin where it is, with no second announcement`.
+
+### `housekeeping/feed-expiry-restored`
+
+The server MUST NOT move an item to the bin by the `feed-expiry` job after it has been brought back from the bin, by a restore or by a transition to `active`.
+
+**Reason:** an expiry that a person undid by restoring would otherwise repeat at every run, and the item could never be kept.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › does not move an item again that was brought back from the bin, by restore or by transition`.
+
+### `housekeeping/feed-expiry-restored-archive`
+
+When an archive carries an item that had been brought back from the bin, and it is restored into an instance, the server MUST NOT move that item to the bin by the `feed-expiry` job.
+
+**Reason:** the archive is how an instance moves to a new build, and the first run there would otherwise move every item a person rescued back to the bin.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps an item brought back from the bin through an archive restored into a new instance`.
+
+### `housekeeping/feed-expiry-unregistered`
+
+While an item's type is not registered, the server MUST NOT move the item to the bin when the `feed-expiry` job runs.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps the items of a type that was force-deleted, and judges them once it is registered again`.
+
+### `housekeeping/feed-expiry-batch`
+
+When more feed items have expired than one transaction moves, the server MUST move every one of them in the same run of the `feed-expiry` job.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › moves every expired item however many there are`.
+
+### `housekeeping/feed-expiry-recoverable`
+
+When the `feed-expiry` job moves an item to the bin, the server MUST keep it there so that `POST /items/{id}/restore` brings it back active.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › keeps an expired item in the bin, where a restore brings it back active`.
+
+### `housekeeping/feed-expiry-announced`
+
+When the `feed-expiry` job moves an item to the bin, the server MUST announce it as `item.deleted` on the event stream.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › announces item.deleted for an expired item`.
+
+### `housekeeping/feed-expiry-audited`
+
+When the `feed-expiry` job moves items to the bin, the server MUST record an audit entry with the action `items.feed_expired`, naming in its `details` the `type`, the number `moved` and the `item_ids`, those a cascade took with another included.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › records an audit entry naming the type and the items it moved`.
+
+### `housekeeping/feed-expiry-promoted`
+
+When the `feed-expiry` job moves a feed item to the bin, the server MUST leave a library item linked to it by a `derived-from` edge active and unchanged.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › leaves the library copy a feed item was promoted to active and unchanged`.
+
+### `housekeeping/feed-expiry-cascade`
+
+When every item an expired feed item's cascading edges reach is an expired feed item or already in the bin, the server MUST move the item to the bin with them when the `feed-expiry` job runs.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › takes a parent with its children when all of them are expired feed items`.
+
+### `housekeeping/feed-expiry-cascade-held`
+
+If an expired feed item's cascading edges reach an item that is not an expired feed item and is not in the bin, then the server MUST leave the item active when the `feed-expiry` job runs.
+
+**Reason:** a delete by cascade would take a library item, an archived one or a feed item that has not yet expired, which no window gave up.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › holds back a parent whose children include an item that has not expired or is in the library`.
+
+### `housekeeping/feed-expiry-blocked`
+
+If an edge with `cascade_on_delete` of `block` refuses the delete of an expired feed item, then the server MUST leave the item active when the `feed-expiry` job runs.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › holds back an item whose delete an edge with cascade_on_delete block refuses`.
+
+### `housekeeping/feed-expiry-report`
+
+When a run of the `feed-expiry` job finishes, the server MUST report in its `result` the number of items it moved to the bin, those a cascade took with another included, as `moved` and the number it held back as `held`.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › reports the number of items it moved to the bin and the number it held back`.
+
+### `housekeeping/feed-expiry-event-log`
+
+The server MUST NOT shorten how long the event log keeps an event because of a type's `retention_policy`.
+
+**Reason:** the event log keeps its own retention (`MARFA_EVENT_LOG_RETENTION_HOURS`), which a device that catches up depends on.
+
+**Tests:** `compliance/housekeeping-feed-expiry.test.ts › is the event log's own, whatever window a type names`.
 
 ## Restarts and deadlines
 

@@ -76,6 +76,7 @@ import { log } from "../middleware/logger.js";
 import { edgeSourcesFor } from "./_edge-visibility.js";
 import {
   archiveDates,
+  archiveRestoredAt,
   archiveVersions,
   archiveWriter,
 } from "./restore-archive-history.js";
@@ -83,6 +84,15 @@ import { archiveLines, readArchive } from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
+
+function archivedRestoredAt(
+  item: Record<string, unknown>,
+  restoredAt: unknown,
+  index: number,
+): { restored_at?: string } {
+  const value = archiveRestoredAt(item, restoredAt, index);
+  return value === undefined ? {} : { restored_at: value };
+}
 
 function archiveScalarRefusal(
   kind: "item" | "edge",
@@ -288,6 +298,7 @@ interface ArchivedItemLine {
   lending_extensions?: unknown;
   versions?: unknown;
   writer?: unknown;
+  restored_at?: unknown;
 }
 
 /** An `edges.ndjson` line. */
@@ -424,6 +435,7 @@ function itemRefusal(
 ): MarfaError | null {
   const { item } = entry;
   archiveDates("item", item, index);
+  archiveRestoredAt(item, entry.restored_at, index);
   archiveWriter(item, entry.writer, index);
   const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
   const scalar = archiveScalarRefusal("item", item, index);
@@ -700,7 +712,10 @@ async function restoreRows(
       const seenSnapshotIds = new Set<string>();
       const restoreItem = async (entry: ArchivedItemLine): Promise<void> => {
         const { item, metadata: meta, lending_blobs: lending } = entry;
-        const dates = archiveDates("item", item, index);
+        const dates = {
+          ...archiveDates("item", item, index),
+          ...archivedRestoredAt(item, entry.restored_at, index),
+        };
         const writer = archiveWriter(item, entry.writer, index);
         const history = archiveVersions(
           item,

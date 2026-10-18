@@ -86,6 +86,12 @@ export const items = sqliteTable(
     // by a second delete starts a fresh window rather than inheriting the
     // first one. Nullable because an active row has no such time.
     trashed_at: text("trashed_at"),
+    // When the row last came back out of its soft-deleted state; null for a
+    // row that never has. The feed-expiry job leaves such a row alone, so an
+    // item a person brought back from the bin is not binned again by the
+    // age that put it there. Set by the same write that clears `trashed_at`
+    // and never cleared, so a second trip through the bin does not undo it.
+    restored_at: text("restored_at"),
     // SQLite's binary JSONB encoding. Write through jsonb(...) and update
     // through jsonb_set (json_set returns text and would silently revert the
     // encoding); read through json(...) — the raw blob is not JSON text.
@@ -157,6 +163,12 @@ export const items = sqliteTable(
     index("idx_items_ends_at")
       .on(table.ends_at)
       .where(sql`ends_at IS NOT NULL`),
+    // Serves the feed-expiry job, one type at a time: the oldest active feed
+    // items of a type that were never restored from the bin, in
+    // `(created_at, id)` order, which is the order its keyset cursor walks.
+    index("idx_items_feed_expiry")
+      .on(table.type, table.created_at, table.id)
+      .where(sql`tier = 'feed' AND state = 'active' AND restored_at IS NULL`),
     // No type in the predicate: which types are files is the registry's answer.
     index("idx_items_enrichment_queue")
       .on(table.created_at)

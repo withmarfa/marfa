@@ -61,6 +61,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
       auditCleanupIntervalMs: 86_400_000,
       eventLogRetentionHours: 168,
       versionThinningIntervalMs: 3_600_000,
+      feedExpiryIntervalMs: 3_600_000,
       versionRecentDays: 30,
       versionDailySnapshotDays: 90,
       versionWeeklySnapshotDays: 365,

@@ -14,6 +14,7 @@ import type {
   FieldDefinition,
   MergePolicy,
   MergeStrategy,
+  RetentionPolicy,
   TypeRole,
   TypeSchema,
   VersionPolicy,
@@ -55,6 +56,25 @@ export function resolveMergePolicy(
   if (Object.keys(fields).length > 0) out.fields = fields;
   if (defaultStrategy) out.default = defaultStrategy;
   return out;
+}
+
+/**
+ * Resolves the effective retention policy for a type by walking its parent
+ * chain, root to leaf, key by key. A descendant's `feed_days` replaces the
+ * ancestor's, `null` included, which is how it keeps its feed items although
+ * a parent expires them. `undefined` when no type in the chain declares one.
+ */
+export function resolveRetentionPolicy(
+  typeId: string,
+  resolve: TypeResolver,
+): RetentionPolicy | undefined {
+  let resolved: RetentionPolicy | undefined;
+  for (const ancestor of buildChain(typeId, resolve)) {
+    const policy = ancestor.retention_policy;
+    if (!policy) continue;
+    resolved = { ...(resolved ?? {}), ...policy };
+  }
+  return resolved;
 }
 
 /**
@@ -104,6 +124,7 @@ function buildChain(typeId: string, resolve: TypeResolver): TypeSchema[] {
  * - `version_policy` — merged root→leaf, per-key, which is
  *   `merge_policy`'s inheritance behavior.
  * - `merge_policy` — delegated to `resolveMergePolicy`.
+ * - `retention_policy` — delegated to `resolveRetentionPolicy`.
  * - `roles` — union across the chain, delegated to `resolveRoles`. Absent
  *   rather than empty when the chain declares none.
  * - `id`, `parent`, `version`, `label`, `description`, `compatible_with` —
@@ -147,6 +168,8 @@ export function resolveTypeSchema(
     versionPolicy = { ...(versionPolicy ?? {}), ...vp };
   }
 
+  const retentionPolicy = resolveRetentionPolicy(typeId, resolve);
+
   const roles = resolveRoles(typeId, resolve);
   const mergePolicy = resolveMergePolicy(typeId, resolve);
   const hasMergePolicy =
@@ -169,6 +192,7 @@ export function resolveTypeSchema(
   if (self.link_field !== undefined) resolved.link_field = self.link_field;
   if (versionPolicy) resolved.version_policy = versionPolicy;
   if (hasMergePolicy) resolved.merge_policy = mergePolicy;
+  if (retentionPolicy) resolved.retention_policy = retentionPolicy;
   if (roles) resolved.roles = roles;
   return resolved;
 }

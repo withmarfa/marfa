@@ -27,6 +27,7 @@ export const QUIET_SCHEDULE: Record<string, string> = {
   MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: NEVER_MS,
   MARFA_INBOUND_CLEANUP_INTERVAL_MS: NEVER_MS,
   VERSION_THINNING_INTERVAL_MS: NEVER_MS,
+  FEED_EXPIRY_INTERVAL_MS: NEVER_MS,
 };
 
 export const operatorOf = (server: FreshServer): MarfaClient =>

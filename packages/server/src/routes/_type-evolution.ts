@@ -56,10 +56,11 @@ export interface Evolution {
  * every row.
  *
  * **Every other member must be as it was**: `parent`, `roles`, `link_field`,
- * `version_policy`, `merge_policy` and `compatible_with`. Each acts beyond
- * the type: a link change forgets the purges its tombstones record, a
- * version policy thins history, a merge policy decides which concurrent edit
- * is dropped, a role changes what may link to the type, a parent changes
+ * `version_policy`, `merge_policy`, `retention_policy` and `compatible_with`.
+ * Each acts beyond the type: a link change forgets the purges its tombstones
+ * record, a version policy thins history, a merge policy decides which
+ * concurrent edit is dropped, a retention policy moves feed items to the bin,
+ * a role changes what may link to the type, a parent changes
  * which fields it inherits and which queries find its rows, and a
  * `compatible_with` is a claim readers rely on.
  */

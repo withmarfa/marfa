@@ -597,6 +597,7 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`state` text DEFAULT 'active' NOT NULL,
 	`tier` text DEFAULT 'library' NOT NULL,
 	`trashed_at` text,
+	`restored_at` text,
 	`properties` blob NOT NULL,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL,
@@ -625,6 +626,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_ends_at` ON `items` (`ends_at`) WHERE ends_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_feed_expiry` ON `items` (`type`,`created_at`,`id`) WHERE tier = 'feed' AND state = 'active' AND restored_at IS NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_enrichment_queue` ON `items` (`created_at`) WHERE state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `link_tombstones` (
 	`type` text NOT NULL,

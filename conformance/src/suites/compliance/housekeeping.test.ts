@@ -26,6 +26,7 @@ const ALWAYS_LISTED = [
   "blob-integrity",
   "blob-replicate",
   "event-log-cleanup",
+  "feed-expiry",
   "inbound-delivery-cleanup",
   "rate-limit-cleanup",
   "revoked-key-reap",

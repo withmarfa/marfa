@@ -8,6 +8,7 @@ import {
   EDGE_TYPE_SCHEMA_KEYS,
   FIELD_DEFINITION_KEYS,
   MERGE_POLICY_KEYS,
+  RETENTION_POLICY_KEYS,
   REFUSED_TYPE_SCHEMA_KEYS,
   TYPE_SCHEMA_KEYS,
   VERSION_POLICY_KEYS,
@@ -135,17 +136,19 @@ describe("unreadKeys", () => {
     expect(validateTypeSchema(everything, context).success).toBe(true);
   });
 
-  it("names a key inside display_hints, version_policy and merge_policy", () => {
+  it("names a key inside display_hints, version_policy, merge_policy and retention_policy", () => {
     const bad = {
       ...type,
       display_hints: { title_field: "title", subtitle_field: "title" },
       version_policy: { max_versions: 5, keep_forever: true },
       merge_policy: { default: "last_writer_wins", fallback: "x" },
+      retention_policy: { feed_days: 30, library_days: 5 },
     };
     expect(refusedPaths(validateTypeSchema(bad, context))).toEqual([
       "display_hints.subtitle_field",
       "version_policy.keep_forever",
       "merge_policy.fallback",
+      "retention_policy.library_days",
     ]);
   });
 
@@ -213,6 +216,7 @@ describe("unreadKeys", () => {
       link_field: "title",
       version_policy: { max_versions: 10 },
       merge_policy: { default: "last_writer_wins" },
+      retention_policy: { feed_days: 30 },
       compatible_with: [parentSchema.id],
     };
     expect(Object.keys(full).sort()).toEqual([...TYPE_SCHEMA_KEYS].sort());
@@ -250,6 +254,7 @@ describe("unreadKeys", () => {
       "weekly_snapshot_days",
     ]);
     expect(sorted(MERGE_POLICY_KEYS)).toEqual(["default", "fields"]);
+    expect(sorted(RETENTION_POLICY_KEYS)).toEqual(["feed_days"]);
     expect(sorted(EDGE_PROPERTY_KEYS)).toEqual(
       sorted(FIELD_DEFINITION_KEYS).filter(
         (key) => !["maxItems", "maxLength", "searchable"].includes(key),

@@ -420,6 +420,13 @@
       "runAuditedTransaction": 1
     }
   },
+  "storage/feed-expiry.ts": {
+    "boundary": "Audited bounded feed item move to the bin, through writeItem; feed-expiry.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 1,
+      "writeItem": 1
+    }
+  },
   "storage/instance-config.ts": {
     "boundary": "Contained settings write under config route audited transaction; audit-atomicity.test.ts.",
     "calls": {

@@ -16,6 +16,7 @@ import {
   asc,
   sql,
   inArray,
+  isNotNull,
   notInArray,
   getTableColumns,
   type SQL,
@@ -56,7 +57,7 @@ import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
   ItemStatsAxis,
-  ArchivedDates,
+  ArchivedItemDates,
   StoredCreateItemInput,
   StoredUpdateItemInput,
 } from "../interface.js";
@@ -636,8 +637,12 @@ export class SqliteItemStore implements ItemStore {
     private searchStore: SqliteSearchStore,
   ) {}
 
-  async restoreDates(id: string, dates: ArchivedDates): Promise<void> {
-    if (dates.created_at === undefined && dates.updated_at === undefined)
+  async restoreDates(id: string, dates: ArchivedItemDates): Promise<void> {
+    if (
+      dates.created_at === undefined &&
+      dates.updated_at === undefined &&
+      dates.restored_at === undefined
+    )
       return;
     await this.db.update(items).set(dates).where(eq(items.id, id)).run();
   }
@@ -1759,6 +1764,52 @@ export class SqliteItemStore implements ItemStore {
       .limit(limit)
       .all();
     return rows.map((row) => row.id);
+  }
+
+  async listExpiredFeed(
+    type: string,
+    beforeDate: string,
+    after?: { created_at: string; id: string },
+    limit = 200,
+  ): Promise<{ id: string; created_at: string }[]> {
+    // The literals are the partial index's own, which the planner can only
+    // match to a predicate written the same way, not to a bound parameter.
+    return this.db
+      .select({ id: items.id, created_at: items.created_at })
+      .from(items)
+      .where(
+        and(
+          eq(items.type, type),
+          sql`${items.tier} = 'feed' AND ${items.state} = 'active' AND ${items.restored_at} IS NULL`,
+          lt(items.created_at, beforeDate),
+          after
+            ? sql`(${items.created_at}, ${items.id}) > (${after.created_at}, ${after.id})`
+            : undefined,
+        ),
+      )
+      .orderBy(items.created_at, items.id)
+      .limit(limit)
+      .all();
+  }
+
+  async restoredAtOf(ids: readonly string[]): Promise<Map<string, string>> {
+    const found = new Map<string, string>();
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const rows = await this.db
+        .select({ id: items.id, restored_at: items.restored_at })
+        .from(items)
+        .where(
+          and(
+            inArray(items.id, ids.slice(offset, offset + 500)),
+            isNotNull(items.restored_at),
+          ),
+        )
+        .all();
+      for (const row of rows) {
+        if (row.restored_at !== null) found.set(row.id, row.restored_at);
+      }
+    }
+    return found;
   }
 
   async listRevokedAppGrantsOlderThan(
