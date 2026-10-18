@@ -98,7 +98,7 @@ inBrowser("owner and delegated profile flows", () => {
       const client = (await registered.json()) as { client_id: string };
       const query = new URLSearchParams({
         client_id: client.client_id,
-        scope: "profile:write",
+        scope: "content:write profile:write",
         prompt: "consent",
         response_type: "code",
         redirect_uri: "http://localhost:5173/callback",
@@ -106,6 +106,12 @@ inBrowser("owner and delegated profile flows", () => {
         code_challenge_method: "S256",
       });
       await page.goto(origin + "/auth/oauth2/authorize?" + query.toString());
+      expect(
+        (await page.locator(".gdesc").allTextContents()).some(
+          (text) => /content/i.test(text) && /name.*avatar/i.test(text),
+        ),
+      ).toBe(true);
+
       await page.locator("details").evaluateAll((nodes) => {
         for (const node of nodes) node.setAttribute("open", "");
       });
@@ -117,7 +123,10 @@ inBrowser("owner and delegated profile flows", () => {
       );
       const issued = await context.request.post(origin + "/auth/device/code", {
         headers: { origin },
-        form: { client_id: client.client_id, scope: "profile:write" },
+        form: {
+          client_id: client.client_id,
+          scope: "content:write profile:write",
+        },
       });
       expect(issued.status()).toBe(200);
       const device = (await issued.json()) as { user_code: string };
@@ -132,6 +141,7 @@ inBrowser("owner and delegated profile flows", () => {
       expect(await page.locator("body").innerText()).toContain(
         "Read your name, email address and avatar; change only your name and avatar.",
       );
+      expect(await page.locator("body").innerText()).toMatch(/content/i);
     } finally {
       await context.close();
     }

@@ -4,7 +4,12 @@ import {
   MarfaError,
   profilePermissionCovers,
 } from "@withmarfa/shared";
-import { authorityId, requireAuth, type AppEnv } from "../middleware/auth.js";
+import {
+  authorityId,
+  requireAuth,
+  standingRule,
+  type AppEnv,
+} from "../middleware/auth.js";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -24,6 +29,18 @@ const updateProfileRoute = createRoute({
   description:
     "Updates the owner's name or avatar and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
   security: [{ bearerAuth: [] }],
+  middleware: standingRule("profile write on name or avatar", (c) => {
+    const key = requireAuth(c);
+    if (
+      !["name", "avatar"].some((field) =>
+        profilePermissionCovers(key.profile_permissions, field, "write"),
+      )
+    )
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "This credential has no writable profile field",
+      );
+  }),
   request: {
     body: {
       required: true,
@@ -75,11 +92,8 @@ const updateProfileRoute = createRoute({
 
 export function profileRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
-  router.use("*", async (c, next) => {
-    setNoStore(c);
-    await next();
-  });
   router.openapi(updateProfileRoute, async (c) => {
+    setNoStore(c);
     requireAuth(c);
     const body = c.req.valid("json");
     await runAuditedTransaction(

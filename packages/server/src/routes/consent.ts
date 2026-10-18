@@ -382,7 +382,11 @@ function summarize(group: ScopeGroup): string {
   );
   const profileDescription =
     wholeProfile && profileWriteDescription(wholeProfile.scope);
-  if (profileDescription) return profileDescription;
+  if (
+    profileDescription &&
+    group.rows.every(({ scope }) => scope.kind === "profile")
+  )
+    return profileDescription;
   // Asked of every scope the group holds, including the ones the collapse
   // below drops and the ones no chain finds a word for: a group reaching
   // things that do not exist yet does so whether or not this sentence ends
@@ -541,7 +545,8 @@ function summarize(group: ScopeGroup): string {
   // brand keeps its capital wherever it lands, and "Notes, Tasks and Files"
   // is a list of names that reads correctly as it stands.
   const sentence = `${list.charAt(0).toUpperCase()}${list.slice(1)}.`;
-  return shared === undefined ? sentence : `${sentence} ${shared}`;
+  const summary = shared === undefined ? sentence : `${sentence} ${shared}`;
+  return profileDescription ? `${summary} ${profileDescription}` : summary;
 }
 
 /**

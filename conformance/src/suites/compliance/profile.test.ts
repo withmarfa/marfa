@@ -148,7 +148,9 @@ describe("owner and delegated profile changes", () => {
     ])
       expect((await profile(body)).status).toBe(400);
     const response = await profile({ name: "Final" });
-    expect(await response.json()).toEqual({ ok: true });
+    const result = await response.json();
+    expect(result).toEqual({ ok: true });
+    await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
   it("requires a recent direct owner and refuses explicit email-write grants", async () => {
     expect(

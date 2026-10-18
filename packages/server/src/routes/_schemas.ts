@@ -1,4 +1,4 @@
-import { ProfilePermissionsSchema } from "@withmarfa/shared";
+import { ProfilePermissionsSchema as SharedProfilePermissionsSchema } from "@withmarfa/shared";
 import { maxStringLength, VERSION_WRITER_KINDS } from "@withmarfa/shared";
 /**
  * Reusable Zod schemas shared across route files. Centralized so each wire
@@ -88,6 +88,10 @@ export const TypePermissionLevelEnum = z
  * What a credential may do with one extension, edge type, metadata family or
  * profile. Absence is the refusal on these, so there is no `none` member.
  */
+export const ProfilePermissionsSchema = SharedProfilePermissionsSchema.describe(
+  "Profile field permissions. Only the owner can change email.",
+).openapi("ProfilePermissions");
+
 export const PermissionLevelEnum = z
   .enum(["read", "write"])
   .describe(
@@ -322,6 +326,13 @@ export const ItemSchema = z
 
 // MetadataSchema does not include `about` — entity references are carried
 // as first-class `about` edges.
+export const StoredProfilePermissionsSchema = z
+  .record(z.string(), PermissionLevelEnum)
+  .describe(
+    "Stored profile levels by field. Only name and avatar permit writes.",
+  )
+  .openapi("StoredProfilePermissions");
+
 export const MetadataSchema = z
   .object({
     item_id: z.string().describe("The ID of the item the metadata belongs to."),
@@ -767,6 +778,8 @@ export const DESCRIBED_ONLY_BY_REFERENCE: Readonly<Record<string, z.ZodType>> =
     ...enforcementRead.levers,
     ...enforcementWrite.levers,
     EnforcementOverride: EnforcementOverrideSchema,
+    ProfilePermissions: ProfilePermissionsSchema,
+    StoredProfilePermissions: StoredProfilePermissionsSchema,
     // Ahead of the objects whose fields describe them, since a schema is
     // met as it is generated, in this order.
     ItemState: ItemStateEnum,
@@ -808,6 +821,8 @@ export const KEY_FIELD_TEXT = {
     "Edge types the key may `read` or `write`, by edge type, a namespace wildcard such as `user.*`, or `*`.",
   metadata_permissions:
     "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both.",
+  stored_profile_permissions:
+    "Stored profile levels by field. Only name and avatar permit writes; email is read-only, including under a wildcard.",
   profile_permissions:
     "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar.",
   enforcement_override:
@@ -820,6 +835,7 @@ export const KEY_FIELD_TEXT = {
 } as const;
 
 /** An API key as the create route answers it. */
+
 export const KeyResponseSchema = z
   .object({
     id: z.string().describe(KEY_FIELD_TEXT.id),
@@ -851,8 +867,8 @@ export const KeyResponseSchema = z
       .describe(KEY_FIELD_TEXT.metadata_permissions),
     // Declared because the handler sends it: a field every mint returns and
     // the published shape omits is one a generated client cannot read.
-    profile_permissions: ProfilePermissionsSchema.describe(
-      KEY_FIELD_TEXT.profile_permissions,
+    profile_permissions: StoredProfilePermissionsSchema.describe(
+      KEY_FIELD_TEXT.stored_profile_permissions,
     ),
     enforcement_override: EnforcementOverrideSchema.describe(
       KEY_FIELD_TEXT.enforcement_override,

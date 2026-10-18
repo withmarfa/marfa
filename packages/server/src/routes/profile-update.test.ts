@@ -344,6 +344,16 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
     picture: "https://example.com/p.png",
     email: ctx.owner.email,
   });
+  expect((await owner({ email: ctx.owner.email.toUpperCase() })).status).toBe(
+    200,
+  );
+  const sameEmail = await request(ctx.app, "GET", "/auth/oauth2/userinfo", {
+    key: oauth.token,
+  });
+  expect(await sameEmail.json()).toMatchObject({
+    email: ctx.owner.email,
+    email_verified: true,
+  });
   expect((await owner({ email: "new@example.com" })).status).toBe(200);
   const changed = await request(ctx.app, "GET", "/auth/oauth2/userinfo", {
     key: oauth.token,
@@ -352,6 +362,25 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
     sub: ctx.owner.id,
     email: "new@example.com",
     email_verified: false,
+  });
+  const refreshed = await request(ctx.app, "POST", "/auth/oauth2/token", {
+    form: {
+      client_id: oauth.clientId,
+      grant_type: "refresh_token",
+      refresh_token: oauth.refreshToken!,
+    },
+  });
+  expect(refreshed.status).toBe(200);
+  const tokens = (await refreshed.json()) as { id_token: string };
+  const claims = JSON.parse(
+    Buffer.from(tokens.id_token.split(".")[1]!, "base64url").toString(),
+  ) as Record<string, unknown>;
+  expect(claims).toMatchObject({
+    sub: ctx.owner.id,
+    email: "new@example.com",
+    email_verified: false,
+    name: "OAuth name",
+    picture: "https://example.com/p.png",
   });
 });
 it("refuses an app narrowed while awaiting the profile writer", async () => {
@@ -388,4 +417,35 @@ it("refuses an app narrowed while awaiting the profile writer", async () => {
   }
   expect((await pending).status).toBe(401);
   expect(await ctx.storage.owner!.find()).toEqual(before);
+});
+
+it("refuses an expired owner session before changing the owner", async () => {
+  expect((await owner({ name: "Live" })).status).toBe(200);
+  const raw = ctx.storage as typeof ctx.storage & {
+    __sqliteRun(query: string, args: unknown[]): Promise<unknown>;
+  };
+  await raw.__sqliteRun("UPDATE auth_session SET expires_at = 0", []);
+  expect((await owner({ name: "Expired" })).status).toBe(401);
+  expect((await ctx.storage.owner!.find())!.name).toBe("Live");
+});
+
+it("keeps an old app token through an identical approval with explicit email read", async () => {
+  const scopes = ["openid", "profile:write", "profile.email:read"];
+  const app = await seedOauthBearer(ctx, scopes);
+  const change = () =>
+    request(ctx.app, "PATCH", "/profile", {
+      key: app.token,
+      body: { name: "Still approved" },
+    });
+  expect((await change()).status).toBe(200);
+  await seedOauthBearer(ctx, scopes, { clientId: app.clientId });
+  expect((await change()).status).toBe(200);
+  await seedOauthBearer(ctx, ["openid", "profile:write"], {
+    clientId: app.clientId,
+  });
+  expect((await change()).status).toBe(200);
+  await seedOauthBearer(ctx, ["openid", "profile.name:write"], {
+    clientId: app.clientId,
+  });
+  expect((await change()).status).toBe(401);
 });

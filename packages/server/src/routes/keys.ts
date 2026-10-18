@@ -1,4 +1,7 @@
-import { maxStringLength, ProfilePermissionsSchema } from "@withmarfa/shared";
+import {
+  maxStringLength,
+  delegableProfilePermissions,
+} from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { randomBytes } from "node:crypto";
 import type { ApiKey, Permission } from "@withmarfa/shared";
@@ -48,6 +51,8 @@ import {
   nullableRef,
   PermissionEnum,
   PermissionLevelEnum,
+  ProfilePermissionsSchema,
+  StoredProfilePermissionsSchema,
   TierEnum,
   TypePermissionLevelEnum,
   wholeListOf,
@@ -154,8 +159,8 @@ const ApiKeySchema = z
     // Declared because the handler sends them: a listing returns stored rows
     // whole, so a field a row can carry and the declaration omits is a field
     // a generated client cannot read.
-    profile_permissions: ProfilePermissionsSchema.describe(
-      KEY_FIELD_TEXT.profile_permissions,
+    profile_permissions: StoredProfilePermissionsSchema.describe(
+      KEY_FIELD_TEXT.stored_profile_permissions,
     ),
     enforcement_override: EnforcementOverrideSchema.describe(
       KEY_FIELD_TEXT.enforcement_override,
@@ -932,7 +937,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         }
         const creator = namesNoFamily ? callerKey : undefined;
         const seed = direct && namesNoFamily ? EVERY_TYPE : undefined;
-        return storage.keys.create(
+        const created = await storage.keys.create(
           {
             label: body.label.trim(),
             source: body.source,
@@ -952,7 +957,9 @@ export function keyRoutes(storage: Storage, salt: string) {
               {},
             profile_permissions:
               seed ??
-              creator?.profile_permissions ??
+              (creator
+                ? delegableProfilePermissions(creator.profile_permissions)
+                : undefined) ??
               body.profile_permissions ??
               {},
             extension_permissions:
@@ -968,6 +975,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           },
           keyHash,
         );
+        return KeyResponseSchema.parse({ ...created, key: rawKey });
       },
       (key) => ({
         client_ip: c.get("clientIp") ?? null,
@@ -978,7 +986,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         details: mintDetails(c, grantItemId),
       }),
     );
-    return c.json(KeyResponseSchema.parse({ ...stored, key: rawKey }), 201);
+    return c.json(stored, 201);
   });
 
   router.openapi(listKeysRoute, async (c) => {

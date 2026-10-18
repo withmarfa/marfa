@@ -2233,3 +2233,21 @@ describe("the authorize screen and the device screen describe a scope alike", ()
     }
   });
 });
+
+it("keeps content and profile write in a mixed group summary", () => {
+  const html = renderConsentScreen({
+    ...PARAMS,
+    scopes: ["content:write", "profile:write"].flatMap((literal) => {
+      const parsed = parseScope(literal);
+      return parsed ? [parsed] : [];
+    }),
+  });
+  const descriptions = [...html.matchAll(/class="gdesc">([^<]*)/g)].map(
+    (match) => match[1]!,
+  );
+  expect(
+    descriptions.some(
+      (text) => /content/i.test(text) && /profile|name.*avatar/i.test(text),
+    ),
+  ).toBe(true);
+});

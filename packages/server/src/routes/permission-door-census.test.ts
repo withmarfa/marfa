@@ -106,6 +106,8 @@ const STANDING: Record<string, string> = {
   "GET /owner/passkeys": DIRECT,
   "PATCH /owner/passkeys/:id": DIRECT,
   "DELETE /owner/passkeys/:id": DIRECT,
+  "PATCH /owner": DIRECT,
+  "PATCH /profile": "profile write on name or avatar",
   "GET /owner/sign-ins": DIRECT,
   "PATCH /owner/sign-ins/:id": DIRECT,
   "DELETE /owner/sign-ins/:id": DIRECT,

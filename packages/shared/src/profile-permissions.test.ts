@@ -22,3 +22,29 @@ describe("profile authority", () => {
     );
   });
 });
+
+it("compares wildcard profile writes through the effective closed fields", async () => {
+  const { grantCoversScope, firstReachBeyondMap } = await import("./scopes.js");
+  const full = ["profile:write", "profile.email:read"];
+  expect(grantCoversScope(full, "profile:write")).toBe(true);
+  expect(
+    grantCoversScope(
+      ["profile.name:write", "profile.avatar:write", "profile.email:read"],
+      "profile:write",
+    ),
+  ).toBe(true);
+  expect(
+    grantCoversScope(
+      ["profile.name:write", "profile.avatar:write"],
+      "profile:write",
+    ),
+  ).toBe(false);
+  expect(grantCoversScope(full, "profile.email:write")).toBe(false);
+  expect(
+    firstReachBeyondMap(
+      "profile",
+      { "*": "write", email: "read" },
+      { "*": "write" },
+    ),
+  ).toBeNull();
+});
