@@ -30,7 +30,7 @@ The words are grouped by topic.
 | **tag**          | A free-form label on an item. Flat, unversioned, and searched alongside the item's text. A release is named by a git tag, `v0.0.1`; call that a **release tag**.                                             |
 | **extension**    | A namespaced object of metadata attached to an item by something other than the key that wrote the item. Read and written per namespace, and not to be confused with a blob: an extension is JSON.           |
 | **edge**         | A directed relationship between two items, named by an **edge type**. Edges carry properties and a version of their own.                                                                                     |
-| **reverse name** | The name an edge goes by read from its target, which an edge type may declare: `child-of` for `parent-of`. An edge type also says where it is **written at**, the end whose file writes it. Never "inverse". |
+| **reverse name** | The name an edge goes by read from its target, which an edge type may declare: `child-of` for `parent-of`. An edge type also says where it is **written at**, the end whose file writes it, or `none` where no file does. Never "inverse". |
 
 ### Versions and events
 
