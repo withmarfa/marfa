@@ -161,12 +161,7 @@ impl Requests {
         let Some(vfs) = &self.vfs else {
             return false;
         };
-        // Claimed and at once let go: held for that moment, it only makes a
-        // command claiming it look again.
-        matches!(
-            WriterLock::claim_named(vfs, REQUEST_LOCK, false),
-            Ok(probe) if probe.handle() == Handle::Reader
-        )
+        WriterLock::held_named(vfs, REQUEST_LOCK).unwrap_or(false)
     }
 }
 
@@ -193,6 +188,54 @@ mod tests {
         let lock = crate::Core::claim_directory(state).unwrap();
         assert_eq!(lock.handle(), Handle::Writer);
         lock
+    }
+
+    #[test]
+    fn a_shared_probe_is_no_request_and_an_exclusive_command_is() {
+        let (_temp, state) = state();
+        let vfs = DirectoryVfs::new(state.file()).unwrap();
+        drop(WriterLock::claim_named(&vfs, REQUEST_LOCK, true).unwrap());
+        let probe = vfs
+            .open(REQUEST_LOCK, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+        probe
+            .execute_batch("BEGIN; SELECT count(*) FROM sqlite_schema")
+            .unwrap();
+        let mut requests = Requests::of(&state);
+        assert!(!requests.asked(), "a shared observer is not a command");
+        drop(probe);
+        let command = WriterLock::claim_named(&vfs, REQUEST_LOCK, true).unwrap();
+        assert_eq!(command.handle(), Handle::Writer);
+        assert!(requests.asked(), "an exclusive command must be seen");
+        drop(command);
+        assert!(!requests.asked(), "the command's request ended");
+    }
+
+    #[test]
+    fn observers_never_ask_each_other_for_the_folder() {
+        let (_temp, state) = state();
+        let vfs = DirectoryVfs::new(state.file()).unwrap();
+        drop(WriterLock::claim_named(&vfs, REQUEST_LOCK, true).unwrap());
+        let start = Barrier::new(2);
+        let false_requests = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    let mut requests = Requests::of(&state);
+                    start.wait();
+                    for _ in 0..1_000 {
+                        if requests.asked() {
+                            false_requests.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                });
+            }
+        });
+        assert_eq!(
+            false_requests.load(Ordering::SeqCst),
+            0,
+            "observers saw requests without any command"
+        );
     }
 
     #[test]

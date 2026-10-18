@@ -4386,7 +4386,7 @@ While a process holds a folder, the CLI MUST refuse `folders watch` of that fold
 
 **Reason:** A watch does not ask for a folder; two watches that asked would take one folder from each other in turn.
 
-**Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+**Tests:** `device/folders-handover.test.ts › hands a folder its own watch holds to each command in turn, and the watch ends once the folder is removed`, `device/folders-handover.test.ts › says a folder it let go is held by another process once that process keeps it`, `device/folders-handover.test.ts › says a folder its own watch let go is held by another process once that process keeps it`, `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
 
 ## Folder syncing from login
 
