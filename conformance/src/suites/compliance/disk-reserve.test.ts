@@ -24,8 +24,8 @@ import { TEST_OWNER } from "../../utils/target.js";
  * so their absence in between is the refusal's doing and not an upload or a
  * restore that cannot work on this server.
  *
- * A body that outgrows the room as it arrives, and a volume that is full,
- * need a volume the fixture controls; they wait on #2071.
+ * A body that outgrows the room as it arrives, and a volume that is full, are
+ * in `disk-space-faults.test.ts`, which sets the room through the `free` fault.
  */
 const HUGE_RESERVE = 2 ** 50;
 

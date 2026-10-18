@@ -418,13 +418,13 @@ If a component's probe has given no answer within two seconds, then the server M
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `down`.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component down, and the status 503, when the lesser of the two volumes has under 1 MiB`.
 
 ### `instance/health-disk-degraded`
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 64 MiB and at least 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › answers the disk component degraded, and the status 200, when the lesser of the two volumes has 1 MiB or more and under 64 MiB`.
 
 ### `instance/health-disk-unknown`
 

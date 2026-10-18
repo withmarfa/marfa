@@ -386,7 +386,7 @@ If a write meets a volume with no room left for it, then the server MUST answer 
 
 **Reason:** a `500` names no cause, so a full disk reads as a fault in the server. A device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`) and keeps the write queued, which is what a write that only freed space can land needs. A `503` would read as a busy instance that a retry a moment later clears, and only someone freeing space does.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/write-faults.test.ts › answers 507 insufficient_storage with write_outcome unknown, and the write that follows lands`, `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage when the disk store has no room for the bytes of an upload, which are not kept, and the next upload lands`, `› is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no row`.
 
 ### `errors/storage-full-unknown`
 
