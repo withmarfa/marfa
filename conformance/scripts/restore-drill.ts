@@ -6,14 +6,13 @@
  *
  * Needs `litestream` and `sqlite3` on the path and the `S3_*` names in the
  * environment, which it reads and never prints. `S3_PREFIX` is not read:
- * the drill works under a prefix of its own, `drill/<id>/`, and removes it,
- * with its own state directory, at the end unless `--keep` is given. The
- * Litestream configuration is the shipped `deploy/litestream.yml` with its
- * replica path moved under that prefix, so what the drill proves is the
- * recipe a deployment runs.
+ * the drill sets it to a prefix of its own, `drill/<id>`, and removes what is
+ * under it, with its own state directory, at the end unless `--keep` is
+ * given. The Litestream configuration is the shipped `deploy/litestream.yml`
+ * as it is, so what the drill proves is the recipe a deployment runs.
  *
  * 1. A source instance boots with Litestream replicating its database to
- *    `drill/<id>/db` and its object store at `drill/<id>/blobs`. Phase A
+ *    `drill/<id>/db` and its object store under `drill/<id>/`. Phase A
  *    writes items and blobs (referenced and unreferenced, one large enough
  *    to take the object store's multipart path) and runs replication to
  *    zero remaining; the time is recorded as T1. Phase B writes more. The
@@ -57,7 +56,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { bootServer, stopServer } from "./marfa-server.js";
-import { moveReplicaPath, same } from "../src/utils/drill.js";
+import { same } from "../src/utils/drill.js";
 import { parseEnvFile } from "../src/utils/target.js";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -124,15 +123,6 @@ function sha256File(path: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
-}
-
-/** The shipped configuration with its replica path moved under the
- *  drill's prefix (`moveReplicaPath` says what else holds). */
-function writeLitestreamConfig(path: string, prefix: string): void {
-  writeFileSync(
-    path,
-    moveReplicaPath(readFileSync(SHIPPED_CONFIG, "utf8"), prefix),
-  );
 }
 
 function litestream(
@@ -494,11 +484,12 @@ async function main(): Promise<void> {
     mkdirSync(dir, { recursive: true });
   }
   const sourceDb = join(sourceState, "marfa.db");
-  const config = join(args.state, "litestream.yml");
-  writeLitestreamConfig(config, prefix);
-  // What the sidecar reads: the shipped names, with the database this run
-  // replicates. The addressing style is spelled out because the server
-  // reads an unset value as `true` and the sidecar's file needs a word.
+  const config = SHIPPED_CONFIG;
+  // What the server and the sidecar read: the shipped names, with the
+  // drill's prefix and the database this run replicates. The addressing
+  // style is spelled out because the server reads an unset value as `true`
+  // and the sidecar's file needs a word.
+  process.env.S3_PREFIX = prefix;
   const sidecarEnv: NodeJS.ProcessEnv = {
     ...process.env,
     SQLITE_PATH: sourceDb,
@@ -508,7 +499,6 @@ async function main(): Promise<void> {
   let litestreamPid: number | undefined;
   try {
     // 1. The source instance, replicating.
-    process.env.S3_PREFIX = `${prefix}/blobs`;
     await bootServer({ state: sourceState });
     const sourceManagement = apiFor(sourceState, true);
     const workingKey = await mintWorkingKey(apiFor(sourceState));
