@@ -93,17 +93,54 @@ function ownKeychain(): { path: string; lock: () => void } {
   };
 }
 
-/** Starts a watch of the folder alone while the watch of every folder is
- *  suspended, so the folder it let go is taken by another process. */
+/** Keeps the command holding the folder until its original watcher is
+ *  suspended, then establishes the other holder before the watcher resumes. */
 async function takenByAnother(
   harness: FolderHarness,
   holder: HeldCommand,
+  dir?: string,
 ): Promise<HeldCommand> {
+  const gateDir = mkdtempSync(join(tmpdir(), "marfa-handover-gate-"));
+  cleanups.push(() => rmSync(gateDir, { recursive: true, force: true }));
+  const gate = join(gateDir, "command");
+  const scanning = hold(
+    harness.folder.hold(["folders", "scan", harness.dir], {
+      MARFA_TEST_FAULT: `gate-handed-folder=${gate}`,
+    }),
+  );
+  await vi.waitFor(() => expect(existsSync(`${gate}.ready`)).toBe(true), WAIT);
+  await vi.waitFor(
+    () => expect(handovers(holder, dir)).toEqual(["let go"]),
+    WAIT,
+  );
+  // A deliberately delayed observer must still find the command holding the folder.
+  await new Promise((resolve) => setTimeout(resolve, 2_500));
+  expect(scanning.running(), scanning.stderr).toBe(true);
+  expect(handovers(holder, dir)).toEqual(["let go"]);
   process.kill(holder.pid(), "SIGSTOP");
-  const another = hold(harness.folder.watch());
-  await vi.waitFor(() => expect(another.stderr).toContain("watching"), WAIT);
-  process.kill(holder.pid(), "SIGCONT");
-  return another;
+  try {
+    // SIGSTOP returns before the kernel has necessarily stopped every thread.
+    await vi.waitFor(() => {
+      const state = execFileSync(
+        "ps",
+        ["-o", "state=", "-p", String(holder.pid())],
+        {
+          encoding: "utf8",
+        },
+      ).trim();
+      expect(state).toMatch(/^T/);
+    }, WAIT);
+    writeFileSync(`${gate}.release`, "");
+    await scanning.exited();
+    expect(scanning.exitCode(), scanning.stderr).toBe(0);
+    const another = hold(harness.folder.watch());
+    await vi.waitFor(() => expect(another.stderr).toContain("watching"), WAIT);
+    expect(another.running(), another.stdout + another.stderr).toBe(true);
+    expect(handovers(holder, dir), holder.stdout).toEqual(["let go"]);
+    return another;
+  } finally {
+    process.kill(holder.pid(), "SIGCONT");
+  }
 }
 
 const WAIT = { timeout: 30_000, interval: 100 };
@@ -602,22 +639,22 @@ describe("handing a folder to a command", () => {
         true,
       );
     }, WAIT);
-    const scanning = withFault("hold-handed-folder=1500", () =>
-      a.folder.scan(),
-    );
-    await vi.waitFor(
-      () => expect(handovers(watch, a.dir)).toEqual(["let go"]),
-      WAIT,
-    );
-    expect((await scanning).ok).toBe(true);
-    const another = await takenByAnother(a, watch);
+    const another = await takenByAnother(a, watch, a.dir);
     const heldLines = (): Array<Record<string, unknown>> =>
       lines(watch, a.dir).filter(
         (line) => line.watching === false && line.code === "reading_handle",
       );
     await vi.waitFor(
       () => {
-        expect(heldLines(), watch.stdout).toHaveLength(1);
+        expect(
+          heldLines(),
+          JSON.stringify({
+            original: watch.stdout,
+            anotherOut: another.stdout,
+            anotherErr: another.stderr,
+            anotherExit: another.exitCode(),
+          }),
+        ).toHaveLength(1);
         expect(recorded(a, watch.pid(), a.dir)).toEqual(
           expect.objectContaining({
             watching: false,
@@ -648,11 +685,6 @@ describe("handing a folder to a command", () => {
     const harness = await oneFolder("handover-held-one");
     const watch = hold(harness.folder.watch());
     await vi.waitFor(() => expect(watch.stderr).toContain("watching"), WAIT);
-    const scanning = withFault("hold-handed-folder=1500", () =>
-      harness.folder.scan(),
-    );
-    await vi.waitFor(() => expect(handovers(watch)).toEqual(["let go"]), WAIT);
-    expect((await scanning).ok).toBe(true);
     const another = await takenByAnother(harness, watch);
     const heldLines = (): Array<Record<string, unknown>> =>
       lines(watch).filter(
@@ -660,7 +692,15 @@ describe("handing a folder to a command", () => {
       );
     await vi.waitFor(
       () => {
-        expect(heldLines(), watch.stdout).toHaveLength(1);
+        expect(
+          heldLines(),
+          JSON.stringify({
+            original: watch.stdout,
+            anotherOut: another.stdout,
+            anotherErr: another.stderr,
+            anotherExit: another.exitCode(),
+          }),
+        ).toHaveLength(1);
       },
       { timeout: 40_000, interval: 200 },
     );

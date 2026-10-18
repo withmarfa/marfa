@@ -119,9 +119,18 @@ fn unasked(root: &Path, error: CoreError) -> CoreError {
     }
 }
 
-/// Holds a folder opened by asking for the milliseconds the fault names, so a
-/// fixture can see what the holder does while it is let go.
+/// Holds a folder opened by asking until a fixture releases its gate, or for
+/// the milliseconds the fault names, to observe the watch while it is let go.
 pub(crate) fn hold_if_asked() {
+    #[cfg(debug_assertions)]
+    if let Some(gate) = crate::fault::named("gate-handed-folder") {
+        std::fs::write(format!("{gate}.ready"), b"").expect("write handover gate readiness");
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !Path::new(&format!("{gate}.release")).exists() {
+            assert!(Instant::now() < deadline, "handover gate was not released");
+            std::thread::sleep(POLL);
+        }
+    }
     if let Some(millis) =
         crate::fault::named("hold-handed-folder").and_then(|millis| millis.parse::<u64>().ok())
     {

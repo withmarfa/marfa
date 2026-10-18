@@ -930,11 +930,36 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct OpenGate {
+        ready: AtomicBool,
+        released: Mutex<bool>,
+        changed: std::sync::Condvar,
+    }
+
+    impl OpenGate {
+        fn wait(&self) {
+            let released = lock(&self.released);
+            self.ready.store(true, Ordering::SeqCst);
+            let (released, _) = self
+                .changed
+                .wait_timeout_while(released, Duration::from_secs(10), |released| !*released)
+                .unwrap();
+            assert!(*released, "the held open was not released");
+        }
+
+        fn release(&self) {
+            *lock(&self.released) = true;
+            self.changed.notify_one();
+        }
+    }
+
     /// Each folder's opens in turn, the last repeating, and what was told.
     #[derive(Default)]
     struct Machine {
         opens: Mutex<HashMap<PathBuf, VecDeque<Result<Goes, Unwatched>>>>,
         opened: Mutex<Vec<PathBuf>>,
+        open_gate: Option<(PathBuf, usize, Arc<OpenGate>)>,
         told: Mutex<Vec<String>>,
         ended: Mutex<Vec<String>>,
         refuse_telling: AtomicBool,
@@ -956,6 +981,17 @@ mod tests {
             lock(&self.told).clone()
         }
 
+        fn read(&self, listed: &Mutex<Listing>) -> Listing {
+            let listing = lock(listed).clone();
+            if let Some((dir, _, gate)) = &self.open_gate
+                && matches!(&listing, Listing::Listed(dirs) if !dirs.iter().any(|(listed, _)| listed == dir))
+            {
+                // This pass reconciles the removal before it can reap the held open.
+                gate.release();
+            }
+            listing
+        }
+
         fn opened(&self, dir: &str) -> usize {
             lock(&self.opened)
                 .iter()
@@ -975,6 +1011,12 @@ mod tests {
 
         fn open(&self, dir: &Path) -> Result<Fake, Unwatched> {
             lock(&self.opened).push(dir.to_path_buf());
+            if let Some((gated_dir, at, gate)) = &self.open_gate
+                && dir == gated_dir
+                && self.opened(&dir.to_string_lossy()) == *at
+            {
+                gate.wait();
+            }
             if lock(&self.hung).iter().any(|hung| hung == dir) {
                 while self.hanging.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(2));
@@ -1078,7 +1120,7 @@ mod tests {
         let stop = AtomicBool::new(false);
         std::thread::scope(|scope| {
             let running =
-                scope.spawn(|| supervise(|| lock(listed).clone(), &stop, machine, record, timing));
+                scope.spawn(|| supervise(|| machine.read(listed), &stop, machine, record, timing));
             let bound = Instant::now() + Duration::from_secs(10);
             while !until(machine) && !running.is_finished() {
                 assert!(
@@ -1757,7 +1799,11 @@ mod tests {
 
     #[test]
     fn a_folder_let_go_that_the_command_took_off_the_registry_leaves_unsaid() {
-        let machine = Machine::default();
+        let gate = Arc::new(OpenGate::default());
+        let machine = Machine {
+            open_gate: Some((PathBuf::from("/asked"), 2, Arc::clone(&gate))),
+            ..Machine::default()
+        };
         machine.opens(
             "/asked",
             vec![
@@ -1769,13 +1815,27 @@ mod tests {
         machine.opens("/a", vec![Ok(Goes::Lasts)]);
         let listing = listed(&["/a", "/asked"]);
         supervised(&machine, &listing, |machine| {
-            if count(machine, "handed /asked") == 1 && machine.opened("/asked") == 2 {
-                // The command removes the folder, and its state with it.
+            if gate.ready.load(Ordering::SeqCst) {
+                // The command removes the folder before its held open returns.
                 *lock(&listing) = listing_of(&["/a"]);
             }
-            count(machine, "left /asked") == 1
+            count(machine, "left /asked") == 1 && count(machine, "watching /a") == 1
         })
         .unwrap();
+        assert_eq!(count(&machine, "handed /asked"), 1);
+        assert_eq!(count(&machine, "left /asked"), 1);
+        assert_eq!(
+            machine.opened("/asked"),
+            2,
+            "the removed folder was reopened"
+        );
+        assert_eq!(
+            machine.opened("/a"),
+            1,
+            "the neighboring watch was restarted"
+        );
+        assert_eq!(count(&machine, "watching /a"), 1);
+        assert_eq!(count(&machine, "left /a"), 0);
         assert!(
             machine
                 .told()
