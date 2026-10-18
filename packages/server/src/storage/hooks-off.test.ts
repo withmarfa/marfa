@@ -541,7 +541,8 @@ it("does not enter the scripted resolver with hooks off, and does with a fault a
     receiver.closeAllConnections();
     await new Promise<void>((resolve, reject) =>
       receiver.close((error) => {
-        error ? reject(error) : resolve();
+        if (error) reject(error);
+        else resolve();
       }),
     );
   }
