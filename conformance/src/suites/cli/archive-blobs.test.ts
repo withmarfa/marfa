@@ -1,5 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -97,5 +104,49 @@ describe("an archive that lacks a blob it names", () => {
     };
     expect(envelope.error.code).toBe("blobs_missing");
     expect(envelope.error.message).toContain(lost);
+  });
+
+  it("leaves the path as it was when the export is cut short, and the next export names the struck blob", async () => {
+    const content = bytesOf("a blob whose bytes rot on the disk", 130);
+    const upload = await working.uploadBlob(content, "text/plain");
+    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+    const rotten = upload.data.hash;
+    const note = await working.createItem({
+      type: "core.note",
+      properties: { body: `![bytes](${rotten})` },
+    });
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    writeFileSync(
+      diskPath(server!, rotten),
+      new Uint8Array(content.length).fill(0x41),
+    );
+
+    const cutDir = mkdtempSync(join(dir, "cut-"));
+    const path = join(cutDir, "backup.tar.gz");
+    writeFileSync(path, "an earlier backup");
+    const cut = await cli.refused([
+      "export",
+      "--format",
+      "archive",
+      "--output",
+      path,
+    ]);
+    expect(cut.code).toBe(3);
+    expect(cut.envelope.error.message).toContain("nothing was written");
+    expect(readFileSync(path, "utf8")).toBe("an earlier backup");
+    expect(readdirSync(cutDir)).toEqual(["backup.tar.gz"]);
+
+    // The export that was cut struck the copy, so this one names the blob.
+    const lacking = await cli.refused([
+      "export",
+      "--format",
+      "archive",
+      "--output",
+      path,
+    ]);
+    expect(lacking.code).toBe(1);
+    expect(lacking.envelope.error.code).toBe("blobs_missing");
+    expect(lacking.envelope.error.message).toContain(rotten);
+    expect(gunzipSync(readFileSync(path)).length).toBeGreaterThan(0);
   });
 });

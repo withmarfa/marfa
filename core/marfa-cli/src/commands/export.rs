@@ -1,5 +1,5 @@
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
 use flate2::write::GzDecoder;
@@ -68,10 +68,7 @@ pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     let mut reader = ManifestTap::new(reader, args.format == Some(ExportFormat::Archive));
     match &args.output {
         Some(path) => {
-            let mut file = std::fs::File::create(path).map_err(|error| {
-                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-            })?;
-            let written = io::copy(&mut reader, &mut file)?;
+            let written = write_whole(path, &mut reader)?;
             reader.whole()?;
             out.report(
                 &json!({ "path": path, "size_bytes": written, "content_type": content_type }),
@@ -91,6 +88,49 @@ pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             reader.whole()
         }
     }
+}
+
+/// Writes the export to a file beside `path` and names it `path` only once
+/// the stream has ended whole, so an export cut short leaves nothing that
+/// passes for a backup.
+fn write_whole(path: &Path, reader: &mut impl Read) -> Result<u64, CliError> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| CliError::Invalid(format!("{} names no file", path.display())))?;
+    let partial = path.with_file_name(format!(
+        ".{}.partial-{}",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let mut file = std::fs::File::create(&partial).map_err(|error| {
+        CliError::Invalid(format!("cannot write {}: {error}", partial.display()))
+    })?;
+    let copied = io::copy(reader, &mut file).and_then(|written| {
+        file.sync_all()?;
+        Ok(written)
+    });
+    drop(file);
+    let written = match copied {
+        Ok(written) => written,
+        Err(error) => {
+            let removed = match std::fs::remove_file(&partial) {
+                Ok(()) => "and the partial file was removed".to_string(),
+                Err(_) => format!("and the partial file is left at {}", partial.display()),
+            };
+            return Err(CliError::Io(io::Error::new(
+                error.kind(),
+                format!(
+                    "{error}: the export ended early, so nothing was written to {}, {removed}",
+                    path.display()
+                ),
+            )));
+        }
+    };
+    std::fs::rename(&partial, path).map_err(|error| {
+        let _ = std::fs::remove_file(&partial);
+        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
+    })?;
+    Ok(written)
 }
 
 const TAR_BLOCK: usize = 512;
@@ -235,6 +275,55 @@ mod tests {
         }
         let whole = archive(r#"{"version":0,"blobs":{"sha256:aa":{}},"missing_blobs":{}}"#);
         assert_eq!(tapped(whole.clone(), true).unwrap(), whole);
+    }
+
+    /// A source that hands over `good` bytes and then fails, as a stream cut
+    /// short by the server does.
+    struct CutShort(usize);
+    impl Read for CutShort {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            if self.0 == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "cut short"));
+            }
+            let n = buffer.len().min(self.0);
+            buffer[..n].fill(b'x');
+            self.0 -= n;
+            Ok(n)
+        }
+    }
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "marfa-export-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn leaves_nothing_at_the_path_when_the_stream_is_cut_and_says_so() {
+        let dir = scratch();
+        let path = dir.join("backup.tar.gz");
+        // The witness: an earlier archive at the path is neither cut nor replaced.
+        std::fs::write(&path, b"an earlier archive").unwrap();
+        let error = write_whole(&path, &mut CutShort(100_000)).unwrap_err();
+        assert!(matches!(error, CliError::Io(_)), "{error:?}");
+        assert!(error.to_string().contains("nothing was written"), "{error}");
+        assert!(error.to_string().contains("removed"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
+        let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
+        assert_eq!(left.len(), 1, "a partial file is left: {left:?}");
+
+        let written = write_whole(&path, &mut io::Cursor::new(b"whole".to_vec())).unwrap();
+        assert_eq!(written, 5);
+        assert_eq!(std::fs::read(&path).unwrap(), b"whole");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
