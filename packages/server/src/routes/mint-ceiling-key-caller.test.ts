@@ -14,7 +14,10 @@
  * Asserting the 403 alone would pass against a route that refused everything,
  * which is the shape this area has produced twice.
  */
-import { scopesToTypePermissions } from "@withmarfa/shared";
+import {
+  scopesToTypePermissions,
+  type ProfilePermission,
+} from "@withmarfa/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
@@ -101,6 +104,58 @@ describe("a creator whose own map carries denials", () => {
 });
 
 describe("a key minting a key", () => {
+  it.each<{
+    held: Record<string, ProfilePermission>;
+    requested: Record<string, ProfilePermission>;
+    requiredScope: string;
+  }>([
+    {
+      held: { name: "write", avatar: "write" },
+      requested: { "*": "write" },
+      requiredScope: "profile.email:read",
+    },
+    {
+      held: { name: "read" },
+      requested: { "*": "write", name: "read" },
+      requiredScope: "profile.name:write",
+    },
+  ])(
+    "reports effective missing profile authority as $requiredScope",
+    async ({ held, requested, requiredScope }) => {
+      const key = await mintWorkingKey(ctx, {
+        permissions: ["keys.mint"],
+        profile_permissions: held,
+        type_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        extension_permissions: {},
+      });
+      const refused = await request(ctx.app, "POST", "/keys", {
+        key,
+        body: {
+          label: "profile wider",
+          source: `profile-refused-${requiredScope}`,
+          profile_permissions: requested,
+        },
+      });
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({
+        error: { details: { required_scope: requiredScope } },
+      });
+
+      const allowed = await request(ctx.app, "POST", "/keys", {
+        key,
+        body: {
+          label: "profile same",
+          source: `profile-allowed-${requiredScope}`,
+          profile_permissions: held,
+        },
+      });
+      expect(allowed.status).toBe(201);
+      expect(await allowed.json()).toMatchObject({ profile_permissions: held });
+    },
+  );
+
   it("refuses a content map its own does not cover", async () => {
     const res = await request(ctx.app, "POST", "/keys", {
       key: narrowKey,
