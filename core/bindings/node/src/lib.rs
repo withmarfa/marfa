@@ -245,6 +245,14 @@ pub enum EdgeEnd {
     Target,
 }
 
+/// Which end of an edge has the file that writes it in a folder, or neither.
+#[napi(string_enum = "snake_case")]
+pub enum EdgeWrittenAt {
+    Source,
+    Target,
+    None,
+}
+
 /// An edge type as the copy holds it.
 #[napi(object)]
 pub struct EdgeType {
@@ -254,7 +262,7 @@ pub struct EdgeType {
     pub cardinality: String,
     /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
-    pub written_at: EdgeEnd,
+    pub written_at: EdgeWrittenAt,
     pub source_type_constraints: Vec<String>,
     pub target_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
@@ -306,8 +314,9 @@ fn edge_type(held: marfa_core::EdgeType) -> EdgeType {
         cardinality: held.cardinality,
         reverse_name: held.reverse_name,
         written_at: match held.written_at {
-            marfa_core::End::Source => EdgeEnd::Source,
-            marfa_core::End::Target => EdgeEnd::Target,
+            marfa_core::WrittenAt::Source => EdgeWrittenAt::Source,
+            marfa_core::WrittenAt::Target => EdgeWrittenAt::Target,
+            marfa_core::WrittenAt::None => EdgeWrittenAt::None,
         },
         source_type_constraints: held.source_type_constraints,
         target_type_constraints: held.target_type_constraints,

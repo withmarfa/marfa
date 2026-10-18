@@ -549,9 +549,11 @@ function summarize(group: ScopeGroup): string {
  * requestable on their own and carry their own rows, labeled "Contacts" and
  * "Places", so somebody ticking this one for their contacts granted nothing
  * of the kind, and the type it does reach went unnamed. The registry calls
- * `core.entity` a non-person entity and lists a company, a band, a team, a
- * charity, a brand and a school, so "Organizations" is what the grant
- * reaches. That half is asked of `grantCoversScope` rather than curated: a
+ * `core.entity` any named entity, and lists a person, a company, a band, a
+ * team, a charity, a brand, a school and a place, the person and the place
+ * narrowed by `core.entity.person` and `core.entity.place`. A bare grant
+ * reaches neither, so
+ * "Organizations" is what the grant reaches. That half is asked of `grantCoversScope` rather than curated: a
  * label naming a descendant its own pattern does not cover fails the suite.
  *
  * **A brand is the one member of that list "Organizations" does not name,

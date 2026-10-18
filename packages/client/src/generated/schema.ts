@@ -1742,10 +1742,10 @@ export interface components {
             /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. */
             reverse_name?: string;
             /**
-             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.
+             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it.
              * @enum {string}
              */
-            written_at: "source" | "target";
+            written_at: "source" | "target" | "none";
             /** @description `true` if Marfa ships the edge type: it exists on every instance, and you can't register or delete it. `false` for one registered through `POST /edge-types`. */
             shipped: boolean;
         };
@@ -1759,7 +1759,7 @@ export interface components {
             required?: boolean;
             /** @description The values an `enum` property takes. */
             enum_values?: string[];
-            /** @description The type of each element of an `array` property. It can't be `thumbnail`. */
+            /** @description The type of each element of an `array` property. A write is refused if an element is not a value of that type. It can't be `thumbnail`. */
             items_type?: string;
             /** @description A refinement of a `string` property. `url`, `email`, `date` and `datetime` store it as that type. `bcp47` and `iso3166` only label it. It can't be `thumbnail`. */
             format?: string;
@@ -2898,10 +2898,10 @@ export interface components {
             /** @description The name the edge goes by when read from its target, such as `child-of` for `parent-of`. No other edge type can use it as an ID or reverse name. */
             reverse_name?: string;
             /**
-             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `target` needs a `reverse_name`. Leave it out for `source`.
+             * @description The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it. `target` needs a `reverse_name`. Leave it out for `source`.
              * @enum {string}
              */
-            written_at?: "source" | "target";
+            written_at?: "source" | "target" | "none";
             /** @description `true` widens a registered type's endpoints in place. Retain every existing constraint token, or allow all types with `[]` or `*`; other members must stay unchanged. Omit or set `false` to register a new type. Not stored in the definition. */
             evolve_constraints?: boolean;
         };
@@ -2980,7 +2980,7 @@ export interface components {
             required?: boolean;
             /** @description The values an `enum` field allows. */
             enum_values?: string[];
-            /** @description The type of each element of an `array` field. */
+            /** @description The type of each element of an `array` field. A write is refused if an element is not a value of that type. */
             items_type?: string;
             /**
              * @description A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`.

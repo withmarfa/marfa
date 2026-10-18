@@ -113,6 +113,51 @@ describe("POST /edges", () => {
     trackEdge(ctx, ok.data.edge.id);
   });
 
+  it("holds an array property's elements to its items_type on a create and an update", async () => {
+    const edgeType = await register({
+      roles: { type: "array", items_type: "string" },
+    });
+    const source = await note();
+    const target = await note();
+    const refused = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+      properties: { roles: ["a", 1] },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(named(refused.error?.error)).toEqual(["roles.1"]);
+
+    // The witness: the same edge with strings, an empty list and no list.
+    for (const roles of [["a", "b"], [], undefined]) {
+      const ok = await client.createEdge({
+        source_id: source,
+        target_id: await note(),
+        edge_type: edgeType,
+        ...(roles === undefined ? {} : { properties: { roles } }),
+      });
+      expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+      trackEdge(ctx, ok.data.edge.id);
+    }
+
+    const made = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: edgeType,
+      properties: { roles: ["a"] },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackEdge(ctx, made.data.edge.id);
+    const patched = await client.updateEdge(made.data.edge.id, {
+      version: made.data.edge.version,
+      properties: { roles: [{}] },
+    });
+    expect(patched.status).toBe(400);
+    expect(patched.error?.error.code).toBe("invalid_properties");
+    expect(named(patched.error?.error)).toEqual(["roles.0"]);
+  });
+
   it("accepts a property the schema does not declare and stores it", async () => {
     const edgeType = await register();
     const r = await client.createEdge({

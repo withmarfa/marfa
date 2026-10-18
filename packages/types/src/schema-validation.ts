@@ -429,9 +429,8 @@ function validateFieldShape(
     );
   }
 
-  // An array's elements are not validated as their items_type says, so an
-  // array of thumbnails would carry images nothing checks, under a name the
-  // one-thumbnail rule never counts.
+  // An array of thumbnails would carry images under a name the one-thumbnail
+  // rule never counts.
   if (fd.items_type === "thumbnail") {
     errors.push(
       issue({
@@ -1799,14 +1798,15 @@ export function validateEdgeTypeSchema(
   if (
     obj.written_at !== undefined &&
     obj.written_at !== "source" &&
-    obj.written_at !== "target"
+    obj.written_at !== "target" &&
+    obj.written_at !== "none"
   ) {
     errors.push(
       issue({
         field: "written_at",
-        expected: 'one of: "source", "target"',
+        expected: 'one of: "source", "target", "none"',
         actual: describe(obj.written_at),
-        hint: "Name the end whose file writes the edge, or omit it for the source.",
+        hint: 'Name the end whose file writes the edge, "none" if no file does, or omit it for the source.',
       }),
     );
   } else if (obj.written_at === "target" && obj.reverse_name === undefined) {

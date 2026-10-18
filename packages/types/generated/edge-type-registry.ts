@@ -74,7 +74,7 @@ const inFolder: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["system.folder"],
   cascade_on_delete: "orphan",
-  written_at: "source",
+  written_at: "none",
   property_schema: {
     path: { type: "string", description: "The file's path relative to the folder's root, with `/` between names; required, and it may not climb out of the folder. The edge takes no other property." },
   },
@@ -224,7 +224,7 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     "target_type_constraints": [
       "system.folder"
     ],
-    "written_at": "source"
+    "written_at": "none"
   },
   "in-thread": {
     "cardinality": "many-to-one",

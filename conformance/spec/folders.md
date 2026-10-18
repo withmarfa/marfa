@@ -204,25 +204,25 @@ When the settings change to require another slice during a running watch, a devi
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST retain the file’s bytes.
 
-**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`, `device/property-validation.test.ts › flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended`.
 
 ### `folders/invalid-document-flagged`
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST flag the local refusal.
 
-**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`, `device/property-validation.test.ts › flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended`.
 
 ### `folders/invalid-document-scan-continues`
 
 When a folder document fails local field validation or names a type absent from the held catalog, a device MUST continue scanning other files.
 
-**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`, `device/property-validation.test.ts › flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended`.
 
 ### `folders/invalid-document-retried`
 
 When a refused folder document is corrected or its type becomes available in the held catalog, a device MUST retry admission at a later scan.
 
-**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`.
+**Tests:** `device/folders-frontmatter.test.ts › refuses an empty null property name before deciding a save is unchanged`, `device/property-validation.test.ts › contains document refusals, preserves bytes through a rename and retries corrected files`, `device/property-validation.test.ts › retries unchanged document bytes after their destination type is registered`, `device/property-validation.test.ts › flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended`.
 
 ### `folders/first-sync-waits`
 
@@ -1556,9 +1556,23 @@ When an edge line is removed, a device MUST retain a pin for its target that the
 
 ### `folders/edge-writing-end`
 
-When rendering an edge, a device MUST write its frontmatter line only at the end named by the edge type's `written_at`, using its forward name at the source or reverse name at the target.
+When rendering an edge whose type's `written_at` is `source` or `target`, a device MUST write its frontmatter line only at that end, using its forward name at the source or reverse name at the target.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an edge in one file only`, `device/folders-frontmatter.test.ts › writes parent-of as child-of in the child`.
+
+### `folders/edge-written-nowhere`
+
+When rendering an edge whose type's `written_at` is `none`, a device MUST write no frontmatter line or body link for it, at either end.
+
+**Reason:** no file writes such an edge, and the server keeps it. `in-folder` is one, since a file's place is where it sits.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes an edge of a type no file writes in no file, and flags a line naming it`.
+
+### `folders/edge-unwritten-line-flagged`
+
+If a document has a frontmatter line named for an edge type whose `written_at` is `none`, then a device MUST flag the document and send no edge write for the line.
+
+**Tests:** `device/folders-frontmatter.test.ts › writes an edge of a type no file writes in no file, and flags a line naming it`, `› flags an in-folder line and a line naming its own item`.
 
 ### `folders/edge-file-fallback`
 
@@ -2363,6 +2377,8 @@ When a file is moved or renamed without a content change, a device MUST send onl
 ### `folders/placement-not-document`
 
 When a device renders a file, a device MUST omit its `in-folder` edge from frontmatter and body links.
+
+**Reason:** the `in-folder` edge type's `written_at` is `none` (`folders/edge-written-nowhere`), since a file's place is where it sits.
 
 **Tests:** `device/folders-placement.test.ts › writes the in-folder edge for a file made in the folder`.
 

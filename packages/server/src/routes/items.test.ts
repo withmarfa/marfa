@@ -67,7 +67,7 @@ describe("POST /items", () => {
           read: null,
           count: 9007199254740991,
           choice: "yes",
-          list: [false, {}],
+          list: ["a", ""],
           date: "0000-02-29",
           time,
           email: "reader+tag@example.test",
@@ -91,6 +91,7 @@ describe("POST /items", () => {
       ["count", 1.5],
       ["choice", "maybe"],
       ["list", [1, 2, 3]],
+      ["list", ["a", 1]],
       ["date", "1900-02-29"],
       ["time", "2026-01-01T12:00:00"],
       ["time", "2026-01-01T12:00+24:00"],
@@ -108,7 +109,10 @@ describe("POST /items", () => {
       };
       expect(result.error.code).toBe("invalid_properties");
       expect(
-        result.error.details.errors.some((error) => error.field === field),
+        result.error.details.errors.some(
+          (error) =>
+            error.field === field || error.field.startsWith(`${field}.`),
+        ),
       ).toBe(true);
     }
   });

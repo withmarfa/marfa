@@ -97,7 +97,7 @@ export const EdgePropertyDefinitionSchema = z
       .optional()
       .describe("The values an `enum` property takes."),
     items_type: EdgePropertyTypeSchema.optional().describe(
-      "The type of each element of an `array` property. It can't be `thumbnail`.",
+      "The type of each element of an `array` property. A write is refused if an element is not a value of that type. It can't be `thumbnail`.",
     ),
     format: EdgePropertyFormatSchema.optional(),
   })
@@ -124,7 +124,7 @@ const PROPERTY_SCHEMA =
 const REVERSE_NAME =
   "The name the edge goes by when read from its target, such as `child-of` for `parent-of`.";
 const WRITTEN_AT =
-  "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name.";
+  "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it.";
 
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
@@ -161,7 +161,7 @@ export const EdgeTypeRequestSchema = z
         `${REVERSE_NAME} No other edge type can use it as an ID or reverse name.`,
       ),
     written_at: z
-      .enum(["source", "target"])
+      .enum(["source", "target", "none"])
       .optional()
       .describe(
         `${WRITTEN_AT} \`target\` needs a \`reverse_name\`. Leave it out for \`source\`.`,
@@ -183,7 +183,7 @@ const EdgeTypeResponseSchema = z
       .record(z.string(), EdgePropertyDefinitionSchema)
       .describe(PROPERTY_SCHEMA),
     reverse_name: z.string().optional().describe(REVERSE_NAME),
-    written_at: z.enum(["source", "target"]).describe(WRITTEN_AT),
+    written_at: z.enum(["source", "target", "none"]).describe(WRITTEN_AT),
     shipped: z
       .boolean()
       .describe(

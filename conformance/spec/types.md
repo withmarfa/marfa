@@ -11,7 +11,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 | Type                 | Family | Parent        | Required properties            | Description                                                                                                                                                                                                                                                                 |
 | -------------------- | ------ | ------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `core.bookmark`      | core   | None          | None                           | Content you captured from elsewhere: a saved URL, a highlight, an excerpt, a clipped paragraph.                                                                                                                                                                             |
-| `core.entity`        | core   | None          | `name`                         | A non-person entity: a company, band, team, charity, brand, school.                                                                                                                                                                                                         |
+| `core.entity`        | core   | None          | `name`                         | Any named entity: a person, a company, a band, a team, a charity, a brand, a school or a place. `core.entity.person` and `core.entity.place` narrow it.                                                                                                                     |
 | `core.entity.person` | core   | `core.entity` | `name`                         | Contact information for an individual. Inherits all core.entity fields.                                                                                                                                                                                                     |
 | `core.entity.place`  | core   | `core.entity` | `name`                         | A location or venue. Inherits all core.entity fields.                                                                                                                                                                                                                       |
 | `core.event`         | core   | None          | `title`                        | Something that happens at a time.                                                                                                                                                                                                                                           |
@@ -335,6 +335,30 @@ When an item names a value for a `datetime` field, the server MUST take a `YYYY-
 If an item names a `datetime` value with a time and no zone, or outside the bounds `types/datetime-value` states, or a `datetime` or `date` value naming a day the calendar does not have, or a `date` value with a time, then the server MUST answer `400 invalid_properties` naming the field.
 
 **Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`.
+
+### `types/array-items`
+
+When an item names an `array` field whose `items_type` is a field type, the server MUST take each element that a field of that type takes as its value, an `enum` taking the field's `enum_values`.
+
+**Reason:** a type is a promise a reader can rely on, and a list of strings that may hold a number makes every reader check each element again. `attachments` is a list of `object` and `links` a list of `string` on every type.
+
+**Tests:** `compliance/field-types.test.ts › takes the values of the declared types, an empty array and a null`, `› checks a subtype's inherited array field`, `› checks a shipped type's array field`.
+
+### `types/array-items-refused`
+
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an element that a field of its `items_type` refuses, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field and the element's position in `field`, as `names.1`.
+
+**Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was. An array already stored with a wrong element therefore also refuses a write that leaves it in place, because the whole resulting property set is judged, and the refusal names the element.
+
+**Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› checks the elements on an update, and keeps the item as it was when it refuses`, `› checks the elements of a bulk entry, an upsert by natural key and a bulk upsert`.
+
+### `types/array-items-unnamed`
+
+Where an `array` field's `items_type` names no field type, the server MUST NOT check the field's elements.
+
+**Reason:** the grammar requires `items_type` to be a string and no more, so a type registered or stored with another name keeps loading and keeps taking writes.
+
+**Tests:** `compliance/field-types.test.ts › leaves the elements of an array unchecked where items_type names no field type`.
 
 ### `types/searchable-false`
 

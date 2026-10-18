@@ -20,7 +20,10 @@ const fields = {
   read: { type: "boolean" },
   count: { type: "integer" },
   choice: { type: "enum", enum_values: ["yes", "no"] },
-  list: { type: "array", maxItems: 2, items: { type: "string" } },
+  list: { type: "array", maxItems: 2, items_type: "string" },
+  sites: { type: "array", items_type: "url" },
+  things: { type: "array", items_type: "object" },
+  loose: { type: "array", items_type: "somethingelse" },
   date: { type: "date" },
   time: { type: "datetime" },
   email: { type: "email" },
@@ -100,7 +103,12 @@ describe("a working copy checks the fields its catalog holds", () => {
         read: null,
         count: 9007199254740991,
         choice: "yes",
-        list: [false, {}],
+        list: ["a", ""],
+        sites: ["https://example.test"],
+        things: [{}, { a: 1 }],
+        loose: [1, {}, null],
+        links: ["b"],
+        attachments: [{}],
         date: "0000-02-29",
         time: "2026-01-01T23:59+23:59",
         email: "reader+tag@example.test",
@@ -125,6 +133,13 @@ describe("a working copy checks the fields its catalog holds", () => {
       ["count", 1.5],
       ["choice", "maybe"],
       ["list", [1, 2, 3]],
+      ["list", ["a", 1]],
+      ["list", [{}]],
+      ["list", [null]],
+      ["sites", ["https://example.test", "relative"]],
+      ["things", ["text"]],
+      ["links", [1]],
+      ["attachments", ["x"]],
       ["date", "1900-02-29"],
       ["time", "2026-01-01T12:00:00"],
       ["time", "2026-01-01T12:00+24:00"],
@@ -621,5 +636,41 @@ describe("a working copy checks the fields its catalog holds", () => {
         ),
       ).toBe(true);
     }
+  });
+
+  it("flags a document whose list holds an element of the wrong type, keeps its bytes and takes it once mended", async () => {
+    folder = await folderHarness("property-validation-list", {
+      settings: { search: { types: [TYPE] } },
+      catalog: typeCatalog(types),
+      rows: {},
+    });
+    expect((await folder.folder.pull()).ok).toBe(true);
+    const path = join(folder.dir, "list.md");
+    const bad =
+      "---\ntype: fixture.fields\ntitle: list\nlist:\n  - a\n  - 1\n---\nkeep these bytes\n";
+    writeFileSync(path, bad);
+    writeFileSync(
+      join(folder.dir, "neighbour.md"),
+      "---\ntype: fixture.fields\ntitle: next\nlist:\n  - a\n  - b\n---\nvalid body\n",
+    );
+    const scanned = await folder.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (scanned.ok) {
+      expect(scanned.value.created, "the neighbour was taken").toBe(1);
+      expect(scanned.value.flagged).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            path: "list.md",
+            flag: "refused",
+            reason: expect.stringContaining("list:"),
+          }),
+        ]),
+      );
+    }
+    expect(readFileSync(path, "utf8")).toBe(bad);
+
+    writeFileSync(path, bad.replace("  - 1", "  - '1'"));
+    const mended = await folder.folder.scan();
+    expect(mended.ok && mended.value.created).toBe(1);
   });
 });

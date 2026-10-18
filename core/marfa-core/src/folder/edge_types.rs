@@ -2,7 +2,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::body::text::Typed;
-use crate::catalog::{EdgeType, End};
+use crate::catalog::{EdgeType, End, WrittenAt};
 use crate::error::CoreError;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -51,7 +51,7 @@ impl EdgeTypes {
         let mut found: Vec<String> = self
             .types
             .iter()
-            .filter(|held| held.written_at == End::Target)
+            .filter(|held| held.written_at == WrittenAt::Target)
             .map(|held| held.id.clone())
             .collect();
         found.sort();

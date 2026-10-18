@@ -114,7 +114,7 @@ pub struct WireEdgeType {
     pub cardinality: String,
     #[serde(default)]
     pub reverse_name: Option<String>,
-    pub written_at: crate::catalog::End,
+    pub written_at: crate::catalog::WrittenAt,
     pub source_type_constraints: Vec<String>,
     pub target_type_constraints: Vec<String>,
     pub cascade_on_delete: String,

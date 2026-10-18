@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::error::CoreError;
 use crate::model::{Item, Shown};
@@ -13,8 +13,8 @@ use crate::wire::{WireCatalog, WireEdgeType};
 const TITLE_PROPERTY: &str = "title";
 
 /// Fields the server takes on every type, optional, which no read of a type
-/// lists (`items/create-null-optional`).
-const EVERY_TYPE_TAKES: [&str; 2] = ["attachments", "links"];
+/// lists (`items/create-null-optional`), and the type of each element.
+const EVERY_TYPE_TAKES: [(&str, &str); 2] = [("attachments", "object"), ("links", "string")];
 const BODY_PROPERTY: &str = "body";
 
 struct Entry {
@@ -35,6 +35,37 @@ struct Entry {
 pub enum End {
     Source,
     Target,
+}
+
+/// Which end of an edge has the file that writes it in a folder, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WrittenAt {
+    Source,
+    Target,
+    /// No file writes the edge. The server holds it, and a folder never
+    /// renders it as a line or a link.
+    None,
+}
+
+impl WrittenAt {
+    /// The end whose file writes the edge, where one does.
+    pub fn end(self) -> Option<End> {
+        match self {
+            WrittenAt::Source => Some(End::Source),
+            WrittenAt::Target => Some(End::Target),
+            WrittenAt::None => None,
+        }
+    }
+}
+
+impl From<End> for WrittenAt {
+    fn from(end: End) -> WrittenAt {
+        match end {
+            End::Source => WrittenAt::Source,
+            End::Target => WrittenAt::Target,
+        }
+    }
 }
 
 impl End {
@@ -109,7 +140,7 @@ pub struct EdgeType {
     pub cardinality: String,
     /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
-    pub written_at: End,
+    pub written_at: WrittenAt,
     pub source_type_constraints: Vec<String>,
     pub target_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
@@ -122,6 +153,9 @@ impl EdgeType {
     /// The name a file at `end` writes an edge of this type under, where it
     /// has one.
     pub fn name_at(&self, end: End) -> Option<&str> {
+        if self.written_at == WrittenAt::None {
+            return None;
+        }
         match end {
             End::Source => Some(&self.id),
             End::Target => self.reverse_name.as_deref(),
@@ -150,7 +184,7 @@ impl EdgeType {
             description: None,
             cardinality: cardinality.into(),
             reverse_name: reverse_name.map(str::to_string),
-            written_at,
+            written_at: written_at.into(),
             source_type_constraints: vec!["*".into()],
             target_type_constraints: vec!["*".into()],
             cascade_on_delete: "orphan".into(),
@@ -513,7 +547,14 @@ impl Catalog {
             chain.push((at, entry));
             current = entry.parent.as_deref();
         }
+        let every: Vec<(&str, Value)> = EVERY_TYPE_TAKES
+            .iter()
+            .map(|(name, items)| (*name, json!({ "type": "array", "items_type": items })))
+            .collect();
         let mut fields = BTreeMap::new();
+        for (name, definition) in &every {
+            fields.insert(*name, definition);
+        }
         for (_, entry) in chain.into_iter().rev() {
             for (name, definition) in &entry.definitions {
                 fields.insert(name.as_str(), definition);
@@ -536,7 +577,9 @@ impl Catalog {
                 !value.is_null()
                     || match self.definition(type_id, name) {
                         Some(definition) => Self::required(definition),
-                        None => !EVERY_TYPE_TAKES.contains(&name.as_str()),
+                        None => !EVERY_TYPE_TAKES
+                            .iter()
+                            .any(|(every, _)| *every == name.as_str()),
                     }
             })
             .map(|(name, value)| (name.clone(), value.clone()))
@@ -1110,6 +1153,42 @@ mod tests {
     }
 
     #[test]
+    fn a_held_array_field_and_the_universal_ones_judge_their_elements() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base",
+                  "fields": { "to": { "type": "array", "items_type": "string" } } },
+                { "id": "acme.leaf", "parent": "acme.base", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        let judge = |properties: Value| {
+            let properties: Map<String, Value> = serde_json::from_value(properties).unwrap();
+            catalog.validate_properties("acme.leaf", &properties, true)
+        };
+        for good in [
+            json!({ "to": ["a"], "links": ["b"], "attachments": [{}] }),
+            json!({ "to": [], "links": null, "attachments": [] }),
+            json!({}),
+        ] {
+            assert!(judge(good.clone()).is_ok(), "{good}");
+        }
+        for bad in [
+            json!({ "to": [42] }),
+            json!({ "to": ["a", {"x": 1}] }),
+            json!({ "links": [1] }),
+            json!({ "attachments": ["x"] }),
+        ] {
+            let refused = judge(bad.clone());
+            assert!(
+                matches!(&refused, Err(CoreError::Validation { code, .. }) if code == "invalid_properties"),
+                "{bad}: {refused:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_create_holds_its_nulls_as_the_server_does() {
         let conn = held(
             serde_json::json!([
@@ -1588,7 +1667,7 @@ mod tests {
         let mentor = edge_type(&conn, "mentor-of").unwrap();
         assert_eq!(
             (mentor.reverse_name.as_deref(), mentor.written_at),
-            (Some("taught-by"), End::Target)
+            (Some("taught-by"), WrittenAt::Target)
         );
     }
 

@@ -364,8 +364,10 @@ async function insertConflictedSibling(
     if (outbound && closedToNewEdge(edge.edge_type, other.state)) continue;
     const schema = getEdgeTypeSchema(edge.edge_type);
     if (schema === undefined) continue;
+    // An edge no file writes belongs to the end it leaves, as a file's place
+    // in a folder does.
     const own = outbound
-      ? schema.written_at === "source"
+      ? schema.written_at !== "target"
       : schema.written_at === "target";
     if (!own) continue;
     if (outbound && edge.edge_type === CONFLICTED_COPY_EDGE) continue;

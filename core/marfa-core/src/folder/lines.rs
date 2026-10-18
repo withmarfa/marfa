@@ -11,7 +11,7 @@ use crate::Result;
 use crate::body::resolve::{self, Names, Paths, Resolved, Resolver, is_id, resolve_reference};
 use crate::body::text::{self, Typed};
 use crate::catalog::Catalog;
-use crate::catalog::{EdgeType, End};
+use crate::catalog::{EdgeType, End, WrittenAt};
 use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
 
 /// A file's links and lines, read once every file in the scan is bound.
@@ -107,17 +107,16 @@ impl Folder {
         types: &EdgeTypes,
         catalog: &Catalog,
     ) -> Result<Option<(String, End)>> {
-        if edge.edge_type == PLACEMENT_EDGE {
-            return Ok(None);
-        }
         let Some(def) = types.get(&edge.edge_type) else {
+            return Ok(None);
+        };
+        let Some(named) = def.written_at.end() else {
             return Ok(None);
         };
         let at = |end: End| match end {
             End::Source => edge.source_id.clone(),
             End::Target => edge.target_id.clone(),
         };
-        let named = def.written_at;
         if self.carries(&at(named), catalog)? != Some(false) {
             return Ok(Some((at(named), named)));
         }
@@ -396,10 +395,17 @@ impl Folder {
             let Some((def, end)) = types.named(key) else {
                 continue;
             };
-            if def.id == PLACEMENT_EDGE {
-                reasons.push(format!(
-                    "its {key} line is not read: a file's place in the folder is where it sits"
-                ));
+            if def.written_at == WrittenAt::None {
+                reasons.push(if def.id == PLACEMENT_EDGE {
+                    format!(
+                        "its {key} line is not read: a file's place in the folder is where it sits"
+                    )
+                } else {
+                    format!(
+                        "its {key} line is not read: no file writes {} edges",
+                        def.id
+                    )
+                });
                 continue;
             }
             groups.insert(
@@ -692,10 +698,12 @@ impl Folder {
         }
         // At the end its type does not name, a line is the fallback for an
         // item that cannot carry frontmatter, and nothing else.
-        if group.end != group.edge_type.written_at {
+        if let Some(written) = group.edge_type.written_at.end()
+            && group.end != written
+        {
             let belongs = group
                 .edge_type
-                .name_at(group.edge_type.written_at)
+                .name_at(written)
                 .unwrap_or(&group.edge_type.id);
             for (id, r#type) in &found {
                 if r#type

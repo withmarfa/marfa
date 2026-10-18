@@ -110,7 +110,9 @@ const FieldDefinitionSchema = z
     items_type: z
       .string()
       .optional()
-      .describe("The type of each element of an `array` field."),
+      .describe(
+        "The type of each element of an `array` field. A write is refused if an element is not a value of that type.",
+      ),
     format: z
       .enum(FIELD_FORMATS as unknown as [string, ...string[]])
       .optional()

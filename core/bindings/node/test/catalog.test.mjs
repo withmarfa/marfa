@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { EdgeEnd, MarfaCore, SliceTier } from "../index.js";
+import { EdgeWrittenAt, MarfaCore, SliceTier } from "../index.js";
 import { CONTRACT, INSTANCE, marker, readProof, streamHead } from "./copy-fixture.mjs";
 
 const RECIPE = {
@@ -117,6 +117,8 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.ok(core.itemTypes().some((held) => held.id === "core.note"));
   assert.throws(() => core.itemType("acme.recipe"), /^Error: not_found: /);
   assert.throws(() => core.edgeType("mentor-of"), /^Error: not_found: /);
+  // An edge no file writes: the built-in `in-folder` placement.
+  assert.equal(core.edgeType("in-folder").writtenAt, EdgeWrittenAt.None);
 
   await core.hydrate(["core.note"], SliceTier.Library);
   assert.equal(typeof core.status().catalogVersion, "number");
@@ -135,7 +137,7 @@ test("holds the types Marfa ships before a server's catalog is read, then reads 
   assert.deepEqual(recipe.fields[0]?.definition, RECIPE.fields.servings);
   const mentor = core.edgeType("mentor-of");
   assert.equal(mentor.reverseName, "mentored-by");
-  assert.equal(mentor.writtenAt, EdgeEnd.Target);
+  assert.equal(mentor.writtenAt, EdgeWrittenAt.Target);
   assert.deepEqual(
     core.edgeTypes().map((type) => type.id),
     ["mentor-of"],

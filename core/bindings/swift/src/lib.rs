@@ -355,6 +355,14 @@ pub enum EdgeEnd {
     Target,
 }
 
+/// Which end of an edge has the file that writes it in a folder, or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum EdgeWrittenAt {
+    Source,
+    Target,
+    None,
+}
+
 /// An edge type as the copy holds it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct EdgeType {
@@ -364,7 +372,7 @@ pub struct EdgeType {
     pub cardinality: String,
     /// The name the edge goes by read from its target.
     pub reverse_name: Option<String>,
-    pub written_at: EdgeEnd,
+    pub written_at: EdgeWrittenAt,
     pub source_type_constraints: Vec<String>,
     pub target_type_constraints: Vec<String>,
     pub cascade_on_delete: String,
@@ -424,8 +432,9 @@ impl From<marfa_core::EdgeType> for EdgeType {
             cardinality: held.cardinality,
             reverse_name: held.reverse_name,
             written_at: match held.written_at {
-                marfa_core::End::Source => EdgeEnd::Source,
-                marfa_core::End::Target => EdgeEnd::Target,
+                marfa_core::WrittenAt::Source => EdgeWrittenAt::Source,
+                marfa_core::WrittenAt::Target => EdgeWrittenAt::Target,
+                marfa_core::WrittenAt::None => EdgeWrittenAt::None,
             },
             source_type_constraints: held.source_type_constraints,
             target_type_constraints: held.target_type_constraints,
@@ -2879,7 +2888,7 @@ mod tests {
             description: None,
             cardinality: "one-to-many".into(),
             reverse_name: Some("mentored-by".into()),
-            written_at: marfa_core::End::Target,
+            written_at: marfa_core::WrittenAt::Target,
             source_type_constraints: vec!["*".into()],
             target_type_constraints: vec!["*".into()],
             cascade_on_delete: "orphan".into(),
@@ -2895,13 +2904,18 @@ mod tests {
         };
         let crossed = EdgeType::from(held.clone());
         assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));
-        assert_eq!(crossed.written_at, EdgeEnd::Target);
+        assert_eq!(crossed.written_at, EdgeWrittenAt::Target);
         assert_eq!(
             text(&crossed.properties[0].definition),
             r#"{"type":"string"}"#
         );
-        held.written_at = marfa_core::End::Source;
-        assert_eq!(EdgeType::from(held).written_at, EdgeEnd::Source);
+        held.written_at = marfa_core::WrittenAt::Source;
+        assert_eq!(
+            EdgeType::from(held.clone()).written_at,
+            EdgeWrittenAt::Source
+        );
+        held.written_at = marfa_core::WrittenAt::None;
+        assert_eq!(EdgeType::from(held).written_at, EdgeWrittenAt::None);
     }
 
     #[test]

@@ -474,7 +474,7 @@ describe("custom edge-type registration", () => {
       source_type_constraints: ["*"],
       target_type_constraints: ["system.folder"],
       cascade_on_delete: "orphan",
-      written_at: "source",
+      written_at: "none",
     });
     expect(inFolder?.reverse_name ?? null).toBeNull();
     expect(inFolder?.property_schema).toHaveProperty("path");
@@ -901,6 +901,8 @@ describe("custom edge-type registration", () => {
     expect(writtenAt["parent-of"]).toBe("target");
     expect(writtenAt["attached-to"]).toBe("source");
     expect(writtenAt["references"]).toBe("source");
+    // No file writes the placement of a file, so the edge names no end.
+    expect(writtenAt["in-folder"]).toBe("none");
   });
 
   it("registers an edge type with a reverse name and lists it", async () => {
@@ -982,6 +984,27 @@ describe("custom edge-type registration", () => {
     expect(plain.status).toBe(201);
     trackEdgeType(ctx, plainId);
     expect(plain.data.edge_type.written_at).toBe("source");
+
+    // An edge no file writes names no end, and needs no name to write it under.
+    const noneId = `mock.written-none.${ctx.runId}`;
+    const none = await client.registerEdgeType({
+      id: noneId,
+      cardinality: "many-to-many",
+      written_at: "none",
+    });
+    expect(none.status, JSON.stringify(none.error)).toBe(201);
+    trackEdgeType(ctx, noneId);
+    expect(none.data.edge_type.written_at).toBe("none");
+    const listedNone = await client.listEdgeTypes();
+    expect(listedNone.data.data.find((t) => t.id === noneId)?.written_at).toBe(
+      "none",
+    );
+    const bogus = await client.registerEdgeType({
+      id: `mock.written-bogus.${ctx.runId}`,
+      cardinality: "many-to-many",
+      written_at: "nowhere" as never,
+    });
+    expect(bogus.status).toBe(400);
 
     // The target's file can only write an edge under a name read from the
     // target, so a type written there must declare one.
