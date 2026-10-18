@@ -211,7 +211,7 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
   const map: Record<string, unknown> = {
     state: table.state,
     type: table.type,
-    source: table.source,
+    source: sourceColumnSql(table.source as SQLWrapper),
     source_id: table.source_id,
     occurred_at: table.occurred_at,
     created_at: table.created_at,
@@ -521,6 +521,15 @@ function decomposeCoveredTypes(types: string[]): {
  */
 export const MISSING_SOURCE = "unknown";
 
+/**
+ * The `source` column as every read answers it. A row stored with a NULL
+ * source reads as `unknown`, so every SQL comparison on the column goes
+ * through here and agrees with what the row reads as.
+ */
+export function sourceColumnSql(sourceCol: SQLWrapper): SQL {
+  return sql`COALESCE(${sourceCol}, ${MISSING_SOURCE})`;
+}
+
 /** Whether the filter names this type, or a type it is under. */
 export function sourceFilterCovers(
   filter: SourceFilterSettings | undefined,
@@ -600,7 +609,7 @@ export function sourceFilterToSql(
   // Emitting `IN ()` instead is a syntax error.
   if (filter.sources.length === 0) return sql`NOT (${covered})`;
 
-  return sql`(NOT (${covered}) OR COALESCE(${sourceCol}, ${MISSING_SOURCE}) IN (${sql.join(
+  return sql`(NOT (${covered}) OR ${sourceColumnSql(sourceCol)} IN (${sql.join(
     filter.sources.map((source) => sql`${source}`),
     sql`, `,
   )}))`;

@@ -47,6 +47,7 @@ import {
   filterToSqlConditions,
   notSystemTypeSql,
   MISSING_SOURCE,
+  sourceColumnSql,
   sourceFilterToSql,
   typeFilterSql,
   typeSubtreeSql,
@@ -280,7 +281,7 @@ async function insertConflictedSibling(
       created_at: now,
       updated_at: now,
       occurred_at: now,
-      source: row.source,
+      source: row.source ?? MISSING_SOURCE,
       version: 1,
       schema_version: schemaVersion,
       ...instantColumnValues(properties),
@@ -505,7 +506,9 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
 
   if (typeClause) conditions.push(typeClause);
 
-  if (filters.source) conditions.push(eq(items.source, filters.source));
+  if (filters.source) {
+    conditions.push(sql`${sourceColumnSql(items.source)} = ${filters.source}`);
+  }
 
   if (filters.tier !== undefined) {
     conditions.push(eq(items.tier, filters.tier));
@@ -736,7 +739,7 @@ export class SqliteItemStore implements ItemStore {
             created_at: now,
             updated_at: now,
             occurred_at: input.occurred_at ?? now,
-            source: input.source,
+            source: input.source ?? MISSING_SOURCE,
             source_id: input.source_id,
             // A restore recreates a row under its archived id, so it also
             // carries the version that id had reached. Every other create

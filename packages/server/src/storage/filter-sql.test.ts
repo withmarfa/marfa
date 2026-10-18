@@ -48,8 +48,10 @@ describe("filterToSqlConditions", () => {
     it("generates system field contains", () => {
       const expr = parseFilter('source contains "import"');
       const result = render(expr);
-      expect(result.clause).toBe(`"i"."source" LIKE ? ESCAPE '\\'`);
-      expect(result.params).toEqual(["%import%"]);
+      expect(result.clause).toBe(
+        `COALESCE("i"."source", ?) LIKE ? ESCAPE '\\'`,
+      );
+      expect(result.params).toEqual(["unknown", "%import%"]);
     });
 
     it("generates system field starts_with", () => {
@@ -193,7 +195,7 @@ describe("filterToSqlConditions", () => {
       ['properties.title contains "?"', ["$.title", "%?%"]],
       ['properties.title starts_with "??"', ["$.title", "??%"]],
       ['tags contains "why?"', ["why?"]],
-      ['source eq "src?x=1"', ["src?x=1"]],
+      ['source eq "src?x=1"', ["unknown", "src?x=1"]],
       ['properties.q eq "say \\"what?\\""', ["$.q", 'say "what?"']],
       ['backref[about] eq "a?b"', ["about", "a?b"]],
       ['edge[about] neq "?"', ["about", "?"]],
