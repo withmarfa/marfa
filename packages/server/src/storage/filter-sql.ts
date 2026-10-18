@@ -32,7 +32,7 @@ import type {
  * exactly the `<root>.` prefix. A range can use the BINARY type index;
  * default case-insensitive LIKE cannot.
  */
-export function subtreeBounds(root: string): { from: string; before: string } {
+function subtreeBounds(root: string): { from: string; before: string } {
   return { from: `${root}.`, before: `${root}/` };
 }
 

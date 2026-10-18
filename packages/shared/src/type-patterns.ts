@@ -221,10 +221,9 @@ function exclusionReachesInto(grant: string, exclusion: string): boolean {
  * Decompose a filter into terms a query can compile independently.
  *
  * Each granted pattern keeps only the exclusions that both outrank it and
- * reach into it, so a compiler emits `match(pattern) AND NOT (match(minus) OR
+ * reach into it, so a caller tests `match(pattern) AND NOT (match(minus) OR
  * ...)` per term and `or`s the terms together. With no exclusions every
- * `minus` is empty and the result is exactly the disjunction these compilers
- * have always emitted.
+ * `minus` is empty and the result is the plain disjunction of the grants.
  */
 export function typeFilterTerms(
   allowed: string[],

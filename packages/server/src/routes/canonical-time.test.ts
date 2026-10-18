@@ -189,7 +189,7 @@ describe("canonical item instants", () => {
   });
 
   it.each(["occurred_at", "created_at", "updated_at"] as const)(
-    "normalizes %s comparison literals in both filter compilers",
+    "normalizes %s comparison literals on GET /items and GET /search",
     async (field) => {
       const row = await create("2026-04-01T07:00:00.084Z");
       const instant = row[field];
