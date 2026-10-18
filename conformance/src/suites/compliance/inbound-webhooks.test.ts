@@ -1,6 +1,5 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
-import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type {
@@ -24,6 +23,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
 
 let ctx: TestContext;
 let client: MarfaClient;
@@ -1243,6 +1243,7 @@ describe("an address whose key has expired", () => {
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   it("answers 404 at an address whose key has expired, as at a revoked key's", async () => {
+    const clock = movedClock(server!);
     const minter = new MarfaClient({
       baseUrl: server!.apiUrl,
       apiKey: server!.workingKey,
@@ -1253,6 +1254,9 @@ describe("an address whose key has expired", () => {
         label,
         source: `inbound-key-${label}`,
         default_tier: "library",
+        ...(label === "expiring"
+          ? { expires_at: new Date(clock.now() + HOUR_MS).toISOString() }
+          : {}),
       });
       expect(minted.status).toBe(201);
       const own = new MarfaClient({
@@ -1273,20 +1277,7 @@ describe("an address whose key has expired", () => {
     }
     expect((await minter.revokeKey(revoked.keyId)).status).toBe(200);
 
-    await server!.restart({
-      whileStopped: () => {
-        const db = new DatabaseSync(server!.sqlitePath);
-        try {
-          const past = new Date(Date.now() - 60_000).toISOString();
-          const changed = db
-            .prepare("UPDATE api_keys SET expires_at = ? WHERE id = ?")
-            .run(past, expiring.keyId);
-          expect(changed.changes).toBe(1);
-        } finally {
-          db.close();
-        }
-      },
-    });
+    await clock.advance(2 * HOUR_MS);
 
     const revokedAnswer = await send(server!.apiUrl, revoked.path, "after");
     expect(revokedAnswer.status).toBe(404);

@@ -5,18 +5,21 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import { movedClock } from "../../utils/moved-clock.js";
 
 /**
  * The two refusals an `Idempotency-Key` meets that `idempotency_key_reused`
  * does not cover: a repeat of a request still being served, and a repeat of
  * one whose answer was too large to keep.
  *
- * **A server of its own, for both.** The first needs a row of the instance's
- * own database arranged, so it cannot share the run's server. The second
- * needs a body the shared server's request cap would refuse, because a stored
- * answer is the request's own size and a little more.
+ * **A server of its own, for both.** The first needs a record of the
+ * instance's own database arranged and the server's clock moved, so it cannot
+ * share the run's server. The second needs a body the shared server's request
+ * cap would refuse, because a stored answer is the request's own size and a
+ * little more.
  */
 let server: FreshServer | undefined;
+let clock: ReturnType<typeof movedClock>;
 
 /** The request cap this file's server takes, above the 1 MiB it defaults to. */
 const REQUEST_CAP_BYTES = 4 * 1024 * 1024;
@@ -28,6 +31,7 @@ beforeAll(async () => {
   server = await bootFreshServer("idempotency-refusals", {
     MARFA_MAX_REQUEST_BYTES: String(REQUEST_CAP_BYTES),
   });
+  clock = movedClock(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -144,18 +148,19 @@ describe("an Idempotency-Key repeated while its first request is still being ser
    * recorded. The window a live request holds it for is a few milliseconds
    * on one event loop, which sixteen concurrent sends of one key over HTTP
    * never landed in, so the record is arranged in the instance's own file.
+   * Its age is not: the claim is as old as the server's clock says.
    */
-  function leaveClaimed(key: string, claimedAt: Date): number {
+  function leaveClaimed(key: string): number {
     return withInstanceDatabase(server!.sqlitePath, (db) => {
       const changed = db
         .prepare(
           `UPDATE idempotency_records
              SET state = 'in_flight', response_status = NULL,
                  response_content_type = NULL, response_body = NULL,
-                 completed_at = NULL, created_at = ?
+                 completed_at = NULL
            WHERE idempotency_key = ?`,
         )
-        .run(claimedAt.toISOString(), key);
+        .run(key);
       return Number(changed.changes);
     });
   }
@@ -179,7 +184,8 @@ describe("an Idempotency-Key repeated while its first request is still being ser
 
     // Ten seconds inside the 60-second lease, so that the bound is what holds
     // the key and not the claim being new.
-    expect(leaveClaimed(key, new Date(Date.now() - 50 * 1000))).toBe(1);
+    expect(leaveClaimed(key)).toBe(1);
+    await clock.advance(50 * 1000);
     const busy = await send("POST", "/items", request, {
       "Idempotency-Key": key,
     });
@@ -192,7 +198,7 @@ describe("an Idempotency-Key repeated while its first request is still being ser
     // A claim nobody is serving does not hold the key for good: a writer
     // that died leaves one, and the retry the code asks for takes it over
     // once it is a second past the lease.
-    expect(leaveClaimed(key, new Date(Date.now() - 61 * 1000))).toBe(1);
+    await clock.advance(11 * 1000);
     const taken = await send("POST", "/items", request, {
       "Idempotency-Key": key,
     });
