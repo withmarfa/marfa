@@ -27,7 +27,7 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // cursor, so this has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) struct Pace {
     pub(crate) stop_poll: Duration,
     pub(crate) silence: Duration,
@@ -37,6 +37,21 @@ pub(crate) struct Pace {
     /// stream at once is asked at most every `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
+    /// How long a stream stayed open is read from this clock, so a test can
+    /// hold it still and a slow machine cannot make a stream that ended at
+    /// once look like one that was held.
+    pub(crate) clock: &'static (dyn Fn() -> Instant + Sync),
+}
+
+impl std::fmt::Debug for Pace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Pace")
+            .field("stop_poll", &self.stop_poll)
+            .field("silence", &self.silence)
+            .field("reconnect_first", &self.reconnect_first)
+            .field("reconnect_most", &self.reconnect_most)
+            .finish_non_exhaustive()
+    }
 }
 
 pub(crate) const PACE: Pace = Pace {
@@ -44,6 +59,7 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
+    clock: &Instant::now,
 };
 
 struct Slice {
@@ -904,7 +920,7 @@ fn follow_paced(
                 });
             }
             let catalog = catalog?;
-            let opened = Instant::now();
+            let opened = (pace.clock)();
             let ended = read_stream(
                 core,
                 &context,
@@ -927,7 +943,7 @@ fn follow_paced(
                 Ended::Over => {}
             }
             refreshed.clear();
-            if opened.elapsed() >= pace.reconnect_most {
+            if (pace.clock)().saturating_duration_since(opened) >= pace.reconnect_most {
                 backoff = pace.reconnect_first;
             } else {
                 recovery.tell(&report.cursor, on_change);
@@ -1404,7 +1420,16 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
+        clock: &frozen,
     };
+
+    /// A clock that never moves, so no stream is held for `reconnect_most`
+    /// however slowly the machine runs: a test that needs a held stream says
+    /// so with a clock of its own.
+    fn frozen() -> Instant {
+        static AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *AT.get_or_init(Instant::now)
+    }
 
     /// For a stream the test holds open with no keepalive while it looks at
     /// what was told: with `QUICK`'s silence, a slow run would end that
@@ -2242,23 +2267,23 @@ mod tests {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         let ended = || stream(vec![connected()], Then::End);
-        server.on(
-            "/events",
-            vec![
-                ended(),
-                ended(),
-                stream(
-                    vec![connected()],
-                    Then::Hold {
-                        keepalive: Some(MS(5)),
-                        lasting: Some(MS(100)),
-                    },
-                ),
-                ended(),
-            ],
-        );
+        server.on("/events", vec![ended(), ended(), ended(), ended()]);
         let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, Some(3));
+        // `follow_paced` reads the clock once when a stream opens and once
+        // after it ends, and not for an open that failed, so the sixth read
+        // is the end of the third stream. It shows that stream as open for
+        // the most wait; every other read shows none.
+        let reads = AtomicUsize::new(0);
+        let still = frozen();
+        let most = QUICK.reconnect_most;
+        let clock: &'static (dyn Fn() -> Instant + Sync) = Box::leak(Box::new(move || match reads
+            .fetch_add(1, Ordering::SeqCst)
+        {
+            5 => still + most,
+            _ => still,
+        }));
+        let pace = Pace { clock, ..QUICK };
+        let run = follow_on(&core, pace, Some(3));
         run.ended().unwrap();
         assert_eq!(
             run.waits(),

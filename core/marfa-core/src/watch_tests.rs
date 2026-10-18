@@ -16,6 +16,7 @@ const QUICK: Pace = Pace {
     silence: Duration::from_secs(60),
     reconnect_first: Duration::from_millis(10),
     reconnect_most: Duration::from_millis(40),
+    clock: &Instant::now,
 };
 
 const FAST_SAVES: SavesPace = SavesPace {
