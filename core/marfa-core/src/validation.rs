@@ -177,7 +177,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
         "array" => match value.as_array() {
             None => expected("array"),
             Some(values) if values.len() as u64 > limit("maxItems", 10_000) => Some(format!("Must contain at most {} items", limit("maxItems", 10_000))),
-            Some(_) => None,
+            Some(values) => elements(definition, values)?,
         },
         "object" => if value.is_object() { None } else { expected("object") },
         "url" => if value.as_str().is_some_and(|text| url::Url::parse(text).is_ok()) { None } else { Some("Must be a valid URL".into()) },
@@ -192,6 +192,41 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
         _ => return Err(CoreError::Decoding(format!("the held field declares unsupported type {kind}"))),
     })
 }
+
+/// The first element of an array that is not a value of the field's
+/// `items_type`, judged as a field of that type judges a value. An
+/// `items_type` that names no field type leaves the elements unchecked, as the
+/// server leaves them.
+fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, CoreError> {
+    let Some(items) = definition.get("items_type").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if !FIELD_TYPES.contains(&items) {
+        return Ok(None);
+    }
+    let element = serde_json::json!({ "enum_values": definition.get("enum_values") });
+    for (index, value) in values.iter().enumerate() {
+        if let Some(message) = field(items, &element, value)? {
+            return Ok(Some(format!("Item {index}: {message}")));
+        }
+    }
+    Ok(None)
+}
+
+const FIELD_TYPES: [&str; 12] = [
+    "string",
+    "number",
+    "integer",
+    "boolean",
+    "url",
+    "email",
+    "datetime",
+    "date",
+    "enum",
+    "array",
+    "object",
+    "thumbnail",
+];
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
 // HTML's broader email shape. Keep its accepted neighbours here too.
@@ -379,6 +414,78 @@ mod tests {
         ] {
             assert!(!email(text), "{text}");
         }
+    }
+
+    #[test]
+    fn an_array_element_is_judged_as_its_items_type_judges_a_value() {
+        let list = |items: &str, values: Value| {
+            field(
+                "array",
+                &serde_json::json!({ "items_type": items }),
+                &values,
+            )
+            .unwrap()
+        };
+        for (items, good) in [
+            ("string", serde_json::json!(["a", ""])),
+            ("url", serde_json::json!(["https://example.test"])),
+            ("email", serde_json::json!(["a@example.test"])),
+            (
+                "datetime",
+                serde_json::json!(["2026-01-01T00:00Z", "2026-01-01"]),
+            ),
+            ("date", serde_json::json!(["2026-02-28"])),
+            ("number", serde_json::json!([1.5, -2])),
+            ("integer", serde_json::json!([3])),
+            ("boolean", serde_json::json!([true, false])),
+            ("object", serde_json::json!([{}, {"a": 1}])),
+            ("array", serde_json::json!([[], [1, "x"]])),
+            ("somethingelse", serde_json::json!([1, {}, null])),
+            ("string", serde_json::json!([])),
+        ] {
+            assert_eq!(list(items, good.clone()), None, "{items} {good}");
+        }
+        for (items, bad) in [
+            ("string", serde_json::json!(["a", 42])),
+            ("string", serde_json::json!([{"x": 1}])),
+            ("string", serde_json::json!([null])),
+            ("string", serde_json::json!(["a\u{0}b"])),
+            (
+                "url",
+                serde_json::json!(["https://example.test", "not a url"]),
+            ),
+            ("email", serde_json::json!(["nobody"])),
+            ("datetime", serde_json::json!(["2026-01-01T00:00:00"])),
+            ("date", serde_json::json!(["2026-02-30"])),
+            ("number", serde_json::json!(["1"])),
+            ("integer", serde_json::json!([1.5])),
+            ("boolean", serde_json::json!(["true"])),
+            ("object", serde_json::json!(["text"])),
+            ("object", serde_json::json!([[]])),
+            ("array", serde_json::json!([{}])),
+        ] {
+            let message = list(items, bad.clone());
+            assert!(message.is_some(), "{items} {bad}");
+        }
+        assert!(
+            list("string", serde_json::json!(["a", 1]))
+                .unwrap()
+                .starts_with("Item 1:")
+        );
+    }
+
+    #[test]
+    fn an_enum_element_takes_the_fields_enum_values() {
+        let definition = serde_json::json!({"items_type": "enum", "enum_values": ["s", "m"]});
+        assert_eq!(
+            field("array", &definition, &serde_json::json!(["s", "m"])).unwrap(),
+            None
+        );
+        assert!(
+            field("array", &definition, &serde_json::json!(["xl"]))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

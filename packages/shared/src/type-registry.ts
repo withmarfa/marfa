@@ -774,7 +774,7 @@ const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
 
 // Match the working copy's UTF-16 bound rather than the reader library's
 // Unicode code-point count, so one value has the same verdict offline.
-const boundedString = (field: FieldDefinition): z.ZodType => {
+const boundedString = (field: { maxLength?: number }): z.ZodType => {
   const max = field.maxLength ?? DEFAULT_MAX_STRING_LENGTH;
   return noNullByte(maxStringLength(z.string(), max));
 };
@@ -837,28 +837,28 @@ const thumbnail = z.string().superRefine((value, ctx) => {
   }
 });
 
-function fieldToZod(field: FieldDefinition): z.ZodType {
-  let schema: z.ZodType;
-
-  switch (field.type) {
+/**
+ * The schema a value of `type` must satisfy, with no `required` or `null`
+ * handling: a field's own value and each element of an array share it, so an
+ * element has the verdict a scalar of that type has.
+ */
+function valueToZod(
+  type: string,
+  field: Pick<FieldDefinition, "enum_values" | "maxLength" | "maxItems">,
+): z.ZodType | undefined {
+  switch (type) {
     case "string":
-      schema = boundedString(field);
-      break;
+      return boundedString(field);
     case "number":
-      schema = z.number();
-      break;
+      return z.number();
     case "integer":
-      schema = z.number().int();
-      break;
+      return z.number().int();
     case "boolean":
-      schema = z.boolean();
-      break;
+      return z.boolean();
     case "url":
-      schema = z.url();
-      break;
+      return z.url();
     case "email":
-      schema = z.email();
-      break;
+      return z.email();
     case "datetime":
       // Either a full ISO 8601 instant with a mandatory offset (Z or
       // ±HH:MM), or a bare calendar date. The offset requirement is what
@@ -868,35 +868,46 @@ function fieldToZod(field: FieldDefinition): z.ZodType {
       // `all_day` on the event is what says which reading applies. A
       // naive local time satisfies neither and is refused, so it cannot
       // surface later as a parse error in whatever reads it.
-      schema = z.union([
+      return z.union([
         z.iso.datetime({ offset: true }),
         z.iso.datetime({ offset: true, precision: -1 }),
         z.iso.date(),
       ]);
-      break;
     case "date":
       // A calendar date, YYYY-MM-DD. Same reasoning as datetime: a
       // declared format is checked rather than read as a bounded string.
-      schema = z.iso.date();
-      break;
+      return z.iso.date();
     case "enum":
       if (field.enum_values && field.enum_values.length > 0) {
-        schema = z.enum(field.enum_values as [string, ...string[]]);
-      } else {
-        schema = boundedString(field);
+        return z.enum(field.enum_values as [string, ...string[]]);
       }
-      break;
+      return boundedString(field);
     case "array":
-      schema = z
+      return z
         .array(z.unknown())
         .max(field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS);
-      break;
     case "object":
-      schema = z.record(z.string(), z.unknown());
-      break;
+      return z.record(z.string(), z.unknown());
     case "thumbnail":
-      schema = thumbnail;
-      break;
+      return thumbnail;
+    default:
+      return undefined;
+  }
+}
+
+function fieldToZod(field: FieldDefinition): z.ZodType {
+  let schema = valueToZod(field.type, field) ?? z.unknown();
+
+  // An array's elements are held to its `items_type` as a scalar of that
+  // type is. A type may name an `items_type` that is no field type, and a
+  // registered schema may name none; those elements are not checked, since
+  // refusing the name would stop a stored type loading.
+  if (field.type === "array") {
+    const element = field.items_type
+      ? valueToZod(field.items_type, { enum_values: field.enum_values })
+      : undefined;
+    const bound = field.maxItems ?? DEFAULT_MAX_ARRAY_ITEMS;
+    schema = (element ? z.array(element) : z.array(z.unknown())).max(bound);
   }
 
   // Optional fields treat an explicit JSON `null` as "unset". Serializers

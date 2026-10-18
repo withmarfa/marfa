@@ -155,7 +155,7 @@ export interface EdgeType {
   description: string | null;
   cardinality: string;
   reverse_name: string | null;
-  written_at: "source" | "target";
+  written_at: "source" | "target" | "none";
   source_type_constraints: string[];
   target_type_constraints: string[];
   cascade_on_delete: string;

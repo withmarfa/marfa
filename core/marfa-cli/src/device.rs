@@ -1513,7 +1513,7 @@ fn field_line(field: &marfa_core::TypeField) -> String {
 
 fn edge_type_line(held: &marfa_core::EdgeType) -> String {
     format!(
-        "{}  {}  {}{}  written at its {}{}",
+        "{}  {}  {}{}  written at {}{}",
         held.id,
         held.label.as_deref().unwrap_or("(no label)"),
         held.cardinality,
@@ -1521,8 +1521,9 @@ fn edge_type_line(held: &marfa_core::EdgeType) -> String {
             .as_deref()
             .map_or(String::new(), |name| format!("  reverse {name}")),
         match held.written_at {
-            marfa_core::End::Source => "source",
-            marfa_core::End::Target => "target",
+            marfa_core::WrittenAt::Source => "its source",
+            marfa_core::WrittenAt::Target => "its target",
+            marfa_core::WrittenAt::None => "no end",
         },
         if held.shipped { "  shipped" } else { "" }
     )

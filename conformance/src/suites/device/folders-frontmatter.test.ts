@@ -16,6 +16,7 @@ import {
   answers,
   edgeEvent,
   edgeType,
+  edgeTypeCatalog,
   copyHeadRead,
   copyItemEvent,
   itemsPage,
@@ -107,6 +108,8 @@ async function edgeHarness(
     lookup?: (text: string) => Answer | undefined;
     /** Handed the item door, for a fixture that answers one of its writes. */
     door?: (door: FolderDoor) => void;
+    /** What `GET /edge-types` answers, the shipped types unless named. */
+    edgeTypes?: Responder;
   } = {},
 ): Promise<{ harness: FolderHarness; door: EdgeDoor }> {
   const whole = (type: string) =>
@@ -120,6 +123,7 @@ async function edgeHarness(
     },
     events: options.events,
     lookup: options.lookup,
+    edgeTypes: options.edgeTypes,
   });
   const door = new EdgeDoor();
   for (const edge of edges) door.hold(edge);
@@ -1205,6 +1209,49 @@ describe("edges in frontmatter", () => {
       frontOf(harness, "Alpha.md"),
       "a title a link reads otherwise was written as a link",
     ).toContain(`"[[${beta}]]"`);
+  });
+
+  it("writes an edge of a type no file writes in no file, and flags a line naming it", async () => {
+    const edge = {
+      id: "01a00000-0000-7000-8000-00000000e1e9",
+      source_id: alpha,
+      target_id: beta,
+      edge_type: "unwritten",
+    };
+    const catalog = (written_at: "none" | "source") =>
+      edgeTypeCatalog([edgeType("unwritten", { written_at })]);
+    // The witness: the same edge of a type written at its source is a line.
+    const witness = await edgeHarness(
+      "folder-edge-written",
+      [titled(alpha, "Alpha"), titled(beta, "Beta")],
+      [edge],
+      { edgeTypes: () => catalog("source") },
+    );
+    harness = witness.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(frontOf(harness, "Alpha.md")).toContain("unwritten:");
+    await harness.stop();
+
+    const made = await edgeHarness(
+      "folder-edge-unwritten",
+      [titled(alpha, "Alpha"), titled(beta, "Beta")],
+      [edge],
+      { edgeTypes: () => catalog("none") },
+    );
+    harness = made.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    for (const name of ["Alpha.md", "Beta.md"]) {
+      expect(read(harness, name), name).not.toMatch(/unwritten|\[\[/);
+    }
+
+    put(harness, "New.md", '---\nunwritten: "[[Alpha]]"\n---\nbody\n');
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged[0]?.reason ?? "").toContain(
+      "unwritten line is not read: no file writes unwritten edges",
+    );
+    expect(sentEdgeWrites(harness)).toEqual([]);
   });
 
   it("flags an in-folder line and a line naming its own item", async () => {

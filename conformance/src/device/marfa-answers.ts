@@ -382,7 +382,7 @@ export interface WireEdgeType {
   cascade_on_delete: "cascade" | "orphan" | "block";
   property_schema: Record<string, unknown>;
   reverse_name?: string;
-  written_at: "source" | "target";
+  written_at: "source" | "target" | "none";
   shipped: boolean;
 }
 
@@ -433,6 +433,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     },
   }),
   shipped("in-folder", "In folder", {
+    written_at: "none",
     target_type_constraints: ["system.folder"],
     property_schema: {
       path: {

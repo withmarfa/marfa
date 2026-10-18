@@ -237,6 +237,14 @@ describe("role constraints", () => {
     });
     expect(atTarget.success && atTarget.data.written_at).toBe("target");
 
+    // An edge no file writes names no end and needs no name to write it under.
+    const unwritten = validateEdgeTypeSchema({
+      id: "placed-in",
+      cardinality: "many-to-many",
+      written_at: "none",
+    });
+    expect(unwritten.success && unwritten.data.written_at).toBe("none");
+
     for (const written_at of ["target", "middle"]) {
       const refused = validateEdgeTypeSchema({
         id: "mentors",

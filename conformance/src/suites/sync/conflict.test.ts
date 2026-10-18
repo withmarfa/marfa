@@ -345,6 +345,17 @@ describe("the server resolves a conflict", () => {
     const cascading = `mock.copy-cascades.${ctx.runId}`;
     const blocking = `mock.copy-blocks.${ctx.runId}`;
     const under = `mock.copy-under.${ctx.runId}`;
+    const unwritten = `mock.copy-unwritten.${ctx.runId}`;
+    const registeredUnwritten = await client.registerEdgeType({
+      id: unwritten,
+      cardinality: "many-to-many",
+      written_at: "none",
+    });
+    expect(
+      registeredUnwritten.ok,
+      JSON.stringify(registeredUnwritten.error),
+    ).toBe(true);
+    trackEdgeType(ctx, unwritten);
     const registeredUnder = await client.registerEdgeType({
       id: under,
       cardinality: "many-to-many",
@@ -389,6 +400,10 @@ describe("the server resolves a conflict", () => {
     await link(album.id, held.id, blocking);
     const over = await make("core.note", "over");
     const binnedOver = await make("core.note", "binned over");
+    const placed = await make("core.note", "placed");
+    const placing = await make("core.note", "placing");
+    await link(album.id, placed.id, unwritten);
+    await link(placing.id, album.id, unwritten);
     await link(over.id, album.id, under);
     await link(binnedOver.id, album.id, under);
     expect((await client.deleteItem(binnedOver.id)).ok).toBe(true);
@@ -426,6 +441,9 @@ describe("the server resolves a conflict", () => {
     // one from a row in the bin.
     expect(inbound).toContain(`${over.id}>${under}`);
     expect(inbound).not.toContain(`${binnedOver.id}>${under}`);
+    // An edge no file writes goes out with the copy, and does not come in.
+    expect(outbound).toContain(`${unwritten}>${placed.id}`);
+    expect(inbound).not.toContain(`${placing.id}>${unwritten}`);
     // A track names its album; the copy is not made its album too.
     expect(inbound).not.toContain(`${track.id}>in-collection`);
     // Discarding the copy must not take what the album points at to the bin,

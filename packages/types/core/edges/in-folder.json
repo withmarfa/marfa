@@ -6,6 +6,7 @@
   "source_type_constraints": ["*"],
   "target_type_constraints": ["system.folder"],
   "cascade_on_delete": "orphan",
+  "written_at": "none",
   "property_schema": {
     "path": {
       "type": "string",

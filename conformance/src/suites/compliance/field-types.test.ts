@@ -263,3 +263,224 @@ describe("a datetime or a date field", () => {
     }
   });
 });
+
+describe("an array field", () => {
+  let typeId: string;
+  let childId: string;
+
+  beforeAll(async () => {
+    typeId = `user.listy-${ctx.runId}`;
+    childId = `${typeId}.child`;
+    const registered = await client.registerType({
+      id: typeId,
+      fields: {
+        names: { type: "array", items_type: "string" },
+        sites: { type: "array", items_type: "url" },
+        things: { type: "array", items_type: "object" },
+        capped: { type: "array", items_type: "string", maxItems: 2 },
+        loose: { type: "array", items_type: "somethingelse" as never },
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const child = await client.registerType({
+      id: childId,
+      parent: typeId,
+      fields: { more: { type: "string" } },
+    });
+    expect(child.status, JSON.stringify(child.error)).toBe(201);
+  });
+
+  async function create(
+    properties: Record<string, unknown>,
+    type = typeId,
+    sourceId?: string,
+  ) {
+    const created = await client.createItem({
+      type,
+      source: ctx.source,
+      ...(sourceId === undefined ? {} : { source_id: sourceId }),
+      properties,
+    });
+    if (created.ok) trackItem(ctx, created.data.item.id);
+    return created;
+  }
+
+  function fields(created: { error?: { error: { details?: unknown } } }) {
+    return (
+      created.error?.error.details as
+        { errors?: { field: string }[] } | undefined
+    )?.errors?.map((e) => e.field);
+  }
+
+  // Each row is a value the field refuses, with the position it names.
+  const REFUSED: [string, Record<string, unknown>, string][] = [
+    ["a string array with a number", { names: ["a", 42] }, "names.1"],
+    ["a string array with an object", { names: [{ x: 1 }] }, "names.0"],
+    ["a string array with a null", { names: [null] }, "names.0"],
+    [
+      "a url array with a non-URL",
+      { sites: ["https://example.test", "no"] },
+      "sites.1",
+    ],
+    ["an object array with a string", { things: [{}, "text"] }, "things.1"],
+    ["an object array with an array", { things: [[]] }, "things.0"],
+    ["a universal links array with a number", { links: [1] }, "links.0"],
+    [
+      "a universal attachments array with a string",
+      { attachments: ["x"] },
+      "attachments.0",
+    ],
+    ["an array over maxItems", { capped: ["a", "b", "c"] }, "capped"],
+  ];
+
+  it.each(REFUSED)(
+    "refuses %s on a create, naming the field",
+    async (what, bad, named) => {
+      const refused = await create(bad);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("invalid_properties");
+      expect(fields(refused), what).toContain(named);
+    },
+  );
+
+  it("takes the values of the declared types, an empty array and a null", async () => {
+    const good = await create({
+      names: ["a", ""],
+      sites: ["https://example.test/a"],
+      things: [{}, { a: [1] }],
+      capped: ["a", "b"],
+      links: ["https://example.test"],
+      attachments: [{ id: "x" }],
+      loose: [1, {}, null],
+    });
+    expect(good.status, JSON.stringify(good.error)).toBe(201);
+    expect(good.data.item.properties.names).toEqual(["a", ""]);
+
+    const empty = await create({ names: [], things: [] });
+    expect(empty.status, JSON.stringify(empty.error)).toBe(201);
+    expect(empty.data.item.properties.names).toEqual([]);
+
+    const nulled = await create({ names: null, sites: null });
+    expect(nulled.status, JSON.stringify(nulled.error)).toBe(201);
+    expect(nulled.data.item.properties).not.toHaveProperty("names");
+  });
+
+  it("checks a subtype's inherited array field", async () => {
+    const refused = await create({ names: [1] }, childId);
+    expect(refused.status).toBe(400);
+    expect(fields(refused)).toContain("names.0");
+    const ok = await create({ names: ["a"], more: "m" }, childId);
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+  });
+
+  it("checks a shipped type's array field", async () => {
+    const refused = await client.createItem({
+      type: "core.message",
+      source: ctx.source,
+      properties: { body: "hi", from: "a@example.test", to: [42, { x: 1 }] },
+    });
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused)).toEqual(expect.arrayContaining(["to.0", "to.1"]));
+    const ok = await client.createItem({
+      type: "core.message",
+      source: ctx.source,
+      properties: {
+        body: "hi",
+        from: "a@example.test",
+        to: ["a@example.test"],
+      },
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+    trackItem(ctx, ok.data.item.id);
+  });
+
+  it("checks the elements on an update, and keeps the item as it was when it refuses", async () => {
+    const made = await create({ names: ["a"], things: [{}] });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    const version = made.data.item.version;
+
+    const refused = await client.updateItem(id, {
+      version,
+      properties: { names: ["b", 7] },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    expect(fields(refused)).toContain("names.1");
+    const kept = await client.getItem(id);
+    expect(kept.data.item.version).toBe(version);
+    expect(kept.data.item.properties.names).toEqual(["a"]);
+
+    // The witness: the same update with a string goes through.
+    const ok = await client.updateItem(id, {
+      version,
+      properties: { names: ["b", "7"] },
+    });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(200);
+    expect(ok.data.item.properties.names).toEqual(["b", "7"]);
+  });
+
+  it("checks the elements of a bulk entry, an upsert by natural key and a bulk upsert", async () => {
+    const key = `listy-${ctx.runId}`;
+    const bulk = await client.bulkItems({
+      mode: "create_only",
+      atomic: false,
+      items: [
+        { type: typeId, source_id: `${key}-a`, properties: { names: ["a"] } },
+        { type: typeId, source_id: `${key}-b`, properties: { names: [1] } },
+      ],
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(bulk.data.results[0]?.outcome).toBe("created");
+    expect(bulk.data.results[1]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+    trackItem(ctx, String(bulk.data.results[0]?.id));
+
+    // A create naming the natural key of a live item is an update.
+    const again = await create({ names: ["a", 2] }, typeId, `${key}-a`);
+    expect(again.status).toBe(400);
+    expect(again.error?.error.code).toBe("invalid_properties");
+    const upsertOk = await create({ names: ["a", "2"] }, typeId, `${key}-a`);
+    expect(upsertOk.status, JSON.stringify(upsertOk.error)).toBe(200);
+
+    const bulkUpsert = await client.bulkItems({
+      mode: "upsert",
+      atomic: false,
+      items: [
+        { type: typeId, source_id: `${key}-a`, properties: { names: [{}] } },
+        { type: typeId, source_id: `${key}-a`, properties: { names: ["z"] } },
+      ],
+    });
+    expect(bulkUpsert.status, JSON.stringify(bulkUpsert.error)).toBe(200);
+    expect(bulkUpsert.data.results[0]).toMatchObject({
+      outcome: "errored",
+      error: { code: "invalid_properties" },
+    });
+    expect(bulkUpsert.data.results[1]?.outcome).toBe("updated");
+
+    const atomic = await client.bulkItems({
+      mode: "create_only",
+      atomic: true,
+      items: [
+        { type: typeId, source_id: `${key}-c`, properties: { names: ["c"] } },
+        { type: typeId, source_id: `${key}-d`, properties: { sites: ["no"] } },
+      ],
+    });
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    const none = await client.lookupItems({
+      type: typeId,
+      source: ctx.source,
+      source_ids: [`${key}-c`],
+    });
+    expect(none.data.data).toEqual([]);
+  });
+
+  it("leaves the elements of an array unchecked where items_type names no field type", async () => {
+    const ok = await create({ loose: [1, "x", {}, null] });
+    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
+  });
+});

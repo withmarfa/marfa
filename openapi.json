@@ -150,9 +150,10 @@
             "type": "string",
             "enum": [
               "source",
-              "target"
+              "target",
+              "none"
             ],
-            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name."
+            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it."
           },
           "shipped": {
             "type": "boolean",
@@ -195,7 +196,7 @@
           },
           "items_type": {
             "type": "string",
-            "description": "The type of each element of an `array` property. It can't be `thumbnail`."
+            "description": "The type of each element of an `array` property. A write is refused if an element is not a value of that type. It can't be `thumbnail`."
           },
           "format": {
             "type": "string",
@@ -3038,9 +3039,10 @@
             "type": "string",
             "enum": [
               "source",
-              "target"
+              "target",
+              "none"
             ],
-            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `target` needs a `reverse_name`. Leave it out for `source`."
+            "description": "The end of an edge whose file writes it in a folder: `source`, or `target` under the reverse name. `none` means no file writes it, so a folder never renders it. `target` needs a `reverse_name`. Leave it out for `source`."
           },
           "evolve_constraints": {
             "type": "boolean",
@@ -3269,7 +3271,7 @@
           },
           "items_type": {
             "type": "string",
-            "description": "The type of each element of an `array` field."
+            "description": "The type of each element of an `array` field. A write is refused if an element is not a value of that type."
           },
           "format": {
             "type": "string",

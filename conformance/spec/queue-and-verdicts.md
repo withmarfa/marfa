@@ -1936,6 +1936,14 @@ When a device judges a property value against a field of the held catalog, a dev
 
 **Tests:** `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`, `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`.
 
+### `queue-and-verdicts/check-array-items`
+
+When a device judges an array property against a field of the held catalog, a device MUST judge each element as a field of the array's `items_type` judges a value, and the elements of `attachments` and `links`, which every type takes, as `object` and `string`.
+
+**Reason:** the server holds an array to its `items_type` (`types/array-items`), and a write the device queued that the server would refuse comes back refused after the person has gone on.
+
+**Tests:** `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`.
+
 ### `queue-and-verdicts/check-inherited-nearest`
 
 When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it.
@@ -1946,7 +1954,7 @@ When a device judges a property its type inherits, a device MUST judge it as the
 
 ### `queue-and-verdicts/check-accepts`
 
-When a device judges an item write against the held catalog, a device MUST accept a null for a field its type does not require, a property its type does not declare, a string under an annotation-only format, and an array element of any value.
+When a device judges an item write against the held catalog, a device MUST accept a null for a field its type does not require, a property its type does not declare, a string under an annotation-only format, and an array element under an `items_type` that names no field type.
 
 **Reason:** the server's field validator accepts each of them; strict mode on the server can still refuse an undeclared property.
 

@@ -61,7 +61,7 @@ use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
 pub use body::{BodyLinks, BodyName, BodyTarget};
-pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField};
+pub use catalog::{EdgeType, End, ItemType, ServerCatalog, TypeField, WrittenAt};
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{CODES as ERROR_CODES, CoreError, CoreErrorKind};

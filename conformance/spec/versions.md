@@ -868,9 +868,9 @@ When the server writes a conflicted copy, the server MUST give it the original's
 
 ### `versions/copy-edges-own`
 
-When the server writes a conflicted copy, the server MUST give it a copy of each outbound edge of the original whose type is written at its source and each inbound edge whose type is written at its target, that no other rule of this section withholds.
+When the server writes a conflicted copy, the server MUST give it a copy of each outbound edge of the original whose type is written at its source or at neither end and each inbound edge whose type is written at its target, that no other rule of this section withholds.
 
-**Reason:** a track names its album, so the copy takes the album's place under its parent and what the album is about, and is not made the album of the tracks. A copy with no edges and no tags sits outside every project, tag and view the original was in, which is where nobody looks for it.
+**Reason:** a track names its album, so the copy takes the album's place under its parent and what the album is about, and is not made the album of the tracks. A copy with no edges and no tags sits outside every project, tag and view the original was in, which is where nobody looks for it. An edge no file writes, such as a file's place in a folder, stays with the item it leaves, so the copy has a place too.
 
 **Tests:** `sync/conflict.test.ts › gives the conflicted copy the original's tags and every edge a second copy may hold`, `› gives the conflicted copy only the edges the original's own file writes, none that cascade or block`.
 

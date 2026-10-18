@@ -995,9 +995,9 @@ If `POST /edges` names a `parent-of` edge that closes a cycle only through an ed
 
 ### `edges/types-in-folder`
 
-When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `source`, no `reverse_name` and a `path` in its `property_schema`.
+When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `none`, no `reverse_name` and a `path` in its `property_schema`.
 
-**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders/placement-path`).
+**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders/placement-path`). No file writes the edge (`folders/placement-not-document`), so it names no end.
 
 **Tests:** `compliance/edge-types.test.ts › ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1211,11 +1211,11 @@ When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `
 
 ### `edges/types-written-at`
 
-When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of` and `source` on `attached-to` and `references`.
+When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of`, `source` on `attached-to` and `references`, and `none` on `in-folder`.
 
-**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders/edge-writing-end`).
+**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
 
-**Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`.
+**Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`, `› ships in-folder from any item to a system.folder, carrying its path`.
 
 ### `edges/types-list`
 
@@ -1395,7 +1395,15 @@ If `POST /edge-types` names an `id` that another edge type holds as its reverse 
 
 ### `edges/types-written-at-listed`
 
-When a key registers an edge type, the server MUST list and answer it with the `written_at` the registration named, `source` where it named none.
+When a key registers an edge type, the server MUST list and answer it with the `written_at` the registration named, `source` where it named no `written_at`.
+
+**Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
+
+### `edges/types-written-at-none`
+
+If `POST /edge-types` names a `written_at` other than `source`, `target` or `none`, then the server MUST answer `400 validation_error`.
+
+**Reason:** `none` is the value for an edge no file writes, and the server keeps such an edge as it keeps any other. A value the server did not know would be listed back and read by a folder as no end at all.
 
 **Tests:** `compliance/edge-types.test.ts › registers an edge type written at its target, and refuses one with no name to write it under`.
 
@@ -1488,6 +1496,14 @@ An edge type's `property_schema` declares properties by name, each with a `type`
 If `POST /edges` names a property the edge type's `property_schema` declares with a value that is not of the declared type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`.
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses a wrong-typed value, a value outside an enum and a missing required property with 400 invalid_properties naming the property`.
+
+### `edges/properties-array-items`
+
+If a write leaves an edge holding, for a property its edge type's `property_schema` declares as an `array`, an element that a value of its `items_type` is not, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property and the element's position in `field`, as `roles.1`.
+
+**Reason:** `types/array-items-refused` holds the same for an item.
+
+**Tests:** `compliance/edge-property-schema.test.ts › holds an array property's elements to its items_type on a create and an update`.
 
 ### `edges/properties-enum`
 

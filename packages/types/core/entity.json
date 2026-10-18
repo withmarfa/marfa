@@ -1,7 +1,7 @@
 {
   "id": "core.entity",
   "label": "Entity",
-  "description": "A non-person entity — a company, band, team, charity, brand, school.",
+  "description": "Any named entity: a person, a company, a band, a team, a charity, a brand, a school or a place. `core.entity.person` and `core.entity.place` narrow it.",
   "version": 0,
   "fields": {
     "name": {
