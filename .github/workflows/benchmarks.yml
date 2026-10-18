@@ -67,7 +67,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: marfa-server-log
-          path: ${{ runner.temp }}/marfa/server.log
+          path: |
+            ${{ runner.temp }}/marfa/server.log
+            ${{ runner.temp }}/marfa/server.stderr
           if-no-files-found: ignore
 
       - name: Stop the server
