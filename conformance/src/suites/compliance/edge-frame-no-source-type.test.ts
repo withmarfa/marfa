@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -16,19 +14,9 @@ import {
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 /**
- * An edge event whose stored form names no source type cannot be shown
- * readable to anyone, so it is sent to no subscriber and no webhook
- * (`events/edge-frame-no-source-type`).
- *
- * No request writes such an event, so the fixture removes the field from the
- * stored row of an edge it created, as the stored rows of
- * `stream-unreadable-rows` are damaged. The stream is opened after the damage
- * so that no live copy, which carries the type, stands in for the row; the
- * webhook job is held (`hold:housekeeping:webhook-schedule`) so that it reads
- * the row only after the damage.
+ * The declared edge-source-type fault withholds the type from one published
+ * edge, in both its stored and live forms. No target files are accessed.
  */
-
-const runSqlite = promisify(execFile);
 
 let server: FreshServer;
 let working: MarfaClient;
@@ -75,18 +63,17 @@ async function edge(): Promise<string> {
   return created.data.edge.id;
 }
 
-async function removeSourceType(edgeId: string): Promise<void> {
-  await runSqlite("sqlite3", [
-    "-cmd",
-    ".timeout 10000",
-    server.sqlitePath,
-    `UPDATE event_log SET payload = json_remove(payload, '$.source_type') WHERE edge_id = '${edgeId}' AND event_type = 'edge_created';`,
-  ]);
-  const check = await runSqlite("sqlite3", [
-    server.sqlitePath,
-    `SELECT count(*) FROM event_log WHERE edge_id = '${edgeId}' AND json_extract(payload, '$.source_type') IS NULL;`,
-  ]);
-  expect(Number(check.stdout.trim()), "the field was not removed").toBe(1);
+async function untypedEdge(): Promise<string> {
+  await server.setFault("fail:edge-source-type");
+  const id = await edge();
+  expect(await server.faults()).toContainEqual(
+    expect.objectContaining({
+      name: "fail:edge-source-type",
+      fired: 1,
+    }),
+  );
+  await server.clearFault("fail:edge-source-type");
+  return id;
 }
 
 const edgeOf = (event: SseEvent): string | undefined =>
@@ -95,9 +82,8 @@ const edgeOf = (event: SseEvent): string | undefined =>
 describe("an edge event that carries no source type", () => {
   it("is not replayed to a subscriber", async () => {
     const before = await streamHead(server.apiUrl, server.workingKey);
-    const untyped = await edge();
+    const untyped = await untypedEdge();
     const typed = await edge();
-    await removeSourceType(untyped);
 
     const tap = await tapStream(server.apiUrl, server.workingKey, {
       lastEventId: before,
@@ -112,6 +98,22 @@ describe("an edge event that carries no source type", () => {
     expect(events.some((event) => edgeOf(event) === untyped)).toBe(false);
   });
 
+  it("is not sent to a live subscriber", async () => {
+    const tap = await tapStream(server.apiUrl, server.workingKey);
+    taps.push(tap);
+    await tap.until(
+      (seen) => seen.some((event) => event.event === "stream_live"),
+      "the subscriber live before the writes",
+    );
+    const untyped = await untypedEdge();
+    const typed = await edge();
+    const events = await tap.until(
+      (seen) => seen.some((event) => edgeOf(event) === typed),
+      "the typed edge after the untyped edge",
+    );
+    expect(events.some((event) => edgeOf(event) === untyped)).toBe(false);
+  });
+
   it("is sent to no webhook", async () => {
     const hook = await working.createWebhook({
       url: receiver.hookUrl("no-source-type"),
@@ -121,9 +123,8 @@ describe("an edge event that carries no source type", () => {
 
     await server.setFault("hold:housekeeping:webhook-schedule");
     await server.waitForHold("hold:housekeeping:webhook-schedule");
-    const untyped = await edge();
+    const untyped = await untypedEdge();
     const typed = await edge();
-    await removeSourceType(untyped);
     await server.clearFault("hold:housekeeping:webhook-schedule");
 
     // The witness: the job ran over both rows and delivered the one it could

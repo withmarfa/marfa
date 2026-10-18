@@ -53,6 +53,10 @@ import type { StreamIncompleteReason } from "./_stream-incomplete.js";
 import * as clock from "../clock.js";
 import { faultsArmed, holdArmed, holdAt } from "../control/faults.js";
 import { failRead } from "../storage/sqlite/injected-failure.js";
+import {
+  createFaultedHeadRead,
+  replayRowsUnderFaults,
+} from "../control/event-faults.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
 const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
@@ -1186,10 +1190,11 @@ export function eventRoutes(
                     }
                     if (!(await paced("a replay"))) return false;
                     if (faultsArmed()) failRead("stream-replay");
-                    const batch = await storage.eventLog.getAfter(
+                    let batch = await storage.eventLog.getAfter(
                       lastReplayedId,
                       REPLAY_BATCH_SIZE,
                     );
+                    if (faultsArmed()) batch = replayRowsUnderFaults(batch);
 
                     if (batch.length === 0) {
                       if (lastReplayedId >= replayReach) break;
@@ -1514,13 +1519,8 @@ export function eventRoutes(
               /** Read the log head this stream announces. */
               const readHeadEventId = (): Promise<bigint | null> =>
                 faultsArmed()
-                  ? readHeadUnderFaults()
+                  ? createFaultedHeadRead(storage.eventLog)()
                   : storage.eventLog.getMaxId();
-              const readHeadUnderFaults = async (): Promise<bigint | null> => {
-                await holdAt("stream-head");
-                failRead("stream-head");
-                return await storage.eventLog.getMaxId();
-              };
 
               /**
                * The head read, bounded.

@@ -611,7 +611,7 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 **Reason:** a source the server cannot classify cannot be shown readable.
 
-**Tests:** `compliance/edge-frame-no-source-type.test.ts › is not replayed to a subscriber`, `› is sent to no webhook`.
+**Tests:** `compliance/edge-frame-no-source-type.test.ts › is not replayed to a subscriber`, `› is not sent to a live subscriber`, `› is sent to no webhook`.
 
 ## A stream and the source filter
 

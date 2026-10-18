@@ -80,6 +80,8 @@ export const POINTS: {
     { name: "stream-head", arg: "nth" },
     { name: "stream-replay", arg: "nth" },
     { name: "stream-credential", arg: "nth" },
+    { name: "stream-replay-row", arg: "nth" },
+    { name: "edge-source-type", arg: "nth" },
   ],
 };
 

@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { clearFaults, setFault } from "../control/faults.js";
+import { generateId } from "@withmarfa/shared";
+import { createGzip } from "node:zlib";
+import * as tar from "tar-stream";
+import { activeFaults, clearFaults, setFault } from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import {
   createTestContext,
+  collectItemEvents,
   readSse,
   request,
   runBulkActionAsync,
@@ -15,7 +19,33 @@ const spies = vi.hoisted(() => ({
   scope: vi.fn(),
   hold: vi.fn(),
   read: vi.fn(),
+  headConstruction: vi.fn(),
+  rows: vi.fn(),
+  edge: vi.fn(),
 }));
+vi.mock("../control/event-faults.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../control/event-faults.js")>();
+  return {
+    ...actual,
+    createFaultedHeadRead: (
+      ...args: Parameters<typeof actual.createFaultedHeadRead>
+    ) => {
+      spies.headConstruction();
+      return actual.createFaultedHeadRead(...args);
+    },
+    replayRowsUnderFaults: (
+      ...args: Parameters<typeof actual.replayRowsUnderFaults>
+    ) => {
+      spies.rows();
+      return actual.replayRowsUnderFaults(...args);
+    },
+    edgeUnderFaults: (...args: Parameters<typeof actual.edgeUnderFaults>) => {
+      spies.edge();
+      return actual.edgeUnderFaults(...args);
+    },
+  };
+});
 vi.mock("../control/faults.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../control/faults.js")>();
   return {
@@ -55,6 +85,9 @@ beforeEach(async () => {
   spies.scope.mockClear();
   spies.hold.mockClear();
   spies.read.mockClear();
+  spies.headConstruction.mockClear();
+  spies.rows.mockClear();
+  spies.edge.mockClear();
   initEventLog(ctx.storage.eventLog);
 });
 afterEach(async () => {
@@ -182,6 +215,8 @@ it("opens, replays and goes live as an event stream by the original code with no
   expect(text).toContain("to replay");
   await note("sent live");
   expect(reached()).toEqual({ hold: 0, read: 0 });
+  expect(spies.headConstruction).not.toHaveBeenCalled();
+  expect(spies.rows).not.toHaveBeenCalled();
 });
 
 it("opens, replays and goes live as a copy stream by the original code with no fault set: no hold is entered and no read is failed", async () => {
@@ -246,6 +281,70 @@ it.each([
   },
 );
 
+it("constructs a head-read wrapper only when a fault is armed", async () => {
+  setFault("fail:stream-head", "2");
+  await streamRead(stream, {}, "event: stream_live");
+  expect(spies.headConstruction).toHaveBeenCalledTimes(1);
+});
+
+it("makes only the nth replay row unreadable and leaves the stored row intact", async () => {
+  await note("first readable");
+  await note("second unreadable");
+  await note("third readable");
+  setFault("fail:stream-replay-row", "2");
+  const text = await streamRead(
+    stream,
+    { "Last-Event-ID": "0" },
+    "event: stream_live",
+  );
+  expect(spies.rows).toHaveBeenCalled();
+  expect(text).toContain("first readable");
+  expect(text).not.toContain("second unreadable");
+  expect(text).toContain("third readable");
+  expect(activeFaults()).toContainEqual(
+    expect.objectContaining({ name: "fail:stream-replay-row", fired: 1 }),
+  );
+  clearFaults();
+  expect(
+    await streamRead(stream, { "Last-Event-ID": "0" }, "event: stream_live"),
+  ).toContain("second unreadable");
+});
+
+it("publishes edges without entering a fault wrapper unless a fault is armed", async () => {
+  const make = async () => {
+    const made = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "endpoint" } },
+    });
+    expect(made.status).toBe(201);
+    return ((await made.json()) as { item: { id: string } }).item.id;
+  };
+  const source = await make();
+  const create = async () =>
+    request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: source, target_id: await make(), edge_type: "about" },
+    });
+  expect((await create()).status).toBe(201);
+  expect(spies.edge).not.toHaveBeenCalled();
+  setFault("fail:edge-source-type", "2");
+  expect((await create()).status).toBe(201);
+  expect(activeFaults()[0]!.fired).toBe(0);
+  expect((await create()).status).toBe(201);
+  expect(activeFaults()[0]!.fired).toBe(1);
+  expect((await create()).status).toBe(201);
+  expect(spies.edge).toHaveBeenCalledTimes(3);
+  const rows = (await ctx.storage.eventLog.getAfter(0n, 100)).filter(
+    (row) => row.edge_id !== null,
+  );
+  expect(
+    rows.map(
+      (row) =>
+        (JSON.parse(row.payload) as { source_type?: string }).source_type,
+    ),
+  ).toEqual(["core.note", "core.note", undefined, "core.note"]);
+});
+
 it("announces a write by the original code with no fault set, and through the hold once one is", async () => {
   const create = () =>
     request(ctx.app, "POST", "/items", {
@@ -279,4 +378,68 @@ it("reads a conditional read by the original code with no fault set, and through
   });
   clearFaults();
   expect((await held).status).toBe(200);
+});
+
+it("holds an archive restore's announcements and later writes until the hold is cleared", async () => {
+  const id = generateId();
+  const pack = tar.pack();
+  const gzip = pack.pipe(createGzip());
+  const chunks: Buffer[] = [];
+  const drained = (async () => {
+    for await (const chunk of gzip) chunks.push(chunk as Buffer);
+  })();
+  pack.entry(
+    { name: "manifest.json" },
+    JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
+  );
+  pack.entry(
+    { name: "items.ndjson" },
+    JSON.stringify({
+      item: {
+        id,
+        type: "core.note",
+        properties: { body: "restored" },
+        source: "test",
+        source_id: id,
+      },
+      metadata: { tags: [], extensions: {} },
+    }) + "\n",
+  );
+  pack.finalize();
+  await drained;
+  const abort = new AbortController();
+  const observed = collectItemEvents(abort.signal);
+  try {
+    setFault("hold:announce", null);
+    const restored = await ctx.app.request("/restore", {
+      method: "POST",
+      headers: {
+        cookie: ctx.owner.cookie,
+        origin: new URL(ctx.config.authBaseUrl).origin,
+        "Content-Type": "application/gzip",
+      },
+      body: Buffer.concat(chunks),
+    });
+    expect(restored.status, await restored.text()).toBe(200);
+    await vi.waitFor(() => {
+      expect(activeFaults()).toContainEqual(
+        expect.objectContaining({ name: "hold:announce", waiting: 1 }),
+      );
+    });
+    await note("after restore");
+    expect(observed.events).toEqual([]);
+    clearFaults();
+    await vi.waitFor(() => {
+      expect(observed.events).toHaveLength(2);
+    });
+    expect(observed.events[0]!.item.id).toBe(id);
+    expect(observed.events[1]!.item.properties.body).toBe("after restore");
+    expect(observed.events[0]!.eventId!).toBeLessThan(
+      observed.events[1]!.eventId!,
+    );
+  } finally {
+    clearFaults();
+    abort.abort();
+    await observed.done;
+  }
 });

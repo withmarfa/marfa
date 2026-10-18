@@ -1,5 +1,3 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -27,7 +25,6 @@ import {
  * that moves the clock is last.
  */
 
-const runSqlite = promisify(execFile);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const COPY_QUERY: Array<[string, string]> = [
   ["edges", "all"],
@@ -154,15 +151,6 @@ const live = (events: SseEvent[]): { cursor: string | null } =>
   events.find((event) => event.event === "stream_live")!.data as {
     cursor: string | null;
   };
-
-async function damage(sql: string): Promise<void> {
-  await runSqlite("sqlite3", [
-    "-cmd",
-    ".timeout 10000",
-    server.sqlitePath,
-    sql,
-  ]);
-}
 
 describe("the final drain of a stream's held frames", () => {
   it("gives stream_live a cursor at or past a drained frame the credential withholds", async () => {
@@ -315,9 +303,7 @@ describe("the replay of a stream", () => {
     const unreadableId = await eventIdOf(observer, unreadable);
     const readableId = await eventIdOf(observer, readable);
     expect(unreadableId).toBeLessThan(readableId);
-    await damage(
-      `UPDATE event_log SET payload = 'not json' WHERE id = ${String(unreadableId)};`,
-    );
+    await server.setFault("fail:stream-replay-row");
     await server.clearFault("hold:stream-replay");
 
     const events = await tap.until(named("stream_live"), "the prologue done");
@@ -335,12 +321,26 @@ describe("the replay of a stream", () => {
       order.indexOf("stream_live"),
     );
 
-    // The witness that the row cannot be replayed: a stream opened now is
-    // sent the row after it and not this one.
+    expect(await server.faults()).toContainEqual(
+      expect.objectContaining({
+        name: "fail:stream-replay-row",
+        fired: 1,
+      }),
+    );
+    // The fault affects a read, not the stored row: arm it again for a
+    // replay with no live twin, then clear it to witness the intact row.
+    await server.setFault("fail:stream-replay-row");
     const later = await open({ lastEventId: before });
     const replayed = await later.until(named("stream_live"), "the replay done");
     expect(replayed.some(announces(readable))).toBe(true);
     expect(replayed.some(announces(unreadable))).toBe(false);
+    await server.clearFault("fail:stream-replay-row");
+    const intact = await open({ lastEventId: before });
+    const witnessed = await intact.until(
+      named("stream_live"),
+      "the intact replay done",
+    );
+    expect(witnessed.some(announces(unreadable))).toBe(true);
   });
 });
 
@@ -440,11 +440,9 @@ describe("the frames a stream holds while it opens", () => {
     await server.waitForHold("hold:stream-replay");
 
     const ids = await notes(501, "overflow-unreadable");
-    const first = await eventIdOf(observer, ids[0]!);
+    await eventIdOf(observer, ids[0]!);
     await eventIdOf(observer, ids[500]!);
-    await damage(
-      `UPDATE event_log SET payload = 'not json' WHERE id = ${String(first)};`,
-    );
+    await server.setFault("fail:stream-replay-row");
     await server.clearFault("hold:stream-replay");
 
     await tap.untilClosed();

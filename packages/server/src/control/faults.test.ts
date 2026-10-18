@@ -300,9 +300,15 @@ describe("a hold on a stream point", () => {
   });
 });
 
-describe("a fail fault on a stream point", () => {
-  it("acts on the nth read and takes only a count", () => {
-    for (const point of ["stream-head", "stream-replay", "stream-credential"]) {
+describe("a fail fault on an event point", () => {
+  it("acts on the nth reach and takes only a count", () => {
+    for (const point of [
+      "stream-head",
+      "stream-replay",
+      "stream-credential",
+      "stream-replay-row",
+      "edge-source-type",
+    ]) {
       expect(arm(`fail:${point}`, "2"), point).toBeUndefined();
       expect([failAt(point), failAt(point), failAt(point)]).toEqual([
         false,

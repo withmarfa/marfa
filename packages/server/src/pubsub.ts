@@ -8,7 +8,8 @@ import {
   afterCommit,
   onCommitDeliveryUncertain,
 } from "./storage/commit-hooks.js";
-import { holdArmed, holdAt } from "./control/faults.js";
+import { faultsArmed, holdArmed, holdAt } from "./control/faults.js";
+import { edgeUnderFaults } from "./control/event-faults.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -308,7 +309,11 @@ function inAnnouncementOrder(task: () => void | Promise<void>): void {
   announcementsPending += 1;
   announcements = runInBackground(() =>
     announcements
-      .then(task)
+      .then(() => {
+        if (faultsArmed() && holdArmed("announce"))
+          return holdAt("announce").then(task);
+        return task();
+      })
       .catch(() => {
         // Subscribers end their streams and resume from the log, which holds
         // every event the announcement could not hand on.
@@ -321,12 +326,8 @@ function inAnnouncementOrder(task: () => void | Promise<void>): void {
 }
 
 function emitInOrder(emit: () => void): void {
-  if (announcementsPending > 0) inAnnouncementOrder(emit);
-  else if (holdArmed("announce"))
-    inAnnouncementOrder(async () => {
-      await holdAt("announce");
-      emit();
-    });
+  if (announcementsPending > 0 || holdArmed("announce"))
+    inAnnouncementOrder(emit);
   else emit();
 }
 
@@ -485,6 +486,7 @@ export async function publishEdge(
   event: EdgeEvent,
   options: PublishOptions = {},
 ): Promise<bigint | undefined> {
+  if (faultsArmed()) event = edgeUnderFaults(event);
   const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
