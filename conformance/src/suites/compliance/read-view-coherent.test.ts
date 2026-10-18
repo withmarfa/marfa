@@ -16,7 +16,7 @@ import { tapStream } from "../../utils/stream-tap.js";
  *
  * The fixture holds a conditional read inside its snapshot, after the read
  * view has been judged and before the door reads (`hold:read-snapshot`), lands
- * a write that retypes an item and tags it, and lets the read go. The answer
+ * writes that retype an item and tag it, and lets the read go. The answer
  * may be `409`; an answer of `200` must show the item as one state or the
  * other, whichever its certificate names, and never as a mixture.
  */
@@ -102,7 +102,6 @@ describe("a conditional read while a write that changes the read view lands", ()
     const reading = conditionalList(before, tag);
     await server.waitForHold("hold:read-snapshot");
 
-    // One write that changes the read view and the rows it describes.
     const moved = await working.updateItem(item.id, {
       version: item.version,
       type: "core.bookmark",

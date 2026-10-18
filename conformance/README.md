@@ -241,10 +241,10 @@ A reserve of zero disables these checks. `<bytes>` is a decimal integer from
 0 through 9007199254740991.
 
 Every caller that reaches a held point waits, and `waiting` in the fault's
-listing counts them. A stream held at a point stays open until the fault is
-cleared or the target stops. A target told to stop releases its faults as the
-stop begins, so a request held at `hold:stream-open` goes on after the stop
-has begun, which is how a fixture opens a stream during a stop.
+listing counts them. A hold does not suspend a stream's head-read budget or
+a read snapshot's lifetime. A target told to stop releases its faults as the
+stop begins, so a request held at `hold:stream-open` resumes after the stop
+has begun. Fixtures use this to open a stream during shutdown.
 
 A `fail` fault makes the target fail at the point, once. It acts on the nth
 time the point is reached after the fault was set, the first unless the

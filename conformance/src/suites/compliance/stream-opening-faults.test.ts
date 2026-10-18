@@ -20,10 +20,8 @@ import {
  * stream waits for.
  *
  * The fixtures set the failure or the hold through the target interface
- * (`conformance/README.md`, "Faults") on a server of their own. A fault acts
- * once, so each case ends by showing that the same request succeeds with the
- * fault spent: the stream failed because of the fault and not because of the
- * request.
+ * (`conformance/README.md`, "Faults") on a server of their own. Failure faults
+ * act once; hold faults remain armed until cleared.
  */
 
 const COPY_QUERY: Array<[string, string]> = [
@@ -193,7 +191,7 @@ describe("a stream whose read of the log fails", () => {
     await copyProof();
   });
 
-  it("ends with replay_failed when a read of the log fails while it replays, naming the last event it sent", async () => {
+  it("ends with replay_failed and a null cursor when the first replay page fails", async () => {
     const before = await streamHead(server.apiUrl, server.workingKey);
     await note("replay-read-fails");
     await server.setFault("fail:stream-replay");

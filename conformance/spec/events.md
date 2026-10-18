@@ -773,7 +773,7 @@ When the server has sent `stream_incomplete`, the server MUST close the stream.
 
 If the server's read of the log's head fails when a stream opens, a read of the log fails while the stream replays, or the read of the stream's credential before a page of the replay fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
 
-**Tests:** `compliance/stream-opening-faults.test.ts › ends with replay_failed when the read of the head fails as it opens`, `› ends a copy stream's opening with replay_failed when the read of the head fails`, `› ends with replay_failed when a read of the log fails while it replays, naming the last event it sent`, `› ends a copy stream's replay with replay_failed when a read of the log fails`, `› ends with replay_failed when the read of its credential before a page of the replay fails`, `› ends a copy stream's replay with replay_failed when its credential cannot be read`.
+**Tests:** `compliance/stream-opening-faults.test.ts › ends with replay_failed when the read of the head fails as it opens`, `› ends a copy stream's opening with replay_failed when the read of the head fails`, `› ends with replay_failed and a null cursor when the first replay page fails`, `› ends a copy stream's replay with replay_failed when a read of the log fails`, `› ends with replay_failed when the read of its credential before a page of the replay fails`, `› ends a copy stream's replay with replay_failed when its credential cannot be read`.
 
 ### `events/live-delivery-failed`
 

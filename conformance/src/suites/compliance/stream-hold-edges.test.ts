@@ -83,8 +83,8 @@ describe("several streams held at one point", () => {
       await server.setFault(name);
       const one = await open();
       const two = await open();
-      // A copy stream's opening is bounded: held at the head it is ended
-      // before the hold could be cleared, so only its drain is held here.
+      // A copy stream can exhaust its opening budget while held at the
+      // head, so only its drain is held here.
       const three = withCopy ? await open({ query: COPY_QUERY }) : undefined;
       const count = three ? 3 : 2;
       await server.waitForHold(name, count);
