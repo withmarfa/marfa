@@ -716,7 +716,7 @@ When a `POST /items/bulk-actions` job with `update_properties` writes a row, the
 
 **Reason:** every other operation asks when it writes, so a lever set while a job waits holds for it. A job whose queuing credential is gone writes nothing more (`items/job-credential-lost`).
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › is asked of every row the job writes, as it stands then`, `› is asked for the credential as it stands then, so a key loosened while the job waits writes its rows`.
 
 ### `types/source-allowlist`
 

@@ -67,7 +67,7 @@ vi.mock("../control/faults.js", async (importOriginal) => {
       return actual.scriptedAnswer(...args);
     },
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
-      spies.hold();
+      spies.hold(...args);
       return actual.holdAt(...args);
     },
   };
@@ -547,3 +547,50 @@ it("does not enter the scripted resolver with hooks off, and does with a fault a
     );
   }
 });
+
+const HOLDS = [
+  "bulk-job:selected",
+  "bulk-job:claimed",
+  "bulk-job:in-chunk",
+  "bulk-job:between-chunks",
+];
+
+/** A job over more rows than one chunk of 100 takes, so it has a place between chunks. */
+async function jobOverTwoChunks(tag: string) {
+  const made = await request(ctx.app, "POST", "/items/bulk", {
+    key: ctx.workingKey,
+    body: {
+      atomic: false,
+      items: Array.from({ length: 150 }, (_, index) => ({
+        type: "core.note",
+        properties: { body: `${tag} ${String(index)}` },
+        tags: [tag],
+      })),
+    },
+  });
+  expect(made.status).toBe(200);
+  return runBulkActionAsync(
+    ctx,
+    { action: "update_tags", add: ["held"], filter: { tags: [tag] } },
+    ctx.workingKey,
+  );
+}
+
+it("waits at no job hold point when no fault is set", async () => {
+  const ran = await jobOverTwoChunks("holds-off");
+  expect(ran.job?.status).toBe("completed");
+  expect(spies.hold).not.toHaveBeenCalled();
+});
+
+it.each(HOLDS)(
+  "reaches %s once a fault holds it, which is the witness for the absence above",
+  async (point) => {
+    setFault(`hold:${point}`, null);
+    const ran = jobOverTwoChunks(`holds-on-${point}`);
+    await vi.waitFor(() => {
+      expect(spies.hold).toHaveBeenCalledWith(point);
+    });
+    clearFaults();
+    expect((await ran).job?.status).toBe("completed");
+  },
+);

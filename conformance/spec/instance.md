@@ -626,7 +626,7 @@ When the server is stopped, the server MUST let the bulk action and the housekee
 
 **Reason:** a run cut off mid-write leaves its record unwritten.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/stop-waits-for-work.test.ts › lets the bulk action and the housekeeping run finish before the storage closes, and exits 0`.
 
 ### `instance/stop-exit-0`
 
@@ -658,7 +658,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it while the
 
 **Reason:** the run is resumed at the next start, so it does not make the stop a failure.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-long.test.ts › exits 0 when a run outlives the stop's wait, and the job is finished once, on the return`.
 
 ## Long jobs
 

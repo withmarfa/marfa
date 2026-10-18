@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { BulkActionJob } from "../../client/types.js";
+import { idsWith, mark, rowsAndChunk, seed } from "../../utils/bulk-jobs.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -40,75 +40,18 @@ afterAll(async () => {
   await server.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-async function seed(tag: string, rows: number): Promise<void> {
-  for (let done = 0; done < rows; done += 500) {
-    const page = await client.bulkItems({
-      atomic: false,
-      items: Array.from({ length: Math.min(500, rows - done) }, (_, index) => ({
-        type: "core.note",
-        properties: { body: `${tag}-${String(done + index)}` },
-        tags: [tag],
-      })),
-    });
-    expect(page.ok, JSON.stringify(page.error)).toBe(true);
-  }
-}
-
-async function idsWith(tag: string): Promise<string[]> {
-  const ids: string[] = [];
-  let cursor: string | undefined;
-  do {
-    const page = await client.listItems({ tags: [tag], limit: 200, cursor });
-    expect(page.status).toBe(200);
-    ids.push(...page.data.data.map((item) => item.id));
-    cursor = page.data.next_cursor ?? undefined;
-  } while (cursor !== undefined);
-  return ids;
-}
-
 async function run(tag: string, marker: string) {
-  const queued = await client.bulkAction({
-    action: "update_tags",
-    add: [marker],
-    filter: { tags: [tag] },
-  });
-  expect(queued.status, JSON.stringify(queued.error)).toBe(202);
   const job = await client.pollBulkActionToTerminal(
-    (queued.data as BulkActionJob).id,
+    await mark(client, tag, marker),
   );
   return { job, errors: job.result?.errors ?? [] };
 }
 
-/** How many rows the job's first chunk took, from the audit entries of its chunks. */
-async function firstChunkRows(jobId: string): Promise<number> {
-  const entries = await client.listAudit({
-    action: "items.bulk_action.chunk",
-    limit: 200,
-  });
-  const first = entries.data.data.find(
-    (entry) => entry.resource_id === jobId && entry.details.from_offset === 0,
-  );
-  return first?.details.to_offset as number;
-}
-
-/** Rows enough that a job takes more than one chunk, and the size of its first. */
-async function rowsAndChunk(): Promise<{ rows: number; chunk: number }> {
-  for (let rows = 250; rows <= 4000; rows *= 2) {
-    const tag = `chunk-learn-${String(rows)}`;
-    await seed(tag, rows);
-    const { job } = await run(tag, `${tag}-done`);
-    expect(job.status).toBe("completed");
-    const chunk = await firstChunkRows(job.id);
-    if (chunk < rows) return { rows, chunk };
-  }
-  throw new Error("a job took one chunk for every number of rows tried");
-}
-
 describe("a fault that ends a job's write partway through a chunk", () => {
   it("reports the chunk's unwritten items in the job's errors with the fault's own cause, and goes on to the next chunk", async () => {
-    const { rows, chunk } = await rowsAndChunk();
+    const { rows, chunk } = await rowsAndChunk(client);
     const tag = "chunk-fault";
-    await seed(tag, rows);
+    await seed(client, tag, rows);
 
     await server.setFault("fail:job-row=2");
     const { job, errors } = await run(tag, "written");
@@ -118,8 +61,8 @@ describe("a fault that ends a job's write partway through a chunk", () => {
     // The witness that the fault acted once, on a row.
     expect(acted?.fired).toBe(1);
 
-    const written = await idsWith("written");
-    const everyone = await idsWith(tag);
+    const written = await idsWith(client, "written");
+    const everyone = await idsWith(client, tag);
     const unwritten = everyone.filter((id) => !written.includes(id));
     // The job's counters cover the whole chunk (items/job-chunk-fault): the
     // rows written before the failed one went with the chunk's transaction,
