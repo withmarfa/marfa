@@ -150,7 +150,7 @@ export function withoutDefinitions(text: string): string {
 }
 
 const CITATION_FILE =
-  /^((?:correctness|compliance|device|sync|cli)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
+  /^((?:correctness|compliance|device|sync|cli|backup)\/[a-z0-9./-]+\.test\.ts)(?: › (.+))?$/;
 const CITATION_CONTINUED = /^› (.+)$/;
 
 /**

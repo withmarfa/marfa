@@ -1,10 +1,14 @@
 # The database, streamed off-site.
 #
 # One file, one replica, in the bucket the server's own object store uses,
-# under `db/` beside the blobs prefix. Every value is read from the names
-# the server already reads, so the sidecar and the server cannot name two
-# buckets. Litestream expands `${NAME}` from the environment when it reads
-# this file.
+# at `db` under the server's own key prefix: everything an instance puts in
+# the bucket is under `S3_PREFIX`, so two instances that share a bucket under
+# different prefixes never read or write each other's replica. Every value is
+# read from the names the server already reads, so the sidecar and the server
+# cannot name two buckets or two prefixes. Litestream expands `${NAME}` from
+# the environment when it reads this file, and an unset name expands to
+# nothing, so `entrypoint.sh` sets `S3_PREFIX` as the server reads it and a
+# restore by hand must set it too.
 #
 # The blob folder is not here: the server's own `blob-replicate`
 # housekeeping job gives the object store every blob, and `deploy/README.md`
@@ -23,7 +27,7 @@ dbs:
     replica:
       type: s3
       bucket: ${S3_BUCKET}
-      path: db
+      path: ${S3_PREFIX}/db
       endpoint: ${S3_ENDPOINT}
       region: ${S3_REGION}
       force-path-style: ${S3_FORCE_PATH_STYLE}

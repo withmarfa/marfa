@@ -18,6 +18,7 @@ export interface SettingRow {
           | "flag"
           | "url"
           | "text"
+          | "key-prefix"
           | "origins"
           | "cidrs"
           | "header-name"
@@ -75,6 +76,8 @@ export function allowedValues(rule: SettingRow["rule"]): string {
       return `Absolute ${code("http")} or ${code("https")} URL`;
     case "text":
       return "Any text";
+    case "key-prefix":
+      return `${code("/")}-joined segments of letters, digits, ${code(".")}, ${code("_")} and ${code("-")}`;
     case "secret":
       return rule.minLength === undefined
         ? "Text with no whitespace around it"

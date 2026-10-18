@@ -61,7 +61,7 @@ const EARS = new RegExp(
 );
 
 const CITATION =
-  "`(?:(?:correctness|compliance|device|sync|cli)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
+  "`(?:(?:correctness|compliance|device|sync|cli|backup)/[a-z0-9./-]+\\.test\\.ts › [^`]+|› [^`]+)`";
 const CITATIONS = new RegExp(`^${CITATION}(?:, ${CITATION})*\\.$`);
 const WAITING = /^waiting on #\d+\.$/;
 

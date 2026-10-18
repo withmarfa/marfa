@@ -115,10 +115,10 @@ export interface AppConfig {
    *  `AppConfig` literals don't have to supply it; `loadConfig` always
    *  populates it. */
   s3ForcePathStyle?: boolean;
-  /** Key prefix the object store keeps its objects under (`S3_PREFIX`,
-   *  default `blobs`), so one bucket can carry the database's replica
-   *  beside the bytes, or several instances' drills. Optional on the type
-   *  for the same reason as `s3ForcePathStyle`. */
+  /** Key prefix the instance keeps everything in the bucket under
+   *  (`S3_PREFIX`, default `blobs`): the blobs, and the database replica at
+   *  `<prefix>/db`, so one bucket can carry several instances. Optional on
+   *  the type for the same reason as `s3ForcePathStyle`. */
   s3Prefix?: string;
   apiKeySalt: string;
   corsOrigins: string[];
@@ -508,6 +508,7 @@ export type SettingRule =
   | { kind: "choice"; values: readonly string[] }
   | { kind: "url" }
   | { kind: "text" }
+  | { kind: "key-prefix" }
   | { kind: "secret"; minLength?: number }
   | { kind: "origins" }
   | { kind: "cidrs" }
@@ -737,6 +738,35 @@ const httpUrl: Parser<string> = {
 const text: Parser<string> = {
   rule: { kind: "text" },
   parse: (value) => value,
+};
+
+/**
+ * `deploy/entrypoint.sh` reads the value the same way for the database
+ * replica, `<prefix>/db`, before the server starts, and `ci/entrypoint.test.ts`
+ * holds the two readings together. A segment that is empty, `.` or `..` is
+ * refused because an HTTP client or a store that normalizes the path would
+ * read two different prefixes as one place, such as `trial/../blobs` as
+ * `blobs`.
+ */
+const keyPrefix: Parser<string> = {
+  rule: { kind: "key-prefix" },
+  parse: (value) => {
+    const prefix = value.replace(/^\/+/, "").replace(/\/+$/, "");
+    const segments = prefix.split("/");
+    if (
+      segments.some(
+        (segment) =>
+          segment === "." ||
+          segment === ".." ||
+          !/^[A-Za-z0-9._-]+$/.test(segment),
+      )
+    ) {
+      throw new Error(
+        "must be segments of letters, digits, `.`, `_` and `-` joined by `/`, none of them `.` or `..`, such as `blobs` or `trial/blobs`",
+      );
+    }
+    return prefix;
+  },
 };
 
 /** The comparison is exact, so `https://app.example/` would never match an `Origin` header. */
@@ -976,9 +1006,9 @@ const settingsShape = {
     "Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.",
   ),
   S3_PREFIX: setting(
-    text,
+    keyPrefix,
     () => "blobs",
-    "The key prefix under which the object store keeps its objects.",
+    "The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.",
   ),
   MARFA_BLOB_MIN_COPIES: count(
     1,

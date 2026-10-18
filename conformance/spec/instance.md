@@ -212,7 +212,29 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ## Backing up
 
-An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it.
+An owner backs up an instance by backing up the machine it runs on. The data directory is the one thing the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. The setting `API_KEY_SALT` is not in it. In the image `deploy/Dockerfile` builds, with `S3_BUCKET` set, Litestream also streams the database to the bucket, and a volume that holds no database is first restored from it.
+
+### `instance/replica-under-prefix`
+
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set, the server MUST keep its database replica under `<S3_PREFIX>/db/` in that bucket, with `S3_PREFIX` read as the settings table says.
+
+**Reason:** everything an instance puts in the bucket is then under its own prefix, its blobs and its database, so one bucket can carry several instances.
+
+**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
+
+### `instance/replica-restores-own`
+
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set, when it starts on a volume that holds no database, the server MUST start on the database last replicated under its own `<S3_PREFIX>/db/`, or on a new database when nothing is there.
+
+**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
+
+### `instance/replica-other-prefix`
+
+Where two instances run in the image `deploy/Dockerfile` builds with the same `S3_BUCKET` and `S3_PREFIX` values that differ as the settings table reads them, the server MUST NOT read or write the other instance's database replica.
+
+**Reason:** a second instance on the bucket, such as a trial instance or the new build during an upgrade, must never start on the first instance's data or stream over its backup.
+
+**Tests:** `backup/replica-paths.test.ts › keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`.
 
 ### `instance/image-starts`
 
@@ -1109,7 +1131,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `S3_ACCESS_KEY_ID`                          | None                          | Any text                                                           | The access key ID for the object store.                                                                                                                                                                                                                      |
 | `S3_SECRET_ACCESS_KEY`                      | None                          | Text with no whitespace around it                                  | The secret access key for the object store.                                                                                                                                                                                                                  |
 | `S3_FORCE_PATH_STYLE`                       | `true`                        | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.                                                                                                                                              |
-| `S3_PREFIX`                                 | `blobs`                       | Any text                                                           | The key prefix under which the object store keeps its objects.                                                                                                                                                                                               |
+| `S3_PREFIX`                                 | `blobs`                       | `/`-joined segments of letters, digits, `.`, `_` and `-`           | The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.                  |
 | `MARFA_BLOB_MIN_COPIES`                     | `1`                           | Whole number, 1 or more                                            | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                               |
 | `MARFA_BLOB_READ_IDLE_TIMEOUT_MS`           | `30000` ms                    | Whole number of milliseconds, 1 to 2147483647                      | How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.                                                                                                                    |
 | `MARFA_BLOB_REPLICATE_INTERVAL_MS`          | `60000` ms                    | Whole number of milliseconds, 1 to 3153600000000                   | How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.                                                                                                                                                         |

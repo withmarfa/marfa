@@ -21,6 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadConfig } from "../packages/server/src/config.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(ROOT, "deploy/entrypoint.sh");
@@ -53,7 +54,11 @@ interface Run {
  * replaced by `body`, a shell script that stands for whichever one the
  * entrypoint runs last.
  */
-function start(options: { body: string; bucket?: boolean }): Run {
+function start(options: {
+  body: string;
+  bucket?: boolean;
+  env?: Record<string, string>;
+}): Run {
   const dir = mkdtempSync(join(tmpdir(), "marfa-entrypoint-"));
   dirs.push(dir);
   const bin = join(dir, "bin");
@@ -97,6 +102,7 @@ function start(options: { body: string; bucket?: boolean }): Run {
       SQLITE_PATH: join(dir, "data/marfa.db"),
       BLOB_PATH: join(dir, "data/blobs"),
       ...(options.bucket ? { S3_BUCKET: "a-bucket" } : {}),
+      ...options.env,
     },
     stdio: ["ignore", "pipe", "pipe"],
     // Its own group, so a test that leaves it running takes the sleeps and
@@ -126,7 +132,68 @@ async function stillRunningAfter(run: Run, ms: number): Promise<boolean> {
   return winner === "running";
 }
 
+/** What the server reads `S3_PREFIX` as, or `null` when it refuses it. */
+function serverPrefix(raw: string | undefined): string | null {
+  try {
+    return (
+      loadConfig(raw === undefined ? {} : { S3_PREFIX: raw }).s3Prefix ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+/** What the entrypoint hands the server as `S3_PREFIX`, and so builds the
+ *  replica path from, or `null` when it ends without starting the server. */
+async function entrypointPrefix(
+  raw: string | undefined,
+): Promise<string | null> {
+  const run = start({
+    bucket: true,
+    env: raw === undefined ? {} : { S3_PREFIX: raw },
+    body: 'printf "%s" "$S3_PREFIX" > "$marker/prefix"',
+  });
+  const status = await run.exited;
+  const written = join(run.dir, "prefix");
+  if (!existsSync(written)) {
+    expect(status).not.toBe(0);
+    expect(run.output()).toContain("S3_PREFIX must be");
+    return null;
+  }
+  return readFileSync(written, "utf8");
+}
+
 describe("deploy/entrypoint.sh", () => {
+  // The replica is `<prefix>/db` (`deploy/litestream.yml`), so a reading the
+  // server does not share would put the database where the server's blobs
+  // are not, or beside another instance's.
+  it("reads S3_PREFIX as the server does, and hands the server that reading", async () => {
+    const cases: [string | undefined, string | null][] = [
+      [undefined, "blobs"],
+      ["", "blobs"],
+      ["  ", "blobs"],
+      ["blobs", "blobs"],
+      ["rehearsal/blobs", "rehearsal/blobs"],
+      ["rehearsal/blobs/", "rehearsal/blobs"],
+      ["/rehearsal/blobs", "rehearsal/blobs"],
+      ["//rehearsal/blobs//", "rehearsal/blobs"],
+      [" trial/ ", "trial"],
+      ["a.b_c-9", "a.b_c-9"],
+      ["/", null],
+      ["rehearsal//blobs", null],
+      ["rehearsal/./blobs", null],
+      ["rehearsal/../blobs", null],
+      ["..", null],
+      ["two words", null],
+      ["blobs$", null],
+      ["blöbs", null],
+    ];
+    for (const [raw, expected] of cases) {
+      expect(serverPrefix(raw), JSON.stringify(raw)).toBe(expected);
+      expect(await entrypointPrefix(raw), JSON.stringify(raw)).toBe(expected);
+    }
+  });
+
   it("names the status it treats as a refused database the same as the server's own", () => {
     const entrypoint = readFileSync(ENTRYPOINT, "utf8");
     const server = readFileSync(

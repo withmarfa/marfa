@@ -1,10 +1,11 @@
 #!/bin/sh
 # The container's one process tree: Litestream in front, the server behind
-# it. With no database on the volume the last replica in the bucket is
-# restored first, so a fresh volume boots the instance it replaces rather
-# than an empty one; then the server runs under `litestream replicate
-# -exec`, which streams every committed page to the bucket and stops the
-# server when it is itself stopped.
+# it. With no database on the volume the last replica under the instance's
+# own `S3_PREFIX` is restored first, so a fresh volume boots the instance it
+# replaces rather than an empty one, and never another instance that shares
+# the bucket under another prefix. Then the server runs under `litestream
+# replicate -exec`, which streams every committed page to the bucket and
+# stops the server when it is itself stopped.
 #
 # Without `S3_BUCKET` there is nothing to stream to, and the server runs on
 # its own; that is a local or trial container, never a deployment, and the
@@ -35,7 +36,24 @@ if [ -z "${S3_FORCE_PATH_STYLE:-}" ]; then
   if [ -n "${S3_ENDPOINT:-}" ]; then S3_FORCE_PATH_STYLE=true; else S3_FORCE_PATH_STYLE=false; fi
 fi
 : "${S3_REGION:=us-east-1}"
-export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION
+# The key prefix as the server reads it (`keyPrefix` in
+# `packages/server/src/config.ts`), because Litestream takes the replica path,
+# `<prefix>/db`, as written. The server is handed the same reading, and
+# `ci/entrypoint.test.ts` holds the two together.
+prefix=${S3_PREFIX:-}
+while :; do case $prefix in [[:space:]]*) prefix=${prefix#?} ;; *) break ;; esac; done
+while :; do case $prefix in *[[:space:]]) prefix=${prefix%?} ;; *) break ;; esac; done
+[ -n "$prefix" ] || prefix=blobs
+while :; do case $prefix in /*) prefix=${prefix#/} ;; *) break ;; esac; done
+while :; do case $prefix in */) prefix=${prefix%/} ;; *) break ;; esac; done
+case /$prefix/ in
+  *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-]* | *//* | */./* | */../*)
+    echo "S3_PREFIX must be segments of letters, digits, \`.\`, \`_\` and \`-\` joined by \`/\`, none of them \`.\` or \`..\`, such as \`blobs\` or \`trial/blobs\`" >&2
+    exit 1
+    ;;
+esac
+S3_PREFIX=$prefix
+export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION S3_PREFIX
 
 mkdir -p "$(dirname "$SQLITE_PATH")" "$BLOB_PATH"
 
@@ -84,7 +102,7 @@ if [ -z "${S3_BUCKET:-}" ]; then
   supervise /bin/sh "$0" run-server || code=$?
 else
   # `-if-db-not-exists` leaves a database already on the volume alone;
-  # `-if-replica-exists` makes a bucket holding no replica yet, the first boot
+  # `-if-replica-exists` makes a prefix holding no replica yet, the first boot
   # of a new instance, a fresh start rather than a failure.
   litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
 

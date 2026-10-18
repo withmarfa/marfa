@@ -49,7 +49,7 @@ The volume is the working copy; the bucket is a separate recovery copy. Replicat
 
 Preserve **`API_KEY_SALT` and `MARFA_AUTH_SECRET`** across restarts, redeployments, and restores. Keep a secure recovery copy outside the project. These values are not stored in the data volume or bucket: changing the salt invalidates existing API keys and app tokens, and losing the authentication secret ends existing browser sessions. If you seal Railway variables, save their recovery copies first, because [sealed values cannot be retrieved](https://docs.railway.com/variables#sealed-variables).
 
-To recover a lost data volume, use the same container revision, backup bucket, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
+To recover a lost data volume, use the same container revision, backup bucket, `S3_PREFIX`, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
 
 ## Recover a forgotten password
 
@@ -68,7 +68,7 @@ Recovery ends existing browser sessions and preserves app access. It uses the sa
 
 Railway [template updates](https://docs.railway.com/templates/updates) are opt-in. Review an update before applying it. Record the running container revision before an update. A redeploy preserves the volume, but a new build can refuse a database whose schema differs from its own. Before the first public release, cross-build archive compatibility is also not guaranteed.
 
-Follow [the deployment upgrade procedure](README.md#upgrading): export with the running build, start the new build on a fresh volume and a new bucket, then restore the archive. Keep the old instance and export until the restore succeeds. Railway's rollback changes the deployment, not the database contents, so retain the build that can read your existing database.
+Follow [the deployment upgrade procedure](README.md#upgrading): export with the running build, start the new build on a fresh volume with a new `S3_PREFIX` or a new bucket, then restore the archive. Keep the old instance and export until the restore succeeds. Railway's rollback changes the deployment, not the database contents, so retain the build that can read your existing database.
 
 ## Remove your instance
 
@@ -115,7 +115,7 @@ These settings describe the saved template and its container defaults.
 | `S3_FORCE_PATH_STYLE`       | `false` for newly created Railway buckets            |
 | `S3_PREFIX`                 | `blobs`                                              |
 
-Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template.
+Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template. The one exception is the new build in an upgrade, which can share the old instance's bucket under a new `S3_PREFIX`.
 
 The container uses Railway's Git build argument when `VERSION_SHA` is empty or unset. An explicit `VERSION_SHA` takes precedence for other build workflows. The resulting revision appears in `/health`; see [Dockerfile build variables](https://docs.railway.com/builds/dockerfiles#using-variables-at-build-time).
 

@@ -6,24 +6,26 @@ The container recipe here runs the server with its database streamed off-site an
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
 - **The CLI**, included at `/usr/local/bin/marfa`, for private setup, key administration and owner recovery. The image defaults to `/data/control/marfa.sock`.
-- **Litestream** (`litestream.yml`), a sidecar in the same container. `entrypoint.sh` restores the database from the bucket when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
+- **Litestream** (`litestream.yml`), a sidecar in the same container. It keeps the database replica at `<S3_PREFIX>/db` in the bucket. `entrypoint.sh` restores the database from that replica when the volume holds none, then runs the server under `litestream replicate -exec`, which streams every committed page to the bucket within a second and takes a snapshot every hour. A day of snapshots is kept, and Litestream removes older ones itself, because the bucket has no lifecycle rules.
 - **The blob folder is the server's own housekeeping.** Litestream carries the database only. The `blob-replicate` housekeeping job (listed at `GET /housekeeping`) gives the object store a copy of every blob the disk holds, woken by each upload and otherwise on `MARFA_BLOB_REPLICATE_INTERVAL_MS`; `blob-integrity` checks the copies and replication replaces one that is missing or corrupt. `conformance/spec/stores.md` states the rules.
 
 ## The names it needs
 
-The six the server reads for its object store are the six the sidecar reads, from the same environment, so the two cannot name different buckets:
+The seven names the server reads for its object store are the seven the sidecar reads, from the same environment, so the two cannot name different buckets or prefixes:
 
-| Name                   | Read by                                                                                                                          |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `S3_BUCKET`            | the server, Litestream                                                                                                           |
-| `S3_REGION`            | the server, Litestream (`us-east-1` when unset, which the entrypoint spells out)                                                 |
-| `S3_ENDPOINT`          | the server, Litestream                                                                                                           |
-| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                                                                           |
-| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                                                                           |
-| `S3_FORCE_PATH_STYLE`  | the server, Litestream (path style with an endpoint and virtual hosting without one when unset, which the entrypoint spells out) |
-| `S3_PREFIX`            | the server (default `blobs`); the database replica sits under `db/` beside it                                                    |
-| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                           |
-| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                          |
+| Name                   | Read by                                                                                                                               |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `S3_BUCKET`            | the server, Litestream                                                                                                                |
+| `S3_REGION`            | the server, Litestream (`us-east-1` when unset, which the entrypoint spells out)                                                      |
+| `S3_ENDPOINT`          | the server, Litestream                                                                                                                |
+| `S3_ACCESS_KEY_ID`     | the server, Litestream                                                                                                                |
+| `S3_SECRET_ACCESS_KEY` | the server, Litestream                                                                                                                |
+| `S3_FORCE_PATH_STYLE`  | the server, Litestream (path style with an endpoint and virtual hosting without one when unset, which the entrypoint spells out)      |
+| `S3_PREFIX`            | the server, Litestream (default `blobs`): the instance keeps everything in the bucket under it, the database replica at `<prefix>/db` |
+| `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                                |
+| `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                               |
+
+**Each instance that shares a bucket needs its own `S3_PREFIX`.** The instance keeps its blobs and its database replica under its prefix, so instances with different prefixes never read or write each other's replica, and a fresh volume restores only the replica under its own prefix. Two instances with the same prefix write one replica, and a fresh volume of either one starts on whichever database was replicated last. A prefix keeps the instances' replicas apart, not their data: each instance holds credentials for the whole bucket, so share a bucket only between instances of one owner. The prefix is segments of letters, digits, `.`, `_` and `-` joined by `/`, such as `trial/blobs`; a `/` at either end is dropped, so `trial/` and `trial` are the same prefix. `instance/replica-under-prefix`, `instance/replica-restores-own` and `instance/replica-other-prefix` in `conformance/spec/instance.md` state the rules.
 
 **The bucket must be on a different site from the instance.** A blob link the object store signs serves the bytes from the bucket's own host, as a download of the blob's recorded type, but a signed link cannot carry the sandbox policy or `nosniff` the instance's own blob answers do (`blobs/download-sandbox` and `blobs/download-nosniff` in `conformance/spec/blobs.md`). Its safety rests on that host being another site: an endpoint under the instance's own domain (say the instance at `marfa.example.com` and the bucket at `files.example.com`) would let an uploaded HTML or SVG blob run as a page of the same site if a browser rendered it.
 
@@ -139,7 +141,7 @@ Until the first public release, nothing upgrades a database in place. A build wh
 To carry your data into a new build:
 
 1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export.
-2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the last replica onto an empty volume, and that replica is the old build's database, which the new build refuses, so give the new instance a new bucket.
+2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the replica under the instance's `S3_PREFIX` onto an empty volume. Under the old instance's prefix that replica is the old build's database, which the new build refuses, so give the new instance a prefix of its own, such as `v2/blobs`, or a new bucket.
 3. Claim the new instance, sign in as its owner, and restore the archive at `/auth/owner/restore`. Alternatively, send `POST /restore` through its private socket.
 
 Until the first public release an archive is read only by the build that wrote it, so the restore in step 3 can refuse the archive. Keep the export and the old build until the restore has answered. `search-and-filters/restore-version` in `conformance/spec/search-and-filters.md` states that promise.
@@ -187,21 +189,23 @@ The instance applies the log at start. A copy's integrity can be checked first w
 
 ## Restoring by hand
 
-A restore is a Litestream command against the same configuration and environment. To the latest replicated state:
+A restore is a Litestream command against the same configuration and environment, which reads the replica at `<S3_PREFIX>/db` in `S3_BUCKET`. Litestream expands an unset name to nothing, so set `S3_PREFIX` to the instance's prefix, without a `/` at either end, even when it is the default `blobs`. To the latest replicated state:
 
 ```bash
-litestream restore -config deploy/litestream.yml -o restored.db -integrity-check full "$SQLITE_PATH"
+S3_PREFIX=blobs litestream restore -config deploy/litestream.yml -o restored.db -integrity-check full "$SQLITE_PATH"
 ```
 
 To a point in time:
 
 ```bash
-litestream restore -config deploy/litestream.yml -o restored.db -timestamp 2026-09-21T10:00:00Z "$SQLITE_PATH"
+S3_PREFIX=blobs litestream restore -config deploy/litestream.yml -o restored.db -timestamp 2026-09-21T10:00:00Z "$SQLITE_PATH"
 ```
+
+Replace `blobs` with the instance's own prefix when it has another.
 
 How fine a point can be named depends on its age. Litestream keeps every one-second sync for five minutes, then compacts them into longer segments (thirty seconds, five minutes, an hour), so a moment in the last five minutes is restorable to the second and an older one to the segment that contains it, back as far as the day of snapshots kept. The drill restores to a moment a few seconds old and asserts the item count it wrote before that moment.
 
-Then boot a server on the restored file with the same bucket and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
+Then boot a server on the restored file with the same bucket and prefix and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
 
 ## What a point-in-time restore can and cannot promise
 
