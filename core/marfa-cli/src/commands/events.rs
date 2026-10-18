@@ -130,7 +130,12 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             None => INTERRUPT_POLL,
         };
         match frames.recv_timeout(wait) {
-            Ok(Ok(frame)) => print_frame(&frame, out)?,
+            Ok(Ok(frame)) => {
+                print_frame(&frame, out)?;
+                if let Some(refusal) = cursor_refusal(&frame) {
+                    return Err(refusal);
+                }
+            }
             Ok(Err(error)) => {
                 return Err(CliError::Core(marfa_core::CoreError::Network(format!(
                     "the stream broke: {error}"
@@ -140,6 +145,28 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
+}
+
+/// The server answers `200` and says in the last frame that it will not
+/// stream from the cursor (`events/cursor-ahead`, `events/catchup-too-old`),
+/// so the status says nothing of the refusal and a script reads it here.
+fn cursor_refusal(frame: &Frame) -> Option<CliError> {
+    let data: Value = serde_json::from_str(&frame.data).ok()?;
+    let text = |name: &str| data.get(name).and_then(Value::as_str).unwrap_or("unknown");
+    let message = match frame.event.as_deref()? {
+        "cursor_ahead" => format!(
+            "the cursor {} is past the end of the server's event log, which ends at {}, as after a restore from an earlier point: read the state again, then follow from a cursor the log holds",
+            text("requested"),
+            text("head")
+        ),
+        "catchup_too_old" => format!(
+            "the event log no longer holds the events after the cursor {}; the oldest it keeps is {}: read the state again, then follow from a cursor the log holds",
+            text("requested"),
+            text("min_retained_id")
+        ),
+        _ => return None,
+    };
+    Some(CliError::Invalid(message))
 }
 
 fn print_frame(frame: &Frame, out: &Printer) -> Result<(), CliError> {

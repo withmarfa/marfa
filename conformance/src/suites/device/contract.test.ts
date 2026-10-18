@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   answers,
   certifiedRead,
+  cursorAhead,
   copyHeadRead,
   copyItemEvent,
   itemsPage,
@@ -410,6 +411,86 @@ describe("the contract the binary was built for", () => {
     expect(read.code, read.stderr).toBe(0);
     expect(read.stdout).toContain("item.created");
   });
+
+  const refusedCursors = [
+    {
+      name: "cursor_ahead",
+      frame: cursorAhead("99", "12"),
+      says: "past the end of the server's event log",
+    },
+    {
+      name: "catchup_too_old",
+      frame: {
+        event: "catchup_too_old",
+        data: {
+          event_type: "catchup_too_old",
+          requested: "5",
+          min_retained_id: "9",
+        },
+      },
+      says: "no longer holds the events after the cursor 5",
+    },
+  ];
+  it.each(refusedCursors)(
+    "refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error",
+    async ({ name, frame, says }) => {
+      server = await ScriptedServer.start();
+      server.copyAnswer("GET", "/events", {
+        kind: "sse",
+        frames: [frame],
+      });
+      const args = [
+        "--url",
+        server.url,
+        "--key",
+        KEY,
+        "events",
+        "--from",
+        "99",
+        "--for",
+        "5",
+      ];
+      const refused = await marfa(["--json", ...args]);
+      expect(refused.code, refused.stderr).toBe(1);
+      expect(server.requests[0]!.headers["last-event-id"]).toBe("99");
+      // The frame the server sent is still printed, so a reader sees what
+      // the stream said.
+      expect(JSON.parse(refused.stdout.trim())).toMatchObject({
+        event: name,
+      });
+      const { error, exit } = JSON.parse(refused.stderr) as {
+        error: { code: string; message: string };
+        exit: number;
+      };
+      expect(error.code).toBe("invalid");
+      expect(error.message).toContain(says);
+      expect(exit).toBe(1);
+      const plain = await marfa(args);
+      expect(plain.code, plain.stderr).toBe(1);
+      expect(plain.stderr).toContain(says);
+      await server.stop();
+      // The witness: a stream that ends on any other last frame is read
+      // to its end and exits 0.
+      server = await ScriptedServer.start();
+      server.copyAnswer("GET", "/events", {
+        kind: "sse",
+        frames: [{ id: "1", event: "item.created", data: { id: "i" } }],
+      });
+      const read = await marfa([
+        "--json",
+        "--url",
+        server.url,
+        "--key",
+        KEY,
+        "events",
+        "--from",
+        "0",
+        "--for",
+        "1",
+      ]);
+      expect(read.code, read.stderr).toBe(0);
+    },
+  );
 
   it("says in words that the server speaks another contract", async () => {
     server = await ScriptedServer.start();
