@@ -1,8 +1,8 @@
-import { request } from "node:http";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
+import { chunkedUpload } from "../../utils/chunked-upload.js";
 import { MarfaClient } from "../../client/api.js";
 import { blobHash, itemsArchive } from "../../utils/archive.js";
 import {
@@ -134,45 +134,6 @@ describe("GET /health as the room on the volumes shrinks", () => {
   });
 });
 
-/** What an upload with no declared length is answered, sent in the parts the
- *  caller writes. `write` sends a part and resolves once it is on its way. */
-async function chunkedUpload(
-  send: (write: (part: Uint8Array) => Promise<void>) => Promise<void>,
-): Promise<{ status: number; body: string }> {
-  const url = new URL(server.apiUrl);
-  const req = request({
-    host: url.hostname,
-    port: url.port,
-    method: "POST",
-    path: "/blobs",
-    headers: {
-      Authorization: `Bearer ${server.workingKey}`,
-      "Content-Type": "application/octet-stream",
-      "Transfer-Encoding": "chunked",
-    },
-  });
-  const answered = new Promise<{ status: number; body: string }>((resolve) => {
-    req.on("response", (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (text: string) => (body += text));
-      response.on("end", () => resolve({ status: response.statusCode!, body }));
-    });
-    // The server may end the connection once it has answered; the answer is
-    // what this reports, and a connection that fails before one is a test
-    // that fails on the missing status.
-    req.on("error", () => resolve({ status: 0, body: "" }));
-  });
-  const write = (part: Uint8Array) =>
-    new Promise<void>((resolve) => {
-      if (req.destroyed) resolve();
-      else req.write(part, () => resolve());
-    });
-  await send(write);
-  req.end();
-  return answered;
-}
-
 function bytes(size: number, fill: number): Uint8Array {
   return new Uint8Array(size).fill(fill);
 }
@@ -187,11 +148,15 @@ describe("an upload whose body declares no length", () => {
   it("is stored while the room holds, which is the witness for the refusal below", async () => {
     await room({ database: 1024 * MiB, blobs: 1024 * MiB });
     const body = new Uint8Array(3 * MiB).fill(7);
-    const done = await chunkedUpload(async (write) => {
-      for (let sent = 0; sent < body.length; sent += MiB / 2) {
-        await write(body.subarray(sent, sent + MiB / 2));
-      }
-    });
+    const done = await chunkedUpload(
+      server.apiUrl,
+      server.workingKey,
+      async (write) => {
+        for (let sent = 0; sent < body.length; sent += MiB / 2) {
+          await write(body.subarray(sent, sent + MiB / 2));
+        }
+      },
+    );
     expect(done.status, done.body).toBe(201);
     expect(existsSync(diskPath(server, blobHash(body)))).toBe(true);
   });
@@ -199,13 +164,33 @@ describe("an upload whose body declares no length", () => {
   it("is answered 507 insufficient_storage and leaves nothing when the volume falls inside the reserve as the bytes arrive", async () => {
     await room({ database: 1024 * MiB, blobs: 1024 * MiB });
     const before = readdirSync(blobFolder(server)).sort();
-    const refused = await chunkedUpload(async (write) => {
-      // Enough to be looked at more than once, with the room there.
-      for (let part = 0; part < 4; part++) await write(bytes(MiB / 2, 11));
-      // The volume fills while the body is still arriving.
-      await server.setFault(`free:blobs=${String(RESERVE - 1)}`);
-      for (let part = 0; part < 8; part++) await write(bytes(MiB / 2, 12));
-    });
+    expect(spooled()).toEqual([]);
+    const refused = await chunkedUpload(
+      server.apiUrl,
+      server.workingKey,
+      async (write, signal) => {
+        // Enough to be looked at more than once, with the room there.
+        for (let part = 0; part < 4; part++) await write(bytes(MiB / 2, 11));
+        // Client writes only prove socket progress. Wait for the server to
+        // admit this upload and spool its initial bytes before filling the volume.
+        await waitFor(
+          "the upload to spool its initial 2 MiB",
+          () => {
+            signal.throwIfAborted();
+            const size = spooled().reduce(
+              (total, name) =>
+                total + statSync(join(blobFolder(server), "tmp", name)).size,
+              0,
+            );
+            return Promise.resolve(size >= 2 * MiB ? true : undefined);
+          },
+          10_000,
+        );
+        signal.throwIfAborted();
+        await server.setFault(`free:blobs=${String(RESERVE - 1)}`);
+        for (let part = 0; part < 8; part++) await write(bytes(MiB / 2, 12));
+      },
+    );
     expect(refused.status, refused.body).toBe(507);
     const error = JSON.parse(refused.body) as {
       error: { code: string; details: Record<string, unknown> };
