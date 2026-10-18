@@ -27,10 +27,6 @@ import {
 const SECOND = 1000;
 /** The wait before the next attempt after the first, second, ... failure. */
 const SCHEDULE = [1, 5, 25, 125, 625, 3125, 15625].map((s) => s * SECOND);
-/** What the real time between an attempt and a check can eat of the margin
- *  before a wait ends. */
-const MARGIN_MS = 2 * SECOND;
-
 let server: FreshServer;
 let receiver: Receiver;
 let clock: ReturnType<typeof movedClock>;
@@ -56,6 +52,7 @@ function answerFor(received: Received): Answer {
 beforeAll(async () => {
   server = await bootFreshServer("webhook-retries");
   clock = movedClock(server);
+  await clock.pause();
   receiver = await startReceiver({
     status: (received) => answerFor(received).status,
     headers: (received) => {
@@ -88,6 +85,8 @@ async function begin(label: string, plan: Plan): Promise<string> {
   });
   expect(created.status, JSON.stringify(created.error)).toBe(201);
   await write(label);
+  expect((await runJob(server, "webhook-schedule")).outcome).toBe("ok");
+  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
   return created.data.id;
 }
 
@@ -133,46 +132,26 @@ async function attemptRecorded(
   );
 }
 
-/**
- * Moves the clock through the wait that follows attempt `n`, and runs the
- * poll at the two instants that bound it.
- *
- * `notBeforeMs` is a wait the delivery must not be attempted inside, and
- * `dueMs` one it must be attempted by. Before the clock reaches `dueMs`, the
- * poll runs at `notBeforeMs` less a margin for the real time between the
- * attempt and the poll, and an attempt then is a wait that is too short. The
- * margin is checked against the real time that did pass: on a machine so
- * slow that the margin is gone, the delivery may be due, so that poll proves
- * nothing and its check is left out.
- */
+/** The paused clock makes both sides of each retry boundary exact. */
 async function waitOut(
   label: string,
   n: number,
   notBeforeMs: number,
-  dueMs = notBeforeMs,
 ): Promise<void> {
-  const arrived = arrivals(label)[n - 1]!;
-  const early = Math.max(0, notBeforeMs - MARGIN_MS);
-  if (early > 0) await clock.advance(early);
-  await runJob(server, "webhook-poll");
-  const elapsed = Date.now() - arrived.at + early;
-  if (elapsed < notBeforeMs) {
-    expect(
-      arrivals(label).length,
-      `attempt ${String(n + 1)} came before ${String(notBeforeMs)} ms had passed`,
-    ).toBe(n);
-  } else if (arrivals(label).length > n) {
-    // On a slow machine the real time alone has ended the wait, and the
-    // attempt is made. The clock moves no further, because a move now would
-    // come after that attempt and shorten the next wait.
-    return;
-  }
-  await clock.advance(dueMs - early);
-  await runJob(server, "webhook-poll");
+  await clock.advance(notBeforeMs - 1);
+  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
   expect(
     arrivals(label).length,
-    `attempt ${String(n + 1)} had not come when ${String(dueMs)} ms had passed`,
-  ).toBeGreaterThan(n);
+    `attempt ${String(n + 1)} came before ${String(notBeforeMs)} ms`,
+  ).toBe(n);
+  await clock.advance(1);
+  expect((await runJob(server, "webhook-poll")).outcome).toBe("ok");
+  await waitFor(
+    `attempt ${String(n + 1)} of ${label} at its deadline`,
+    async () => (arrivals(label).length > n ? true : undefined),
+    60_000,
+  );
+  expect(arrivals(label)).toHaveLength(n + 1);
 }
 
 /** A Retry-After date `ms` ahead of the server's clock. */
@@ -192,6 +171,12 @@ describe("webhook retry waits", () => {
     try {
       for (let n = 1; n <= SCHEDULE.length; n += 1) {
         await attemptRecorded("schedule", id, n, "pending");
+        if (n === 2) {
+          // A delayed harness and an automatic poll must not consume the next wait.
+          await new Promise((resolve) => setTimeout(resolve, 6000));
+          await runJob(server, "webhook-poll");
+          expect(arrivals("schedule")).toHaveLength(n);
+        }
         await waitOut("schedule", n, SCHEDULE[n - 1]!);
       }
       const last = await attemptRecorded("schedule", id, 8, "dead_letter");
@@ -261,7 +246,8 @@ describe("webhook retry waits", () => {
     );
     try {
       await attemptRecorded("retry-after-date", id, 1, "pending");
-      await waitOut("retry-after-date", 1, 175 * SECOND, 180 * SECOND);
+      const dateWait = Date.parse(dateAhead(180 * SECOND)) - clock.now();
+      await waitOut("retry-after-date", 1, dateWait);
       await attemptRecorded("retry-after-date", id, 2, "pending");
       await waitOut("retry-after-date", 2, 300 * SECOND);
       await attemptRecorded("retry-after-date", id, 3, "success");
@@ -273,6 +259,7 @@ describe("webhook retry waits", () => {
   it.each(["SIGTERM", "SIGKILL"] as const)(
     "keeps a delivery's wait across a restart by %s, and attempts it once when the wait ends",
     async (signal) => {
+      await clock.resume();
       const label = `restart-${signal.toLowerCase()}`;
       const id = await begin(label, (n) =>
         n === 1 ? { status: 503, retryAfter: "120" } : { status: 200 },

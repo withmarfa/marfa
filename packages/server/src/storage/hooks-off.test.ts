@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import { createGzip } from "node:zlib";
@@ -10,6 +11,7 @@ import {
   unfoldDeadlineFault,
 } from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
 import { WebhookScheduler } from "../webhooks/delivery.js";
 import {
   createTestContext,
@@ -30,6 +32,7 @@ const spies = vi.hoisted(() => ({
   headConstruction: vi.fn(),
   rows: vi.fn(),
   edge: vi.fn(),
+  lookup: vi.fn(),
 }));
 vi.mock("../control/event-faults.js", async (importOriginal) => {
   const actual =
@@ -54,12 +57,15 @@ vi.mock("../control/event-faults.js", async (importOriginal) => {
     },
   };
 });
-import { WebhookScheduler } from "../webhooks/delivery.js";
 vi.mock("../control/faults.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../control/faults.js")>();
   return {
     ...actual,
     unfoldDeadlineFault: vi.fn(actual.unfoldDeadlineFault),
+    scriptedAnswer: (...args: Parameters<typeof actual.scriptedAnswer>) => {
+      spies.lookup();
+      return actual.scriptedAnswer(...args);
+    },
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
       spies.hold();
       return actual.holdAt(...args);
@@ -507,4 +513,36 @@ it("answers no lookup from a script with no fault set, and one once a resolve fa
     checked: ["1.1.1.1"],
     connected: ["1.1.1.1"],
   });
+});
+
+it("does not enter the scripted resolver with hooks off, and does with a fault armed", async () => {
+  const receiver = createServer((_req, res) => res.end());
+  await new Promise<void>((resolve) =>
+    receiver.listen(0, "127.0.0.1", resolve),
+  );
+  try {
+    const address = receiver.address();
+    if (address === null || typeof address === "string")
+      throw new Error("no receiver port");
+    const post = () =>
+      createWebhookHttpClient({ allowPrivateAddresses: true }).post({
+        url: `http://localhost:${String(address.port)}/hook`,
+        headers: {},
+        body: "{}",
+        timeoutMs: 5000,
+      });
+    spies.lookup.mockClear();
+    expect(await post()).toMatchObject({ status: 200 });
+    expect(spies.lookup).not.toHaveBeenCalled();
+    setFault("resolve:localhost", "127.0.0.1");
+    expect(await post()).toMatchObject({ status: 200 });
+    expect(spies.lookup).toHaveBeenCalledTimes(1);
+  } finally {
+    receiver.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      receiver.close((error) => {
+        error ? reject(error) : resolve();
+      }),
+    );
+  }
 });

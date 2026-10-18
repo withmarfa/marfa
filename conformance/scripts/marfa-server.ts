@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
  *   tsx scripts/marfa-server.ts status [--state <dir>]
  *   tsx scripts/marfa-server.ts refused [--state <dir>] [--env K=V ...]
  *   tsx scripts/marfa-server.ts restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...]
- *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>
+ *   tsx scripts/marfa-server.ts clock [--state <dir>] advance <ms>|pause|resume
  *   tsx scripts/marfa-server.ts fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list
  *
  * `refused` boots the same server on a state directory and waits for it to end
@@ -28,6 +28,7 @@ import { tmpdir } from "node:os";
  * and boots it again on the same data. The URL may change and the env file is
  * rewritten.
  *
+ * `clock pause` stops real-time drift; `clock resume` catches up again.
  * `clock advance` moves the server's clock forward. The server refuses a
  * negative step. The adapter keeps the offset in the state directory and
  * passes it back on the next boot, so a restarted server does not go back in
@@ -149,7 +150,7 @@ function parseArgs(argv: string[]): Args {
   const [command, ...rest] = argv;
   if (!COMMANDS.some((known) => known === command)) {
     throw new Error(
-      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms> | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
+      "usage: marfa-server.ts up|refused [--state <dir>] [--port <n>] [--env K=V ...] | restart [--state <dir>] [--signal TERM|INT|KILL] [--env K=V ...] | down|status [--state <dir>] | clock [--state <dir>] advance <ms>|pause|resume | fault [--state <dir>] set <name>[=<arg>] | clear [<name>] | list",
     );
   }
   const args: Args = {
@@ -935,9 +936,20 @@ async function listFaults(state: string): Promise<string> {
 async function runHooks(args: Args): Promise<void> {
   const [verb, operand] = args.words;
   if (args.command === "clock") {
+    if ((verb === "pause" || verb === "resume") && operand === undefined) {
+      console.log(
+        JSON.stringify(
+          await hook(args.state, "/_control/test/clock", {
+            method: "POST",
+            body: { paused: verb === "pause" },
+          }),
+        ),
+      );
+      return;
+    }
     const ms = Number(operand);
     if (verb !== "advance" || operand === undefined || !Number.isFinite(ms)) {
-      throw new Error("usage: clock [--state <dir>] advance <ms>");
+      throw new Error("usage: clock [--state <dir>] advance <ms>|pause|resume");
     }
     await advanceClock(args.state, ms);
   } else if (verb === "set" && operand !== undefined) {

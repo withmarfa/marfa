@@ -89,6 +89,8 @@ export interface FreshServer {
    * survives `restart`, and the clock does not come back until `stop`.
    */
   advanceClock(ms: number): Promise<string>;
+  /** Pauses or resumes real-time drift and returns the target's current instant. */
+  pauseClock(paused: boolean): Promise<number>;
   /**
    * The boot offset plus the steps `advanceClock` has taken: how far the target's clock
    * is ahead of this machine's, give or take the milliseconds the two differ
@@ -482,6 +484,17 @@ export async function bootFreshServer(
       return ended;
     },
     clockOffsetMs: Number(extraEnv.MARFA_TEST_CLOCK_OFFSET_MS ?? 0),
+    async pauseClock(paused) {
+      const result = await adapter("clock", paused ? "pause" : "resume");
+      const line = result.output
+        .split("\n")
+        .find((candidate) => candidate.startsWith("{"));
+      if (result.status !== 0 || line === undefined)
+        throw new Error(
+          `the target did not pause or resume its clock: ${result.output}`,
+        );
+      return Date.parse((JSON.parse(line) as { now: string }).now);
+    },
     async advanceClock(ms) {
       const moved = await adapter("clock", "advance", String(ms));
       if (moved.status !== 0) {

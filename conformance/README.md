@@ -159,6 +159,7 @@ data, log and env file. The default is `.marfa-state` in the working directory.
 | `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                              |
 | `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                  |
 | `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                 |
+| `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                           |
 | `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted or a `resolve` fault has answered. |
 
 ### The env file
@@ -185,6 +186,10 @@ value passed for one replaces its own:
   (`--node-env production`), which would be refused for it.
 
 ### The clock
+
+`clock pause` stops the system-time component at its current instant; `clock advance` still moves that paused clock by exactly the requested step. Timers and monotonic deadlines continue on real time. `clock resume` and a restart catch up with the system clock while retaining the accumulated offset. Both pause and resume print a JSON object with `now` and `offset_ms`. Pause is process-local and is not restored on restart. The private `POST /_control/test/clock` hook accepts either `{ "advance_ms": <ms> }` or `{ "paused": <boolean> }`.
+
+Retry fixtures pause before sending any delivery. A poll one millisecond before the retry deadline must send nothing; a poll at the deadline must complete the next attempt. A delayed fixture or automatic poll cannot make another retry due, because only an explicit advance changes the paused time. The fixture waits for the recorded outcome before advancing again.
 
 `clock advance` adds to an offset. The clock only moves forward, because ids,
 versions and cursors assume time does not go back. The adapter keeps the offset
@@ -290,7 +295,7 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:webhook-schedule:queued` | The `webhook-schedule` job waits inside its transaction after queuing deliveries and before recording its position in the event log. |
 | `resolve:<hostname>=<answers>` | Supplies scripted answers for an outbound webhook's name lookups.                                                                    |
 
-For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. The normal address check applies to the checked addresses, including rejecting private addresses when the instance disallows them.
+For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component

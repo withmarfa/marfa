@@ -447,3 +447,18 @@ export function scriptedAnswer(hostname: string): ScriptedAnswer | undefined {
   entry.fired += 1;
   return answer;
 }
+
+/** Socket translation does not resolve the name or consume an answer. */
+export function scriptedConnectionAddress(
+  hostname: string,
+  address: string,
+): string {
+  const entry = faults.get(`resolve:${hostname.toLowerCase()}`);
+  const steps = answers(entry?.arg ?? null);
+  if (entry === undefined || steps === undefined || entry.fired === 0)
+    return address;
+  const answer = steps[Math.min(entry.fired - 1, steps.length - 1)];
+  if (answer === undefined) return address;
+  const index = answer.checked.indexOf(address);
+  return index < 0 ? address : (answer.connected[index] ?? address);
+}

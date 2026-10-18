@@ -1,9 +1,23 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createApp } from "../app.js";
 import { clockOffsetMs, resetClockForTests } from "../clock.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
-import { activeFaults, clearFaults, holdAt, scriptedAnswer } from "./faults.js";
+import {
+  activeFaults,
+  clearFaults,
+  holdAt,
+  scriptedAnswer,
+  scriptedConnectionAddress,
+} from "./faults.js";
 
 let ctx: TestContext;
 let instanceId: string;
@@ -88,6 +102,36 @@ describe("the test hook routes", () => {
 });
 
 describe("the clock route", () => {
+  it("pauses real-time drift while explicit advances still work", async () => {
+    const app = appFor(true, true);
+    const post = (body: unknown) =>
+      app.request("/_control/test/clock", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    const paused = await post({ paused: true });
+    expect(paused.status).toBe(200);
+    const start = (await paused.json()) as { now: string };
+    const real = Date.now();
+    const wall = vi.spyOn(Date, "now").mockReturnValue(real + 60_000);
+    try {
+      const moved = await post({ advance_ms: 999 });
+      expect(Date.parse(((await moved.json()) as { now: string }).now)).toBe(
+        Date.parse(start.now) + 999,
+      );
+      const due = await post({ advance_ms: 1 });
+      expect(Date.parse(((await due.json()) as { now: string }).now)).toBe(
+        Date.parse(start.now) + 1000,
+      );
+      const resumed = await post({ paused: false });
+      expect(
+        Date.parse(((await resumed.json()) as { now: string }).now),
+      ).toBeGreaterThanOrEqual(real + 61_000);
+    } finally {
+      wall.mockRestore();
+    }
+  });
+
   it("moves the clock forward and reports the offset", async () => {
     const app = appFor(true, true);
     const moved = await app.request("/_control/test/clock", {
@@ -111,6 +155,8 @@ describe("the clock route", () => {
       { advance_ms: -1 },
       { advance_ms: 1.5 },
       { advance_ms: "5" },
+      { paused: "true" },
+      { paused: true, advance_ms: 1 },
       {},
     ]) {
       const refused = await app.request("/_control/test/clock", {
@@ -252,7 +298,11 @@ describe("the resolve fault", () => {
       checked: ["1.1.1.1", "2606:4700:4700::1111"],
       connected: ["127.0.0.1", "2606:4700:4700::1111"],
     });
+    expect(scriptedConnectionAddress("rebind.test", "1.1.1.1")).toBe(
+      "127.0.0.1",
+    );
     expect(scriptedAnswer("REBIND.test")?.checked).toEqual(["::1"]);
+    expect(scriptedConnectionAddress("rebind.test", "::1")).toBe("::1");
     expect(scriptedAnswer("rebind.test")?.checked).toEqual(["::1"]);
     expect(scriptedAnswer("other.test")).toBeUndefined();
     expect(activeFaults()[0]).toMatchObject({
