@@ -42,6 +42,23 @@ describe("GET /", () => {
     expect(body.features.length).toBeGreaterThan(0);
   });
 
+  it("names the release only when the build is one", async () => {
+    const plain = (await (await ctx.app.request("/")).json()) as object;
+    expect(plain).not.toHaveProperty("release");
+    const released = await createTestContext({ releaseVersion: "0.0.14" });
+    try {
+      const body = (await (await released.app.request("/")).json()) as {
+        release: string;
+        version: string;
+      };
+      expect(body.release).toBe("0.0.14");
+      // The build keeps its own name: a release is not the commit.
+      expect(body.version).toBe("dev");
+    } finally {
+      await released.cleanup();
+    }
+  });
+
   it("answers the contract version its document carries", async () => {
     const body = (await (await ctx.app.request("/")).json()) as {
       contract: unknown;

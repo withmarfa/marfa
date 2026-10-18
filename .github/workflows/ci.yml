@@ -688,9 +688,12 @@ jobs:
   # The shipped image, built from `deploy/Dockerfile` and booted through its
   # entrypoint, which nothing else in CI runs. `scripts/check-image.sh` holds
   # it to the deploy guide: it becomes healthy, reports the commit it was
-  # built from, stops with status 0 inside ten seconds, and on a database
+  # built from and the release it was made as, packages a `marfa` that reports
+  # that release, stops with status 0 inside ten seconds, and on a database
   # another build wrote stays up and unhealthy rather than ending. No bucket,
-  # so the Litestream half is the restore drill's.
+  # so the Litestream half is the restore drill's. The release is a stand-in:
+  # the build is made as a release so that the stamping a release build does
+  # is exercised before a tag depends on it.
   image:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
@@ -700,9 +703,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Build the image
-        run: docker build -f deploy/Dockerfile --build-arg VERSION_SHA="$GITHUB_SHA" -t marfa-server .
+        run: docker build -f deploy/Dockerfile --build-arg VERSION_SHA="$GITHUB_SHA" --build-arg VERSION_RELEASE=0.0.1 -t marfa-server .
       - name: Boot it, ask it, stop it
-        run: scripts/check-image.sh marfa-server "$GITHUB_SHA"
+        run: scripts/check-image.sh marfa-server "$GITHUB_SHA" 0.0.1
 
   types-freshness:
     needs: changes

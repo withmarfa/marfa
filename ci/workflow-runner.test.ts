@@ -36,10 +36,21 @@ const NIGHTLY_MAC_JOBS = new Set([
   "ci.yml:cli-scenarios",
 ]);
 
+// The server image is built on a runner of each platform it ships for, and
+// both are standard GitHub-hosted runners.
+const IMAGE_JOB = "release.yml:image";
+const IMAGE_RUNNER = "${{ matrix.runner }}";
+const IMAGE_RUNNERS = new Set(["ubuntu-latest", "ubuntu-24.04-arm"]);
+
 interface Workflow {
   jobs: Record<
     string,
-    { "runs-on"?: unknown; concurrency?: unknown; uses?: unknown }
+    {
+      "runs-on"?: unknown;
+      concurrency?: unknown;
+      uses?: unknown;
+      strategy?: { matrix?: { include?: { runner?: string }[] } };
+    }
   >;
 }
 
@@ -75,6 +86,21 @@ describe("jobs use standard GitHub-hosted runners", () => {
         continue;
       }
       const key = `${file}:${job}`;
+      if (key === IMAGE_JOB) {
+        expect(config["runs-on"], key).toEqual(IMAGE_RUNNER);
+        const runners = (config.strategy?.matrix?.include ?? []).map(
+          (entry) => entry.runner,
+        );
+        expect(runners.length, key).toBeGreaterThan(0);
+        for (const runner of runners) {
+          expect(
+            IMAGE_RUNNERS.has(runner ?? ""),
+            `${key}: ${runner ?? ""}`,
+          ).toBe(true);
+        }
+        expect(config.concurrency, key).toBeUndefined();
+        continue;
+      }
       const expected = MAC_JOBS.has(key)
         ? "macos-26"
         : NIGHTLY_MAC_JOBS.has(key)
@@ -112,6 +138,13 @@ describe("jobs use standard GitHub-hosted runners", () => {
       type: "boolean",
       default: false,
     });
+  });
+
+  it("finds the image job named by the policy", () => {
+    const [file = "", job = ""] = IMAGE_JOB.split(":");
+    expect(
+      jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],
+    ).toBeDefined();
   });
 
   it("finds every macOS job named by the policy", () => {

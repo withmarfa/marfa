@@ -538,6 +538,29 @@ describe("version.json", () => {
     });
   });
 
+  it("names the release the image was built as", () => {
+    inDirectoryHolding('{"sha":"abc123","release":"0.0.14"}', () => {
+      expect(loadConfig({}).releaseVersion).toBe("0.0.14");
+    });
+  });
+
+  it("names no release when the file holds none", () => {
+    inDirectoryHolding('{"sha":"abc123"}', () => {
+      expect(loadConfig({}).releaseVersion).toBeUndefined();
+    });
+    expect(loadConfig({}).releaseVersion).toBeUndefined();
+  });
+
+  it("stops boot naming the file when its release is not a version", () => {
+    for (const release of ["", "latest", "v0.0.14", "0.0", 14, null]) {
+      inDirectoryHolding(JSON.stringify({ sha: "abc123", release }), () => {
+        expect(refusal({}), String(release)).toMatch(
+          /^ {2}version\.json release /m,
+        );
+      });
+    }
+  });
+
   it("stops boot naming the file when it is not a JSON object", () => {
     for (const text of ["{not json", "[1]"]) {
       inDirectoryHolding(text, () => {

@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Describe the instance
-         * @description Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
+         * @description Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -2203,6 +2203,8 @@ export interface components {
             name: string;
             /** @description The build the instance runs. */
             version: string;
+            /** @description The release the build was made as, such as `0.0.14`. Absent for a build that is not a release. */
+            release?: string;
             /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
             instance_id: string;
             /** @description The contract version, the same number as this document's `info.version`. It stays at `0` until the first public release. */

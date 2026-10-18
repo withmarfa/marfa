@@ -31,14 +31,31 @@ The seven names the server reads for its object store are the seven the sidecar 
 
 Plus what any instance needs, which the image's `NODE_ENV=production` makes the server refuse to boot without: `API_KEY_SALT` and `MARFA_AUTH_SECRET`, each generated with `openssl rand -hex 32` (a short, predictable or placeholder value is refused), and `MARFA_AUTH_BASE_URL`, the public URL clients reach the instance at. Set `PORT` when `8600` is not wanted. Every setting the server reads is defined, with its bounds and default, by the settings schema in `packages/server/src/config.ts`, and `.env.example` at the repository root lists each by name; a value outside its bounds stops the server with a message naming the setting. Values live in the deployment's own secret store, never in a file here.
 
-## Building and running
+## Running the published image
 
-From the repository root:
+Every release publishes the server image to `ghcr.io/withmarfa/marfa-server`, for `linux/amd64` and `linux/arm64`, under its version (such as `0.0.14`) and under `latest`. Pull the version you want, not `latest`, so that a restart never changes the build, and so that the old and the new build of an upgrade can each be named:
+
+```bash
+docker pull ghcr.io/withmarfa/marfa-server:<version>
+docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data --env-file <your-env-file> ghcr.io/withmarfa/marfa-server:<version>
+```
+
+`-p 127.0.0.1:8600:8600` publishes the port on the loopback address only. Docker publishes a bare `-p 8600:8600` on every network interface, and on Linux it does so past the host's firewall rules, so the instance would be open to the whole network. Put a reverse proxy or a tunnel on the same machine in front of the loopback port, and set `MARFA_AUTH_BASE_URL` to the address people reach it at.
+
+The image reports which release it is: `GET /` answers it as `release` beside `version`, which is the commit the image was built from, and `marfa status` shows both. The `marfa` inside the image reports the same release.
+
+`release.yml` builds the image on a runner of each platform, boots it through its entrypoint with `scripts/check-image.sh`, and pushes it only for a tag. After tagging, it pulls the image signed out and boots it again before the release is made public.
+
+## Building the image yourself
+
+To run code that is not a release, build from the repository root:
 
 ```bash
 docker build -f deploy/Dockerfile --build-arg VERSION_SHA=$(git rev-parse HEAD) -t marfa-server .
-docker run --name marfa -d -p 8600:8600 -v marfa-data:/data --env-file <your-env-file> marfa-server
+docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data --env-file <your-env-file> marfa-server
 ```
+
+A build without `VERSION_RELEASE` names no release: `GET /` answers `version` and no `release`, and the `marfa` inside reports `0.0.0`. Only a release build sets it.
 
 `ci.yml` builds this image and boots it through its entrypoint on every pull request that can affect it, and on every push to `main` (`scripts/check-image.sh`): it becomes healthy, reports the commit it was built from, stops with status `0` inside ten seconds, and on a database another build wrote stays up and unhealthy. That run uses no bucket, so the Litestream half is the restore drill's.
 
@@ -74,12 +91,12 @@ docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover
 
 Enter the replacement password at the hidden prompt, or use `owner recover --stdin` with a JSON object containing `password`. Recovery changes the existing owner's password and revokes browser sessions. Ordinary keys and approved app access remain in force.
 
-If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets:
+If public HTTP cannot start but the process is still running, the private socket remains available. If the server is stopped, start only the control listener against the same volume and secrets, from the image the instance runs (`<image>`):
 
 ```bash
 docker stop marfa
 docker run -d --name marfa-recovery -v marfa-data:/data \
-  --env-file <your-env-file> marfa-server control-only
+  --env-file <your-env-file> <image> control-only
 docker exec -it marfa-recovery marfa --socket /data/control/marfa.sock owner recover
 docker stop marfa-recovery
 docker rm marfa-recovery
@@ -140,7 +157,7 @@ Until the first public release, nothing upgrades a database in place. A build wh
 
 To carry your data into a new build:
 
-1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export.
+1. With the running build, take an export: `GET /export?format=archive`, with an ordinary credential whose read maps cover everything to export. Note the build's release, which `GET /` answers as `release`: its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag, and runs beside the new one on its own volume and port.
 2. Start the new build on a fresh file and an empty blob folder. In the container, that is a new volume. With a bucket, the entrypoint restores the replica under the instance's `S3_PREFIX` onto an empty volume. Under the old instance's prefix that replica is the old build's database, which the new build refuses, so give the new instance a prefix of its own, such as `v2/blobs`, or a new bucket.
 3. Claim the new instance, sign in as its owner, and restore the archive at `/auth/owner/restore`. Alternatively, send `POST /restore` through its private socket.
 

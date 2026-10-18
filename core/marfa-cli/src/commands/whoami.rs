@@ -66,12 +66,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         };
         let mut lines = vec![
             format!("server {}", remote.origin()),
-            format!(
-                "instance {} ({} {})",
-                field(&instance, "instance_id"),
-                field(&instance, "name"),
-                field(&instance, "version")
-            ),
+            status::instance_line(&instance),
         ];
         if !held {
             lines.push(status::contract_line(&instance));

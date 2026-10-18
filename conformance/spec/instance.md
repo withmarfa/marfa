@@ -2,7 +2,7 @@
 
 What one deployment says about itself, and what happens to it as an owner runs it: the identity it answers to, the features and contract version it advertises, backing up, health, upgrading, stopping, the pages it renders, the configuration operations and the settings that stop it from starting. The credential chapters state what a key may reach and the registry chapters state what the data plane holds.
 
-`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`. A page is the HTML a browser is given instead.
+`GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
 ## Identity
 
@@ -157,6 +157,22 @@ When `GET /` is answered with the description, the server MUST answer `version` 
 **Reason:** `version` is the build, which moves on a deploy, and the contract version does not.
 
 **Tests:** `compliance/instance.test.ts › describes itself at the root`, `› carries one contract version at the root and in its document`.
+
+### `instance/root-release`
+
+Where the server runs a build made as a numbered release, the server MUST answer `GET /` with `release` as that release's version, three dot-separated whole numbers.
+
+**Reason:** `version` names the build and stays what it was, so that a deployment can be traced to its commit. A person who is upgrading names a release, and reads it here. The fixtures boot a checkout, which is not a release, so they hold only the form of the number; `scripts/check-image.sh` boots a built release image and holds the field to the release it was made as.
+
+**Tests:** `compliance/instance.test.ts › names a release only as the version a tag carries`.
+
+### `instance/root-release-absent`
+
+When `GET /` is answered with the description for a build that is not a numbered release, the server MUST NOT give it `release`.
+
+**Reason:** a placeholder would read as a release that no tag carries.
+
+**Tests:** `compliance/instance.test.ts › names no release for a build made from a checkout`.
 
 ### `instance/features-array`
 
