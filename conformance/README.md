@@ -219,7 +219,7 @@ time the point is reached after the fault was set, the first unless the
 argument says another: `fail:lock=3` acts on the third write. It then stays
 listed with the number of times it acted (`fired`), so a fixture can tell that
 it acted, and a fault that never acted is not mistaken for a pass. A fault
-that has acted does not act again until it is set again.
+that has acted does not act again until it is set again. The statement points (`audit`, `inbound-receipt`, `inbound-cleanup`, `export-read`, `housekeeping:<job>` and `job-row`) count only a statement that failed: a run that reaches the point and runs no statement, such as a job with nothing to do, leaves `fired` at 0 and the fault waiting for a reach that can fail.
 
 `<n>` is a decimal integer from 1 through 1000000, without leading zeros.
 `<ms>` is a whole number from 1 through 2147483647. An action argument
