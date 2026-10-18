@@ -209,9 +209,8 @@ function paths(state: string) {
   };
 }
 
-/** `PORT` from the environment, when it names one. */
-function envPort(): number | undefined {
-  const raw = process.env.PORT;
+/** A port named by `PORT`, when it names one. */
+function namedPort(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const port = Number(raw);
   if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
@@ -368,7 +367,9 @@ async function startServer(args: BootOptions): Promise<Started> {
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
   ensureBuilt();
 
-  // `--port`, then `PORT`, then one the kernel says is free.
+  // `--port`, then `--env PORT=`, then `PORT`, then one the kernel says is
+  // free. `--env PORT=` is a setting the server is started with, so the port
+  // this script waits on and reports has to be the one it names.
   //
   // `PORT` is read as well as written because the sibling boot path,
   // `core/scripts/server-up.sh`, takes its port that way, and an instruction
@@ -376,7 +377,11 @@ async function startServer(args: BootOptions): Promise<Started> {
   // having no lever at all: a caller who exported it would believe they were
   // pinned while nothing had changed. Both default to a free port, so nobody
   // needs either lever to avoid a collision.
-  const port = args.port ?? envPort() ?? (await freePort());
+  const port =
+    args.port ??
+    namedPort(args.env.PORT) ??
+    namedPort(process.env.PORT) ??
+    (await freePort());
   const url = `http://127.0.0.1:${String(port)}`;
   const controlDir = realpathSync(
     mkdtempSync(resolve(tmpdir(), "marfa-control-")),
