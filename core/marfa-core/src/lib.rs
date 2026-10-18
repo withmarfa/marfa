@@ -3288,8 +3288,8 @@ mod tests {
         );
         store::add_tags(&core.conn().unwrap(), "row", &[String::new()]).unwrap();
         assert!(core.remove_tag("row", "").is_ok());
-        // A dot tag held from before the bound is shed by a replace, the one
-        // tag operation whose request does not name it in a URL path.
+        // A dot tag held from before the bound is shed by a replace, whose
+        // request does not name it in a URL path.
         let dots = vec![".".to_string(), "..".to_string()];
         store::add_tags(&core.conn().unwrap(), "row", &dots).unwrap();
         assert_eq!(core.get("row").unwrap().unwrap().tags, dots);
