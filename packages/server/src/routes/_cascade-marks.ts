@@ -5,7 +5,7 @@ import { cascadeMark } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
- * Mirrors the stream's redaction: a mark names its row only to a credential
+ * Mirrors the stream's redaction: a mark names its row only to a caller
  * that may read that row's type.
  */
 export async function withCascadeMarks(

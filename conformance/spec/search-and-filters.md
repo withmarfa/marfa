@@ -1166,7 +1166,7 @@ When a credential requests an export, the server MUST leave out the items of eve
 
 ### `search-and-filters/export-extensions`
 
-When `GET /export` answers a row, the server MUST carry on it only the extension namespaces that the credential may read, in both formats.
+When `GET /export` answers a credential with a row, the server MUST carry on it only the extension namespaces that credential may read, in both formats.
 
 **Reason:** an archive written by a credential restores only the namespaces that credential may read. `keys-and-oauth/extension-map-only` states what a credential may read of an extension.
 
@@ -1260,7 +1260,7 @@ When `GET /export?format=archive` carries an item, the server MUST carry with it
 
 ### `search-and-filters/archive-history-reach`
 
-When `GET /export?format=archive` carries a snapshot, the server MUST carry it only if the credential may read the type that snapshot had.
+When an archive requested by a credential carries a snapshot, the server MUST carry it only if that credential may read the type that snapshot had.
 
 **Reason:** a current grant on a type does not grant access to an item's earlier type.
 
@@ -1268,7 +1268,7 @@ When `GET /export?format=archive` carries a snapshot, the server MUST carry it o
 
 ### `search-and-filters/archive-history-bytes`
 
-When a snapshot that an archive carries names a blob, the server MUST carry the blob's bytes if and only if the credential could read that blob through the blob operations.
+When a snapshot in an archive requested by a credential names a blob, the server MUST carry the blob's bytes if and only if that credential could read the blob through the blob operations.
 
 **Reason:** a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs/lend-earlier-version`).
 

@@ -1743,7 +1743,7 @@ When every edge of a block an item read carries is one the credential may not re
 
 ### `edges/read-export`
 
-When `GET /export` carries edge lines, the server MUST leave out each edge whose edge type the credential may not read.
+When `GET /export` answers a credential with edge lines, the server MUST leave out each edge whose edge type that credential may not read.
 
 **Tests:** `compliance/export.test.ts › carries only the kinds of relationship the credential may read`.
 
