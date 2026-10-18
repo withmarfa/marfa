@@ -23,7 +23,7 @@ import { parseEnvFile } from "../src/utils/target.js";
 import {
   formatObserved,
   formatUndeclared,
-  parseRequestLines,
+  readRequestLog,
   reportStatuses,
   unreachedDebt,
 } from "../src/utils/status-declarations.js";
@@ -112,10 +112,30 @@ async function read(): Promise<{
 }
 
 const { logs, document, where } = await read();
-const lines = logs.flatMap((path) =>
-  parseRequestLines(readFileSync(path, "utf8")),
-);
+const parsed = logs.map((path) => ({
+  path,
+  ...readRequestLog(readFileSync(path, "utf8")),
+}));
+const lines = parsed.flatMap((log) => log.lines);
 const report = reportStatuses(lines, document);
+
+// The server's stdout carries JSON lines only (`conformance/README.md`), so a
+// line this cannot read is a request it could not check, not noise.
+const unreadable = parsed.flatMap((log) =>
+  log.unreadable.map(
+    (line) => `${log.path}:${String(line.line)}: ${line.reason}: ${line.text}`,
+  ),
+);
+if (unreadable.length > 0) {
+  console.error(
+    `\n${String(unreadable.length)} line${unreadable.length === 1 ? "" : "s"} of the request log cannot be read, so any request ${unreadable.length === 1 ? "it holds was" : "they hold were"} not checked:\n` +
+      unreadable.slice(0, 20).join("\n") +
+      (unreadable.length > 20
+        ? `\n... and ${String(unreadable.length - 20)} more`
+        : ""),
+  );
+  process.exitCode = 1;
+}
 
 // An empty log passes every comparison there is, so say what was read.
 if (report.lines === 0) {
