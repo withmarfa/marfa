@@ -522,26 +522,20 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
 
 /// The server credits an upload to the credential that sent it, and refuses
 /// a file write whose bytes the writing credential neither sent nor may read
-/// (`blobs/proof-file-refused`). So once the copy sends with another
-/// credential, each taken upload a write still waits on is sent again, ahead
-/// of that write, where the copy still holds its bytes. A renewed app token
-/// counts as another credential here, which costs an upload the server did
-/// not need, since it credits an app's grant.
+/// (`blobs/proof-file-refused`). So each taken upload sent with another
+/// credential than the copy's current one is sent again, ahead of a write
+/// this pass sends that waits on it, where the copy still holds its bytes.
 fn send_uploads_as(core: &Core, http: &Http) -> Result<()> {
-    let credential = store::credential_digest(&http.authorization());
     let mut conn = core.conn()?;
-    if store::meta_get(&conn, store::META_UPLOADS_SENT_AS)?.as_deref() == Some(credential.as_str())
-    {
-        return Ok(());
-    }
+    core.write_down_renewals(&conn)?;
+    let credential = store::credential_digest(&http.authorization());
     let cache = core.cache().ok();
     let tx = conn.transaction()?;
-    for (id, hash) in store::awaited_uploads(&tx)? {
+    for (id, hash) in store::uploads_to_send_again(&tx, &credential)? {
         if cache.is_some_and(|cache| cache.held(&hash).is_ok_and(|held| held.is_some())) {
             store::send_upload_again(&tx, &id)?;
         }
     }
-    store::meta_set(&tx, store::META_UPLOADS_SENT_AS, &credential)?;
     tx.commit()?;
     Ok(())
 }
@@ -1015,6 +1009,13 @@ fn send_queue(
             // reached the server, and treating it as unsent would write twice.
             let conn = core.conn()?;
             store::mark_sent(&conn, &row.id)?;
+            if row.kind == WriteKind::UploadBlob {
+                store::record_upload_sent_as(
+                    &conn,
+                    &row.id,
+                    &store::credential_digest(&http.authorization()),
+                )?;
+            }
         }
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);

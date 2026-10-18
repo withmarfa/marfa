@@ -1518,8 +1518,9 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 }
 
 /// The bytes the cache keeps for the queue: those of every upload not yet
-/// taken, and those of every taken upload a waiting write still names, which
-/// a drain under another credential sends again (`awaited_uploads`).
+/// taken, and those of every taken upload a write that may still be sent
+/// waits on, unanswered, blocked or dead, which a drain under another
+/// credential sends again (`uploads_to_send_again`).
 pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue
@@ -1537,29 +1538,84 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
             |row| row.get::<_, String>(0),
         )?
         .collect::<Result<HashSet<_>, _>>()?;
-    hashes.extend(awaited_uploads(conn)?.into_iter().map(|(_, hash)| hash));
-    Ok(hashes)
-}
-
-/// The credential, as `credential_digest` names it, that every upload the
-/// queue holds as taken was sent with.
-pub const META_UPLOADS_SENT_AS: &str = "uploads_sent_as";
-
-/// Each taken upload, by its queue id and hash, that a write still
-/// unanswered or releasable waits on.
-///
-/// The server refuses a file write from a credential that neither sent its
-/// bytes nor may read them (`blobs/proof-file-refused`), so these are the
-/// uploads a drain sends again once the copy sends with another credential.
-pub fn awaited_uploads(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT upload.id, upload.blob FROM queue AS upload
+        "SELECT DISTINCT upload.blob FROM queue AS upload
           WHERE upload.kind = :upload AND upload.blob IS NOT NULL
             AND upload.verdict IN (:accepted, :merged, :conflicted)
             AND EXISTS (
               SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
                WHERE named.value = upload.id
                  AND (waiting.verdict IS NULL OR waiting.verdict IN (:blocked, :dead))
+            )",
+    )?;
+    hashes.extend(
+        statement
+            .query_map(
+                named_params! {
+                    ":upload": WriteKind::UploadBlob.as_str(),
+                    ":accepted": Verdict::Accepted.as_str(),
+                    ":merged": Verdict::Merged.as_str(),
+                    ":conflicted": Verdict::Conflicted.as_str(),
+                    ":blocked": Verdict::Blocked.as_str(),
+                    ":dead": Verdict::Dead.as_str(),
+                },
+                |row| row.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    Ok(hashes)
+}
+
+fn upload_sent_as_key(id: &str) -> String {
+    format!("upload_sent_as/{id}")
+}
+
+/// The credential, as `credential_digest` names it, that the upload `id`
+/// was last sent with.
+pub fn record_upload_sent_as(
+    conn: &Connection,
+    id: &str,
+    credential: &str,
+) -> Result<(), CoreError> {
+    meta_set(conn, &upload_sent_as_key(id), credential)
+}
+
+/// A renewal replaces the bearer a credential sends, not the credential:
+/// the server credits an app's uploads to its grant, which the new token
+/// carries.
+pub fn move_uploads_sent_as(conn: &Connection, from: &str, to: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE meta SET value = ?2 WHERE key LIKE 'upload_sent_as/%' AND value = ?1",
+        params![from, to],
+    )?;
+    Ok(())
+}
+
+/// Each taken upload, by its queue id and hash, that was sent with a
+/// credential other than `credential` and that a write the next pass sends
+/// waits on: one unanswered, or blocked for a reason that clears itself.
+///
+/// The server refuses a file write from a credential that neither sent its
+/// bytes nor may read them (`blobs/proof-file-refused`). A write blocked for
+/// good or dead is left until a release makes it unanswered, which the
+/// record of the sending credential still covers.
+pub fn uploads_to_send_again(
+    conn: &Connection,
+    credential: &str,
+) -> Result<Vec<(String, String)>, CoreError> {
+    let [credential_refused, awaiting] = SELF_CLEARING;
+    let mut statement = conn.prepare(
+        "SELECT upload.id, upload.blob FROM queue AS upload
+          WHERE upload.kind = :upload AND upload.blob IS NOT NULL
+            AND upload.verdict IN (:accepted, :merged, :conflicted)
+            AND (SELECT value FROM meta WHERE key = 'upload_sent_as/' || upload.id)
+                IS NOT :credential
+            AND EXISTS (
+              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
+               WHERE named.value = upload.id
+                 AND (waiting.verdict IS NULL
+                      OR waiting.verdict = :blocked
+                         AND waiting.reason IN (:credential_refused, :awaiting))
             )
           ORDER BY upload.seq",
     )?;
@@ -1570,8 +1626,10 @@ pub fn awaited_uploads(conn: &Connection) -> Result<Vec<(String, String)>, CoreE
                 ":accepted": Verdict::Accepted.as_str(),
                 ":merged": Verdict::Merged.as_str(),
                 ":conflicted": Verdict::Conflicted.as_str(),
+                ":credential": credential,
                 ":blocked": Verdict::Blocked.as_str(),
-                ":dead": Verdict::Dead.as_str(),
+                ":credential_refused": credential_refused,
+                ":awaiting": awaiting,
             },
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )?
@@ -2998,16 +3056,20 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// A drain returns these rows to unanswered before it starts, so the block
 /// is the last drain's finding rather than a state that sticks.
 pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
+    let [credential_refused, awaiting] = SELF_CLEARING;
     Ok(conn.execute(
         "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
           WHERE verdict = ?1 AND reason IN (?2, ?3)",
-        params![
-            Verdict::Blocked.as_str(),
-            BlockedReason::CredentialRefused.as_str(),
-            crate::model::AWAITING_DEPENDENCY
-        ],
+        params![Verdict::Blocked.as_str(), credential_refused, awaiting],
     )?)
 }
+
+/// The reasons a block clears itself for: a drain returns these rows to
+/// unanswered before it starts (`unblock_self_clearing`).
+const SELF_CLEARING: [&str; 2] = [
+    BlockedReason::CredentialRefused.as_str(),
+    crate::model::AWAITING_DEPENDENCY,
+];
 
 /// The released row goes out under a fresh key; the spent one is kept so a
 /// late answer under it is not taken for an answer to the new attempt.
@@ -3228,7 +3290,7 @@ fn forget_answered_inner(
         let pass = forget_answered_once(conn, only)?;
         if pass == 0 {
             if clean_effects {
-                for prefix in ["dead_effect/", "chosen_tier/"] {
+                for prefix in ["dead_effect/", "chosen_tier/", "upload_sent_as/"] {
                     conn.execute(
                         "DELETE FROM main.meta
                           WHERE key LIKE :prefix || '%'
@@ -4994,9 +5056,10 @@ mod tests {
         for id in ["named", "kept", "orphan"] {
             meta_set(&conn, &format!("dead_effect/{id}"), "x").unwrap();
             meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
+            meta_set(&conn, &format!("upload_sent_as/{id}"), "x").unwrap();
         }
         assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
-        for prefix in ["dead_effect/", "chosen_tier/"] {
+        for prefix in ["dead_effect/", "chosen_tier/", "upload_sent_as/"] {
             assert!(
                 meta_get(&conn, &format!("{prefix}named"))
                     .unwrap()

@@ -192,6 +192,9 @@ pub struct Core {
     draining: Mutex<()>,
     /// The one source this store's listeners share (`watch`).
     watch: Arc<watch::Watch>,
+    /// Each renewal not yet written down, as the digests of the header it
+    /// replaced and of the one that replaced it.
+    renewals: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -321,6 +324,7 @@ impl Core {
             streaming: Mutex::default(),
             draining: Mutex::new(()),
             watch: watch::Watch::new(),
+            renewals: Arc::default(),
         })
     }
 
@@ -373,6 +377,22 @@ impl Core {
             store::hold_local_catalog(&conn)?;
         }
         let conn = Arc::new(Mutex::new(conn));
+        let renewals = Arc::new(Mutex::new(Vec::new()));
+        if let Some(http) = &http {
+            let db = Arc::clone(&conn);
+            let pending = Arc::clone(&renewals);
+            http.on_renewed(Box::new(move |from, to| {
+                pending
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((store::credential_digest(from), store::credential_digest(to)));
+                // Not waited for: a call can be renewed while its caller
+                // holds the connection, and the next drain writes it down.
+                if let Ok(conn) = db.try_lock() {
+                    let _ = write_down_renewals(&conn, &pending);
+                }
+            }));
+        }
         if let Some((expected_origin, expected_instance)) = relocation {
             let http = http.as_ref().expect("relocation has a server");
             let db = Arc::clone(&conn);
@@ -404,6 +424,7 @@ impl Core {
             streaming: Mutex::default(),
             draining: Mutex::new(()),
             watch: watch::Watch::new(),
+            renewals,
         })
     }
 
@@ -2180,6 +2201,10 @@ impl Core {
         }
     }
 
+    pub(crate) fn write_down_renewals(&self, conn: &Connection) -> Result<()> {
+        write_down_renewals(conn, &self.renewals)
+    }
+
     fn kept_blobs(&self) -> Option<HashSet<String>> {
         let conn = self.conn().ok()?;
         let hashes = store::kept_uploads(&conn).ok()?;
@@ -2372,6 +2397,21 @@ impl Core {
         }
         Ok(conn)
     }
+}
+
+/// A renewal changes the bearer, not the credential, so each upload
+/// recorded as sent with the replaced header is now recorded as sent with
+/// the new one (`store::move_uploads_sent_as`).
+fn write_down_renewals(conn: &Connection, pending: &Mutex<Vec<(String, String)>>) -> Result<()> {
+    let renewals = std::mem::take(
+        &mut *pending
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    for (from, to) in renewals {
+        store::move_uploads_sent_as(conn, &from, &to)?;
+    }
+    Ok(())
 }
 
 fn keep_relocated_origin(

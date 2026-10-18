@@ -74,6 +74,7 @@ pub struct Http {
     base: Url,
     authorization: Arc<RwLock<String>>,
     renew: Arc<OnceLock<Renew>>,
+    renewed: Arc<OnceLock<Renewed>>,
     /// Held while a renewal runs, so two calls refused at once renew once.
     renewing: Arc<Mutex<()>>,
     /// Raised by `let_go`: no renewal starts after it.
@@ -100,6 +101,9 @@ type StreamAgent = Arc<dyn Fn(Arc<RwLock<Option<std::time::Instant>>>) -> Agent 
 /// Handed the refused bearer, so a caller that keeps the credential elsewhere
 /// can tell whether another process has rotated it already.
 pub type Renew = Box<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
+
+/// Handed the header a renewal replaced and the one that replaced it.
+pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
@@ -369,6 +373,7 @@ impl Http {
             base,
             authorization: Arc::new(RwLock::new(format!("Bearer {key}"))),
             renew: Arc::new(OnceLock::new()),
+            renewed: Arc::new(OnceLock::new()),
             renewing: Arc::new(Mutex::new(())),
             let_go: Arc::new(AtomicBool::new(false)),
             relocation: Arc::new(OnceLock::new()),
@@ -447,6 +452,11 @@ impl Http {
     /// Set once; a second is ignored.
     pub fn renew_with(&self, renew: Renew) {
         let _ = self.renew.set(renew);
+    }
+
+    /// Set once; a second is ignored.
+    pub(crate) fn on_renewed(&self, renewed: Renewed) {
+        let _ = self.renewed.set(renewed);
     }
 
     pub(crate) fn relocating(
@@ -549,6 +559,9 @@ impl Http {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone_from(&header);
+        if let Some(renewed) = self.renewed.get() {
+            renewed(sent, &header);
+        }
         Ok(Some(header))
     }
 
