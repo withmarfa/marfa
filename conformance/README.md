@@ -195,9 +195,9 @@ The offset may not exceed 3153600000000 ms (100 years), the largest
 `MARFA_TEST_CLOCK_OFFSET_MS`, so a restart can always take the offset back. A
 move past it is refused and the clock stays where it was.
 
-Every time the target records or compares follows the clock, including the
+The target's stored times and expiry checks follow the clock, including the
 times a component it builds on sets for itself. The sign-in library's sessions,
-tokens, authorization links and registrations are stamped and judged by the
+opaque access and refresh tokens, authorization links and registrations are stamped and judged by the
 target's clock, so a fixture that moves the clock ages them too and writes none
 of those times. The server does this by making the process's `Date` follow the
 offset when the hooks are on, before it creates the sign-in library; a second
@@ -208,11 +208,38 @@ wait, a stream's heartbeat and the server's uptime do not follow the clock. A
 fixture moves the clock and then runs the job it tests with
 `POST /housekeeping/{name}/run`.
 
-Two times are a peer's and stay on its own clock: the `Retry-After` date of a
-webhook receiver, and what a fixture reads from its own machine. After a clock
-move, a fixture does not rely on either. A client that judges how old a
-sign-in is takes the target's time from `FreshServer.clockOffsetMs`, the sum of
-the steps the fixture moved, because the age it reads is the target's.
+Protocols checked by an external peer stay on real time:
+
+- S3 requests and store-signed blob links use the object store's real clock.
+  Their stated lifetime elapses in real seconds, including when the target
+  starts ahead or advances again. The adapter runs the SDK, its credential
+  providers, retries, uploads and presigner in an isolated real-time context.
+  The installed SDK's `systemClockOffset` affects request signing but not
+  presigning; a constructor offset alone would also miss later clock moves.
+  Links served by the target itself still expire on the target's clock.
+- Webhook signature timestamps and absolute `Retry-After` dates use real time.
+  Event-body timestamps and retry scheduling still follow the target's clock;
+  a receiver's date is converted to a delay before that delay is scheduled.
+- OAuth ID tokens are signed with real-time `iat`, `exp`, `nbf` and `auth_time`
+  claims for external verifiers. Their lifetime and the simulated age of an
+  authentication are preserved. Opaque tokens verified by the target still
+  follow its clock.
+- Node's automatic HTTP `Date` headers and native TLS certificate checks use
+  the runtime's real clock, unaffected by the JavaScript `Date` replacement.
+- OTLP export retries and PostHog transport use real time. Marfa log records
+  keep their target-clock event timestamps; those timestamps are observations,
+  not credential lifetimes. Traces use the runtime's monotonic time base.
+
+A fixture's own machine keeps real time. A client that judges how old a
+sign-in is takes the target's time from `FreshServer.clockOffsetMs`, the boot
+offset plus subsequent advances, because the age it reads is the target's.
+
+Packed WebAuthn attestation is a remaining limitation of the clock adapter.
+The installed passkey verifier checks attestation certificate validity with
+the process's `Date` and has no callback for that check. Marfa requests `none`
+attestation, which has no certificate-time check. Fixtures using the moved
+clock must not claim coverage of packed certificate validity. Production
+does not install the shim.
 
 ### The contract version
 
