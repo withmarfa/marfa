@@ -46,6 +46,7 @@ import {
 import {
   filterToSqlConditions,
   notSystemTypeSql,
+  MISSING_SOURCE,
   sourceFilterToSql,
   typeFilterSql,
   typeSubtreeSql,
@@ -422,7 +423,7 @@ async function insertConflictedSibling(
       occurred_at: now,
       version: 1,
       schema_version: schemaVersion,
-      source: row.source ?? "unknown",
+      source: row.source ?? MISSING_SOURCE,
     } satisfies Item,
     edges: copied,
   };
@@ -808,7 +809,7 @@ export class SqliteItemStore implements ItemStore {
         occurred_at: input.occurred_at ?? now,
         version: input.version ?? 1,
         schema_version: schemaVersion,
-        source: input.source ?? "unknown",
+        source: input.source ?? MISSING_SOURCE,
         ...(input.source_id != null && { source_id: input.source_id }),
         ...(input.capture_latitude != null && {
           capture_latitude: input.capture_latitude,
@@ -1301,7 +1302,7 @@ export class SqliteItemStore implements ItemStore {
           if (isSourceDedupViolation(err)) {
             throw new MarfaError(
               ErrorCode.SOURCE_ID_CONFLICT,
-              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
               { source: row.source, source_id: input.source_id },
             );
           }
@@ -1595,7 +1596,7 @@ export class SqliteItemStore implements ItemStore {
         if (isSourceDedupViolation(err)) {
           throw new MarfaError(
             ErrorCode.SOURCE_ID_CONFLICT,
-            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? "unknown"}"`,
+            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
             { source: row.source, source_id: input.source_id },
           );
         }

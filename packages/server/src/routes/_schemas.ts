@@ -718,7 +718,7 @@ const enforcementSchema = (strict: boolean) => {
       .optional(),
     source_filter: typesAndSourcesLever
       .describe(
-        "Types whose listings, searches and exports show only items from the listed sources. A read by ID isn't narrowed.",
+        "Types whose listings, searches, exports, event streams and webhook deliveries show only items from the listed sources. A read by ID isn't narrowed, and a copy stream sends such items with `listed: false`.",
       )
       .optional(),
   });
