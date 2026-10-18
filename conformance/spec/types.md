@@ -148,7 +148,7 @@ When `POST /types`, `PUT /types/{id}` or `DELETE /types/{id}` races another regi
 
 **Reason:** a parent deleted while a child registers, a child registered while its parent is deleted, or two re-parents closing a loop would otherwise leave a registry no single write could make.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.
 
 ### `types/label`
 
@@ -596,7 +596,7 @@ When a type is registered again, the server MUST hold each later write to its it
 
 When an item write races `DELETE /types/{id}`, the server MUST either count the item, refusing a delete without `force=true` `409 type_in_use`, or refuse the item `unknown_type`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.
 
 ## Version policy
 
@@ -672,7 +672,7 @@ When a `POST /items/bulk-actions` job with `update_properties` writes a row, the
 
 **Reason:** every other operation asks when it writes, so a lever set while a job waits holds for it. A job whose queuing credential is gone writes nothing more (`items/job-credential-lost`).
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `types/source-allowlist`
 

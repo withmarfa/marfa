@@ -1917,7 +1917,7 @@ If the consent screen receives an authorization whose signature the instance did
 
 If the consent screen receives an authorization the instance signed whose window has closed, then the server MUST answer the page saying the request has expired.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2075.
 
 ### `keys-and-oauth/end-session-page`
 
@@ -2515,4 +2515,4 @@ While the outcome of a change to a credential is unknown, the server MUST withho
 
 **Reason:** An unanswered commit is not proof of a rollback.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.

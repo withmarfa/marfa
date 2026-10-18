@@ -546,13 +546,13 @@ While a run of `blob-orphans` is under way, if a write that names a blob the run
 
 **Reason:** the run decides each purge again at the moment it purges, so a reference written after the run's walk still counts. A write that commits after the purge names bytes that are gone.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `stores/orphan-purge-cut-short`
 
 If a purge is cut short after the blob left the registry and before its bytes are gone from every store, then the server MUST finish removing the bytes on the next run of `blob-orphans`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `stores/orphan-purge-no-dangling`
 
@@ -560,7 +560,7 @@ If a purge is cut short, then the server MUST NOT leave a blob that is listed or
 
 **Reason:** the server removes what lists or links the bytes before the bytes, so a purge cut short leaves nothing that names bytes that are gone.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `stores/orphan-restore-keeps`
 
@@ -628,7 +628,7 @@ While a queued or in-progress `update_properties` job's patch holds a blob's dig
 
 **Reason:** enqueueing such a job takes the blob off the report at once, and a run that was already walking the corpus cannot start or keep a report for it.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `stores/orphan-job-ended`
 
@@ -642,7 +642,7 @@ While a queued or in-progress `update_properties` job's patch names a blob's dig
 
 **Reason:** retention grants no read.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `stores/job-patch-unknown-digest`
 
@@ -670,13 +670,13 @@ When a string holds a run of lowercase hexadecimal characters that is 63 charact
 
 When a queued or in-progress `update_properties` job's patch holds a string with a digest at any depth, the server MUST count it as a reference.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `stores/reference-job-inputs`
 
 When a digest sits in the filter, the tags or another input of a queued or in-progress `update_properties` job and not in its patch, the server MUST NOT count it as a reference.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ## Keeping a copy's bytes removed
 
@@ -686,7 +686,7 @@ If a store cannot delete the bytes of a copy the server dropped, struck or purge
 
 **Reason:** the copy left the location log when it was dropped, struck or purged, so only the retry removes bytes that nothing names.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `stores/cleanup-isolated`
 
@@ -694,4 +694,4 @@ If a store keeps failing to delete the bytes of one copy, then the server MUST g
 
 **Reason:** a run deletes a bounded number of copies, so a copy that always fails would otherwise fill every run and leave the bytes of every copy behind it in place.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.

@@ -662,7 +662,7 @@ When two writes to one item race, the server MUST judge each against the item an
 
 **Reason:** a check made before the write lands is made of a row another write may change first.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.
 
 ## Idempotency keys
 
@@ -698,7 +698,7 @@ If a credential repeats a request under its `Idempotency-Key` after the server h
 
 **Reason:** the kept answer is shaped for the contract it was made under.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2075.
 
 ### `items/idempotency-credential`
 
@@ -1306,13 +1306,13 @@ If the server cannot confirm whether an entry of a page under `atomic: false` co
 
 **Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `items/bulk-outcome-unknown-continues`
 
 When the server reports a `POST /items/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `items/bulk-reason`
 
@@ -1460,7 +1460,7 @@ When a bulk action writes an item, the server MUST hold the write to the rules t
 
 If the credential's source filter changes, or hides a matched item, while the server selects a bulk action's items, then the server MUST answer `403 forbidden` without a count or ids.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-read`
 
@@ -1502,31 +1502,31 @@ When `POST /items/bulk-actions/jobs/{id}/cancel` names a job that has ended, the
 
 When `POST /items/bulk-actions/jobs/{id}/cancel` names a job that has not ended, the server MUST end it `canceled`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-cancel-keeps`
 
 When the server cancels a job, the server MUST keep every item the job already wrote.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-canceled-final`
 
 While a job is `canceled`, the server MUST answer it `canceled`, whatever the work it had in hand when canceled does.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-credential-lost`
 
 If the credential that queued a job stops authenticating, or a purge's credential loses `items.purge`, while the job runs, then the server MUST write nothing more and end the job `failed` with an `error` saying so.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-failed-result`
 
 When the server ends a job `failed`, the server MUST answer the `result` the job had gathered, its `ids`, `errors` and counts.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-token-expiry`
 
@@ -1534,19 +1534,19 @@ While the grant behind a signed-in app stands, the server MUST go on running the
 
 **Reason:** the app refreshes to a new token while the grant stands.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-source-hidden`
 
 If the credential's source filter comes to hide a matched item while its job runs, then the server MUST report that item in the job's `errors` as `item_not_found`, naming no type.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-type-lost`
 
 If the credential that queued a job loses write on a matched item's type while the job runs, then the server MUST report that item in the job's `errors`, `type_not_permitted` where it may still read the type and `item_not_found` where it may not.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `items/job-row-continues`
 
@@ -1558,19 +1558,19 @@ When a job reports an item in its `errors`, the server MUST go on to the job's n
 
 If a fault ends a job's write partway through a chunk of items, then the server MUST report the chunk's unwritten items in the job's `errors` with the fault's own cause.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `items/job-chunk-continues`
 
 When a fault ends a job's write partway through a chunk of items, the server MUST go on to the job's next chunk.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `items/job-resumes`
 
 If the server stops while a job runs, then the server MUST finish the job on its return without writing or announcing an item twice.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ## Tags, metadata and extensions
 

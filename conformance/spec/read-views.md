@@ -166,7 +166,7 @@ If the server cannot read the head of the log within the bound of a copy stream'
 
 **Reason:** a marker invented without a head would certify a view the server did not read.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## What a read view is bound to
 
@@ -284,7 +284,7 @@ When a retention sweep purges at least one item, the server MUST change the read
 
 **Reason:** a sweep purges rows without a request, so no write answers the change.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/read-view-sweep.test.ts › changes the read view, and a sweep that purges nothing does not`.
 
 ### `read-views/view-change-before-answer`
 
@@ -378,7 +378,7 @@ When a `GET` other than `GET /events`, or a `POST /items/bulk-get` whose body is
 
 While a write that changes the read view lands, the server MUST NOT answer a conditional read with a body that mixes what the item set held before the write and after it.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## What a conditional read certifies
 
@@ -540,13 +540,13 @@ When the read view of a copy stream changes after the stream has started, the se
 
 While a copy stream replays, holds a frame, or is about to announce `stream_live`, if the read view changes, then the server MUST end the stream with `read_view_changed`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `read-views/terminal-races-silent`
 
 While a copy stream replays, holds a frame, or is about to announce `stream_live`, if the read view changes, then the server MUST send neither `stream_live` nor a frame of the changed data.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ## What a copy stream says about each item
 

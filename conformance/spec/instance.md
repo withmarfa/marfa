@@ -380,13 +380,13 @@ If a component's probe has given no answer within two seconds, then the server M
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `down`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `instance/health-disk-degraded`
 
 If the bytes available on the database's volume and on the disk store's volume can both be read, and the lesser of the two is below 64 MiB and at least 1 MiB, then the server MUST answer the `disk` component of `GET /health` as `degraded`.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2071.
 
 ### `instance/health-disk-unknown`
 
@@ -544,7 +544,7 @@ When the server is stopped, the server MUST end an open copy stream, `GET /event
 
 When the server is stopped, the server MUST answer an event stream that is opened after the stop has begun with a terminal `stream_incomplete` frame.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2072.
 
 ### `instance/stop-stream-reason`
 
@@ -578,7 +578,7 @@ When the server is stopped, the server MUST let the bulk action and the housekee
 
 **Reason:** a run cut off mid-write leaves its record unwritten.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ### `instance/stop-exit-0`
 
@@ -610,7 +610,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it while the
 
 **Reason:** the run is resumed at the next start, so it does not make the stop a failure.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ## Long jobs
 
@@ -620,7 +620,7 @@ While the server runs an archive export, an archive restore, an NDJSON export, a
 
 **Reason:** the database driver runs each statement synchronously behind a promise, so a job that never hands the process to other requests stops every request, `/health` included, for as long as it runs, and a container whose health check waits five seconds restarts a server that is working. A restore also holds the write lock, which makes the write probe `degraded` and is not a held process.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2069.
 
 ## The root in a browser
 

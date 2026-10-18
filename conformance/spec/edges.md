@@ -841,13 +841,13 @@ If the server cannot confirm whether an entry of a `POST /edges/bulk` page under
 
 **Reason:** the caller reconciles that entry's stored state before retrying it, and does not replay the page (`items/bulk-outcome-unknown`).
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ### `edges/bulk-outcome-unknown-continues`
 
 When the server reports a `POST /edges/bulk` entry with `write_outcome: "unknown"`, the server MUST go on to the page's next entry.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2070.
 
 ## Edges written with an item
 
@@ -1883,7 +1883,7 @@ If an edge write lands after its source item was retyped into a type the key may
 
 **Reason:** the permission is judged against the source's type as it stands when the write lands.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.
 
 ### `edges/race-event`
 
@@ -1891,4 +1891,4 @@ When an operation announces an event for an edge it wrote or removed, the server
 
 **Reason:** an event naming ends the edge did not have when it was written or removed tells a subscriber of something that did not happen.
 
-**Tests:** waiting on #1444.
+**Tests:** waiting on #2074.

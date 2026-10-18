@@ -183,10 +183,19 @@ versions and cursors assume time does not go back. The adapter keeps the offset
 in the state directory and passes it back as `MARFA_TEST_CLOCK_OFFSET_MS`
 when the target is restarted, so a restarted target does not go back in time.
 
-Timers stay on real time: a job's deadline and a stream's heartbeat do not
-follow the clock. A fixture moves the clock and then runs the job it tests with
-`POST /housekeeping/{name}/run`. The clock does not reach time inside the
-sign-in library, and no fixture may depend on moving it.
+The offset may not exceed 3153600000000 ms (100 years), the largest
+`MARFA_TEST_CLOCK_OFFSET_MS`, so a restart can always take the offset back. A
+move past it is refused and the clock stays where it was.
+
+Timers and elapsed-time measures stay on real time: a job's deadline, a busy
+wait, a stream's heartbeat and the server's uptime do not follow the clock. A
+fixture moves the clock and then runs the job it tests with
+`POST /housekeeping/{name}/run`.
+
+After a clock move, no fixture may rely on an OAuth token, an owner session's
+step-up, or the `Retry-After` date of a webhook receiver. Each compares a time
+that the sign-in library or a peer sets in real time with the target's clock,
+which the move has put out of step with it.
 
 ### Faults
 
@@ -198,6 +207,10 @@ when the target starts. `FreshServer.stop()` clears the faults a fixture set.
 | `hold:housekeeping:<job>`    | A run of the job waits at its start until the fault is cleared.                                                  |
 | `hold:version-thinning:item` | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item. |
 | `deadline:<job>=<ms>`        | Shortens the run deadline of the job.                                                                            |
+
+A fault that names a housekeeping job the target has not registered is refused,
+as is a name that answers to no point. A refused fault is never armed, so a
+typo cannot pass for one.
 
 A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
 the target does not fake them.
