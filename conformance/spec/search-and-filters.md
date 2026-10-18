@@ -128,7 +128,7 @@ When a `type` filter of `GET /items`, `GET /items/stats`, `GET /search`, `GET /e
 
 ### `search-and-filters/type-grammar-refused`
 
-If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /occurrences`, or the `filter.type` of `POST /items/bulk-actions`, is neither a type identifier nor a wildcard ending in `.*` over one, then the server MUST answer `400 validation_error` naming the field in `details.errors`.
+If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` or `GET /occurrences`, or the `filter.type` of `POST /items/bulk-actions`, holds a value that is neither a type identifier nor a wildcard ending in `.*` over one, then the server MUST answer `400 validation_error` naming the field in `details.errors`.
 
 **Tests:** `compliance/question-mark-values.test.ts › is refused on every door that takes a type, naming it`.
 
@@ -382,9 +382,9 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 ### `search-and-filters/filter-question-mark`
 
-When a value in a `filter` expression, a `tags` parameter or a `backref[<edge type>]` key of `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` holds a `?`, the server MUST match the `?` as that character and as nothing else.
+When a value in a `filter` expression, a `tags` parameter or the value of a `backref[<edge type>]` parameter of `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-actions` holds a `?`, the server MUST match the `?` as that character and as nothing else.
 
-**Tests:** `compliance/question-mark-values.test.ts › matches as itself in a filter on GET /items`, `› matches as itself in a tags parameter on GET /items`, `› matches as itself in a filter on GET /items/stats`, `› matches as itself in a filter on GET /search`, `› matches as itself in a filter on POST /items/bulk-actions`, `› matches as itself in the anchor of an edge term, on every door that takes one`.
+**Tests:** `compliance/question-mark-values.test.ts › matches as itself in a filter on GET /items`, `› matches as itself in a tags parameter on GET /items`, `› matches as itself in a tags parameter on GET /items/stats, GET /search and POST /items/bulk-actions`, `› matches as itself in a filter on GET /items/stats`, `› matches as itself in a filter on GET /search`, `› matches as itself in a filter on POST /items/bulk-actions`, `› matches as itself in the anchor of an edge term, on every door that takes one`.
 
 ### `search-and-filters/tag-count-question-mark`
 

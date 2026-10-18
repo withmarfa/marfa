@@ -97,7 +97,7 @@ When a credential's type map names a subtree wildcard, the server MUST apply the
 
 ### `keys-and-oauth/map-case-sensitive`
 
-The server MUST match a credential's type map entry against a type identifier character for character, so that an entry differing from every type in case, or holding a character no type identifier holds, covers no type.
+The server MUST match a credential's type map entry against a type identifier character for character, so that an exact entry, or the part of a subtree wildcard before `.*`, that differs from every type in case or holds a character no type identifier holds covers no type.
 
 **Tests:** `compliance/type-map-ranking.test.ts › covers no type with an entry in another case`, `› covers no type with an entry holding a ?`.
 
