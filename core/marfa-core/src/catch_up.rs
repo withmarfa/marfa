@@ -37,6 +37,10 @@ pub(crate) struct Pace {
     /// stream at once is asked at most every `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
+    /// How long a stream stayed open is read from this clock, so a test can
+    /// hold it still and a slow machine cannot make a stream that ended at
+    /// once look like one that was held.
+    pub(crate) clock: fn() -> Instant,
 }
 
 pub(crate) const PACE: Pace = Pace {
@@ -44,6 +48,7 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
+    clock: Instant::now,
 };
 
 struct Slice {
@@ -904,7 +909,7 @@ fn follow_paced(
                 });
             }
             let catalog = catalog?;
-            let opened = Instant::now();
+            let opened = (pace.clock)();
             let ended = read_stream(
                 core,
                 &context,
@@ -927,7 +932,7 @@ fn follow_paced(
                 Ended::Over => {}
             }
             refreshed.clear();
-            if opened.elapsed() >= pace.reconnect_most {
+            if (pace.clock)().saturating_duration_since(opened) >= pace.reconnect_most {
                 backoff = pace.reconnect_first;
             } else {
                 recovery.tell(&report.cursor, on_change);
@@ -1404,7 +1409,16 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
+        clock: frozen,
     };
+
+    /// A clock that never moves, so no stream is held for `reconnect_most`
+    /// however slowly the machine runs: a test that needs a held stream says
+    /// so with a clock of its own.
+    fn frozen() -> Instant {
+        static AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *AT.get_or_init(Instant::now)
+    }
 
     /// For a stream the test holds open with no keepalive while it looks at
     /// what was told: with `QUICK`'s silence, a slow run would end that
@@ -2251,14 +2265,21 @@ mod tests {
                     vec![connected()],
                     Then::Hold {
                         keepalive: Some(MS(5)),
-                        lasting: Some(MS(100)),
+                        lasting: Some(MS(600)),
                     },
                 ),
                 ended(),
             ],
         );
         let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, Some(3));
+        // The streams that end at once must stay under the most wait on the
+        // real clock, so it is wide; the held one outlasts it.
+        let pace = Pace {
+            reconnect_most: MS(500),
+            clock: Instant::now,
+            ..QUICK
+        };
+        let run = follow_on(&core, pace, Some(3));
         run.ended().unwrap();
         assert_eq!(
             run.waits(),
