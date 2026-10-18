@@ -7,7 +7,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import * as clock from "../clock.js";
 
 const CACHE_TTL_MS = 60_000;
-const startedAt = clock.nowMs();
+const startedAt = clock.monotonicMs();
 
 // Every admitted caller sees the same instance-wide counts.
 interface CacheEntry {
@@ -94,7 +94,7 @@ export function metricsRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
-    const now = clock.nowMs();
+    const now = clock.monotonicMs();
     if (metricsCache && now - metricsCache.at < CACHE_TTL_MS) {
       return c.json(
         metricsCache.response as z.infer<typeof MetricsResponseSchema>,

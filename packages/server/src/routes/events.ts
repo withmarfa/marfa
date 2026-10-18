@@ -541,10 +541,10 @@ export function eventRoutes(
               // would retain one listener per departed viewer indefinitely.
               const subscriptionAbort = new AbortController();
 
-              let lastWriteAt = clock.nowMs();
+              let lastWriteAt = clock.monotonicMs();
               const send = (data: string) => {
                 if (state.closed) return;
-                lastWriteAt = clock.nowMs();
+                lastWriteAt = clock.monotonicMs();
                 try {
                   controller.enqueue(encoder.encode(data));
                 } catch {
@@ -572,7 +572,7 @@ export function eventRoutes(
               const waitForRoom = async (): Promise<boolean> => {
                 if (hasRoom()) return true;
                 let room = controller.desiredSize ?? 0;
-                let tookAt = clock.nowMs();
+                let tookAt = clock.monotonicMs();
                 while (!state.closed) {
                   let timer: ReturnType<typeof setTimeout> | undefined;
                   await new Promise<void>((resolve) => {
@@ -585,9 +585,10 @@ export function eventRoutes(
                   if (state.closed) return false;
                   if (hasRoom()) return true;
                   const now = controller.desiredSize ?? 0;
-                  if (now > room) tookAt = clock.nowMs();
+                  if (now > room) tookAt = clock.monotonicMs();
                   room = now;
-                  if (clock.nowMs() - tookAt >= readerStallMs) return false;
+                  if (clock.monotonicMs() - tookAt >= readerStallMs)
+                    return false;
                 }
                 return false;
               };
@@ -1140,7 +1141,10 @@ export function eventRoutes(
                     ) {
                       return false;
                     }
-                    if (clock.nowMs() - lastWriteAt >= REPLAY_PROGRESS_MS) {
+                    if (
+                      clock.monotonicMs() - lastWriteAt >=
+                      REPLAY_PROGRESS_MS
+                    ) {
                       send(": replaying\n\n");
                     }
 

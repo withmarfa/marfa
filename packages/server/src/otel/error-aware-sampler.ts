@@ -153,7 +153,7 @@ export class ErrorBucketFilterSpanProcessor implements SpanProcessor {
     private readonly sampleRatio: number,
     options: ProcessorOptions = {},
   ) {
-    this.now = options.now ?? clock.nowMs;
+    this.now = options.now ?? clock.monotonicMs;
     this.maxAgeMs = options.maxAgeMs ?? HOLD_LIMITS.maxAgeMs;
     this.timer = setInterval(() => {
       this.sweep();

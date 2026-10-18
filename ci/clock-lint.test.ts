@@ -35,6 +35,13 @@ describe("the server reads the time through its clock", () => {
       "const f = Date.now;",
       "const s = new Date().toISOString();",
       "function f(now = new Date()) { return now; }",
+      "const s = Date();",
+      "const t = globalThis.Date.now();",
+      "const d = new globalThis.Date();",
+      "const d = globalThis.Date();",
+      "const { now } = Date;",
+      "const { now: read } = globalThis.Date;",
+      "const t = Date['now']();",
     ]) {
       expect(await reports(SERVER_FILE, code), code).not.toEqual([]);
     }
@@ -49,6 +56,10 @@ describe("the server reads the time through its clock", () => {
       "const t = Date.parse(value);",
       "const t = Date.UTC(2030, 0, 1);",
       "const t = clock.nowMs();",
+      "const { UTC } = Date;",
+      "const d = new globalThis.Date(0);",
+      "const t = globalThis.Date.parse(value);",
+      "const { now } = clock;",
     ]) {
       expect(await reports(SERVER_FILE, code), code).toEqual([]);
     }

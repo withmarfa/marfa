@@ -814,7 +814,7 @@ export async function readSse(
   let text = "";
   let closed = false;
   let satisfied = false;
-  const deadline = clock.nowMs() + timeoutMs;
+  const deadline = clock.monotonicMs() + timeoutMs;
 
   // One read outstanding at a time, and the same promise is awaited again
   // rather than replaced. A second `read()` issued while the first is still
@@ -826,7 +826,7 @@ export async function readSse(
   let pending: Promise<StreamChunk> | undefined;
 
   for (;;) {
-    const remaining = deadline - clock.nowMs();
+    const remaining = deadline - clock.monotonicMs();
     if (remaining <= 0) break;
     pending ??= reader
       .read()

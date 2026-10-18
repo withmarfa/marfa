@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advanceClock,
   clockOffsetMs,
+  monotonicMs,
   now,
   nowMs,
   resetClockForTests,
@@ -30,6 +31,13 @@ describe("clock", () => {
     expect(now().toISOString()).toBe("2030-01-02T00:00:01.000Z");
     advanceClock(1_000);
     expect(clockOffsetMs()).toBe(86_401_000);
+  });
+
+  it("leaves the monotonic reading where it was when the clock moves", () => {
+    const before = monotonicMs();
+    advanceClock(3_600_000);
+    expect(monotonicMs() - before).toBeLessThan(1_000);
+    expect(nowMs() - Date.now()).toBe(3_600_000);
   });
 
   it("refuses a step back and leaves the clock where it was", () => {

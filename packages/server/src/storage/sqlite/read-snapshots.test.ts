@@ -582,10 +582,10 @@ it("a shorter nested deadline abandons the entire read and cannot be extended by
   await expect(
     storage.runInReadSnapshot(async () => {
       await storage.runInReadSnapshot(() => undefined, {
-        deadlineAt: Date.now() + 10,
+        deadlineAt: performance.now() + 10,
       });
       await storage.runInReadSnapshot(() => new Promise(() => undefined), {
-        deadlineAt: Date.now() + 10000,
+        deadlineAt: performance.now() + 10000,
       });
     }),
   ).rejects.toThrow("unavailable");

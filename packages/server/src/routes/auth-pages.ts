@@ -90,6 +90,7 @@ async function createUserAppGrant(
   created: boolean;
   scopes: string[];
 }> {
+  // eslint-disable-next-line no-restricted-syntax -- the sign-in pages move onto the clock with the rest of that surface
   const now = new Date().toISOString();
   const consentingUser = consenting.user;
   const by = browserWriter(

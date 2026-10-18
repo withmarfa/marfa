@@ -241,7 +241,7 @@ export async function buildCopyStream(
   const paced = async (): Promise<boolean> => {
     if (hasRoom()) return true;
     let room = controller?.desiredSize ?? 0;
-    let progressAt = clock.nowMs();
+    let progressAt = clock.monotonicMs();
     while (!isClosed()) {
       await new Promise<void>((resolve) => {
         onRoom = resolve;
@@ -255,10 +255,10 @@ export async function buildCopyStream(
       onRoom = undefined;
       if (isClosed()) return false;
       const next = controller?.desiredSize ?? 0;
-      if (next > room) progressAt = clock.nowMs();
+      if (next > room) progressAt = clock.monotonicMs();
       room = next;
       if (hasRoom()) return true;
-      if (clock.nowMs() - progressAt >= stallMs) {
+      if (clock.monotonicMs() - progressAt >= stallMs) {
         incomplete("reader_behind");
         return false;
       }
@@ -395,7 +395,7 @@ export async function buildCopyStream(
       },
       {
         deadlineAt:
-          clock.nowMs() +
+          clock.monotonicMs() +
           (options.headReadTimeoutMs ?? EVENT_LIMITS.headReadTimeoutMs),
         signal: abort.signal,
       },

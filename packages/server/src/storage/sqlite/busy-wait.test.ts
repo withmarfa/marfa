@@ -14,6 +14,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient, LibsqlError } from "@libsql/client";
+import { advanceClock, resetClockForTests } from "../../clock.js";
 import { createConnection, untilNotBusy } from "./connection.js";
 
 const dirs: string[] = [];
@@ -151,6 +152,26 @@ describe("a write that meets the write lock", () => {
     });
     // The whole budget, then one last try at the deadline.
     expect(Date.now() - started).toBeGreaterThanOrEqual(55);
+    expect(attempts).toBeGreaterThan(2);
+  });
+
+  it("keeps its budget when the clock is moved", async () => {
+    // The budget is elapsed time. The witness is the test above: the same
+    // wait ends at the budget when the clock stays where it is.
+    let attempts = 0;
+    const started = performance.now();
+    try {
+      await expect(
+        untilNotBusy(() => {
+          attempts += 1;
+          if (attempts === 1) advanceClock(3_600_000);
+          return Promise.reject(busy());
+        }, 60),
+      ).rejects.toMatchObject({ code: "write_contention" });
+    } finally {
+      resetClockForTests();
+    }
+    expect(performance.now() - started).toBeGreaterThanOrEqual(55);
     expect(attempts).toBeGreaterThan(2);
   });
 

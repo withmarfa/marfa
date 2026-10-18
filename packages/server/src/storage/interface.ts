@@ -3286,6 +3286,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
     fn: (
       pin: Readonly<{ instanceId: string; structuralGeneration: string }>,
     ) => T | Promise<T>,
+    /** `deadlineAt` is on the scale of `clock.monotonicMs()`. */
     options?: { deadlineAt?: number; signal?: AbortSignal },
   ): Promise<T>;
   close(): Promise<void>;

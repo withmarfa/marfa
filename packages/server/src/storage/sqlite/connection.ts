@@ -326,13 +326,13 @@ export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = busyBudgetMs,
 ): Promise<T> {
-  const deadline = clock.nowMs() + budgetMs;
+  const deadline = clock.monotonicMs() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
   for (;;) {
     try {
       return await attempt();
     } catch (err) {
-      const remaining = deadline - clock.nowMs();
+      const remaining = deadline - clock.monotonicMs();
       if (!isBusy(err)) throw err;
       if (remaining <= 0) {
         // The budget is spent and the lock is still held. Rethrowing

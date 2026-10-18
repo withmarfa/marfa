@@ -18,7 +18,7 @@ export class ReadLifetime {
   >();
 
   constructor(options?: { deadlineAt?: number; signal?: AbortSignal }) {
-    this.deadlineAt = clock.nowMs() + 5_000;
+    this.deadlineAt = clock.monotonicMs() + 5_000;
     this.ended = new Promise<never>((_, reject) => {
       this.reject = reject;
     });
@@ -40,12 +40,16 @@ export class ReadLifetime {
     }
     if (options?.signal?.aborted) this.abandon();
     clearTimeout(this.timer);
-    if (clock.nowMs() >= this.deadlineAt) this.abandon();
-    else this.timer = setTimeout(this.abandon, this.deadlineAt - clock.nowMs());
+    if (clock.monotonicMs() >= this.deadlineAt) this.abandon();
+    else
+      this.timer = setTimeout(
+        this.abandon,
+        this.deadlineAt - clock.monotonicMs(),
+      );
   }
 
   assertAlive(): void {
-    if (clock.nowMs() >= this.deadlineAt) this.abandon();
+    if (clock.monotonicMs() >= this.deadlineAt) this.abandon();
     if (this.abandoned) throw new ReadSnapshotUnavailable();
   }
 

@@ -7,7 +7,7 @@
  * The clock is the system clock plus an offset, which is zero unless the
  * server was started with `MARFA_TEST_HOOKS` and the test hooks move it.
  * It only moves forward: ids, versions and cursors assume time does not go
- * back. Timers and `performance.now()` stay on real time.
+ * back. Timers and `monotonicMs()` stay on real time.
  */
 
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
@@ -23,6 +23,15 @@ export function nowMs(): number {
 /** The current time as a `Date`. */
 export function now(): Date {
   return new Date(nowMs());
+}
+
+/**
+ * Milliseconds on a monotonic scale that the test hooks never move. Measure
+ * every elapsed span with it (a budget, a stall, a lifetime, an uptime): a
+ * span that followed `nowMs()` would end the moment a test moved the clock.
+ */
+export function monotonicMs(): number {
+  return performance.now();
 }
 
 /** How far the clock is ahead of the system clock, in milliseconds. */
