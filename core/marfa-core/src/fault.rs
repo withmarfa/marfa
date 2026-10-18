@@ -5,7 +5,7 @@
 
 /// The argument of the named fault, empty where it takes none.
 #[cfg(debug_assertions)]
-pub(crate) fn named(fault: &str) -> Option<String> {
+pub fn named(fault: &str) -> Option<String> {
     std::env::var("MARFA_TEST_FAULT")
         .ok()?
         .split(',')
@@ -16,6 +16,6 @@ pub(crate) fn named(fault: &str) -> Option<String> {
 }
 
 #[cfg(not(debug_assertions))]
-pub(crate) fn named(_fault: &str) -> Option<String> {
+pub fn named(_fault: &str) -> Option<String> {
     None
 }
