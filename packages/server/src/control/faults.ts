@@ -216,6 +216,7 @@ export function faultProblem(
 ): string | undefined {
   const problem = shapeProblem(name, arg);
   if (problem !== undefined) return problem;
+  if (name === "unfold-deadline") return undefined;
   const colon = name.indexOf(":");
   const kind = name.slice(0, colon);
   const rest = name.slice(colon + 1);
