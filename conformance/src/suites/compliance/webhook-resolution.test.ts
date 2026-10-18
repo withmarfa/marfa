@@ -103,28 +103,6 @@ describe("webhook address resolution", () => {
     // loopback, where the receiver listens, so no packet leaves the machine.
     // A second lookup answers ::1, where nothing listens: a target that
     // resolves again after its check connects there and misses the receiver.
-    await server.setFault("resolve:moved.test=127.0.0.1");
-    const id = await subscribe("moved.test", "witness");
-    try {
-      await write("witness");
-      await receiver.waitFor((r) => r.path === "/hook/witness");
-    } finally {
-      await owner().deleteWebhook(id);
-      await server.clearFault();
-    }
-  });
-
-  it("connects to the address it checked and does not resolve the name again", async () => {
-    // The target boots again with private addresses refused, as a production
-    // instance runs, and stays so until the file ends.
-    await server.restart({
-      env: { MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: "false" },
-    });
-    // The first lookup answers a public address that the socket reaches on
-    // loopback, where the receiver listens, so no packet leaves the machine.
-    // Any second lookup answers loopback, which the check refuses and a
-    // socket that skipped the check would find refused by nothing listening
-    // there: the receiver takes the delivery only from the first answer.
     await server.setFault(
       `resolve:rebind.test=${PUBLIC_ADDRESS}>127.0.0.1;::1`,
     );

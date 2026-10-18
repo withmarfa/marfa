@@ -231,7 +231,11 @@ const systemLookup: LookupFunction = (hostname, options, callback) => {
     (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
     return;
   }
-  const first = all[0] as LookupAddress;
+  const first = all[0];
+  if (first === undefined) {
+    callback(new AddressNotPublicError(), "", 0);
+    return;
+  }
   callback(null, first.address, first.family);
 };
 
