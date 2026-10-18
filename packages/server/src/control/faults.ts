@@ -18,6 +18,10 @@
  *   counts, as `items.bulk@2`, so a request that makes other writes first
  *   does not shift the count.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
+ * - `free:<volume>=<bytes>` makes the server read that many bytes of free
+ *   space on the volume (`database` or `blobs`) from now until the fault is
+ *   cleared or set again. Setting it again while a body streams in is how
+ *   a volume fills as the bytes arrive.
  *
  * The routes refuse a name that answers to no point, an argument the point
  * does not take, and a job the scheduler has not registered, so a typo cannot
@@ -49,6 +53,8 @@ export const POINTS: {
   hold: [
     { name: "housekeeping:<job>", arg: "none" },
     { name: "version-thinning:item", arg: "none" },
+    { name: "blob-orphans:purge", arg: "none" },
+    { name: "restore:before-commit", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -59,6 +65,9 @@ export const POINTS: {
     { name: "inbound-receipt", arg: "nth" },
     { name: "inbound-cleanup", arg: "nth" },
     { name: "export-read", arg: "nth" },
+    { name: "blob-read", arg: "nth" },
+    { name: "blob-write", arg: "nth" },
+    { name: "blob-delete", arg: "nth" },
     { name: "housekeeping:<job>", arg: "nth" },
     { name: "job-row", arg: "nth" },
   ],
@@ -69,6 +78,10 @@ export const POINTS: {
  * could only be counted and never act.
  */
 const JOBS_WITHOUT_STATEMENTS: readonly string[] = ["heartbeat"];
+
+/** The volumes a `free` fault may name. */
+const VOLUMES = ["database", "blobs"] as const;
+export type Volume = (typeof VOLUMES)[number];
 
 const JOB_SLOT = "<job>";
 const JOB_NAME = /^[a-z][a-z0-9-]*$/;
@@ -161,7 +174,15 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
       return "a deadline fault takes a whole number of milliseconds from 1";
     return undefined;
   }
-  return "a fault is named hold:<point>, fail:<point> or deadline:<job>";
+  if (kind === "free") {
+    if (!VOLUMES.includes(rest as Volume))
+      return `${rest} is not a volume: ${VOLUMES.join(" or ")}`;
+    const bytes = arg === null ? Number.NaN : Number(arg);
+    if (!/^[0-9]+$/.test(arg ?? "") || !Number.isSafeInteger(bytes))
+      return "a free fault takes a whole number of bytes";
+    return undefined;
+  }
+  return "a fault is named hold:<point>, fail:<point>, deadline:<job> or free:<volume>";
 }
 
 /**
@@ -180,7 +201,11 @@ export function faultProblem(
   const kind = name.slice(0, colon);
   const rest = name.slice(colon + 1);
   const job =
-    kind === "deadline" ? rest : declared(kind as "hold" | "fail", rest)?.job;
+    kind === "deadline"
+      ? rest
+      : kind === "hold" || kind === "fail"
+        ? declared(kind, rest)?.job
+        : undefined;
   if (job !== undefined && !jobs.includes(job))
     return `no housekeeping job is named ${job}`;
   if (
@@ -310,5 +335,12 @@ export async function holdAt(point: string): Promise<void> {
 /** The deadline `deadline:<job>` sets for a run of `job`, if one is armed. */
 export function deadlineFault(job: string): number | undefined {
   const arg = faults.get(`deadline:${job}`)?.arg;
+  return arg === undefined || arg === null ? undefined : Number(arg);
+}
+
+/** The free space `free:<volume>` makes the server read, if one is armed. */
+export function freeFault(volume: Volume): number | undefined {
+  if (faults.size === 0) return undefined;
+  const arg = faults.get(`free:${volume}`)?.arg;
   return arg === undefined || arg === null ? undefined : Number(arg);
 }

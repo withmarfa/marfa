@@ -9,6 +9,7 @@ import {
   recordFired,
   faultProblem,
   faultsArmed,
+  freeFault,
   POINTS,
   setFault,
 } from "./faults.js";
@@ -229,5 +230,27 @@ describe("a hold fault and a deadline fault", () => {
     arm("deadline:trash-purge", "250");
     expect(deadlineFault("trash-purge")).toBe(250);
     expect(deadlineFault("inbound-delivery-cleanup")).toBeUndefined();
+  });
+});
+
+describe("a free fault", () => {
+  it("reads the bytes it was set to for its volume alone, until it is set again or cleared", () => {
+    expect(freeFault("blobs")).toBeUndefined();
+    expect(arm("free:blobs", "2048")).toBeUndefined();
+    expect(freeFault("blobs")).toBe(2048);
+    expect(freeFault("database")).toBeUndefined();
+    expect(arm("free:blobs", "0")).toBeUndefined();
+    expect(freeFault("blobs")).toBe(0);
+    clearFaults();
+    expect(freeFault("blobs")).toBeUndefined();
+  });
+
+  it("refuses a volume nothing reads, and an argument that is not a whole number of bytes", () => {
+    expect(arm("free:elsewhere", "1")).toMatch(/not a volume/);
+    expect(arm("free:blobs")).toMatch(/whole number/);
+    for (const arg of ["-1", "1.5", "1e3", "", "ten", "9007199254740993"]) {
+      expect(arm("free:blobs", arg), arg).toMatch(/whole number/);
+    }
+    expect(activeFaults()).toEqual([]);
   });
 });

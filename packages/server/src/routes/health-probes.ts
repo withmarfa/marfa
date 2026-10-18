@@ -2,6 +2,7 @@ import { statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Storage } from "../storage/interface.js";
 import * as clock from "../clock.js";
+import { freeFault, type Volume } from "../control/faults.js";
 
 /**
  * What `/health` asks of the machine beyond reading a row: whether a write
@@ -67,10 +68,15 @@ export function storageProbes(
   return {
     write: commit,
     availableBytes: async () => {
-      const volumes = [dirname(paths.sqlitePath), paths.blobPath];
+      const volumes: [Volume, string][] = [
+        ["database", dirname(paths.sqlitePath)],
+        ["blobs", paths.blobPath],
+      ];
       const free = await Promise.all(
-        volumes.map(async (volume) => {
-          const stats = await statfs(volume);
+        volumes.map(async ([name, path]) => {
+          const set = freeFault(name);
+          if (set !== undefined) return set;
+          const stats = await statfs(path);
           return stats.bavail * stats.bsize;
         }),
       );
