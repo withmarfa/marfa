@@ -223,6 +223,11 @@ export async function startHarness(label: string): Promise<Harness> {
 export interface BindingHarness {
   server: ScriptedServer;
   device: BindingDevice;
+  /**
+   * Another binding, in a process of its own, that opens the same store to
+   * read it only. It is closed with the harness.
+   */
+  reader: () => Promise<BindingDevice>;
   stop: () => Promise<void>;
 }
 
@@ -233,22 +238,34 @@ export interface BindingHarness {
  */
 export async function startBindingHarness(
   label: string,
+  options: { server?: boolean } = {},
 ): Promise<BindingHarness> {
   const module = requireModule();
   const server = await ScriptedServer.start();
+  const readers: BindingDevice[] = [];
   const device = await BindingDevice.start({
     module,
     store: newStore(label),
-    url: server.url,
-    key: KEY,
+    // A working copy with no server holds a store and nothing else.
+    ...(options.server === false ? {} : { url: server.url, key: KEY }),
   });
   return {
     server,
     device,
+    reader: async () => {
+      const reading = await BindingDevice.start({
+        module,
+        store: device.store,
+        reader: true,
+      });
+      readers.push(reading);
+      return reading;
+    },
     stop: async () => {
       const unscripted = [...server.unmatchedRequests];
       // The device first: it may hold a stream or a request the server would
       // otherwise wait on.
+      await Promise.all(readers.map((reading) => reading.close()));
       await device.close();
       await server.stop();
       if (unscripted.length > 0) {

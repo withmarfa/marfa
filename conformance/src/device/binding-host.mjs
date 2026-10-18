@@ -14,9 +14,18 @@
 //                                          `handle`; an argument of the form
 //                                          { $stop: name } is that stop
 //   { op: "stop", name, action: "new" | "raise" }
-//   { op: "subscribe", handle, name, kind: "follow" | "watch", toldUnreachable }
+//   { op: "subscribe", handle, name, kind: "follow" | "watch", toldUnreachable,
+//     slowMs?, throwAt?, openOnEnd? }   a listener that blocks `slowMs` in each
+//                                       change, throws in the change numbered
+//                                       `throwAt` (from 0), or, as it is told
+//                                       it ended, opens the store `openOnEnd`
+//                                       names and sends what came of it
 //   { op: "unsubscribe", name }
-//   { op: "hook", name, point }            the debug build's testHooks
+//   { op: "forget", handle }              lets go of the core opened as
+//                                         `handle` and collects it
+//   { op: "try-open", path, url?, key? }  opens the store as a writer would and
+//                                         holds it, answering the role it got
+//   { op: "hook", name, point, arg? }      the debug build's testHooks
 //   { op: "clock", name, arg? }           the debug build's testClock
 //   { op: "exit" }
 // A reply is { id, ok: true, value } or { id, ok: false, error }. A
@@ -33,6 +42,28 @@ const binding = createRequire(import.meta.url)(modulePath);
 const cores = new Map();
 const stops = new Map();
 const subscriptions = new Map();
+// Cores a fixture opened to see whether it could, kept so they are not
+// collected while the fixture still reads what they hold.
+const probes = [];
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+/**
+ * Opens the store the way a writer does, answering the role it was given: a
+ * second opener while another holds the writer's role is a reading handle.
+ */
+function tryOpen(message) {
+  try {
+    const opened = binding.MarfaCore.open(
+      message.path,
+      message.url,
+      message.key,
+    );
+    probes.push(opened);
+    return { opened: true, handle: opened.heldHandle() };
+  } catch (thrown) {
+    return { opened: false, error: describe(thrown) };
+  }
+}
 
 /** A thrown error as data: its code, its message and the fields it carries. */
 function describe(thrown) {
@@ -71,11 +102,25 @@ function debugOnly(name) {
 }
 
 function subscribe(message) {
-  const { handle, name, kind, toldUnreachable } = message;
-  const onChange = (change) => process.send({ event: "change", name, change });
+  const { handle, name, kind, toldUnreachable, slowMs, throwAt, openOnEnd } =
+    message;
+  let told = 0;
+  const onChange = (change) => {
+    const number = told++;
+    process.send({ event: "change", name, change });
+    if (slowMs !== undefined && slowMs !== null) {
+      Atomics.wait(sleeper, 0, 0, slowMs);
+    }
+    if (throwAt === number) throw new Error("the listener faulted");
+  };
   const onEnd = (error) => {
+    // Before anything else: the store must be free by now.
+    const opened =
+      openOnEnd === undefined || openOnEnd === null
+        ? undefined
+        : tryOpen(openOnEnd);
     subscriptions.delete(name);
-    process.send({ event: "end", name, error: describe(error) });
+    process.send({ event: "end", name, error: describe(error), opened });
   };
   subscriptions.set(
     name,
@@ -116,8 +161,20 @@ async function handle(message) {
     case "unsubscribe":
       subscriptions.get(message.name)?.stop();
       return null;
+    case "forget": {
+      cores.delete(message.handle);
+      // A collected object lets go in a later turn, so collect, wait and
+      // collect again.
+      for (let round = 0; round < 5; round += 1) {
+        globalThis.gc?.();
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      return null;
+    }
+    case "try-open":
+      return tryOpen(message);
     case "hook":
-      return debugOnly("testHooks")[message.name](message.point);
+      return debugOnly("testHooks")[message.name](message.point, message.arg);
     case "clock":
       return debugOnly("testClock")[message.name](message.arg);
     case "exit":

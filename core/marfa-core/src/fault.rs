@@ -1,8 +1,9 @@
 //! Faults a debug build injects where `MARFA_TEST_FAULT` names them, so the
 //! device suite can stand a crash, a store that fails, or another process's
 //! change at the moment it matters, which no fixture can time from outside.
-//! A debug build also holds a call where a fixture in its own process says,
-//! which a fault in the environment cannot do. A release build has none.
+//! A debug build also holds a call, or makes it fail, where a fixture in its
+//! own process says, which a fault in the environment cannot do. A release
+//! build has none.
 
 /// The argument of the named fault, empty where it takes none.
 #[cfg(debug_assertions)]
@@ -31,10 +32,30 @@ pub fn hold(point: &str) {
     let _ = point;
 }
 
+/// Whether the fixture has made `point` fail, for the engine to answer with
+/// the error that point's failure is. A debug build counts the call, as
+/// `hold` does, so a fixture can wait for a failing read to have been made.
+/// A release build never fails.
+#[cfg(debug_assertions)]
+pub fn fails(point: &str) -> bool {
+    holds::fails(point)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn fails(_point: &str) -> bool {
+    false
+}
+
 /// Makes the next calls of `hold(point)` wait. A debug build only.
 #[cfg(debug_assertions)]
 pub fn arm(point: &str) {
     holds::arm(point);
+}
+
+/// Makes `fails(point)` answer `on`. A debug build only.
+#[cfg(debug_assertions)]
+pub fn set_failing(point: &str, on: bool) {
+    holds::set_failing(point, on);
 }
 
 /// Lets go of every caller waiting at `point`, and stops holding it. A debug
@@ -64,6 +85,7 @@ mod holds {
     #[derive(Default)]
     struct Point {
         armed: bool,
+        failing: bool,
         reached: usize,
         waiting: usize,
         /// Lets a released caller proceed even if the point is armed again
@@ -105,6 +127,17 @@ mod holds {
         CHANGED.notify_all();
     }
 
+    pub(super) fn fails(name: &str) -> bool {
+        let mut held = points();
+        let here = point(&mut held, name);
+        here.reached += 1;
+        here.failing
+    }
+
+    pub(super) fn set_failing(name: &str, on: bool) {
+        point(&mut points(), name).failing = on;
+    }
+
     pub(super) fn arm(name: &str) {
         point(&mut points(), name).armed = true;
     }
@@ -127,7 +160,7 @@ mod holds {
 
     #[cfg(test)]
     mod tests {
-        use super::super::{arm, hold, reached, release, waiting};
+        use super::super::{arm, fails, hold, reached, release, set_failing, waiting};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::thread;
@@ -193,6 +226,16 @@ mod holds {
             });
             release("holds-test-early");
             caller.join().unwrap();
+        }
+
+        #[test]
+        fn a_point_made_to_fail_fails_until_it_is_made_not_to_and_counts_each_ask() {
+            assert!(!fails("holds-test-failing"));
+            set_failing("holds-test-failing", true);
+            assert!(fails("holds-test-failing"));
+            set_failing("holds-test-failing", false);
+            assert!(!fails("holds-test-failing"));
+            assert_eq!(reached("holds-test-failing"), 3);
         }
 
         #[test]

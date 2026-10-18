@@ -332,6 +332,26 @@ follows.
     when it asks to drain and when it finds no work left.
   - `follow-waiting`: a follow that waits for a first hydration.
   - `answer-dropped`: an answer reached a request that nobody waited for.
+  - `catalog-replacing`: a refresh of the catalog has written the item types
+    and not yet the edge types, inside the transaction that replaces both. A
+    reading handle that reads then must answer from the catalog before the
+    refresh.
+- **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
+  reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
+  each reach as `testHooks.reached` does. The only point that fails is
+  `data-version`, the read a reading handle's watch makes to learn that
+  another process saved.
+- **Listeners and stores.** `watch` can be called more than once on one working
+  copy, and each call is a listener. The host can make a listener block in each
+  change, throw from one, and open the store the moment it is told it ended
+  (the role the new handle is given says whether the watch had let go of it);
+  it can let go of its own core and collect it, so that a watch is the only
+  hold left on the store; and it can open the same store to read, in a second
+  process (`harness.reader()`), as an app's helper does.
+- **A stream the fixture speaks on.** The scripted server's held stream can
+  name a `StreamFeed`. The fixture pushes frames to the streams open on it,
+  so a change is told after a listener has joined, and the feed counts the
+  streams it was asked for.
 - **The clock.** `testClock.manual()` sets the clock the engine waits by to
   one that moves only where `testClock.advance(ms)` moves it, and
   `testClock.waits()` lists the waits the engine has asked of it and the clock

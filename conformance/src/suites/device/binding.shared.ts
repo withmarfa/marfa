@@ -6,6 +6,8 @@ import type {
 import {
   answers,
   connected,
+  copyItemEvent,
+  copyStreamCursor,
   refusal,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -13,6 +15,8 @@ import type {
   Answer,
   RecordedRequest,
   Responder,
+  SseFrame,
+  StreamFeed,
 } from "../../device/scripted-server.js";
 import {
   scriptHydration,
@@ -25,6 +29,33 @@ import {
 
 /** A stream the server holds open and says nothing on. */
 export const HELD: Answer = { kind: "sse", frames: [connected], hold: true };
+
+/**
+ * A stream the server holds open, saying what `feed` is given to say. It
+ * names the cursor it was asked from as its own, as a server at that head
+ * does.
+ */
+export function heldBy(feed: StreamFeed, ...frames: SseFrame[]): Responder {
+  return (request) => ({
+    kind: "sse",
+    frames: [
+      connected,
+      copyStreamCursor(request.headers["last-event-id"] ?? "10"),
+      ...frames,
+    ],
+    hold: true,
+    feed,
+  });
+}
+
+/** The frame that tells a note was made, at `cursor`. */
+export function noteMade(id: string, cursor: string): SseFrame {
+  return copyItemEvent(
+    cursor,
+    "item.created",
+    wireItem({ id, properties: { title: id, body: id } }),
+  );
+}
 
 export const BUSY = refusal(503, "unavailable", "busy");
 
@@ -62,6 +93,8 @@ export async function bindingHarness(
      */
     log?: Responder[];
     hydrate?: boolean;
+    /** The rows the hydration lists, by type. */
+    rows?: Parameters<typeof scriptHydration>[1]["rows"];
   } = {},
 ): Promise<Followed> {
   const started = await startBindingHarness(label);
@@ -72,6 +105,7 @@ export async function bindingHarness(
     scriptHydration(started.server, {
       head: options.head ?? "10",
       instance: options.instance,
+      rows: options.rows,
     });
     options.setup?.(started);
     let next: Responder[] = options.streams ?? [HELD];
@@ -243,4 +277,32 @@ export function servedBy(instance: string, answer: Answer): Answer {
         : frame,
     ),
   };
+}
+
+/** Waits for `feed` to hold `open` streams. */
+export async function untilOpen(feed: StreamFeed, open = 1): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(feed.open, "the engine held no stream").toBe(open);
+    },
+    { timeout: 10_000, interval: 20 },
+  );
+}
+
+/** Waits a while for something that should not happen, so its absence means something. */
+export async function quietly(ms = 400): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Waits for `feed` to have been given `count` streams, open or not. */
+export async function untilOpened(
+  feed: StreamFeed,
+  count: number,
+): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(feed.opened, "the engine did not hold a stream again").toBe(count);
+    },
+    { timeout: 10_000, interval: 20 },
+  );
 }

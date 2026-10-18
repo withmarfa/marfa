@@ -65,6 +65,11 @@ export type Answer =
       delayedFrames?: Array<{ afterMs: number; frames: SseFrame[] }>;
       /** Held open with no keepalive: a server that has gone quiet. */
       quiet?: boolean;
+      /**
+       * Where a held stream is told what to say when the fixture chooses,
+       * and which counts the streams it holds.
+       */
+      feed?: StreamFeed;
     }
   /** Bytes as they are, which is what a blob's link serves. */
   | {
@@ -90,6 +95,51 @@ export type Answer =
   /** `then`, once `until` settles: an answer the fixture lets through when
    *  it chooses, so a second command can meet the first still running. */
   | { kind: "gated"; until: Promise<void>; then: Answer };
+
+/**
+ * The held streams a fixture speaks on as it goes. Frames written by `push`
+ * go to every stream of the answers that name this feed and are open then,
+ * so a fixture that wants a change told after a listener has joined says it
+ * then, rather than at a time it guesses.
+ */
+export class StreamFeed {
+  private readonly streams = new Set<ServerResponse>();
+  private count = 0;
+
+  /** @internal */
+  attach(response: ServerResponse): void {
+    this.count += 1;
+    this.streams.add(response);
+    const gone = (): void => {
+      this.streams.delete(response);
+    };
+    response.on("close", gone);
+    response.on("error", gone);
+  }
+
+  /** How many streams are open now. */
+  get open(): number {
+    return this.streams.size;
+  }
+
+  /** How many streams have been opened on it, open or not. */
+  get opened(): number {
+    return this.count;
+  }
+
+  /** Writes the frames to every stream open now. */
+  push(...frames: SseFrame[]): void {
+    for (const response of this.streams) {
+      if (response.destroyed) continue;
+      for (const frame of frames) response.write(renderFrame(frame));
+    }
+  }
+
+  /** Ends every stream open now, as a server that closes them does. */
+  end(): void {
+    for (const response of [...this.streams]) response.end();
+  }
+}
 
 export interface RecordedRequest {
   method: string;
@@ -445,6 +495,7 @@ export class ScriptedServer {
       response.end();
       return;
     }
+    answer.feed?.attach(response);
     const pending = new Set<NodeJS.Timeout>();
     for (const batch of answer.delayedFrames ?? []) {
       const timer = setTimeout(() => {

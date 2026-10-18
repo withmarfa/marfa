@@ -290,7 +290,7 @@ Where an app reads the queue through a binding, a device MUST present a write bl
 
 **Reason:** nothing outside the queue has to change for such a write to go, and an app showing each verdict would show an ordinary wait as a stop.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-queue.test.ts › presents a write held behind one the server has not answered as waiting with no verdict, and gives it a verdict once it is answered`.
 
 ### `queue-and-verdicts/held-released-same-pass`
 
@@ -678,7 +678,7 @@ When a read after an answer or a refusal finds no row or edge, and something wro
 
 **Reason:** what was written while the read was out is later than the read, so letting it go would take the copy back under a change already applied.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-queue.test.ts › keeps a row something wrote in the copy while the read after an answer was out and found no row`.
 
 ### `queue-and-verdicts/refusal-parts`
 
@@ -1176,15 +1176,15 @@ When a catch-up brings a row while a withdraw's read of it is out, a device MUST
 
 **Reason:** the row a catch-up brought is later than the read, and put back over it the read would take the copy back under a change whose event is already behind the cursor.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-queue.test.ts › keeps the row a catch-up brought while a withdraw's read of it was out, with the writes still waiting laid over it`.
 
 ### `queue-and-verdicts/drain-keeps-refusal`
 
-If a withdraw or a discard refuses a write while a drain runs, then a device MUST keep that refusal through the rest of the drain.
+If a withdraw refuses a write while a drain runs, then a device MUST keep that refusal through the rest of the drain.
 
-**Reason:** held instead, the write would wait on a write the queue no longer holds, and nothing would release it.
+**Reason:** held instead, the write would wait on a write the queue no longer holds, and nothing would release it. A discard of a create waits for a running drain to end before it refuses the writes held for that create, so it never refuses one during a drain.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-queue.test.ts › keeps the refusal a withdraw recorded for a write held behind a create while a drain ran, rather than holding the write again`.
 
 ### `queue-and-verdicts/clear-answered`
 
@@ -1932,7 +1932,7 @@ When a drain is asked for in a process while another runs on the same store, a d
 
 **Reason:** two drains at once, an app's after a write and its timer's, would each send every unanswered write: the server answers the repeats from its record, so the data comes out right, but every write costs a request per drain and every drain reports writes another sent.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-queue.test.ts › makes a drain asked for while another runs wait for it, and send only what is still unanswered`.
 
 ## Local checks of an item's properties
 

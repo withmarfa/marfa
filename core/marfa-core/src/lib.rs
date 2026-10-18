@@ -807,6 +807,9 @@ impl Core {
 
     /// Moves each time another process saves to this store.
     pub fn data_version(&self) -> Result<i64> {
+        if fault::fails("data-version") {
+            return Err(CoreError::Store("the data version cannot be read".into()));
+        }
         store::data_version(&*self.conn()?)
     }
 
