@@ -62,6 +62,28 @@ describe("the scheduler's fault points", () => {
     await hk.stop();
   });
 
+  it("does not start a held run that a shutdown let go", async () => {
+    const runs = { count: 0 };
+    const hk = await started(runs);
+    setFault("hold:housekeeping:probe", null);
+    const run = hk.runNow("probe");
+    await pause(50);
+    const stopping = hk.stop();
+    // What the server does first when it is told to stop.
+    clearFaults();
+    expect(await run).toMatchObject({
+      kind: "ran",
+      run: { outcome: "error", result: null },
+    });
+    await stopping;
+    expect(runs.count).toBe(0);
+    // Nothing is recorded for a run that never began: the claim stays for the
+    // next boot to clear, and the schedule is as it was.
+    const [row] = await ctx!.storage.housekeeping.list();
+    expect(row).toMatchObject({ name: "probe", last_finished_at: null });
+    expect(row?.running_since).not.toBeNull();
+  });
+
   it("gives up on a held run at the shortened deadline, then discards what it finishes with", async () => {
     const runs = { count: 0 };
     const hk = await started(runs);

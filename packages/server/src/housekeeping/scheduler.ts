@@ -28,6 +28,13 @@ export type HousekeepingReport = Record<
   number | boolean | string | null
 >;
 
+/** Thrown out of a run that was held at its start and let go after `stop()`. */
+class StoppedBeforeRun extends Error {
+  constructor(job: string) {
+    super(`The scheduler stopped before ${job} began; nothing ran.`);
+  }
+}
+
 export interface HousekeepingJob {
   /** Lowercase, hyphenated: the name in the table, the log and the door. */
   name: string;
@@ -303,6 +310,18 @@ export class Housekeeping {
     try {
       result = (await this.runWithinDeadline(job)) ?? null;
     } catch (err) {
+      if (err instanceof StoppedBeforeRun) {
+        // Nothing ran, so nothing is recorded: the claim stays, the next boot
+        // clears it as an unfinished run, and the schedule is untouched.
+        return {
+          name: job.name,
+          started_at: startedAt,
+          finished_at: this.nowFn().toISOString(),
+          outcome: "error",
+          result: null,
+          error: err.message,
+        };
+      }
       outcome = "error";
       error = errorMessage(err);
       logJobTickFailure(`Housekeeping ${job.name}`, err, this.stopped);
@@ -359,7 +378,13 @@ export class Housekeeping {
       }, deadlineMs);
     });
     try {
-      const run = atPoint(`housekeeping:${job.name}`, () => job.run());
+      // A hold let go by the shutdown must not start the body: the stop is
+      // already waiting for the runs in flight.
+      const run = atPoint(`housekeeping:${job.name}`, (held) =>
+        held && this.stopped
+          ? Promise.reject(new StoppedBeforeRun(job.name))
+          : job.run(),
+      );
       const noteLate = () => {
         if (expired) {
           log("warn", `Housekeeping ${job.name} settled after its deadline`);
