@@ -30,7 +30,9 @@ export async function runAuditedTransaction<T>(
         result = await work();
         const record = typeof entry === "function" ? entry(result) : entry;
         if (record !== null) {
-          const log = () => storage.audit.log(record, id);
+          const log = async () => {
+            await storage.audit.log(record, id);
+          };
           await (nested
             ? log()
             : withStatementFault("audit", log, record.action));
