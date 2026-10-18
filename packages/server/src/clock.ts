@@ -14,12 +14,30 @@
  * the same offset, and only a server started with the test hooks installs it.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const realTime = new AsyncLocalStorage<boolean>();
 const SystemDate = Date;
 let installed = false;
 
 /** The system clock: the live `Date` until the shim replaces it. */
 function systemNow(): number {
   return installed ? SystemDate.now() : Date.now();
+}
+
+/** Wall time for protocols whose peer does not share the test clock. */
+export function realNowMs(): number {
+  return systemNow();
+}
+
+/** Whether external libraries need isolation from the process's test clock. */
+export function dateShimInstalled(): boolean {
+  return installed;
+}
+
+/** Keep a library and its asynchronous work on its external peer's clock. */
+export function withRealTime<T>(run: () => T): T {
+  return installed ? realTime.run(true, run) : run();
 }
 
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
@@ -100,7 +118,8 @@ export function setClockOffset(ms: number): void {
  */
 export function installDateShim(): void {
   if (installed) return;
-  const shifted = (): number => systemNow() + offsetMs;
+  const shifted = (): number =>
+    systemNow() + (realTime.getStore() ? 0 : offsetMs);
   const shim = new Proxy(SystemDate, {
     construct: (target, args: unknown[], newTarget): object =>
       Reflect.construct(

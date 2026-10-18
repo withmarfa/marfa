@@ -9,6 +9,8 @@ import {
   nowMs,
   resetClockForTests,
   setClockOffset,
+  realNowMs,
+  withRealTime,
 } from "./clock.js";
 
 afterEach(() => {
@@ -17,6 +19,26 @@ afterEach(() => {
 });
 
 describe("clock", () => {
+  it("keeps external asynchronous work on real time without moving another caller", async () => {
+    const systemDate = Date;
+    installDateShim();
+    advanceClock(86_400_000);
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const external = withRealTime(async () => {
+      await wait;
+      expect(Math.abs(Date.now() - systemDate.now())).toBeLessThan(100);
+      expect(Math.abs(new Date().getTime() - realNowMs())).toBeLessThan(100);
+    });
+    advanceClock(3_600_000);
+    expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
+    release();
+    await external;
+    expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
+  });
+
   it("reads the system clock until it is moved", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
