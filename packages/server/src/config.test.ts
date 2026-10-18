@@ -148,7 +148,7 @@ describe("the settings schema", () => {
       MARFA_MAX_REQUEST_BYTES: "0",
     });
     expect(message).toContain(
-      'PORT must be a whole number, from 1 to 65535 (got "abc")',
+      'PORT must be a whole number, from 0 to 65535 (got "abc")',
     );
     expect(message).toContain("RATE_LIMIT_REQUESTS");
     expect(message).toContain("MARFA_MAX_REQUEST_BYTES");
