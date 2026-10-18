@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
@@ -52,4 +53,35 @@ export async function strikeCopy(
     });
   }
   return true;
+}
+
+/**
+ * Whether `store`'s copy of `hash` holds the blob, read in full and hashed.
+ * `false` when the store holds no copy, holds one of another size, or gives
+ * exactly `sizeBytes` bytes that hash to another name. A read that fails or
+ * ends short throws instead, because it says nothing of the copy.
+ */
+export async function copyIntact(
+  store: BlobStore,
+  hash: string,
+  sizeBytes: number,
+): Promise<boolean> {
+  const read = await store.get(hash);
+  if (!read) return false;
+  if (read.size_bytes !== sizeBytes) {
+    read.stream.destroy();
+    return false;
+  }
+  const digest = createHash("sha256");
+  let bytes = 0;
+  for await (const chunk of read.stream) {
+    digest.update(chunk as Buffer);
+    bytes += (chunk as Buffer).length;
+  }
+  if (bytes !== sizeBytes) {
+    throw new Error(
+      `The read of ${hash} ended after ${String(bytes)} of ${String(sizeBytes)} bytes`,
+    );
+  }
+  return `sha256:${digest.digest("hex")}` === hash;
 }

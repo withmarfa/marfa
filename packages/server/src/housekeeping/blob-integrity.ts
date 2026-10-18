@@ -1,10 +1,8 @@
-import { createHash } from "node:crypto";
-import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { finishPendingCopyDeletions, type Stores } from "./blob-delete.js";
-import { strikeCopy } from "./blob-strike.js";
+import { copyIntact, strikeCopy } from "./blob-strike.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 
@@ -76,7 +74,7 @@ export class BlobIntegrityChecker {
         try {
           intact =
             store.kind === "disk"
-              ? await this.hashMatches(store, row.hash, row.size_bytes)
+              ? await copyIntact(store, row.hash, row.size_bytes)
               : (await store.has(row.hash))?.size_bytes === row.size_bytes;
         } catch (err) {
           // A store that cannot answer is not evidence against the copy: it
@@ -104,23 +102,5 @@ export class BlobIntegrityChecker {
       });
     }
     return { verified, struck, bytes };
-  }
-
-  private async hashMatches(
-    store: BlobStore,
-    hash: string,
-    sizeBytes: number,
-  ): Promise<boolean> {
-    const read = await store.get(hash);
-    if (!read) return false;
-    if (read.size_bytes !== sizeBytes) {
-      read.stream.destroy();
-      return false;
-    }
-    const digest = createHash("sha256");
-    for await (const chunk of read.stream) {
-      digest.update(chunk as Buffer);
-    }
-    return `sha256:${digest.digest("hex")}` === hash;
   }
 }
