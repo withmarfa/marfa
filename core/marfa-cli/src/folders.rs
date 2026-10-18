@@ -619,7 +619,7 @@ fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
         && let Some(wait) = drained.report.retry_after_seconds
     {
         lines.push(format!(
-            "the server asked for {wait}s before the next drain; `folders push` again sends the rest"
+            "the server asked for {wait}s before the next drain; push again after that to send the rest"
         ));
     }
     if let Some(stopped) = &drained.report.stopped {

@@ -4952,7 +4952,7 @@ When a folder scan finds a file whose bytes are as they were bound and whose wri
 
 When a folder scan finds a file whose bytes are as they were bound and whose only unanswered write is dead, a device MUST count it in `unchanged` and not in `waiting`.
 
-**Reason:** A dead write is never sent again, so nothing waits to be delivered.
+**Reason:** A dead write is not sent again unless someone releases it, so nothing waits to be delivered.
 
 **Tests:** `device/folders.test.ts › counts a file whose create died unchanged, not waiting`.
 

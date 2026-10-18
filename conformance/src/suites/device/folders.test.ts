@@ -3146,7 +3146,7 @@ describe("files and items", () => {
     if (!after.ok) return;
     expect(
       [after.value.scan.unchanged, after.value.scan.waiting],
-      "a file whose write died, and is never sent again, was counted waiting",
+      "a file whose write died was counted waiting",
     ).toEqual([1, 0]);
   });
 

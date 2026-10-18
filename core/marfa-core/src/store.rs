@@ -1518,7 +1518,8 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 }
 
 /// The items with a create or edit the server has yet to answer: none
-/// answered and none dead, since a dead write is never sent again.
+/// answered and none dead, since a dead write is not sent again unless it
+/// is released.
 pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT item_id FROM queue
