@@ -241,3 +241,17 @@ fn a_missing_credential_leaves_by_five() {
     assert_eq!(code, 5, "{stderr}");
     assert_eq!(read_envelope(&stderr)["error"]["code"], "no_credential");
 }
+
+#[test]
+fn owner_update_requires_socket_before_resolving_credentials() {
+    let (code, stdout, stderr) = run(&["--json", "owner", "update", "--name", "New owner"]);
+    assert_eq!(code, 2);
+    assert!(stdout.is_empty());
+    assert!(
+        read_envelope(&stderr)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--socket PATH"),
+        "{stderr}"
+    );
+}

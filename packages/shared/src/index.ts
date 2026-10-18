@@ -13,3 +13,5 @@ export * from "./recurrence.js";
 export * from "./registry-view.js";
 
 export * from "./string-length.js";
+
+export * from "./profile-permissions.js";

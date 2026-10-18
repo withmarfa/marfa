@@ -124,6 +124,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listOwnerPasskeys", "owner passkeys list"),
     reached("updateOwnerPasskey", "owner passkeys rename"),
     reached("removeOwnerPasskey", "owner passkeys remove"),
+    reached("updateOwner", "owner update"),
+    reached("updateProfile", "profile update"),
     reached("listSignIns", "sign-ins list"),
     reached("updateSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),

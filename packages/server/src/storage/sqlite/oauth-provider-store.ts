@@ -448,6 +448,36 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     });
   }
 
+  async findTokenGrantScopes(
+    kind: "authorization_code" | "refresh_token" | "device_code",
+    digest: string,
+  ): Promise<string[] | null> {
+    if (kind === "authorization_code") {
+      const rows = await this.db.all<{ scope: string | null }>(
+        sql`SELECT json_extract(value, '$.query.scope') AS scope FROM auth_verification WHERE identifier = ${digest} AND json_extract(value, '$.type') = 'authorization_code' LIMIT 1`,
+      );
+      return rows[0]
+        ? (rows[0].scope ?? "").split(/\s+/).filter(Boolean)
+        : null;
+    }
+    if (kind === "device_code") {
+      const held = await this.findDeviceCodeRequest(digest);
+      return held?.scopes ?? null;
+    }
+    const row = await this.db
+      .select({ scopes: auth_oauth_refresh_token.scopes })
+      .from(auth_oauth_refresh_token)
+      .where(eq(auth_oauth_refresh_token.token, digest))
+      .get();
+    return row
+      ? safeJsonParse<string[]>(
+          row.scopes,
+          [],
+          "auth_oauth_refresh_token.scopes",
+        )
+      : null;
+  }
+
   async findAuthorizationCodeGrantKey(codeHash: string): Promise<{
     clientId: string;
     userId: string;

@@ -251,3 +251,81 @@ When a credential with `instance.read` requests `GET /metrics`, the server MUST 
 Where control-only mode is enabled, when another process holds the configured public HTTP port, the server MUST allow local password recovery through its private control connection.
 
 **Tests:** `compliance/instance-lifecycle.test.ts › recovers the existing owner in control-only mode while the public port is taken`.
+
+## Owner and delegated profile changes
+
+### `instance-claim/owner-update`
+
+When a direct owner authenticated within the last five minutes or the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, or both, the server MUST return the updated owner.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› requires a recent direct owner and refuses explicit email-write grants`.
+
+### `instance-claim/owner-update-authority`
+
+If `PATCH /owner` lacks private local authority or a live direct owner sign-in authenticated at most five minutes ago, then the server MUST refuse the request.
+
+**Reason:** Email determines the owner's password sign-in identity.
+
+**Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
+
+### `instance-claim/owner-update-identity`
+
+When `PATCH /owner` changes email or name, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/owner-update-email`
+
+When `PATCH /owner` changes email, the server MUST store the lowercase address without requiring email confirmation.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/profile-input`
+
+If an owner or delegated profile update contains no field, an unknown field, an invalid email address, an empty trimmed name, a name longer than 200 Unicode code points, a name containing a control or bidirectional control character before trimming, or an avatar other than null or an HTTP(S) URL of at most 2048 characters, then the server MUST refuse the whole update with `400 validation_error`.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+
+### `instance-claim/delegated-profile-update`
+
+When a key or app submits a valid nonempty `PATCH /profile` containing only `name`, `avatar`, or both and holds current profile write permission for every submitted field, the server MUST return only `{ "ok": true }` after changing those fields.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+
+### `instance-claim/delegated-profile-atomic`
+
+If any submitted profile field lacks current write permission when the transaction commits, then the server MUST preserve every submitted field's previous value.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+
+### `instance-claim/profile-email-owner-only`
+
+When a credential holds wildcard or stored explicit profile write permission, the server MUST refuse email changes through `PATCH /profile`.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to approved name and avatar`.
+
+### `instance-claim/profile-grant-closed`
+
+If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, or requests write on `email`, then the server MUST refuse the grant.
+
+**Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
+
+### `instance-claim/owner-update-email-unverified`
+
+When `PATCH /owner` changes the stored email address, the server MUST clear email verification for that address.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/owner-update-password-identity`
+
+If a password sign-in's submitted email no longer matches the owner's address when its session is created, then the server MUST refuse that sign-in.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/profile-email-write-scope`
+
+If an OAuth registration, authorization, device initiation, consent decision, or token exchange explicitly names `profile.email:write`, then the server MUST refuse that request without granting a narrowed scope.
+
+**Reason:** Apps can read the sign-in address but cannot change it.
+
+**Tests:** `compliance/profile.test.ts › refuses explicit email-write OAuth scopes`.

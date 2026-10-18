@@ -1,3 +1,4 @@
+import { refuseProfileEmailWrite } from "./profile-scope.js";
 import { isAPIError } from "better-auth/api";
 import { withConsentLock } from "./consent-lock.js";
 import { revokeProjectedGrant, auditGrantReused } from "./grant-lifecycle.js";
@@ -275,6 +276,14 @@ export function withCredentialAudit<
           // row is stored unbound and no such door reaches it.
           args = { ...args, data: { ...args.data, sessionId: null } };
         }
+        if (
+          ["oauthAccessToken", "oauthRefreshToken", "oauthConsent"].includes(
+            args.model,
+          )
+        ) {
+          refuseProfileEmailWrite(args.data?.scopes);
+          refuseProfileEmailWrite(args.update?.scopes);
+        }
         const revoke = request?.revoke;
         const commit = () =>
           runAuditedTransaction(
@@ -296,7 +305,12 @@ export function withCredentialAudit<
                     { field: "providerId", value: "credential" },
                   ],
                 })) as { password?: unknown } | null;
+                const user = (await adapter.findOne({
+                  model: "user",
+                  where: [{ field: "id", value: userId }],
+                })) as { email?: unknown } | null;
                 if (
+                  user?.email !== request.email?.toLowerCase() ||
                   !request.verifiedPasswordHash ||
                   account?.password !== request.verifiedPasswordHash
                 )

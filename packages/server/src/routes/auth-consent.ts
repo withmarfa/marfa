@@ -1,3 +1,4 @@
+import { containsProfileEmailWrite } from "../auth/profile-scope.js";
 import {
   requireDirectAuthority,
   requireRecentOwnerAuthentication,
@@ -102,7 +103,7 @@ import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
-import { renderConsentScreen } from "./consent.js";
+import { renderConsentScreen, profileWriteDescription } from "./consent.js";
 import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -646,6 +647,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const requestedRedirectUri = signedParams.get("redirect_uri");
     const signedScopeStr = signedParams.get("scope") ?? "";
     const signedScopes = new Set(signedScopeStr.split(/\s+/).filter(Boolean));
+    if (
+      containsProfileEmailWrite(signedScopeStr) ||
+      containsProfileEmailWrite(form.getAll("scopes"))
+    )
+      return c.text("Invalid scope: profile.email:write", 400);
     if (!clientId) {
       return c.text("oauth_query missing client_id", 400);
     }
@@ -1438,7 +1444,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // None of these states that the parent reaches rows added later — that is
   // composed from `isOpenEnded`, which answers true for the bare `profile`
   // form and false for a row, exactly as it does for a wildcard.
-  profile: "Your name, email address, avatar, username, bio and timezone.",
+  profile: "Your name, email address and avatar.",
   "profile.name": "Your name.",
   "profile.email": "Your email address.",
   "profile.avatar": "Your avatar.",
@@ -1637,8 +1643,12 @@ function describeScope(scope: ParsedScope): string | undefined {
         EDGE_TYPE_REGISTRY.get(edgeType)?.description
       );
     }
-    case "metadata":
     case "profile":
+      return (
+        profileWriteDescription(scope) ??
+        CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern]
+      );
+    case "metadata":
       // No registry fallback for either: a metadata sub-resource and a
       // profile row are not registered types, and nothing else holds copy
       // for one. Curated copy is the only possible source, which is also why

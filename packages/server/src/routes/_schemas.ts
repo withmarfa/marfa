@@ -1,3 +1,4 @@
+import { ProfilePermissionsSchema } from "@withmarfa/shared";
 import { maxStringLength, VERSION_WRITER_KINDS } from "@withmarfa/shared";
 /**
  * Reusable Zod schemas shared across route files. Centralized so each wire
@@ -808,7 +809,7 @@ export const KEY_FIELD_TEXT = {
   metadata_permissions:
     "Registrations the key may make: `types` to register types and `edge_types` to register edge types, at `write`. `*` covers both.",
   profile_permissions:
-    "What the key may `read` or `write` of the owner's profile: `name`, `email` or `avatar`, or `*` for all of it.",
+    "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar.",
   enforcement_override:
     "The key's own enforcement levers. Absent if the key sets none, so it follows the instance's.",
   created_at: "When the key was created, in UTC.",
@@ -850,9 +851,9 @@ export const KeyResponseSchema = z
       .describe(KEY_FIELD_TEXT.metadata_permissions),
     // Declared because the handler sends it: a field every mint returns and
     // the published shape omits is one a generated client cannot read.
-    profile_permissions: z
-      .record(z.string(), PermissionLevelEnum)
-      .describe(KEY_FIELD_TEXT.profile_permissions),
+    profile_permissions: ProfilePermissionsSchema.describe(
+      KEY_FIELD_TEXT.profile_permissions,
+    ),
     enforcement_override: EnforcementOverrideSchema.describe(
       KEY_FIELD_TEXT.enforcement_override,
     ).optional(),

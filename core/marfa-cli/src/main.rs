@@ -26,8 +26,8 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
-    housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, restore,
-    search, sign_ins, status, types, webhooks, whoami,
+    housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, profile,
+    restore, search, sign_ins, status, types, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, Exit, exit_codes_help};
@@ -98,6 +98,11 @@ enum Command {
     Owner {
         #[command(subcommand)]
         command: owner::OwnerCommand,
+    },
+    /// The owner's name and avatar, changed with a key or app's profile write permission.
+    Profile {
+        #[command(subcommand)]
+        command: profile::ProfileCommand,
     },
     /// Sign-ins: every browser, app and key that can reach the server. A key
     /// or an app's token is refused; use --socket.
@@ -371,7 +376,9 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         && matches!(
             &cli.command,
             Command::Owner {
-                command: owner::OwnerCommand::Recover(_) | owner::OwnerCommand::Passkeys { .. }
+                command: owner::OwnerCommand::Recover(_)
+                    | owner::OwnerCommand::Passkeys { .. }
+                    | owner::OwnerCommand::Update(_)
             } | Command::Setup {
                 command: owner::SetupCommand::Status
                     | owner::SetupCommand::Code
@@ -422,6 +429,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
+        Command::Profile { command } => profile::run(command, &remote()?, &out),
         Command::SignIns { command } => sign_ins::run(command, &remote()?, &out),
         Command::Setup { command } => {
             let setup_remote = match &cli.socket {

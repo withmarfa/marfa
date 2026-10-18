@@ -1,4 +1,4 @@
-import { maxStringLength } from "@withmarfa/shared";
+import { maxStringLength, ProfilePermissionsSchema } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { randomBytes } from "node:crypto";
 import type { ApiKey, Permission } from "@withmarfa/shared";
@@ -154,9 +154,9 @@ const ApiKeySchema = z
     // Declared because the handler sends them: a listing returns stored rows
     // whole, so a field a row can carry and the declaration omits is a field
     // a generated client cannot read.
-    profile_permissions: z
-      .record(z.string(), PermissionLevelEnum)
-      .describe(KEY_FIELD_TEXT.profile_permissions),
+    profile_permissions: ProfilePermissionsSchema.describe(
+      KEY_FIELD_TEXT.profile_permissions,
+    ),
     enforcement_override: EnforcementOverrideSchema.describe(
       KEY_FIELD_TEXT.enforcement_override,
     ).optional(),
@@ -241,10 +241,9 @@ const createKeyRoute = createRoute({
               .record(z.string(), PermissionLevelEnum)
               .optional()
               .describe(KEY_FIELD_TEXT.metadata_permissions),
-            profile_permissions: z
-              .record(z.string(), PermissionLevelEnum)
-              .optional()
-              .describe(KEY_FIELD_TEXT.profile_permissions),
+            profile_permissions: ProfilePermissionsSchema.optional().describe(
+              KEY_FIELD_TEXT.profile_permissions,
+            ),
             enforcement_override: EnforcementOverrideSchema.describe(
               "Enforcement levers for this key alone. Leave it out for none, so the key follows the instance's.",
             ).optional(),
@@ -467,10 +466,9 @@ const UpdateKeyBodySchema = z.strictObject({
     .record(z.string(), PermissionLevelEnum)
     .optional()
     .describe(KEY_FIELD_TEXT.metadata_permissions),
-  profile_permissions: z
-    .record(z.string(), PermissionLevelEnum)
-    .optional()
-    .describe(KEY_FIELD_TEXT.profile_permissions),
+  profile_permissions: ProfilePermissionsSchema.optional().describe(
+    KEY_FIELD_TEXT.profile_permissions,
+  ),
   permissions: z
     .array(PermissionEnum)
     .optional()

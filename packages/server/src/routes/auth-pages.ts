@@ -1,3 +1,4 @@
+import { containsProfileEmailWrite } from "../auth/profile-scope.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -795,6 +796,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // static registry — expansion showed concrete types the grant does
     // not enumerate, and dropped `user.*` entirely because runtime
     // types are not in the registry to expand against.
+    if (containsProfileEmailWrite(verdict.scope))
+      return c.text("Invalid scope: profile.email:write", 400);
     const parsedScopes = scopeList(verdict.scope)
       .map(parseScope)
       .filter(
@@ -873,6 +876,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }
     const clientId = verdict.clientId;
     const requestedScopes = scopeList(verdict.scope);
+    if (
+      containsProfileEmailWrite(requestedScopes) ||
+      containsProfileEmailWrite(formData.getAll("scopes"))
+    )
+      return c.text("Invalid scope: profile.email:write", 400);
 
     // The ticked set, intersected with what the device asked for.
     //

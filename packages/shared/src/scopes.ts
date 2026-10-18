@@ -659,6 +659,7 @@ export function parseScope(scope: string): ParsedScope | null {
   if (profileRowMatch) {
     const profileRow = profileRowMatch[1] ?? "";
     const operation = profileRowMatch[2] as "read" | "write";
+    if (profileRow === "email" && operation === "write") return null;
     return {
       typePattern: `${PROFILE_ROOT}.${profileRow}`,
       operation,
@@ -1010,8 +1011,8 @@ export function scopesToProfilePermissions(
 
 /**
  * Checks whether a profile_permissions map covers the required verb on a row.
- * The wildcard `*`, granted by a bare `profile:<verb>`, matches any row
- * including one added to the category later. `write` implies `read`.
+ * The wildcard `*`, granted by a bare `profile:<verb>`, reads every row.
+ * `write` implies `read` and permits changes only to name and avatar.
  *
  * **`read` is a level here rather than a baseline**, which is the difference
  * from an item-type axis and the whole reason this category is leveled: a
@@ -1022,6 +1023,9 @@ export function profilePermissionCovers(
   row: string,
   requiredOp: "read" | "write",
 ): boolean {
+  if (!(PROFILE_ROWS as readonly string[]).includes(row) && row !== "*")
+    return false;
+  if (row === "email" && requiredOp === "write") return false;
   if (!perms) return false;
   const specific = perms[row];
   if (specific === "write" || (specific === "read" && requiredOp === "read")) {
