@@ -83,9 +83,11 @@ describe("fail:audit", () => {
     // real insert, and the query layer carried its text and its values.
     expect((error as Error).message).toContain("audit_log");
     expect((error as Error).message).toContain(SENTINEL);
-    expect(reportableError(error).message).not.toContain("audit_log");
-    expect(reportableError(error).message).not.toContain(SENTINEL);
-    expect(reportableError(error).message).toContain("SQLITE_IOERR");
+    expect((reportableError(error) as Error).message).not.toContain(
+      "audit_log",
+    );
+    expect((reportableError(error) as Error).message).not.toContain(SENTINEL);
+    expect((reportableError(error) as Error).message).toContain("SQLITE_IOERR");
     expect(await ctx.storage.settings.get("a")).toBeNull();
     expect(emitted).toEqual([]);
     expect(await audited("test.write")).toBe(0);
