@@ -8,6 +8,7 @@ import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { atPoint, deadlineFault } from "../control/faults.js";
 
 /**
  * What one run reports: a flat object of scalars, named by the job.
@@ -344,7 +345,7 @@ export class Housekeeping {
   private async runWithinDeadline(
     job: HousekeepingJob,
   ): Promise<HousekeepingReport | null> {
-    const deadlineMs = job.deadlineMs ?? DEFAULT_RUN_DEADLINE_MS;
+    const deadlineMs = deadlineFault(job.name) ?? this.deadlineMs(job.name);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let expired = false;
     const deadline = new Promise<never>((_, reject) => {
@@ -358,7 +359,7 @@ export class Housekeeping {
       }, deadlineMs);
     });
     try {
-      const run = job.run();
+      const run = atPoint(`housekeeping:${job.name}`, () => job.run());
       const noteLate = () => {
         if (expired) {
           log("warn", `Housekeeping ${job.name} settled after its deadline`);

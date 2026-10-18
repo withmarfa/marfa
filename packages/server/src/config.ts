@@ -85,6 +85,13 @@ export interface AppConfig {
   sqlitePath: string;
   controlSocket?: string;
   controlOnly?: boolean;
+  /** `MARFA_TEST_HOOKS`: whether the private control socket serves the
+   *  clock and fault routes a conformance harness drives. Never true in
+   *  production; `loadConfig` refuses that. */
+  testHooks?: boolean;
+  /** `MARFA_TEST_CLOCK_OFFSET_MS`: how far ahead of the system clock the
+   *  server's clock starts, so a restart keeps the time the harness moved to. */
+  testClockOffsetMs?: number;
   /** The disk store: where every upload lands. Always present. */
   blobPath: string;
   /** Ordinary JSON body cap, excluding the doors with separate caps in
@@ -901,6 +908,15 @@ const settingsShape = {
     () => false,
     "Start only the private control listener, without public HTTP or background jobs, for local recovery.",
   ),
+  MARFA_TEST_HOOKS: on(
+    false,
+    "Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener, and refused when `NODE_ENV` is production. Leave off on every instance that holds real data.",
+  ),
+  MARFA_TEST_CLOCK_OFFSET_MS: count(
+    0,
+    "How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.",
+    { min: 0, max: 3_153_600_000_000, unit: "ms" },
+  ),
   SQLITE_BUSY_BUDGET_MS: count(
     5_000,
     "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
@@ -1448,6 +1464,15 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       );
     }
   }
+  if (s.MARFA_TEST_HOOKS && s.NODE_ENV === "production") {
+    refuse(
+      "MARFA_TEST_HOOKS",
+      "must not be true in production: the test hooks move the server's clock and hold its jobs",
+    );
+  }
+  if (s.MARFA_TEST_CLOCK_OFFSET_MS > 0 && !s.MARFA_TEST_HOOKS) {
+    refuse("MARFA_TEST_CLOCK_OFFSET_MS", "needs MARFA_TEST_HOOKS to be true");
+  }
   // Windows are tested in order, so one shorter than the window before it
   // is swallowed by that window: the setting would silently do nothing.
   if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
@@ -1651,6 +1676,8 @@ export function loadConfig(
       s.MARFA_CONTROL_SOCKET ||
       resolve(dirname(s.SQLITE_PATH), "control", "marfa.sock"),
     controlOnly: s.MARFA_CONTROL_ONLY,
+    testHooks: s.MARFA_TEST_HOOKS,
+    testClockOffsetMs: s.MARFA_TEST_CLOCK_OFFSET_MS,
     blobPath: s.BLOB_PATH,
     maxRequestBytes: s.MARFA_MAX_REQUEST_BYTES,
     maxBulkRequestBytes: s.MARFA_MAX_BULK_REQUEST_BYTES,

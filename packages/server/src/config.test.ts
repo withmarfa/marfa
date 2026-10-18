@@ -353,6 +353,41 @@ describe("production boot", () => {
   it("lets development boot with none of them", () => {
     expect(refusal({ NODE_ENV: "development" })).toBe("");
   });
+
+  it("refuses the test hooks, and names the setting", () => {
+    expect(refusal(production({ MARFA_TEST_HOOKS: "true" }))).toContain(
+      "MARFA_TEST_HOOKS must not be true in production",
+    );
+    // The witness: the same settings boot with the hooks off, and the hooks
+    // boot outside production.
+    expect(refusal(production({ MARFA_TEST_HOOKS: "false" }))).toBe("");
+    expect(refusal({ NODE_ENV: "development", MARFA_TEST_HOOKS: "true" })).toBe(
+      "",
+    );
+    expect(refusal({ MARFA_TEST_HOOKS: "true" })).toBe("");
+  });
+});
+
+describe("test hooks", () => {
+  it("are off unless the setting says so", () => {
+    expect(loadConfig({}).testHooks).toBe(false);
+    expect(loadConfig({ MARFA_TEST_HOOKS: "true" }).testHooks).toBe(true);
+  });
+
+  it("start the clock at the stated offset, and only with the hooks on", () => {
+    const hooked = { MARFA_TEST_HOOKS: "true" };
+    expect(
+      loadConfig({ ...hooked, MARFA_TEST_CLOCK_OFFSET_MS: "86400000" })
+        .testClockOffsetMs,
+    ).toBe(86_400_000);
+    expect(loadConfig({}).testClockOffsetMs).toBe(0);
+    expect(refusal({ MARFA_TEST_CLOCK_OFFSET_MS: "86400000" })).toContain(
+      "MARFA_TEST_CLOCK_OFFSET_MS needs MARFA_TEST_HOOKS to be true",
+    );
+    expect(refusal({ ...hooked, MARFA_TEST_CLOCK_OFFSET_MS: "-1" })).toContain(
+      "MARFA_TEST_CLOCK_OFFSET_MS",
+    );
+  });
 });
 
 describe("OpenTelemetry settings", () => {
