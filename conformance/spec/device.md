@@ -334,7 +334,7 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-late-answer.test.ts › lets a late answer neither expire nor change a copy a hydration has begun to replace since the request was made`.
 
 ### `device/proof-lost`
 
@@ -1896,7 +1896,7 @@ If every held stream ends at once, then a device MUST ask for the next after a w
 
 While a device waits to ask for a held stream again, a device MUST NOT wait more than thirty seconds unless the server names a longer wait.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › doubles the wait before it asks for a held stream again up to thirty seconds, and waits no longer unless the server names a longer wait`.
 
 ### `device/follow-server-failing`
 
@@ -1976,13 +1976,13 @@ When a held stream is had at once, and its caller says it was last told `server.
 
 **Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › tells its caller the server is reachable when its first stream is had at once, where the caller was last told it was not`.
 
 ### `device/follow-told-not-again`
 
 If a held stream cannot be had for a reason that clears on its own, and its caller says it was last told `server.unreachable` by an earlier held stream, then a device MUST NOT tell the caller `server.unreachable` again.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream is had`.
 
 ### `device/follow-change-kinds`
 
@@ -1990,7 +1990,7 @@ Where an app follows through a binding, a device MUST tell it `catalog.changed`,
 
 **Reason:** an app that told them from events by name would take an event of that name for one of them, and would miss one renamed.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › tells that the catalog changed, that the server was lost and is back, and what a drain did or failed to do, each as a change of its own kind apart from the events the stream applied`.
 
 ### `device/follow-drains-reachable`
 
@@ -2044,7 +2044,7 @@ If a drain the caller started is under way when a device tells its caller `serve
 
 **Reason:** the drain under way may already send what the held stream's would have, or end before it, and a write sent once is not sent again.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › starts the held stream's drain only after the drain its caller started has ended, and drains nothing where that drain left no work`, `› drains what the caller's drain left once it has ended, each write sent once`.
 
 ### `device/follow-waits-hydration`
 
@@ -2068,13 +2068,13 @@ When the copy a follow waits on comes to report its hydration `expired` (`device
 
 **Reason:** the hydration the follow waited for ended in a state only another hydration, which its caller asks for, can mend (`device/follow-expired-refused`).
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › ends a follow copy_expired at once, sending nothing, when the hydration it waits for expires the copy`.
 
 ### `device/follow-after-hydration`
 
 When a hydration completes while a follow waits for it, a device MUST open the follow's stream from the cursor the hydration stored.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › opens the stream of a follow that waited for a hydration from the cursor the hydration stored, sending nothing before`.
 
 ### `device/event-id-number`
 
@@ -2832,7 +2832,7 @@ When the answer to a write a stopped drain left in flight arrives after the drai
 
 **Reason:** the drain has ended, and the next drain sends the write again and records the server's answer from its record of the key.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-late-answer.test.ts › records no answer to a write a stopped drain left in flight when it arrives after the drain has ended, and records the server's answer once the next drain sends the write again under its key`.
 
 ### `device/stop-drain-no-send`
 
