@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -224,6 +226,40 @@ describe("a blob that lost its last copy", () => {
       ((await gone.json()) as { error: { code: string } }).error.code,
     ).toBe("blob_not_found");
     expect((await headLink()).status).toBe(404);
+  });
+});
+
+describe("a disk store out of reach", () => {
+  it("strikes no copy while the folder or its marker is gone, and serves the blob once the folder returns", async () => {
+    const bytes = bytesOf("a blob whose folder goes away", 160);
+    const upload = await working.uploadBlob(bytes, "text/plain");
+    expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+    const hash = upload.data.hash;
+    const [before] = await locations(hash);
+    const folder = blobFolder(server!);
+    const away = `${folder}.away`;
+
+    // The folder gone, then an empty one in its place, as a mount point
+    // with nothing mounted on it. The witness that a copy missing from a
+    // folder that holds its marker is struck is the run above.
+    renameSync(folder, away);
+    try {
+      const gone = await runJob(operator, "blob-integrity");
+      expect(gone.result).toEqual({ verified: 0, struck: 0, bytes: 0 });
+      mkdirSync(folder);
+      const unmounted = await runJob(operator, "blob-integrity");
+      expect(unmounted.result).toEqual({ verified: 0, struck: 0, bytes: 0 });
+      expect(await locations(hash)).toEqual([before]);
+    } finally {
+      rmSync(folder, { recursive: true, force: true });
+      renameSync(away, folder);
+    }
+
+    const download = await operator.downloadBlob(hash);
+    expect(download.status).toBe(200);
+    const checked = await runJob(operator, "blob-integrity");
+    expect(checked.result).toMatchObject({ struck: 0 });
+    expect((await locations(hash))[0]!.verified_at).not.toBeNull();
   });
 });
 

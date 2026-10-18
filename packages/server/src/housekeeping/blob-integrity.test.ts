@@ -5,7 +5,7 @@
  * disk is, by re-hashing; the object store's own check, by name and size,
  * is driven through a stub of that kind.
  */
-import { writeFile, rm } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
@@ -442,5 +442,69 @@ describe("BlobIntegrityChecker.runOnce", () => {
     }
     expect(struck).toMatchObject({ struck: 1 });
     expect(deletes).toEqual([hash]);
+  });
+
+  it("strikes no copy while the disk folder or its marker is gone, and the blob reads back once the folder returns", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "kept on a disk that goes away");
+    const named = await ctx.app.request("/items", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "core.file",
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      }),
+    });
+    expect(named.status).toBe(201);
+    const disk = ctx.blobs.disk;
+    const away = `${disk.locator}.away`;
+    const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, {
+      maxRows: 100,
+      maxBytes: 1024 * 1024,
+    });
+    const run = async () => {
+      const silenced = quiet();
+      try {
+        return {
+          result: await checker.runOnce(),
+          lines: silenced.lines(),
+        };
+      } finally {
+        silenced.restore();
+      }
+    };
+
+    // The folder gone, then an empty one in its place, as a mount point
+    // with nothing mounted on it.
+    await rename(disk.locator, away);
+    const gone = await run();
+    await mkdir(disk.locator);
+    const unmounted = await run();
+    for (const { result, lines } of [gone, unmounted]) {
+      expect(result).toEqual({ verified: 0, struck: 0, bytes: 0 });
+      expect(
+        lines.filter((l) => l.message === "blob.integrity_unchecked"),
+      ).toHaveLength(1);
+    }
+    expect(await ctx.storage.blobs.listLocations(hash)).toEqual([
+      expect.objectContaining({ store_id: disk.id, verified_at: null }),
+    ]);
+
+    await rm(disk.locator, { recursive: true });
+    await rename(away, disk.locator);
+    const read = await ctx.app.request(`/blobs/${hash}`, {
+      headers: { Authorization: `Bearer ${ctx.workingKey}` },
+    });
+    expect(read.status).toBe(200);
+    expect(await read.text()).toBe("kept on a disk that goes away");
+    expect((await run()).result).toMatchObject({ verified: 1, struck: 0 });
+
+    // The witness: the same copy gone from a folder that holds its marker
+    // is struck.
+    await rm(diskPath(disk.locator, hash));
+    expect((await run()).result).toMatchObject({ verified: 0, struck: 1 });
   });
 });

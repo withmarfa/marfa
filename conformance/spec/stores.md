@@ -366,6 +366,14 @@ When a run of `blob-integrity` finds a copy missing or altered, the server MUST 
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
 
+### `stores/integrity-unreachable-store`
+
+If a run of `blob-integrity` checks a disk copy while the store's folder is missing or no longer holds the store's marker, then the server MUST NOT strike the copy.
+
+**Reason:** an unmounted drive or a dropped network share answers every blob as absent, and a strike would leave a blob with no other copy unreadable after the folder returns.
+
+**Tests:** `compliance/blob-store-folders.test.ts › strikes no copy while the folder or its marker is gone, and serves the blob once the folder returns`.
+
 ### `stores/integrity-strike-restored`
 
 When a run of `blob-integrity` has struck a copy of a blob that another attached store holds, the server MUST copy the blob back to the struck store on the next run of `blob-replicate`.

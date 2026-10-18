@@ -24,8 +24,9 @@ import type { BlobStoreKind } from "./interface.js";
 
 /**
  * A place bytes live. Four verbs on a content hash, so a new kind of store
- * is four functions; plus the identity the location log keys on, and a
- * link where the store can mint one itself.
+ * is four functions; plus the identity the location log keys on, a link
+ * where the store can mint one itself, and a reach check where an absent
+ * blob and an absent store answer alike.
  *
  * A store never lists what it holds. The location log says which stores
  * hold which blob, so a question about a store's contents is a question
@@ -63,6 +64,12 @@ export interface BlobStore {
    * the instance serves a link for the rest.
    */
   link?(hash: string, ttlSeconds: number, mimeType: string): Promise<string>;
+  /**
+   * Throws when the store itself is out of reach, so a `null` from `get`
+   * or `has` can be told from a blob the store does not hold. Only a store
+   * whose absence reads as an absent blob has one.
+   */
+  confirmReachable?(): Promise<void>;
 }
 
 export type BlobSource =
@@ -325,6 +332,25 @@ export class DiskBlobStore implements BlobStore {
       await unlink(this.pathFor(hash));
     } catch (err) {
       if (!isEnoent(err)) throw err;
+    }
+  }
+
+  /** A folder that is gone, or a mount point with nothing mounted on it,
+   *  answers every blob as absent. The marker tells this store from that. */
+  async confirmReachable(): Promise<void> {
+    const markerPath = join(this.locator, MARKER);
+    let raw: string;
+    try {
+      raw = await readFile(markerPath, "utf8");
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+      throw new Error(`the store marker at ${markerPath} is missing`, {
+        cause: err,
+      });
+    }
+    const parsed = JSON.parse(raw) as { id?: unknown };
+    if (parsed.id !== this.id) {
+      throw new Error(`the store marker at ${markerPath} names another store`);
     }
   }
 }

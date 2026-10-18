@@ -82,6 +82,7 @@ export class BlobIntegrityChecker {
             store.kind === "disk"
               ? await this.hashMatches(store, row.hash, row.size_bytes)
               : (await store.has(row.hash))?.size_bytes === row.size_bytes;
+          if (!intact) await store.confirmReachable?.();
         } catch (err) {
           // A store that cannot answer is not evidence against the copy: it
           // is neither stamped nor struck, and the rest of the run goes on.
