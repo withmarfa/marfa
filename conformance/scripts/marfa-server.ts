@@ -338,7 +338,7 @@ interface Started {
   authSecret: string;
 }
 
-/** The largest `MARFA_TEST_CLOCK_OFFSET_MS` (`spec/instance.md`). */
+/** The largest `MARFA_TEST_CLOCK_OFFSET_MS` the server takes (`packages/server/src/config.ts`). */
 const MAX_CLOCK_OFFSET_MS = 3_153_600_000_000;
 
 /** The offset the last `clock advance` left, in ms; zero when none did. */
