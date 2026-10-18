@@ -372,7 +372,9 @@ fn take(
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     if applied {
         for edge in &brought {
-            store::put_server_edge(&tx, edge)?;
+            if store::put_server_edge(&tx, edge)? {
+                store::lay_waiting_edge_writes_over(&tx, &edge.id)?;
+            }
         }
     }
     // The last id applied, never the highest seen: where an event is not
