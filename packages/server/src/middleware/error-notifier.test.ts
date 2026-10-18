@@ -27,10 +27,13 @@ function notification(error: string, path: string) {
 
 describe("the error webhook's debounce", () => {
   let sent: number;
+  let elapsed: number;
 
   beforeEach(() => {
     sent = 0;
+    elapsed = 0;
     vi.useFakeTimers();
+    vi.spyOn(performance, "now").mockImplementation(() => elapsed);
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
     vi.stubGlobal("fetch", () => {
       sent += 1;
@@ -41,6 +44,7 @@ describe("the error webhook's debounce", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+    vi.restoreAllMocks();
     vi.resetModules();
   });
 
@@ -51,6 +55,38 @@ describe("the error webhook's debounce", () => {
     expect(sent).toBe(1);
   });
 
+  it("ignores wall-clock changes and sends again at the elapsed boundary", async () => {
+    const { notifyError } = await freshNotifier();
+    notifyError(WEBHOOK, notification("boom", "/a"));
+    expect(sent).toBe(1);
+    vi.setSystemTime(new Date("2030-01-01T00:00:00Z"));
+    elapsed = 59_999;
+    notifyError(WEBHOOK, notification("boom", "/a"));
+    expect(sent).toBe(1);
+    elapsed = 60_000;
+    notifyError(WEBHOOK, notification("boom", "/a"));
+    expect(sent).toBe(2);
+  });
+
+  it.each([WEBHOOK, "https://api.telegram.org/bot123/sendMessage"])(
+    "contains delivery failures and keeps the elapsed window for %s",
+    async (url) => {
+      const fetch = vi.fn().mockRejectedValue(new Error("offline"));
+      vi.stubGlobal("fetch", fetch);
+      const { notifyError } = await freshNotifier();
+      expect(() => {
+        notifyError(url, notification("boom", "/a"));
+      }).not.toThrow();
+      await Promise.resolve();
+      notifyError(url, notification("boom", "/a"));
+      expect(fetch).toHaveBeenCalledTimes(1);
+      elapsed = 60_000;
+      notifyError(url, notification("boom", "/a"));
+      await Promise.resolve();
+      expect(fetch).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("drops the entries whose window has passed on the next send", async () => {
     const { notifyError, debounceEntryCount } = await freshNotifier();
 
@@ -60,8 +96,8 @@ describe("the error webhook's debounce", () => {
     // is a sweep clearing them rather than a map that never held them.
     expect(debounceEntryCount()).toBe(2);
 
-    // Past the window, so neither entry can debounce anything any longer.
-    vi.setSystemTime(new Date("2026-01-01T00:02:00Z"));
+    // At the boundary, neither entry can debounce anything any longer.
+    elapsed = 60_000;
     notifyError(WEBHOOK, notification("later", "/c"));
 
     // Only the entry this send added. A sweep that walked the map without
@@ -76,7 +112,7 @@ describe("the error webhook's debounce", () => {
     notifyError(WEBHOOK, notification("boom", "/a"));
     // Well inside the window the first entry was written in, so the sweep
     // this send runs has to leave it alone.
-    vi.setSystemTime(new Date("2026-01-01T00:00:10Z"));
+    elapsed = 10_000;
     notifyError(WEBHOOK, notification("crash", "/b"));
 
     expect(debounceEntryCount()).toBe(2);

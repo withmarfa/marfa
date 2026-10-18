@@ -34,7 +34,7 @@ const WRITE_PROBE_KEY = "health_probe";
 export function storageProbes(
   storage: Pick<Storage, "settings">,
   paths: { sqlitePath: string; blobPath: string },
-  now: () => number = clock.nowMs,
+  monotonicMs: () => number = clock.monotonicMs,
 ): HealthProbes {
   let inFlight: Promise<void> | undefined;
   let settledAt = Number.NEGATIVE_INFINITY;
@@ -42,11 +42,11 @@ export function storageProbes(
 
   const commit = (): Promise<void> => {
     if (inFlight) return inFlight;
-    if (now() - settledAt < WRITE_PROBE_REUSE_MS) {
+    if (monotonicMs() - settledAt < WRITE_PROBE_REUSE_MS) {
       return refusal ? Promise.reject(refusal) : Promise.resolve();
     }
     const attempt = storage.settings
-      .set(WRITE_PROBE_KEY, new Date(now()).toISOString())
+      .set(WRITE_PROBE_KEY, new Date(clock.nowMs()).toISOString())
       .then(
         () => {
           refusal = undefined;
@@ -57,7 +57,7 @@ export function storageProbes(
         },
       )
       .finally(() => {
-        settledAt = now();
+        settledAt = monotonicMs();
         inFlight = undefined;
       });
     inFlight = attempt;

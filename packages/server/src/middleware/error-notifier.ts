@@ -26,7 +26,7 @@ const DEFAULT_WEBHOOK_TIMEOUT_MS = 5_000;
  */
 function forgetExpired(now: number): void {
   for (const [key, ts] of debounceMap) {
-    if (now - ts > DEBOUNCE_MS) debounceMap.delete(key);
+    if (now - ts >= DEBOUNCE_MS) debounceMap.delete(key);
   }
 }
 
@@ -75,9 +75,9 @@ export function notifyError(
     environment: DEPLOYMENT_ENVIRONMENT,
   };
   const errorKey = `${notification.error.slice(0, 100)}:${notification.path}`;
-  const now = clock.nowMs();
+  const now = clock.monotonicMs();
   const last = debounceMap.get(errorKey);
-  if (last && now - last < DEBOUNCE_MS) return;
+  if (last !== undefined && now - last < DEBOUNCE_MS) return;
   forgetExpired(now);
   debounceMap.set(errorKey, now);
 
