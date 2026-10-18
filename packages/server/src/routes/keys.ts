@@ -58,6 +58,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 const keySecurity: Record<string, string[]>[] = [
   { bearerAuth: [] },
@@ -800,7 +801,7 @@ function parseExpiry(value: string): string {
     );
   }
   const instant = normalizeTimeBound(value, "expires_at");
-  if (instant <= new Date().toISOString()) {
+  if (instant <= clock.now().toISOString()) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       "Invalid expires_at: it must be in the future",

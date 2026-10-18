@@ -10,6 +10,7 @@ import {
   type Stores,
 } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 export interface IntegrityBounds {
   /** Most copies one run checks, over every store. */
@@ -45,7 +46,7 @@ export class BlobIntegrityChecker {
     private readonly storage: Storage,
     private readonly stores: Stores,
     private readonly bounds: IntegrityBounds,
-    private readonly nowFn: () => Date = () => new Date(),
+    private readonly nowFn: () => Date = () => clock.now(),
   ) {}
 
   async runOnce(): Promise<IntegrityResult> {

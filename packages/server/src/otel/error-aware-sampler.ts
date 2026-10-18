@@ -5,6 +5,7 @@ import type {
   Span,
   SpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
+import * as clock from "../clock.js";
 
 /**
  * "5% baseline + 100% on errors" trace sampling.
@@ -152,7 +153,7 @@ export class ErrorBucketFilterSpanProcessor implements SpanProcessor {
     private readonly sampleRatio: number,
     options: ProcessorOptions = {},
   ) {
-    this.now = options.now ?? Date.now;
+    this.now = options.now ?? clock.monotonicMs;
     this.maxAgeMs = options.maxAgeMs ?? HOLD_LIMITS.maxAgeMs;
     this.timer = setInterval(() => {
       this.sweep();

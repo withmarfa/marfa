@@ -23,6 +23,7 @@ import {
 } from "./schema.js";
 import { notRevokedOrExpired } from "./key-store.js";
 import type { DrizzleDb } from "./connection.js";
+import * as clock from "../../clock.js";
 
 /** Runs kept per connector: a bound on the table, not a retention. */
 export const RUNS_KEPT_PER_CONNECTOR = 100;
@@ -60,7 +61,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       .where(
         and(
           eq(connectorHolds.connector_id, row.id),
-          gt(connectorHolds.expires_at, new Date().toISOString()),
+          gt(connectorHolds.expires_at, clock.now().toISOString()),
         ),
       )
       .get();
@@ -92,7 +93,7 @@ export class SqliteConnectorStore implements ConnectorStore {
     description: string | null,
   ): Promise<{ connector: Connector; created: boolean }> {
     return this.db.transaction(async (tx) => {
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       // Revalidate after writer admission: a request authenticated before
       // revocation must not take the source back from its successor.
       const live = await tx
@@ -175,7 +176,7 @@ export class SqliteConnectorStore implements ConnectorStore {
   }
 
   async heartbeat(id: string): Promise<string | null> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const rows = await this.db
       .update(connectors)
       .set({ last_heartbeat_at: now })
@@ -194,7 +195,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       finished_at: input.finished_at,
       summary: input.summary ?? null,
       error: input.error ?? null,
-      reported_at: new Date().toISOString(),
+      reported_at: clock.now().toISOString(),
     };
     await this.db.insert(connectorRuns).values(row).run();
     // Trimmed on every insert: the bound is a property of the table, and
@@ -229,7 +230,7 @@ export class SqliteConnectorStore implements ConnectorStore {
         .where(eq(connectors.id, id))
         .get();
       if (!registered) return null;
-      const now = new Date();
+      const now = clock.now();
       const current = await tx
         .select()
         .from(connectorHolds)

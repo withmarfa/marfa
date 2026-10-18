@@ -20,6 +20,7 @@ import { sourceFilterToSql, typeFilterSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncExtensionBlobReferences } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM, distinctTags } from "../../tag-limits.js";
+import * as clock from "../../clock.js";
 
 export class SqliteMetadataStore implements MetadataStore {
   /** The search store, because every tag write is also an index write. */
@@ -124,7 +125,7 @@ export class SqliteMetadataStore implements MetadataStore {
     // One bump for the whole write, however many namespaces it carries: a
     // caller writing several together means one change rather than one per
     // namespace.
-    const bumpedAt = new Date().toISOString();
+    const bumpedAt = clock.now().toISOString();
     await tx
       .update(items)
       .set({ updated_at: bumpedAt })

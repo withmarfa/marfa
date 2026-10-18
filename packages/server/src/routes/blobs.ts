@@ -50,6 +50,7 @@ import {
   uploadsBlobs,
 } from "./_blob-reach.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -895,7 +896,7 @@ export function blobRoutes(
       config.authSecret,
       linkOrigin,
       hash,
-      blobLinkExpiry(Date.now(), ttl),
+      blobLinkExpiry(clock.nowMs(), ttl),
     );
     return c.json({ url, expires_in: ttl }, 200);
   });
@@ -922,7 +923,7 @@ export function blobRoutes(
         hash,
         expires,
         signature,
-        Math.floor(Date.now() / 1000),
+        Math.floor(clock.nowMs() / 1000),
       )
     ) {
       throw new MarfaError(

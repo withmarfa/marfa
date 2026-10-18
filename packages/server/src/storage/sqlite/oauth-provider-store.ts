@@ -26,6 +26,7 @@ import {
 import type { DrizzleDb } from "./connection.js";
 import { WriteTracker } from "../write-tracker.js";
 import { sameScopeSet } from "../consent-scopes.js";
+import * as clock from "../../clock.js";
 
 function parseRedirectUris(column: string): string[] {
   const parsed = safeJsonParse<unknown>(
@@ -74,8 +75,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     connectionItemId: string,
     thresholdMs: number,
   ): Promise<void> {
-    const nowIso = new Date().toISOString();
-    const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
+    const nowIso = clock.now().toISOString();
+    const cutoffIso = new Date(clock.nowMs() - thresholdMs).toISOString();
     await this.db
       .update(items)
       .set({
@@ -230,7 +231,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     if (row.revoked !== null) return null;
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
-    if (honorExpiry && expMs !== null && expMs < Date.now()) return null;
+    if (honorExpiry && expMs !== null && expMs < clock.nowMs()) return null;
     const parsedScopes = safeJsonParse<unknown>(
       row.scopes,
       [],
@@ -391,7 +392,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     }
     const updated = await this.db
       .update(auth_oauth_client)
-      .set({ scopes: JSON.stringify([...scopes]), updatedAt: new Date() })
+      .set({ scopes: JSON.stringify([...scopes]), updatedAt: clock.now() })
       .where(
         and(
           eq(auth_oauth_client.id, row.id),
@@ -542,7 +543,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   async mintTokenPair(input: MintTokenPairInput): Promise<void> {
-    const now = new Date();
+    const now = clock.now();
     const accessExpires = new Date(now.getTime() + input.accessTtlMs);
     const refreshExpires = new Date(now.getTime() + 30 * 86_400_000); // 30-day TTL matches plugin default
     const scopesJson = JSON.stringify(input.scopes);
@@ -575,7 +576,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
 
   async createClient(input: CreateClientInput): Promise<CreateClientResult> {
     const id = generateId();
-    const now = new Date();
+    const now = clock.now();
     // JSON-encode every string[] field: the columns are `text` holding JSON
     // literals, which is what every reader here parses back.
     await this.db.insert(auth_oauth_client).values({
@@ -704,7 +705,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async markClientOffered(clientId: string): Promise<void> {
     await this.db
       .update(auth_oauth_client)
-      .set({ updatedAt: new Date() })
+      .set({ updatedAt: clock.now() })
       .where(eq(auth_oauth_client.clientId, clientId));
   }
 
@@ -796,7 +797,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     authUserId: string;
     scopes: readonly string[];
   }): Promise<void> {
-    const now = new Date();
+    const now = clock.now();
     // One statement, arbitrated by `uq_auth_oauth_consent_client_user`.
     await this.db
       .insert(auth_oauth_consent)

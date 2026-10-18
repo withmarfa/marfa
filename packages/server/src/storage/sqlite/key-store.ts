@@ -32,6 +32,7 @@ import type { KeyRevokeOutcome, KeyStore, StoredApiKey } from "../interface.js";
 import { apiKeys, outboundWebhooks } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isUniqueViolation } from "./pk-violation.js";
+import * as clock from "../../clock.js";
 
 /**
  * Window within which repeated `last_used_at` writes for the same key
@@ -114,7 +115,7 @@ export class SqliteKeyStore implements KeyStore {
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
   ): Promise<StoredApiKey> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const row = {
       id: generateId(),
       key_hash: keyHash,
@@ -173,7 +174,7 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   async revokeLapsedHolders(source: string): Promise<string[]> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     return this.db.transaction(async (tx) => {
       const lapsed = await tx
         .select({ id: apiKeys.id })
@@ -206,7 +207,7 @@ export class SqliteKeyStore implements KeyStore {
     const rows = await this.db
       .select()
       .from(apiKeys)
-      .where(notRevokedOrExpired(new Date().toISOString()))
+      .where(notRevokedOrExpired(clock.now().toISOString()))
       .all();
     return rows.map(mapRow);
   }
@@ -216,7 +217,7 @@ export class SqliteKeyStore implements KeyStore {
       .select()
       .from(apiKeys)
       .where(
-        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+        and(eq(apiKeys.id, id), notRevokedOrExpired(clock.now().toISOString())),
       )
       .get();
     return row ? mapRow(row) : null;
@@ -227,7 +228,7 @@ export class SqliteKeyStore implements KeyStore {
       .select()
       .from(apiKeys)
       .where(
-        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+        and(eq(apiKeys.id, id), notRevokedOrExpired(clock.now().toISOString())),
       )
       .get();
     if (!existing) {
@@ -269,7 +270,7 @@ export class SqliteKeyStore implements KeyStore {
       // Keep empty updates subject to the same live-row predicate.
       .set(Object.keys(patch).length > 0 ? patch : { id })
       .where(
-        and(eq(apiKeys.id, id), notRevokedOrExpired(new Date().toISOString())),
+        and(eq(apiKeys.id, id), notRevokedOrExpired(clock.now().toISOString())),
       )
       .returning()
       .all();
@@ -294,7 +295,7 @@ export class SqliteKeyStore implements KeyStore {
     // A key past its hard lifetime bound is as dead as a revoked one —
     // same null so the middleware surfaces the same 401. ISO-8601 strings
     // compare correctly as strings.
-    if (row.expires_at && row.expires_at <= new Date().toISOString()) {
+    if (row.expires_at && row.expires_at <= clock.now().toISOString()) {
       return null;
     }
     return {
@@ -308,11 +309,11 @@ export class SqliteKeyStore implements KeyStore {
     const revoked = await this.db.transaction(async (tx) => {
       const result = await tx
         .update(apiKeys)
-        .set({ revoked_at: new Date().toISOString() })
+        .set({ revoked_at: clock.now().toISOString() })
         .where(
           and(
             eq(apiKeys.id, id),
-            notRevokedOrExpired(new Date().toISOString()),
+            notRevokedOrExpired(clock.now().toISOString()),
           ),
         )
         .run();
@@ -342,7 +343,7 @@ export class SqliteKeyStore implements KeyStore {
    * middleware, from any number of processes, without a write storm.
    */
   async updateLastUsed(id: string): Promise<void> {
-    const now = new Date();
+    const now = clock.now();
     const cutoff = new Date(
       now.getTime() - LAST_USED_DEBOUNCE_MS,
     ).toISOString();
@@ -362,7 +363,7 @@ export class SqliteKeyStore implements KeyStore {
     const [row] = await this.db
       .select({ total: count() })
       .from(apiKeys)
-      .where(notRevokedOrExpired(new Date().toISOString()))
+      .where(notRevokedOrExpired(clock.now().toISOString()))
       .all();
     return row?.total ?? 0;
   }

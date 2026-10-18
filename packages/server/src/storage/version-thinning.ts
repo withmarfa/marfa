@@ -1,4 +1,5 @@
 import type { Version, VersionPolicy } from "@withmarfa/shared";
+import * as clock from "../clock.js";
 
 export interface ResolvedPolicy {
   recentDays: number;
@@ -62,7 +63,7 @@ function isoWeekKey(date: Date): string {
 export function computeVersionsToDelete(
   versions: Version[],
   policy: ResolvedPolicy,
-  now: Date = new Date(),
+  now: Date = clock.now(),
 ): string[] {
   if (versions.length <= 1) return [];
 

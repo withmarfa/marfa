@@ -1,6 +1,10 @@
 import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
+// A reference to the global `Date`, as written or through `globalThis`.
+const DATE_OBJECT =
+  ":matches(Identifier[name='Date'], MemberExpression[object.name='globalThis'][property.name='Date'])";
+
 export default [
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
@@ -51,6 +55,45 @@ export default [
       "@typescript-eslint/no-unsafe-member-access": "off",
       "@typescript-eslint/no-unsafe-call": "off",
       "@typescript-eslint/no-unsafe-argument": "off",
+    },
+  },
+  {
+    // The server reads the time through `packages/server/src/clock.ts`,
+    // which the conformance harness moves forward through the test hooks.
+    // A read of the system clock anywhere else is a read the harness cannot
+    // move. The selectors cover `Date`, and `globalThis.Date`, called, built
+    // with no argument, asked for `now` or destructured for `now`.
+    files: ["packages/server/src/**/*.ts"],
+    ignores: ["**/*.test.ts", "packages/server/src/clock.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: `MemberExpression[property.name='now'][computed=false] > ${DATE_OBJECT}.object`,
+          message:
+            "Read the time through `clock.nowMs()` (src/clock.ts), so the test hooks can move it.",
+        },
+        {
+          selector: `MemberExpression[property.value='now'][computed=true] > ${DATE_OBJECT}.object`,
+          message:
+            "Read the time through `clock.nowMs()` (src/clock.ts), so the test hooks can move it.",
+        },
+        {
+          selector: `VariableDeclarator:has(ObjectPattern > Property[key.name='now']) > ${DATE_OBJECT}.init`,
+          message:
+            "Read the time through `clock.nowMs()` (src/clock.ts), so the test hooks can move it.",
+        },
+        {
+          selector: `NewExpression[arguments.length=0] > ${DATE_OBJECT}.callee`,
+          message:
+            "Read the time through `clock.now()` (src/clock.ts), so the test hooks can move it.",
+        },
+        {
+          selector: `CallExpression > ${DATE_OBJECT}.callee`,
+          message:
+            "Read the time through `clock.now()` (src/clock.ts), so the test hooks can move it.",
+        },
+      ],
     },
   },
   {

@@ -12,6 +12,7 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import * as clock from "./clock.js";
 
 /**
  * Directories older than this cannot belong to a run that is still going,
@@ -38,7 +39,7 @@ const STALE_AFTER_MS = 6 * 60 * 60 * 1000;
  */
 function sweepStaleTempDirs(): void {
   const root = tmpdir();
-  const cutoff = Date.now() - STALE_AFTER_MS;
+  const cutoff = clock.nowMs() - STALE_AFTER_MS;
   let removed = 0;
 
   let entries: string[];

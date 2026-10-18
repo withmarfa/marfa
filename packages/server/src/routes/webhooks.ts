@@ -32,6 +32,7 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import * as clock from "../clock.js";
 
 /** One stream-style item pattern; absence on PATCH preserves configuration. */
 function normalizeTypeFilter(
@@ -846,7 +847,7 @@ export function webhookRoutes(
         const config = await readInstanceConfig(storage.settings);
         const retention =
           config?.audit_retention_days ?? c.get("config").auditRetentionDays;
-        const now = new Date();
+        const now = clock.now();
         const reopened = await storage.outboundWebhookDeliveries.reopen(
           id,
           delivery_id,

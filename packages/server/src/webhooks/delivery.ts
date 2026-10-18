@@ -18,6 +18,7 @@ import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
 import { frameInReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * Stripe-style webhook signature. The HMAC is computed over
@@ -81,7 +82,7 @@ export function parseRetryAfter(headerValue: string | null): number | null {
   // HTTP-date form
   const dateMs = Date.parse(trimmed);
   if (!isNaN(dateMs)) {
-    const delta = dateMs - Date.now();
+    const delta = dateMs - clock.nowMs();
     if (delta > 0) return Math.min(delta, RETRY_AFTER_CEILING_MS);
   }
 
@@ -178,7 +179,7 @@ export async function deliveryInReach(
     event_id: delivery.event_id,
     delivery_id: delivery.id,
     ...("item" in frame && { metadata: frame.metadata ?? null }),
-    delivered_at: new Date().toISOString(),
+    delivered_at: clock.now().toISOString(),
   });
   return { body, secret: subscription.secret };
 }
@@ -213,7 +214,7 @@ export async function deliverWebhookAttempt(
       return;
     }
 
-    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const timestamp = Math.floor(clock.nowMs() / 1000).toString();
     const outcome = await context.http.post({
       url: delivery.webhook_url,
       headers: {
@@ -356,7 +357,7 @@ async function scheduleDeliveryRetry(
   if (ordinaryDelay === undefined)
     throw new Error("Invalid webhook retry position");
   const delayMs = Math.max(overrideDelayMs ?? 0, ordinaryDelay);
-  const nextAttemptAt = new Date(Date.now() + delayMs).toISOString();
+  const nextAttemptAt = new Date(clock.nowMs() + delayMs).toISOString();
   if (
     !(await store.markFailed(
       delivery.id,
@@ -537,7 +538,7 @@ export class WebhookScheduler {
               eventType,
               payload: event.payload,
               webhookUrl: subscription.url,
-              nextAttemptAt: new Date().toISOString(),
+              nextAttemptAt: clock.now().toISOString(),
             });
             scheduled++;
             queuedBytes += payloadBytes;
@@ -597,7 +598,7 @@ export class WebhookPoller {
   async runOnce(): Promise<{ attempted: number }> {
     const pending =
       await this.context.storage.outboundWebhookDeliveries.getPending(
-        new Date().toISOString(),
+        clock.now().toISOString(),
         WEBHOOK_POLL_BATCH_SIZE,
       );
     await Promise.allSettled(

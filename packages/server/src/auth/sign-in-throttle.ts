@@ -29,6 +29,7 @@ import {
   addressBucket,
 } from "../middleware/client-ip.js";
 import { KeyedThrottle } from "./keyed-throttle.js";
+import * as clock from "../clock.js";
 
 /** Attempts one address may make at one account per window. */
 export const SIGN_IN_ADDRESS_LIMIT = 10;
@@ -72,7 +73,10 @@ export function passwordAttempts(storage: Storage) {
     if (refused.allowed) return { allowed: true };
     return {
       allowed: false,
-      retryAfter: Math.max(1, Math.ceil((refused.resetAt - Date.now()) / 1000)),
+      retryAfter: Math.max(
+        1,
+        Math.ceil((refused.resetAt - clock.nowMs()) / 1000),
+      ),
     };
   };
 }

@@ -42,6 +42,7 @@ import {
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { readableMetadata } from "./_extension-reach.js";
 import { requestBlobProof } from "./_blob-reach.js";
+import * as clock from "../clock.js";
 
 const FOLDER_TYPE = "system.folder";
 const MAX_DEFAULT_EDGE_TYPES = 100;
@@ -629,7 +630,7 @@ export function folderRoutes(storage: Storage) {
           {
             op: "update",
             id,
-            properties: { revoked_at: new Date().toISOString() },
+            properties: { revoked_at: clock.now().toISOString() },
             blob_proof: requestBlobProof(c, storage),
           },
           { announce: false },

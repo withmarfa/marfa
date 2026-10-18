@@ -7,6 +7,7 @@ import type { MarfaAuth, MarfaAuthSession } from "./instance.js";
 import { KeyedThrottle } from "./keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { PasswordAttemptsSpent, passwordAttempts } from "./sign-in-throttle.js";
+import * as clock from "../clock.js";
 
 export const CLAIM_STATE_KEY = "instance.claim";
 const SESSION_MS = 15 * 60_000;
@@ -36,7 +37,7 @@ async function read(storage: Storage): Promise<ClaimState> {
   return raw === null ? emptyState() : (JSON.parse(raw) as ClaimState);
 }
 async function write(storage: Storage, state: ClaimState): Promise<void> {
-  const now = Date.now();
+  const now = clock.nowMs();
   state.tickets = state.tickets.filter((p) => p.expiresAt > now);
   state.sessions = state.sessions.filter((p) => p.expiresAt > now);
   await storage.settings.set(CLAIM_STATE_KEY, JSON.stringify(state));
@@ -117,7 +118,7 @@ export async function issueSetupTicket(
   storage: Storage,
 ): Promise<{ ticket: string; expiresAt: number }> {
   const ticket = randomBytes(32).toString("base64url"),
-    expiresAt = Date.now() + TICKET_MS;
+    expiresAt = clock.nowMs() + TICKET_MS;
   return runAuditedTransaction(
     storage,
     async () => {
@@ -151,14 +152,14 @@ async function countCodeAttempt(
       {
         retry_after: Math.max(
           1,
-          Math.ceil((result.resetAt - Date.now()) / 1000),
+          Math.ceil((result.resetAt - clock.nowMs()) / 1000),
         ),
       },
     );
 }
 async function newSession(storage: Storage, state: ClaimState) {
   const token = randomBytes(32).toString("base64url"),
-    expiresAt = Date.now() + SESSION_MS;
+    expiresAt = clock.nowMs() + SESSION_MS;
   state.sessions.push({ digest: digest(token), expiresAt });
   await write(storage, state);
   return { token, expiresAt };
@@ -170,7 +171,7 @@ export async function exchangeSetupTicket(storage: Storage, ticket: string) {
       const state = await read(storage);
       unclaimed(state);
       const index = state.tickets.findIndex(
-        (p) => p.expiresAt > Date.now() && matches(ticket, p.digest),
+        (p) => p.expiresAt > clock.nowMs() && matches(ticket, p.digest),
       );
       if (index < 0) invalidProof();
       state.tickets.splice(index, 1);
@@ -187,7 +188,7 @@ export async function hasSetupSession(
   return (
     !state.claimed &&
     state.sessions.some(
-      (p) => p.expiresAt > Date.now() && matches(token, p.digest),
+      (p) => p.expiresAt > clock.nowMs() && matches(token, p.digest),
     )
   );
 }
@@ -232,7 +233,7 @@ function validateClaimProof(state: ClaimState, proof: ClaimProof): void {
   if (
     proof.kind === "session" &&
     !state.sessions.some(
-      (p) => p.expiresAt > Date.now() && matches(proof.token, p.digest),
+      (p) => p.expiresAt > clock.nowMs() && matches(proof.token, p.digest),
     )
   )
     invalidProof();
@@ -318,8 +319,8 @@ export async function requireOwnerSession(
   if (
     options.recent &&
     (!Number.isFinite(authenticatedAt) ||
-      authenticatedAt > Date.now() ||
-      Date.now() - authenticatedAt > 5 * 60_000)
+      authenticatedAt > clock.nowMs() ||
+      clock.nowMs() - authenticatedAt > 5 * 60_000)
   )
     throw new MarfaError(
       ErrorCode.UNAUTHORIZED,

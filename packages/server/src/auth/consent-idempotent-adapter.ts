@@ -1,3 +1,4 @@
+import * as clock from "../clock.js";
 /**
  * The @better-auth/oauth-provider plugin's consent endpoint resolves a
  * prior grant via `findOne` and only falls back to `create` when none is
@@ -106,7 +107,7 @@ export function withIdempotentConsent<
       // single record for this `(clientId, userId)` pair.
       const update: Record<string, unknown> = {
         scopes: args.data.scopes,
-        updatedAt: args.data.updatedAt ?? new Date(),
+        updatedAt: args.data.updatedAt ?? clock.now(),
       };
 
       await adapter.update({

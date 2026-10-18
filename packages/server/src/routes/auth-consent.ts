@@ -116,6 +116,7 @@ import {
 } from "../auth/redirect-params.js";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * Query parameter carrying a consent-page error banner code back from the
@@ -958,7 +959,7 @@ async function verifySignedQuery(
       );
       return "unsigned";
     }
-    return expSeconds * 1000 < Date.now() ? "expired" : "valid";
+    return expSeconds * 1000 < clock.nowMs() ? "expired" : "valid";
   } catch (err) {
     log("warn", "consent: signed-query verification failed", {
       error: errorMessage(err),

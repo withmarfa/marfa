@@ -28,6 +28,7 @@ import {
   reconcileCommitHooks,
 } from "../storage/sqlite/transaction-control.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -94,7 +95,7 @@ export class BulkActionWorker {
       options.pollBackoffMultiplier ?? DEFAULT_POLL_BACKOFF_MULTIPLIER;
     this.staleAfterMs = options.staleAfterMs ?? DEFAULT_STALE_AFTER_MS;
     this.workerId = options.workerId ?? `bulk-action-worker-${generateId()}`;
-    this.nowFn = options.nowFn ?? (() => new Date());
+    this.nowFn = options.nowFn ?? (() => clock.now());
     this.currentPollMs = this.pollIntervalMs;
   }
 

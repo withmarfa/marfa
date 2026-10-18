@@ -1,3 +1,4 @@
+import * as clock from "../../clock.js";
 export class ReadSnapshotUnavailable extends Error {
   constructor() {
     super("The read snapshot is unavailable");
@@ -17,7 +18,7 @@ export class ReadLifetime {
   >();
 
   constructor(options?: { deadlineAt?: number; signal?: AbortSignal }) {
-    this.deadlineAt = Date.now() + 5_000;
+    this.deadlineAt = clock.monotonicMs() + 5_000;
     this.ended = new Promise<never>((_, reject) => {
       this.reject = reject;
     });
@@ -39,12 +40,16 @@ export class ReadLifetime {
     }
     if (options?.signal?.aborted) this.abandon();
     clearTimeout(this.timer);
-    if (Date.now() >= this.deadlineAt) this.abandon();
-    else this.timer = setTimeout(this.abandon, this.deadlineAt - Date.now());
+    if (clock.monotonicMs() >= this.deadlineAt) this.abandon();
+    else
+      this.timer = setTimeout(
+        this.abandon,
+        this.deadlineAt - clock.monotonicMs(),
+      );
   }
 
   assertAlive(): void {
-    if (Date.now() >= this.deadlineAt) this.abandon();
+    if (clock.monotonicMs() >= this.deadlineAt) this.abandon();
     if (this.abandoned) throw new ReadSnapshotUnavailable();
   }
 

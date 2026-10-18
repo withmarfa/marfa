@@ -7,6 +7,7 @@ import type {
 import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
+import * as clock from "../clock.js";
 
 /**
  * What one run reports: a flat object of scalars, named by the job.
@@ -110,7 +111,7 @@ export class Housekeeping {
     private readonly store: HousekeepingStore,
     private readonly opts: HousekeepingOptions,
   ) {
-    this.nowFn = opts.nowFn ?? (() => new Date());
+    this.nowFn = opts.nowFn ?? (() => clock.now());
   }
 
   register(job: HousekeepingJob): void {

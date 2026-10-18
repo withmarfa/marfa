@@ -44,6 +44,7 @@ import { errorMessage } from "../error-text.js";
 import { diskFull } from "../storage/disk-space.js";
 import { parseCookies } from "better-auth/cookies";
 import { generateCookie } from "hono/cookie";
+import * as clock from "../clock.js";
 
 /**
  * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
@@ -973,7 +974,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const userId = found.user.id;
     const { name } = ctx.authCookies.sessionToken;
     const token = found.session.token;
-    const now = new Date();
+    const now = clock.now();
     const due = (row: { updatedAt: Date }) =>
       now.getTime() - row.updatedAt.getTime() >=
       BROWSER_SESSION_USE_INTERVAL_SECONDS * 1000;
@@ -1042,7 +1043,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     userId: string,
   ): Promise<BrowserSession[]> => {
     const ctx = await credentialContext();
-    const now = new Date();
+    const now = clock.now();
     return (await ctx.internalAdapter.listSessions(userId))
       .filter((row) => row.userId === userId && live(row, now))
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
@@ -1069,7 +1070,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       runAuditedTransaction(
         storage,
         async () => {
-          const now = new Date();
+          const now = clock.now();
           const target = (await ctx.internalAdapter.listSessions(userId)).find(
             (row) =>
               row.id === sessionId && row.userId === userId && live(row, now),

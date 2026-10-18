@@ -24,6 +24,7 @@ import { requestWriter, resolveWriter } from "../auth/version-writer.js";
 import { VersionWriterSchema } from "./_schemas.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import * as clock from "../clock.js";
 
 const readsFolderStatus = standingRule(
   "reads some type, or owner or local command",
@@ -428,7 +429,7 @@ export function folderStatusRoutes(storage: Storage) {
     const result = await storage.runInTransaction(
       async (): Promise<FolderStatus> => {
         await readableFolder(c, storage, id);
-        const now = new Date();
+        const now = clock.now();
         const groups: FolderStatus["sign_ins"] = [];
         const totals: FolderStatusTotals = {
           saturated: false,

@@ -24,6 +24,7 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { notRevokedOrExpired } from "./key-store.js";
+import * as clock from "../../clock.js";
 
 type EndpointRow = typeof inboundEndpoints.$inferSelect;
 type DeliveryRow = typeof inboundDeliveries.$inferSelect;
@@ -60,7 +61,7 @@ export class SqliteInboundStore implements InboundStore {
     maxLive: number,
   ): Promise<InboundEndpoint | "limit" | "key_dead"> {
     const id = generateId();
-    const createdAt = new Date().toISOString();
+    const createdAt = clock.now().toISOString();
     // One statement, so two creates at once cannot both slip under the cap,
     // and none lands on a key that went dead between a check and the insert.
     const inserted = await this.db.all<EndpointRow>(sql`
@@ -117,7 +118,7 @@ export class SqliteInboundStore implements InboundStore {
       );
       const result = await tx
         .update(inboundEndpoints)
-        .set({ retired_at: new Date().toISOString() })
+        .set({ retired_at: clock.now().toISOString() })
         .where(and(mine, isNull(inboundEndpoints.retired_at)))
         .run();
       const row = await tx.select().from(inboundEndpoints).where(mine).get();
@@ -131,7 +132,7 @@ export class SqliteInboundStore implements InboundStore {
   }
 
   async target(tokenHash: string): Promise<InboundTarget | null> {
-    return this.liveTarget(this.db, tokenHash, new Date().toISOString());
+    return this.liveTarget(this.db, tokenHash, clock.now().toISOString());
   }
 
   private async liveTarget(
@@ -190,7 +191,7 @@ export class SqliteInboundStore implements InboundStore {
     const id = generateId();
     const sha256 = createHash("sha256").update(input.body).digest("hex");
     return this.db.transaction(async (tx) => {
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       const target = await this.liveTarget(tx, input.tokenHash, now);
       if (target?.connector_id !== input.connectorId)
         return { kind: "not_found" };
@@ -341,7 +342,7 @@ export class SqliteInboundStore implements InboundStore {
       if (found.length !== unique.length) return null;
       await tx
         .update(inboundDeliveries)
-        .set({ handled_at: new Date().toISOString(), outcome })
+        .set({ handled_at: clock.now().toISOString(), outcome })
         .where(and(mine, isNull(inboundDeliveries.handled_at)))
         .run();
       const rows = await tx.select().from(inboundDeliveries).where(mine).all();
@@ -360,7 +361,7 @@ export class SqliteInboundStore implements InboundStore {
     handledDays: number;
     pendingDays: number;
   }): Promise<{ deleted: number; remaining: boolean }> {
-    const now = Date.now();
+    const now = clock.nowMs();
     const cutoff = (days: number): string =>
       new Date(now - days * DAY_MS).toISOString();
     const handledCutoff =

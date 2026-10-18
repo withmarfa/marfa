@@ -138,6 +138,7 @@ import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem, rowWriter, writerColumns } from "./helpers.js";
 import type { WriterColumns } from "./helpers.js";
+import * as clock from "../../clock.js";
 
 // The stored properties column is SQLite's binary JSONB encoding. Every read
 // projects it back to JSON text via json() so rowToItem can parse it; every
@@ -687,7 +688,7 @@ export class SqliteItemStore implements ItemStore {
     );
     let properties = inAnswerOrder(declared, validation.data, input.properties);
 
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;
 
     return await this.db.transaction(async (tx) => {
@@ -1208,7 +1209,7 @@ export class SqliteItemStore implements ItemStore {
         input.type ?? row.type,
         input.properties,
       );
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
 
       // The row's own fields as they stand, which is what this version
       // will have held once the update below moves past it.
@@ -1668,7 +1669,7 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, error);
     }
 
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db
       .update(items)
       .set({
@@ -1724,7 +1725,7 @@ export class SqliteItemStore implements ItemStore {
     }
 
     await this.rehomeTrashRecords([id]);
-    await recordTombstones(this.db, [id], new Date().toISOString());
+    await recordTombstones(this.db, [id], clock.now().toISOString());
     // metadata, versions and blob references cascade; the search index must
     // be removed explicitly.
     await this.db.delete(items).where(eq(items.id, id)).run();
@@ -1852,7 +1853,7 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db
       .update(items)
       .set({
@@ -1998,7 +1999,7 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     await this.db
       .update(items)
       .set({

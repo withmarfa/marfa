@@ -34,6 +34,7 @@ import {
   decodeStoredEdge,
   type EventRoutesOptions,
 } from "./events.js";
+import * as clock from "../clock.js";
 
 const BATCH_SIZE = EVENT_LIMITS.replayBatchSize;
 const MAX_HELD_FRAMES = BATCH_SIZE;
@@ -240,7 +241,7 @@ export async function buildCopyStream(
   const paced = async (): Promise<boolean> => {
     if (hasRoom()) return true;
     let room = controller?.desiredSize ?? 0;
-    let progressAt = Date.now();
+    let progressAt = clock.monotonicMs();
     while (!isClosed()) {
       await new Promise<void>((resolve) => {
         onRoom = resolve;
@@ -254,10 +255,10 @@ export async function buildCopyStream(
       onRoom = undefined;
       if (isClosed()) return false;
       const next = controller?.desiredSize ?? 0;
-      if (next > room) progressAt = Date.now();
+      if (next > room) progressAt = clock.monotonicMs();
       room = next;
       if (hasRoom()) return true;
-      if (Date.now() - progressAt >= stallMs) {
+      if (clock.monotonicMs() - progressAt >= stallMs) {
         incomplete("reader_behind");
         return false;
       }
@@ -394,7 +395,7 @@ export async function buildCopyStream(
       },
       {
         deadlineAt:
-          Date.now() +
+          clock.monotonicMs() +
           (options.headReadTimeoutMs ?? EVENT_LIMITS.headReadTimeoutMs),
         signal: abort.signal,
       },

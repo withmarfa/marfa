@@ -4,9 +4,10 @@ import type { AppEnv } from "../middleware/auth.js";
 import { standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import * as clock from "../clock.js";
 
 const CACHE_TTL_MS = 60_000;
-const startedAt = Date.now();
+const startedAt = clock.monotonicMs();
 
 // Every admitted caller sees the same instance-wide counts.
 interface CacheEntry {
@@ -93,7 +94,7 @@ export function metricsRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
-    const now = Date.now();
+    const now = clock.monotonicMs();
     if (metricsCache && now - metricsCache.at < CACHE_TTL_MS) {
       return c.json(
         metricsCache.response as z.infer<typeof MetricsResponseSchema>,
@@ -132,7 +133,7 @@ export function metricsRoutes(storage: Storage) {
         total: webhookCount,
       },
       uptime_seconds: Math.floor((now - startedAt) / 1000),
-      cached_at: new Date().toISOString(),
+      cached_at: clock.now().toISOString(),
     };
 
     metricsCache = { response, at: now };

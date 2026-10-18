@@ -43,6 +43,7 @@ import type { SourceFilterSettings } from "../filter-sql.js";
 import { syncEdgeBlobReferences } from "./blob-references.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
+import * as clock from "../../clock.js";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
@@ -86,7 +87,7 @@ export class SqliteEdgeStore implements EdgeStore {
   constructor(private db: DrizzleDb) {}
 
   async createRaw(input: StoredCreateEdgeInput): Promise<Edge> {
-    const now = new Date().toISOString();
+    const now = clock.now().toISOString();
     const id = input.id ?? generateId();
     const properties = input.properties ?? {};
     const row = {
@@ -345,7 +346,7 @@ export class SqliteEdgeStore implements EdgeStore {
       // lock cannot stamp an `updated_at` taken before it started
       // waiting. That column is the catch-up cursor's sort key and must
       // not move backwards.
-      const now = new Date().toISOString();
+      const now = clock.now().toISOString();
       const held = rowToEdge(row).properties;
       const merged = mergeUpdateProperties(held, properties);
       assertEdgeProperties(row.edge_type, merged);

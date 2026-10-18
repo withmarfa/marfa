@@ -33,6 +33,7 @@ import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
 import { DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { reportableError } from "./error-text.js";
+import * as clock from "./clock.js";
 
 declare global {
   /**
@@ -60,7 +61,7 @@ function bootLog(
   extra: Record<string, unknown> = {},
 ): void {
   process.stdout.write(
-    `${JSON.stringify({ timestamp: new Date().toISOString(), level, message, ...extra })}\n`,
+    `${JSON.stringify({ timestamp: clock.now().toISOString(), level, message, ...extra })}\n`,
   );
 }
 
