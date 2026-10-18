@@ -28,11 +28,16 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import type { OwnerItemRead } from "./_owner-item-read.js";
 import type { Storage, ItemFilters } from "../storage/interface.js";
 import {
-  holdsWhole,
   recordedStores,
+  storeChecks,
+  storeUnavailable,
+  wholeCopies,
+  within,
   type BlobLayer,
 } from "../storage/blob-layer.js";
-import type { BlobRead } from "../storage/blob-store.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { strikeCopy } from "../housekeeping/blob-strike.js";
+import type { BlobRead, BlobStore } from "../storage/blob-store.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
@@ -83,21 +88,28 @@ export interface ArchiveManifest {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HonoContext = Context<any, any, any>;
 
-/** The bytes of the first recorded copy of `hash` that holds them whole. */
+/**
+ * The bytes of the first recorded copy of `hash` that holds them whole, and
+ * the store they come from. Nothing of the entry is written yet, so a store
+ * that fails here, or holds the blob short, gives way to the next.
+ */
 async function readWhole(
   storage: Storage,
   blobs: BlobLayer,
   hash: string,
   sizeBytes: number,
-): Promise<BlobRead> {
+): Promise<{ read: BlobRead; store: BlobStore }> {
   let failure: unknown;
   for (const store of await recordedStores(storage, blobs, hash)) {
-    const read = await store.get(hash).catch((error: unknown) => {
-      failure = error;
-      return null;
-    });
+    let read: BlobRead | null;
+    try {
+      read = await within(store.get(hash), storeChecks.timeoutMs);
+    } catch (error) {
+      failure = storeUnavailable(store, hash, error);
+      continue;
+    }
     if (!read) continue;
-    if (read.length === sizeBytes) return read;
+    if (read.length === sizeBytes) return { read, store };
     read.stream.destroy();
   }
   throw new Error(`No store holds the whole bytes of ${hash}`, {
@@ -108,13 +120,18 @@ async function readWhole(
 /**
  * Passes bytes on while hashing them, and holds the last chunk back until
  * they are known to hash to `hash`, so an entry with other bytes ends short
- * and its tar is not well formed.
+ * and its tar is not well formed. Bytes that do not hash to their name strike
+ * the copy they came from, as `blob-integrity` would, so the next export
+ * reads another store's copy or names the blob in `missing_blobs`.
  */
 class VerifyingTransform extends Transform {
   private readonly hashing = createHash("sha256");
   private held: Buffer | null = null;
 
-  constructor(private readonly hash: string) {
+  constructor(
+    private readonly hash: string,
+    private readonly onMismatch: () => Promise<void>,
+  ) {
     super();
   }
 
@@ -131,11 +148,21 @@ class VerifyingTransform extends Transform {
 
   override _flush(callback: (error?: Error | null, data?: Buffer) => void) {
     const actual = `sha256:${this.hashing.digest("hex")}`;
-    if (actual !== this.hash) {
-      callback(new Error(`The bytes read for ${this.hash} hash to ${actual}`));
+    if (actual === this.hash) {
+      callback(null, this.held ?? undefined);
       return;
     }
-    callback(null, this.held ?? undefined);
+    const mismatch = new Error(
+      `The bytes read for ${this.hash} hash to ${actual}`,
+    );
+    this.onMismatch().then(
+      () => {
+        callback(mismatch);
+      },
+      (error: unknown) => {
+        callback(new Error(mismatch.message, { cause: error }));
+      },
+    );
   }
 }
 
@@ -237,10 +264,17 @@ export async function handleArchiveExport(
 
   const entry = (name: string, size: number, source: Readable) =>
     pipeline(source, pack.entry({ name, size }), { signal: stopped.signal });
-  const blobEntry = (hash: string, size: number, source: Readable) =>
+  const blobEntry = (
+    hash: string,
+    size: number,
+    source: Readable,
+    store: BlobStore,
+  ) =>
     pipeline(
       source,
-      new VerifyingTransform(hash),
+      new VerifyingTransform(hash, async () => {
+        await withBlobUploadLock(hash, () => strikeCopy(storage, store, hash));
+      }),
       pack.entry({ name: `blobs/${hash}`, size }),
       { signal: stopped.signal },
     );
@@ -278,12 +312,14 @@ export async function handleArchiveExport(
     for (;;) {
       const hashes = await selection.listedBlobs.page(after, PAGE);
       for (const hash of hashes) {
-        // A blob's record is never rewritten, so the size its tar header
-        // carries is the one the selection judged the copies by.
+        // The manifest listing the blob has been sent, so a blob whose
+        // record or last copy went since the selection cuts the archive
+        // short rather than leaving the entry out. A blob's record is never
+        // rewritten, so its size is the one the selection judged by.
         const size = (await storage.blobs.get(hash))?.size_bytes;
         if (size === undefined) throw new Error(`${hash} is not registered`);
-        const read = await readWhole(storage, blobs, hash, size);
-        await blobEntry(hash, size, read.stream);
+        const { read, store } = await readWhole(storage, blobs, hash, size);
+        await blobEntry(hash, size, read.stream, store);
       }
       after = hashes.at(-1);
       if (hashes.length < PAGE) break;
@@ -492,15 +528,26 @@ async function collectSelection(input: {
     const listed: string[] = [];
     const entries: string[] = [];
     const missing: string[] = [];
+    const records = new Map<
+      string,
+      { mime_type: string; size_bytes: number }
+    >();
     for (const hash of page) {
       if (!(await reader.blob(storage, hash))) continue;
       const record = await storage.blobs.get(hash);
-      if (!record) continue;
+      if (record) records.set(hash, record);
+    }
+    const copies = await wholeCopies(
+      storage,
+      blobs,
+      new Map([...records].map(([hash, r]) => [hash, r.size_bytes])),
+    );
+    for (const [hash, record] of records) {
       const entry = `${JSON.stringify(hash)}:${JSON.stringify({
         mime_type: record.mime_type,
         size_bytes: record.size_bytes,
       })}`;
-      if (await holdsWhole(storage, blobs, hash, record.size_bytes)) {
+      if (copies.get(hash)) {
         listed.push(hash);
         entries.push(entry);
       } else {

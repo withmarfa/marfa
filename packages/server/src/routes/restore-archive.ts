@@ -58,7 +58,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import { holdsWhole, type BlobLayer } from "../storage/blob-layer.js";
+import { wholeCopies, type BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   planArchiveTypes,
@@ -80,7 +80,11 @@ import {
   archiveVersions,
   archiveWriter,
 } from "./restore-archive-history.js";
-import { archiveLines, readArchive } from "./restore-archive-read.js";
+import {
+  archiveLines,
+  readArchive,
+  type AbsentBlob,
+} from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
@@ -281,6 +285,18 @@ const restoreArchiveRoute = createRoute({
       },
       description:
         "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.",
+    },
+    503: {
+      description:
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
     },
   },
 });
@@ -590,6 +606,8 @@ async function restoreRows(
   restore: {
     plan: ArchiveTypePlan;
     pending: readonly PendingBlob[];
+    /** Blobs the archive names and neither it nor the instance holds. */
+    absent: readonly AbsentBlob[];
     files: ReadArchive["lineFiles"];
     totalItems: number;
     totalEdges: number;
@@ -598,7 +616,7 @@ async function restoreRows(
     apiKey: AppEnv["Variables"]["apiKey"];
   },
 ) {
-  const { plan, pending, files, uploader, actor } = restore;
+  const { plan, pending, absent, files, uploader, actor } = restore;
   return runAuditedTransaction(
     storage,
     async () => {
@@ -627,6 +645,30 @@ async function restoreRows(
           },
         );
         await yieldBulkWork();
+      }
+
+      // A record with no copy, so every later export names the blob in
+      // `missing_blobs` as the archive did, rather than leaving it out of
+      // the manifest as a hash the instance never heard of.
+      if (absent.length > 0) {
+        await runAuditedTransaction(
+          storage,
+          async () => {
+            for (const blob of absent) {
+              await storage.blobs.register(
+                blob.hash,
+                blob.mimeType,
+                blob.sizeBytes,
+              );
+            }
+          },
+          {
+            ...actor,
+            action: "restore_archive.blobs_missing",
+            resource_type: "blob",
+            details: { hashes: absent.map((blob) => blob.hash) },
+          },
+        );
       }
 
       // A row carrying a property no type declares is refused wherever
@@ -970,19 +1012,23 @@ async function restoreRows(
   );
 }
 
-/** Of `hashes`, those no attached store holds whole. */
+/**
+ * Of `absent`, the blobs no attached store holds whole. Asked before the
+ * restore writes, so a store that cannot answer refuses the restore rather
+ * than reporting a blob it may hold as missing.
+ */
 async function stillAbsent(
   storage: Storage,
   blobs: BlobLayer,
-  hashes: string[],
-): Promise<string[]> {
-  const absent: string[] = [];
-  for (const hash of hashes) {
-    const record = await storage.blobs.get(hash);
-    if (!record || !(await holdsWhole(storage, blobs, hash, record.size_bytes)))
-      absent.push(hash);
+  absent: readonly AbsentBlob[],
+): Promise<AbsentBlob[]> {
+  const sizes = new Map<string, number>();
+  for (const blob of absent) {
+    const record = await storage.blobs.get(blob.hash);
+    if (record) sizes.set(blob.hash, record.size_bytes);
   }
-  return absent;
+  const copies = await wholeCopies(storage, blobs, sizes);
+  return absent.filter((blob) => !copies.get(blob.hash));
 }
 
 export function restoreArchiveRoutes(
@@ -1089,16 +1135,19 @@ export function restoreArchiveRoutes(
       }
       const typePlan = await planArchiveTypes(storage, typeEntries);
 
-      const releaseBlobs = await holdBlobUploadLocks(
-        archive.blobs.map((blob) => blob.hash),
-      );
+      const releaseBlobs = await holdBlobUploadLocks([
+        ...archive.blobs.map((blob) => blob.hash),
+        ...archive.absent.map((blob) => blob.hash),
+      ]);
       try {
+        const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
         try {
           requireRecentOwnerAuthentication(c);
           const result = await restoreRows(storage, blobs, {
             plan: typePlan,
             pending: archive.blobs,
+            absent,
             files: paths,
             totalItems,
             totalEdges,
@@ -1114,7 +1163,7 @@ export function restoreArchiveRoutes(
               edges_skipped: result.edgesSkipped,
               edges_skipped_reasons: result.edgesSkippedReasons,
               blobs_imported: archive.blobs.length,
-              blobs_missing: await stillAbsent(storage, blobs, archive.absent),
+              blobs_missing: absent.map((blob) => blob.hash),
               types_registered: result.types.typesRegistered,
               types_skipped: result.types.typesSkipped,
               edge_types_registered: result.types.edgeTypesRegistered,

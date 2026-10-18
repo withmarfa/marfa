@@ -128,6 +128,18 @@ const exportRoute = createRoute({
       description:
         "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.",
     },
+    503: {
+      description:
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
+    },
   },
 });
 

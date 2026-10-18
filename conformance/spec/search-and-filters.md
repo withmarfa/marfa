@@ -1258,9 +1258,33 @@ When one attached store's recorded copy of a blob that an archive carries is mis
 
 If the bytes `GET /export?format=archive` reads for a blob do not hash to the blob's name, then the server MUST end the response with an error and not with a clean end.
 
-**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. Once `blob-integrity` strikes such a copy, an export names the blob in `missing_blobs` or reads it from another store.
+**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. The bytes are checked as they are sent rather than before, because checking first would read every blob twice on every export.
 
-**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name`.
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+
+### `search-and-filters/archive-bytes-struck`
+
+If the bytes `GET /export?format=archive` reads from a store's copy of a blob do not hash to the blob's name, then the server MUST strike that copy from the location log.
+
+**Reason:** the next export then reads the blob from another store that holds it, or names it in `missing_blobs`, as it does once `blob-integrity` has struck the copy.
+
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+
+### `search-and-filters/archive-blob-gone`
+
+If a blob that the manifest of `GET /export?format=archive` lists in `blobs` has no record, or no recorded copy that a store holds whole, when its entry is due, then the server MUST end the response with an error and not with a clean end.
+
+**Reason:** the manifest that lists the blob has already been sent, so an archive that left the entry out would claim a file it does not hold.
+
+**Tests:** waiting on #2071.
+
+### `search-and-filters/archive-store-unavailable`
+
+If a store fails, or does not answer within 15 seconds, while the server checks a copy of a blob that `GET /export?format=archive` would carry, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a store that cannot answer is no evidence that the copy is gone, so the blob is not named in `missing_blobs`. The checks are made before the response begins, so the refusal is an ordinary answer and not a stream cut short.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
 
 ### `search-and-filters/archive-only`
 
@@ -1406,6 +1430,28 @@ When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the has
 
 **Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`.
 
+### `search-and-filters/restore-blobs-missing-kept`
+
+When `POST /restore` answers a blob in `blobs_missing`, the server MUST name the blob, with the MIME type and size the archive gave it, in the `missing_blobs` of a later archive whose rows reference it while no attached store holds it.
+
+**Reason:** a backup taken after the restore says the file is still missing, rather than leaving out a hash the instance would otherwise not know.
+
+**Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a blob a restore answered missing`.
+
+### `search-and-filters/restore-store-unavailable`
+
+If a store fails, or does not answer within 15 seconds, while `POST /restore` checks whether the instance holds a blob that the archive names and does not carry, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a store that cannot answer is no evidence that the instance lacks the blob, so the restore does not answer it in `blobs_missing`.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
+
+### `search-and-filters/restore-store-unavailable-unwritten`
+
+When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
+
 ### `search-and-filters/cli-export-lacking`
 
 When `marfa export --format archive` has written an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
@@ -1419,6 +1465,14 @@ When `marfa export --format archive` has written an archive whose manifest names
 When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the CLI MUST print the answer and exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
 
 **Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
+
+### `search-and-filters/cli-export-cut`
+
+If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave the path as it was before the command and exit 3.
+
+**Reason:** a file cut short at the path would pass for a backup until a restore needed it.
+
+**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
 
 ### `search-and-filters/restore-edge-skips`
 

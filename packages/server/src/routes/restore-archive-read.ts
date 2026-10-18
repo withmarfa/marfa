@@ -70,12 +70,18 @@ export interface PendingBlob {
 const LINE_FILES = ["items.ndjson", "edges.ndjson", "types.ndjson"] as const;
 type LineFile = (typeof LINE_FILES)[number];
 
+export interface AbsentBlob {
+  hash: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
 export interface ReadArchive {
   lineFiles: Partial<Record<LineFile, string>>;
   blobs: PendingBlob[];
-  /** The hashes the manifest names, under `blobs` or `missing_blobs`, for
-   *  which no entry carries bytes that hash to the name. */
-  absent: string[];
+  /** The blobs the manifest names, under `blobs` or `missing_blobs`, for
+   *  which no entry carries bytes that hash to the name, by hash. */
+  absent: AbsentBlob[];
 }
 
 function invalid(message: string, details?: Record<string, unknown>) {
@@ -299,14 +305,15 @@ export async function readArchive(
       manifest?.blobs[blob.hash]?.mime_type ?? "application/octet-stream";
   }
   const carried = new Set(blobs.map((blob) => blob.hash));
-  const absent = [
-    ...new Set([
-      ...Object.keys(manifest?.blobs ?? {}),
-      ...Object.keys(manifest?.missing_blobs ?? {}),
-    ]),
-  ]
-    .filter((hash) => isValidBlobHash(hash) && !carried.has(hash))
-    .sort();
+  const named = { ...manifest?.missing_blobs, ...manifest?.blobs };
+  const absent = Object.entries(named)
+    .filter(([hash]) => isValidBlobHash(hash) && !carried.has(hash))
+    .map(([hash, entry]) => ({
+      hash,
+      mimeType: entry.mime_type,
+      sizeBytes: entry.size_bytes,
+    }))
+    .sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
   return { lineFiles, blobs, absent };
 }
 

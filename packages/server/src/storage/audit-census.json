@@ -112,12 +112,9 @@
     }
   },
   "housekeeping/blob-integrity.ts": {
-    "boundary": "Audited missing/corrupt copy registry changes; verified-at bookkeeping is operational; external-audit.test.ts.",
+    "boundary": "Verified-at bookkeeping is operational; a strike goes through blob-strike.ts.",
     "calls": {
-      "BlobRegistry.markVerified": 1,
-      "BlobRegistry.queueCopyDeletion": 1,
-      "BlobRegistry.removeLocation": 1,
-      "runAuditedTransaction": 1
+      "BlobRegistry.markVerified": 1
     }
   },
   "housekeeping/blob-orphans.ts": {
@@ -130,6 +127,14 @@
     "boundary": "Audited registry copy publication after external I/O; external-audit.test.ts.",
     "calls": {
       "BlobRegistry.recordLocation": 1,
+      "runAuditedTransaction": 1
+    }
+  },
+  "housekeeping/blob-strike.ts": {
+    "boundary": "Audited strike of a missing or corrupt copy, shared by the integrity check and the archive export; external-audit.test.ts.",
+    "calls": {
+      "BlobRegistry.queueCopyDeletion": 1,
+      "BlobRegistry.removeLocation": 1,
       "runAuditedTransaction": 1
     }
   },
@@ -378,10 +383,10 @@
       "BlobRegistry.queueCopyDeletion": 1,
       "BlobRegistry.recordLocation": 1,
       "BlobRegistry.recordUploader": 1,
-      "BlobRegistry.register": 1,
+      "BlobRegistry.register": 2,
       "EdgeStore.createRaw": 1,
       "MetadataStore.setExtensions": 1,
-      "runAuditedTransaction": 2,
+      "runAuditedTransaction": 3,
       "writeItem": 1,
       "finalizeArchiveItem": 1
     }

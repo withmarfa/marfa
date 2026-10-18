@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes } from "node:crypto";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -139,7 +147,7 @@ describe("an archive export on an instance with one disk store", () => {
     expect(entries).not.toContain(`blobs/${hash}`);
   });
 
-  it("ends the response with an error when a copy's bytes do not hash to the blob's name", async () => {
+  it("ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy", async () => {
     const content = bytesOf("a blob whose bytes rot in place", 140);
     const hash = await upload(working, content);
     await noteNaming(working, hash);
@@ -153,17 +161,108 @@ describe("an archive export on an instance with one disk store", () => {
     expect(sound.status).toBe(200);
     expect((await sound.arrayBuffer()).byteLength).toBeGreaterThan(0);
 
-    const path = diskPath(server!, hash);
-    const original = readFileSync(path);
-    writeFileSync(path, new Uint8Array(content.length).fill(0x42));
+    writeFileSync(
+      diskPath(server!, hash),
+      new Uint8Array(content.length).fill(0x42),
+    );
+    const res = await read();
+    expect(res.status).toBe(200);
+    await expect(res.arrayBuffer()).rejects.toThrow();
+
+    // Struck as the integrity check would strike it, so the next export,
+    // with no other store to read, names it instead of cutting again.
+    expect((await operator.listBlobLocations(hash)).data.data).toEqual([]);
+    const { manifest } = await archiveOf(working);
+    expect(Object.keys(manifest.missing_blobs)).toContain(hash);
+  });
+
+  it("answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob", async () => {
+    const owner = ownerOf(server!);
+    const content = bytesOf("a blob behind a folder that cannot be read", 150);
+    const hash = await upload(working, content);
+    await noteNaming(working, hash);
+    const folder = dirname(diskPath(server!, hash));
+    const id = uuidv7();
+    // An archive that names the blob and does not carry it, so the restore
+    // asks the disk whether the instance holds it.
+    const lacking = itemsArchive(
+      [
+        {
+          id,
+          type: "core.note",
+          source: "export-missing-blob",
+          properties: { body: `![bytes](${hash})` },
+        },
+      ],
+      [],
+      [],
+      (m) => ({
+        ...m,
+        blobs: { [hash]: { mime_type: "text/plain", size_bytes: 150 } },
+      }),
+    );
+
+    chmodSync(folder, 0o000);
     try {
-      const res = await read();
-      expect(res.status).toBe(200);
-      await expect(res.arrayBuffer()).rejects.toThrow();
+      // The witness: the folder really cannot be read by this user.
+      expect(() => statSync(diskPath(server!, hash))).toThrow();
+
+      const res = await fetch(`${server!.apiUrl}/export?format=archive`, {
+        headers: { Authorization: `Bearer ${server!.workingKey}` },
+      });
+      expect(res.status).toBe(503);
+      expect(
+        ((await res.json()) as { error: { code: string } }).error.code,
+      ).toBe("blob_store_unavailable");
+
+      const restored = await owner.restoreArchive(lacking);
+      expect(restored.status).toBe(503);
+      expect(restored.error?.error.code).toBe("blob_store_unavailable");
+      expect((await working.getItem(id)).status).toBe(404);
     } finally {
-      // The archives the tests below read carry this blob too.
-      writeFileSync(path, original);
+      chmodSync(folder, 0o755);
     }
+
+    // The same archive restores once the disk answers, and the blob is held.
+    const again = await owner.restoreArchive(lacking);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.blobs_missing).toEqual([]);
+  });
+
+  it("names in a later archive's missing_blobs a blob a restore answered missing", async () => {
+    const owner = ownerOf(server!);
+    const absent = blobHash(new Uint8Array(randomBytes(64)));
+    const id = uuidv7();
+    const restored = await owner.restoreArchive(
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.note",
+            source: "export-missing-blob",
+            properties: { body: `![x](${absent})` },
+          },
+        ],
+        [],
+        [],
+        (m) => ({
+          ...m,
+          blobs: { [absent]: { mime_type: "image/png", size_bytes: 64 } },
+        }),
+      ),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.blobs_missing).toEqual([absent]);
+
+    const res = await owner.exportArchive();
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    const manifest = JSON.parse(
+      readTarGzEntry(res.data, "manifest.json") ?? "{}",
+    ) as Manifest;
+    expect(manifest.missing_blobs[absent]).toEqual({
+      mime_type: "image/png",
+      size_bytes: 64,
+    });
   });
 
   it("answers in blobs_missing a blob the archive names and lacks, and none the instance holds", async () => {

@@ -186,6 +186,11 @@ export enum ErrorCode {
    * Retryable: the sender records a failure it can deliver again.
    */
   INBOUND_UNAVAILABLE = "inbound_unavailable",
+  /**
+   * A store failed, or did not answer in time, while the server checked or
+   * read a copy of a blob. Says nothing about whether the copy is there.
+   */
+  BLOB_STORE_UNAVAILABLE = "blob_store_unavailable",
   REQUEST_TIMEOUT = "request_timeout",
   /**
    * Every streaming connection slot is in use and none freed within the
@@ -616,6 +621,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 503,
     summary:
       "An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.",
+  },
+  [ErrorCode.BLOB_STORE_UNAVAILABLE]: {
+    status: 503,
+    summary:
+      "A blob store failed, or did not answer in time, while Marfa checked a blob's copy. Nothing was written. Retry later.",
   },
   [ErrorCode.REQUEST_TIMEOUT]: {
     status: 408,
