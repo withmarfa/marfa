@@ -21,6 +21,9 @@ import * as clock from "../clock.js";
 
 const MS_PER_DAY = 86_400_000;
 
+/** Trashed rows one write of the trash purge removes at most. */
+export const TRASH_PURGE_BATCH = 200;
+
 /**
  * Purges each row through the write the purge doors use, a savepoint of the
  * sweep's transaction with its events, so the removal and its announcement
@@ -104,7 +107,8 @@ export class TrashPurger {
 
   /**
    * One sweep. Computes the cutoff date from the injected clock and deletes
-   * at most 200 trashed rows strictly older than it, with one audit.
+   * every trashed row strictly older than it, `TRASH_PURGE_BATCH` rows to a
+   * write, with one audit for each write.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.
@@ -128,25 +132,40 @@ export class TrashPurger {
     return deleted;
   }
 
-  private purge(cutoff: string): Promise<number> {
-    return runAuditedTransaction(
-      this.storage,
-      async () =>
-        purgeEach(
-          this.storage,
-          await this.storage.items.listTrashedOlderThan(cutoff, 200),
-          {},
-        ),
-      (deleted) =>
-        deleted > 0
-          ? {
-              action: "items.trash_purged",
-              resource_type: "item",
-              client_ip: null,
-              details: { deleted, before: cutoff },
-            }
-          : null,
-    );
+  private async purge(cutoff: string): Promise<number> {
+    // Batch by batch, each its own audited write, until a batch comes back
+    // short: feed expiry fills the bin with no daily cap, so a backlog can
+    // be larger than one batch and must not wait a whole cadence per batch.
+    // A full batch that purges nothing is rows the purge refuses, which the
+    // next listing would answer again.
+    let deleted = 0;
+    for (;;) {
+      let listed = 0;
+      const batch = await runAuditedTransaction(
+        this.storage,
+        async () => {
+          const ids = await this.storage.items.listTrashedOlderThan(
+            cutoff,
+            TRASH_PURGE_BATCH,
+          );
+          listed = ids.length;
+          return purgeEach(this.storage, ids, {});
+        },
+        (count) =>
+          count > 0
+            ? {
+                action: "items.trash_purged",
+                resource_type: "item",
+                client_ip: null,
+                details: { deleted: count, before: cutoff },
+              }
+            : null,
+      );
+      deleted += batch;
+      if (listed < TRASH_PURGE_BATCH || batch === 0) break;
+      await yieldBulkWork();
+    }
+    return deleted;
   }
 
   private async runOnceGlobal(): Promise<number> {

@@ -1,6 +1,7 @@
 import type { ApiKey } from "@withmarfa/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
@@ -19,6 +20,7 @@ import {
   RevokedGrantPurger,
   RevokedKeyReaper,
   runSweepAtRetention,
+  TRASH_PURGE_BATCH,
   TrashPurger,
 } from "./retention.js";
 
@@ -91,6 +93,51 @@ async function rowExists(itemId: string): Promise<boolean> {
     `SELECT 1 FROM items WHERE id = '${itemId.replace(/'/g, "''")}'`,
   );
   return rows.length > 0;
+}
+
+/** The event type of every frame in the event log, in log order. */
+async function loggedEventTypes(): Promise<string[]> {
+  const types: string[] = [];
+  let cursor = 0n;
+  for (;;) {
+    const rows = await ctx.storage.eventLog.getAfter(cursor, 200);
+    if (rows.length === 0) return types;
+    for (const row of rows) {
+      types.push(
+        (JSON.parse(row.payload) as { event_type: string }).event_type,
+      );
+      if (row.id > cursor) cursor = row.id;
+    }
+  }
+}
+
+/** Seeds `count` notes in the bin, every one trashed at `trashedAtIso`. */
+async function seedTrash(count: number, trashedAtIso: string): Promise<void> {
+  for (let i = 0; i < count; i += 1) {
+    const item = await itemWrites(ctx.storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: `trash ${String(i)}` },
+    });
+    await itemWrites(ctx.storage).transition(item.id, "trashed");
+  }
+  await (
+    ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    }
+  ).__sqliteRun(
+    "UPDATE items SET updated_at = ?, trashed_at = ? WHERE state = 'trashed'",
+    [trashedAtIso, trashedAtIso],
+  );
+}
+
+async function trashedCount(): Promise<number> {
+  const rows = await (
+    ctx.storage as unknown as {
+      __sqliteAll: (q: string) => Promise<unknown[]>;
+    }
+  ).__sqliteAll("SELECT id FROM items WHERE state = 'trashed'");
+  return rows.length;
 }
 
 describe("TrashPurger.runOnce — behavioral", () => {
@@ -247,6 +294,73 @@ describe("TrashPurger.runOnce — behavioral", () => {
     expect(await rowExists(behind)).toBe(false);
     expect(await rowExists(stuck.id)).toBe(true);
   });
+
+  it("purges a backlog larger than one batch in one run, a write and an announcement per row", async () => {
+    const backlog = TRASH_PURGE_BATCH * 2 + 1;
+    await seedTrash(
+      backlog,
+      new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
+    );
+    // Wired after the seed, so every frame the log holds is the purge's.
+    initEventLog(ctx.storage.eventLog);
+    let purged: number;
+    try {
+      purged = await new TrashPurger(
+        ctx.storage,
+        60,
+        () => FIXED_NOW,
+      ).runOnce();
+    } finally {
+      __resetEventLogForTests();
+    }
+
+    expect(purged).toBe(backlog);
+    expect(await trashedCount()).toBe(0);
+    const audited = await ctx.storage.audit.list({
+      action: "items.trash_purged",
+    });
+    expect(
+      audited.data
+        .map((row) => row.details.deleted as number)
+        .sort((a, b) => b - a),
+    ).toEqual([TRASH_PURGE_BATCH, TRASH_PURGE_BATCH, 1]);
+    expect(await loggedEventTypes()).toEqual(
+      Array<string>(backlog).fill("item.purged"),
+    );
+  });
+
+  it("ends the run when a full batch purges nothing", async () => {
+    // Live app grants in the bin are refused by the purge doors; a full
+    // batch of them would bring the same batch back forever.
+    const ancient = new Date(
+      FIXED_NOW.getTime() - 400 * MS_PER_DAY,
+    ).toISOString();
+    for (let i = 0; i < TRASH_PURGE_BATCH; i += 1) {
+      const stuck = await itemWrites(ctx.storage).create({
+        writer: null,
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: "2019-01-01T00:00:00.000Z",
+          client_id: `stuck-${String(i)}`,
+        },
+      });
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun(
+        "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
+        [ancient, stuck.id],
+      );
+    }
+
+    expect(
+      await new TrashPurger(ctx.storage, 60, () => FIXED_NOW).runOnce(),
+    ).toBe(0);
+    expect(await trashedCount()).toBe(TRASH_PURGE_BATCH);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -281,6 +395,25 @@ describe("TrashPurger — the instance config override", () => {
     const deleted = await purger.runOnce();
     expect(deleted).toBe(1);
     expect(await rowExists(itemId)).toBe(false);
+  });
+
+  it("purges a backlog larger than one batch in one run at the configured retention", async () => {
+    await writeInstanceConfig(ctx.storage.settings, {
+      trash_retention_days: 1,
+    });
+    const backlog = TRASH_PURGE_BATCH + 1;
+    await seedTrash(
+      backlog,
+      new Date(FIXED_NOW.getTime() - 10 * MS_PER_DAY).toISOString(),
+    );
+
+    const purger = new TrashPurger(ctx.storage, 30, () => FIXED_NOW, {
+      settings: ctx.storage.settings,
+      configField: "trash_retention_days",
+    });
+
+    expect(await purger.runOnce()).toBe(backlog);
+    expect(await trashedCount()).toBe(0);
   });
 
   it("keeps everything in the trash when trash_retention_days is 0 in the config", async () => {
