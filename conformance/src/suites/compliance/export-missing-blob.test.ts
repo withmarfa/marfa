@@ -46,7 +46,10 @@ import { TEST_OWNER } from "../../utils/target.js";
 interface Manifest {
   blob_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
-  missing_blobs: Record<string, { mime_type: string; size_bytes: number }>;
+  missing_blobs: Record<
+    string,
+    { mime_type: string | null; size_bytes: number | null }
+  >;
 }
 
 async function upload(client: MarfaClient, bytes: Uint8Array) {
@@ -229,18 +232,27 @@ describe("an archive export on an instance with one disk store", () => {
     expect(again.data.blobs_missing).toEqual([]);
   });
 
-  it("names in a later archive's missing_blobs a blob a restore answered missing", async () => {
+  it("names in a later archive's missing_blobs a file's blob that a restore answered missing", async () => {
     const owner = ownerOf(server!);
     const absent = blobHash(new Uint8Array(randomBytes(64)));
-    const id = uuidv7();
+    // A run of hex in a note's text that no upload made, which is no blob.
+    const noted = blobHash(new Uint8Array(randomBytes(64)));
+    const file = uuidv7();
+    const note = uuidv7();
     const restored = await owner.restoreArchive(
       itemsArchive(
         [
           {
-            id,
+            id: file,
+            type: "core.file",
+            source: "export-missing-blob",
+            properties: { blob_ref: absent, mime_type: "image/png" },
+          },
+          {
+            id: note,
             type: "core.note",
             source: "export-missing-blob",
-            properties: { body: `![x](${absent})` },
+            properties: { body: `checksum ${noted.slice("sha256:".length)}` },
           },
         ],
         [],
@@ -260,9 +272,16 @@ describe("an archive export on an instance with one disk store", () => {
       readTarGzEntry(res.data, "manifest.json") ?? "{}",
     ) as Manifest;
     expect(manifest.missing_blobs[absent]).toEqual({
-      mime_type: "image/png",
-      size_bytes: 64,
+      mime_type: null,
+      size_bytes: null,
     });
+    expect(Object.keys(manifest.missing_blobs)).not.toContain(noted);
+    expect(Object.keys(manifest.blobs)).not.toContain(absent);
+
+    // The archive that names it with no type or size restores as well.
+    const again = await owner.restoreArchive(res.data);
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.blobs_missing).toContain(absent);
   });
 
   it("answers in blobs_missing a blob the archive names and lacks, and none the instance holds", async () => {

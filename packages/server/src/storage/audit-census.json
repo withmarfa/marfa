@@ -383,10 +383,10 @@
       "BlobRegistry.queueCopyDeletion": 1,
       "BlobRegistry.recordLocation": 1,
       "BlobRegistry.recordUploader": 1,
-      "BlobRegistry.register": 2,
+      "BlobRegistry.register": 1,
       "EdgeStore.createRaw": 1,
       "MetadataStore.setExtensions": 1,
-      "runAuditedTransaction": 3,
+      "runAuditedTransaction": 2,
       "writeItem": 1,
       "finalizeArchiveItem": 1
     }

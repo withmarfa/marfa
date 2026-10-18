@@ -36,9 +36,9 @@ import {
   type BlobLayer,
 } from "../storage/blob-layer.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import { strikeCopy } from "../housekeeping/blob-strike.js";
+import { copyIntact, strikeCopy } from "../housekeeping/blob-strike.js";
 import type { BlobRead, BlobStore } from "../storage/blob-store.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
+import { collectBlobHashes, fileBlobRef } from "../storage/blob-utils.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
@@ -81,8 +81,13 @@ export interface ArchiveManifest {
   edge_type_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
   /** The blobs the archive should carry that no store could read whole,
-   *  in the shape of `blobs`. They are not counted in `blob_count`. */
-  missing_blobs: Record<string, { mime_type: string; size_bytes: number }>;
+   *  in the shape of `blobs`, and not counted in `blob_count`. A blob the
+   *  instance has no record of, which a file's `blob_ref` names, has a null
+   *  type and size: nothing here knows them. */
+  missing_blobs: Record<
+    string,
+    { mime_type: string | null; size_bytes: number | null }
+  >;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,7 +108,11 @@ async function readWhole(
   for (const store of await recordedStores(storage, blobs, hash)) {
     let read: BlobRead | null;
     try {
-      read = await within(store.get(hash), storeChecks.timeoutMs);
+      read = await within(
+        (signal) => store.get(hash, undefined, signal),
+        storeChecks.timeoutMs,
+        { late: (gone) => gone?.stream.destroy() },
+      );
     } catch (error) {
       failure = storeUnavailable(store, hash, error);
       continue;
@@ -119,17 +128,19 @@ async function readWhole(
 
 /**
  * Passes bytes on while hashing them, and holds the last chunk back until
- * they are known to hash to `hash`, so an entry with other bytes ends short
- * and its tar is not well formed. Bytes that do not hash to their name strike
- * the copy they came from, as `blob-integrity` would, so the next export
- * reads another store's copy or names the blob in `missing_blobs`.
+ * they are known to be the blob's, so an entry with other bytes ends short
+ * and its tar is not well formed. Only `size` bytes that hash to another
+ * name are evidence against the copy, and `onMismatch` is then asked to
+ * judge it; a read that ends short says only that the read went wrong.
  */
 class VerifyingTransform extends Transform {
   private readonly hashing = createHash("sha256");
   private held: Buffer | null = null;
+  private bytes = 0;
 
   constructor(
     private readonly hash: string,
+    private readonly size: number,
     private readonly onMismatch: () => Promise<void>,
   ) {
     super();
@@ -141,12 +152,21 @@ class VerifyingTransform extends Transform {
     callback: (error?: Error | null, data?: Buffer) => void,
   ): void {
     this.hashing.update(chunk);
+    this.bytes += chunk.length;
     const previous = this.held;
     this.held = chunk;
     callback(null, previous ?? undefined);
   }
 
   override _flush(callback: (error?: Error | null, data?: Buffer) => void) {
+    if (this.bytes !== this.size) {
+      callback(
+        new Error(
+          `The read of ${this.hash} ended after ${String(this.bytes)} of ${String(this.size)} bytes`,
+        ),
+      );
+      return;
+    }
     const actual = `sha256:${this.hashing.digest("hex")}`;
     if (actual === this.hash) {
       callback(null, this.held ?? undefined);
@@ -272,8 +292,15 @@ export async function handleArchiveExport(
   ) =>
     pipeline(
       source,
-      new VerifyingTransform(hash, async () => {
-        await withBlobUploadLock(hash, () => strikeCopy(storage, store, hash));
+      // The read was made outside the blob's upload lock, so the copy may
+      // have been put right since: it is read again under the lock, as
+      // `blob-integrity` reads it, and struck only if it is still wrong.
+      new VerifyingTransform(hash, size, async () => {
+        await withBlobUploadLock(hash, async () => {
+          if (!(await copyIntact(store, hash, size))) {
+            await strikeCopy(storage, store, hash);
+          }
+        });
       }),
       pack.entry({ name: `blobs/${hash}`, size }),
       { signal: stopped.signal },
@@ -383,7 +410,7 @@ async function collectSelection(input: {
   const types = await spool.text();
   const blobEntries = await spool.text();
   const missingEntries = await spool.text();
-  const { itemIds, blobHashes, listedBlobs } = await spool.sets();
+  const { itemIds, blobHashes, fileRefs, listedBlobs } = await spool.sets();
 
   // Between pages, and nowhere else, the event loop gets its turn: a page is
   // read as a unit, so an item's row, metadata, lending digests and history
@@ -406,6 +433,7 @@ async function collectSelection(input: {
     const lines: string[] = [];
     const ids: string[] = [];
     const hashes = new Set<string>();
+    const refs = new Set<string>();
     // Of the version each row was read at, which a write since may have
     // moved the row past. A writer is held to the reach that holds the
     // snapshots, so a caller that may not read the history learns none.
@@ -429,6 +457,10 @@ async function collectSelection(input: {
         ).filter(([namespace]) => namespace in metadata.extensions),
       );
       const versions = await historyBelow(storage, item, readsHistory, hashes);
+      for (const row of [item, ...versions]) {
+        const ref = fileBlobRef(row);
+        if (ref) refs.add(ref);
+      }
       lines.push(
         JSON.stringify({
           item,
@@ -447,6 +479,7 @@ async function collectSelection(input: {
     await items.append(lines.map((line) => `${line}\n`).join(""));
     await itemIds.add(ids);
     await blobHashes.add(hashes);
+    await fileRefs.add(refs);
     itemCount += lines.length;
     cursor = result.next_cursor ?? undefined;
   } while (cursor);
@@ -530,18 +563,23 @@ async function collectSelection(input: {
     const missing: string[] = [];
     const records = new Map<
       string,
-      { mime_type: string; size_bytes: number }
+      { mime_type: string | null; size_bytes: number | null }
     >();
+    const sizes = new Map<string, number>();
+    // A digest with no record is a blob only where a file's `blob_ref`
+    // names it; anywhere else it may be any run of hex.
+    const refs = await fileRefs.held(page);
     for (const hash of page) {
       if (!(await reader.blob(storage, hash))) continue;
       const record = await storage.blobs.get(hash);
-      if (record) records.set(hash, record);
+      if (record) {
+        records.set(hash, record);
+        sizes.set(hash, record.size_bytes);
+      } else if (refs.has(hash)) {
+        records.set(hash, { mime_type: null, size_bytes: null });
+      }
     }
-    const copies = await wholeCopies(
-      storage,
-      blobs,
-      new Map([...records].map(([hash, r]) => [hash, r.size_bytes])),
-    );
+    const copies = await wholeCopies(storage, blobs, sizes, signal);
     for (const [hash, record] of records) {
       const entry = `${JSON.stringify(hash)}:${JSON.stringify({
         mime_type: record.mime_type,

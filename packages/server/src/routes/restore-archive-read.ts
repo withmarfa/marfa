@@ -43,17 +43,25 @@ export const MAX_ARCHIVE_TEXT_BYTES = 64 * 1024 * 1024;
  * it claim fields of every archive ever written, which is a claim nothing
  * here can keep.
  */
-const manifestBlobs = z.record(
-  z.string(),
-  z.object({
-    mime_type: z.string(),
-    size_bytes: z.number().int().nonnegative(),
-  }),
-);
 const archiveManifestSchema = z.object({
   version: z.literal(0),
-  blobs: manifestBlobs,
-  missing_blobs: manifestBlobs.optional(),
+  blobs: z.record(
+    z.string(),
+    z.object({
+      mime_type: z.string(),
+      size_bytes: z.number().int().nonnegative(),
+    }),
+  ),
+  // A blob the writer had no record of has neither.
+  missing_blobs: z
+    .record(
+      z.string(),
+      z.object({
+        mime_type: z.string().nullable(),
+        size_bytes: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
 });
 type ArchiveManifest = z.infer<typeof archiveManifestSchema>;
 
@@ -70,18 +78,12 @@ export interface PendingBlob {
 const LINE_FILES = ["items.ndjson", "edges.ndjson", "types.ndjson"] as const;
 type LineFile = (typeof LINE_FILES)[number];
 
-export interface AbsentBlob {
-  hash: string;
-  mimeType: string;
-  sizeBytes: number;
-}
-
 export interface ReadArchive {
   lineFiles: Partial<Record<LineFile, string>>;
   blobs: PendingBlob[];
   /** The blobs the manifest names, under `blobs` or `missing_blobs`, for
-   *  which no entry carries bytes that hash to the name, by hash. */
-  absent: AbsentBlob[];
+   *  which no entry carries bytes that hash to the name, in order. */
+  absent: string[];
 }
 
 function invalid(message: string, details?: Record<string, unknown>) {
@@ -305,15 +307,13 @@ export async function readArchive(
       manifest?.blobs[blob.hash]?.mime_type ?? "application/octet-stream";
   }
   const carried = new Set(blobs.map((blob) => blob.hash));
-  const named = { ...manifest?.missing_blobs, ...manifest?.blobs };
-  const absent = Object.entries(named)
-    .filter(([hash]) => isValidBlobHash(hash) && !carried.has(hash))
-    .map(([hash, entry]) => ({
-      hash,
-      mimeType: entry.mime_type,
-      sizeBytes: entry.size_bytes,
-    }))
-    .sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
+  const named = new Set([
+    ...Object.keys(manifest?.missing_blobs ?? {}),
+    ...Object.keys(manifest?.blobs ?? {}),
+  ]);
+  const absent = [...named]
+    .filter((hash) => isValidBlobHash(hash) && !carried.has(hash))
+    .sort();
   return { lineFiles, blobs, absent };
 }
 

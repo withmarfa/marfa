@@ -1,3 +1,5 @@
+import { isSubtypeOf, isValidBlobHash } from "@withmarfa/shared";
+
 /**
  * A blob's digest wherever it sits in a string: a whole value, a `sha256:`
  * link inside text, an escaped or URL-encoded one, or the bare hex the blob
@@ -32,4 +34,21 @@ export function collectBlobHashes(value: unknown, out: Set<string>): void {
       collectBlobHashes(v, out);
     }
   }
+}
+
+/**
+ * The blob a file row's `blob_ref` names, when it is a whole `sha256:` hash:
+ * the one place a row names a blob by its type's declaration, and not only
+ * by a run of hex that could be anything.
+ */
+export function fileBlobRef(row: {
+  type: string;
+  properties: Record<string, unknown>;
+}): string | undefined {
+  const ref = row.properties.blob_ref;
+  return isSubtypeOf(row.type, "core.file") &&
+    typeof ref === "string" &&
+    isValidBlobHash(ref)
+    ? ref
+    : undefined;
 }

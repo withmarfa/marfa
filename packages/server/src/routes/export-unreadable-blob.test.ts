@@ -6,16 +6,23 @@
  * restore answers which named blobs neither the archive nor the instance
  * holds.
  */
+import { createHash, randomBytes } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { BlobReplicator } from "../housekeeping/blob-replicate.js";
-import { BlobIntegrityChecker } from "../housekeeping/blob-integrity.js";
-import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
 import { storeChecks } from "../storage/blob-layer.js";
 import {
   closeTestContexts,
@@ -40,7 +47,10 @@ afterAll(() => closeTestContexts(contexts));
 interface Manifest {
   blob_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
-  missing_blobs: Record<string, { mime_type: string; size_bytes: number }>;
+  missing_blobs: Record<
+    string,
+    { mime_type: string | null; size_bytes: number | null }
+  >;
 }
 
 async function upload(ctx: TestContext, content: string): Promise<string> {
@@ -63,6 +73,27 @@ async function noteNaming(ctx: TestContext, hash: string): Promise<string> {
   });
   expect(res.status, await res.clone().text()).toBe(201);
   return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
+async function fileNaming(
+  ctx: TestContext,
+  hash: string,
+  extra: Record<string, unknown> = {},
+): Promise<string> {
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: {
+      type: "core.file",
+      properties: { blob_ref: hash, mime_type: "image/png", ...extra },
+    },
+  });
+  expect(res.status, await res.clone().text()).toBe(201);
+  return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
+/** A digest no upload has made, so the instance has no record of it. */
+function unheardOf(): string {
+  return `sha256:${createHash("sha256").update(randomBytes(32)).digest("hex")}`;
 }
 
 function diskPath(ctx: TestContext, hash: string): string {
@@ -117,8 +148,12 @@ async function pack(entries: Map<string, Buffer>): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function exported(ctx: TestContext) {
-  const res = await exportArchive(ctx);
+async function exported(ctx: TestContext, asOwner = false) {
+  const res = asOwner
+    ? await request(ctx.app, "GET", "/export?format=archive", {
+        headers: { cookie: ctx.owner.cookie },
+      })
+    : await exportArchive(ctx);
   expect(res.status).toBe(200);
   const entries = await unpack(Buffer.from(await res.arrayBuffer()));
   const manifest = JSON.parse(
@@ -368,6 +403,235 @@ describe("an archive export of a blob it cannot read", () => {
     await expect(res.arrayBuffer()).rejects.toThrow();
   });
 
+  it("names a blob a file's blob_ref refers to that the instance has no record of, with no type or size", async () => {
+    const ctx = await context();
+    const hash = unheardOf();
+    await fileNaming(ctx, hash);
+
+    const { entries, manifest } = await exported(ctx, true);
+    expect(manifest.blobs).toEqual({});
+    expect(manifest.blob_count).toBe(0);
+    expect(manifest.missing_blobs).toEqual({
+      [hash]: { mime_type: null, size_bytes: null },
+    });
+    expect(entries.has(`blobs/${hash}`)).toBe(false);
+  });
+
+  it("names an unrecorded blob that only an earlier version's blob_ref refers to", async () => {
+    const ctx = await context();
+    const earlier = unheardOf();
+    const id = await fileNaming(ctx, earlier);
+    const now = await upload(ctx, "the bytes the file names now");
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: {
+        version: 1,
+        properties: { blob_ref: now, mime_type: "text/plain" },
+      },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+
+    const { manifest } = await exported(ctx, true);
+    expect(Object.keys(manifest.blobs)).toEqual([now]);
+    expect(manifest.missing_blobs).toEqual({
+      [earlier]: { mime_type: null, size_bytes: null },
+    });
+  });
+
+  it("names no unrecorded digest a row holds anywhere but a file's blob_ref", async () => {
+    const ctx = await context();
+    const inText = unheardOf();
+    const inOtherField = unheardOf();
+    const referenced = unheardOf();
+    await noteNaming(ctx, inText);
+    await fileNaming(ctx, referenced, { description: `see ${inOtherField}` });
+
+    // The witness is the file's own blob_ref, named in the same archive.
+    const { manifest } = await exported(ctx, true);
+    expect(Object.keys(manifest.missing_blobs)).toEqual([referenced]);
+  });
+
+  it("carries a blob from a store that holds it whole while another store's check fails", async () => {
+    const ctx = await context();
+    const { stores } = await withSecondStore(ctx);
+    const content = "bytes the second store answers for";
+    const hash = await upload(ctx, content);
+    await noteNaming(ctx, hash);
+    await new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    }).runOnce();
+    const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+    vi.spyOn(ctx.blobs.disk, "has").mockRejectedValue(
+      Object.assign(new Error("permission denied"), { code: "EACCES" }),
+    );
+    vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+      async (wanted, ...rest) =>
+        wanted === hash
+          ? Promise.reject(new Error("permission denied"))
+          : get(wanted, ...rest),
+    );
+
+    const { entries, manifest } = await exported(ctx);
+    expect(Object.keys(manifest.blobs)).toEqual([hash]);
+    expect(manifest.missing_blobs).toEqual({});
+    expect(entries.get(`blobs/${hash}`)?.toString()).toBe(content);
+  });
+
+  describe("a store that does not answer", () => {
+    let timeout: number;
+    beforeEach(() => {
+      timeout = storeChecks.timeoutMs;
+      storeChecks.timeoutMs = 50;
+    });
+    afterEach(() => {
+      storeChecks.timeoutMs = timeout;
+    });
+
+    /** A check that answers only by being cancelled, counted while open. */
+    function hanging(open: { count: number }) {
+      return (_hash: string, signal?: AbortSignal) => {
+        open.count++;
+        return new Promise<never>((_, reject) => {
+          signal?.addEventListener("abort", () => {
+            open.count--;
+            reject(signal.reason as Error);
+          });
+        });
+      };
+    }
+
+    it("cancels a check that does not answer in time", async () => {
+      const ctx = await context();
+      const { second } = await withSecondStore(ctx);
+      const hash = await upload(ctx, "bytes only a hanging store holds");
+      await noteNaming(ctx, hash);
+      await ctx.storage.blobs.recordLocation(hash, second.id);
+      await rm(diskPath(ctx, hash));
+      const open = { count: 0 };
+      vi.spyOn(second, "has").mockImplementation(hanging(open));
+
+      const res = await exportArchive(ctx);
+      expect(res.status).toBe(503);
+      expect(open.count).toBe(0);
+    });
+
+    it("cancels the checks still running once a store has failed", async () => {
+      const ctx = await context();
+      const { second } = await withSecondStore(ctx);
+      const hashes: string[] = [];
+      for (let i = 0; i < 20; i++) {
+        const hash = await upload(ctx, `bytes number ${String(i)} of some`);
+        await ctx.storage.blobs.recordLocation(hash, second.id);
+        await rm(diskPath(ctx, hash));
+        hashes.push(hash);
+      }
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: hashes.map((h) => `![x](${h})`).join(" ") },
+        },
+      });
+      expect(res.status).toBe(201);
+      storeChecks.timeoutMs = 60_000;
+      const open = { count: 0 };
+      const hang = hanging(open);
+      let failed = false;
+      vi.spyOn(second, "has").mockImplementation(async (hash, signal) => {
+        if (!failed) {
+          failed = true;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          throw Object.assign(new Error("I/O error"), { code: "EIO" });
+        }
+        return hang(hash, signal);
+      });
+
+      const refused = await exportArchive(ctx);
+      expect(refused.status).toBe(503);
+      expect(open.count).toBe(0);
+    });
+
+    it("destroys the stream of a read that answers after its timeout", async () => {
+      const ctx = await context();
+      const hash = await upload(ctx, "bytes a slow store opens late");
+      await noteNaming(ctx, hash);
+      const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+      let late: Readable | undefined;
+      vi.spyOn(ctx.blobs.disk, "get").mockImplementation(async (wanted) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        // A store that ignores the cancellation and answers anyway.
+        const read = await get(wanted);
+        late = read?.stream;
+        return read;
+      });
+
+      const res = await exportArchive(ctx);
+      expect(res.status).toBe(200);
+      await expect(res.arrayBuffer()).rejects.toThrow();
+      await vi.waitFor(() => {
+        expect(late?.destroyed).toBe(true);
+      });
+    });
+  });
+
+  describe("a read that does not prove the copy wrong", () => {
+    const content = "bytes whose read goes wrong";
+
+    async function exportWith(read: () => Readable) {
+      const ctx = await context();
+      const hash = await upload(ctx, content);
+      await noteNaming(ctx, hash);
+      const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+      let served = false;
+      vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+        async (wanted, ...rest) => {
+          if (wanted !== hash || served) return get(wanted, ...rest);
+          served = true;
+          return {
+            stream: read(),
+            size_bytes: content.length,
+            offset: 0,
+            length: content.length,
+          };
+        },
+      );
+      const res = await exportArchive(ctx);
+      expect(res.status).toBe(200);
+      await expect(res.arrayBuffer()).rejects.toThrow();
+      return (await ctx.storage.blobs.listLocations(hash)).map(
+        (l) => l.store_id,
+      );
+    }
+
+    it("does not strike a copy whose read fails partway", async () => {
+      const kept = await exportWith(
+        () =>
+          new Readable({
+            read() {
+              this.push(Buffer.from(content.slice(0, 8)));
+              this.destroy(new Error("connection reset"));
+            },
+          }),
+      );
+      expect(kept).toHaveLength(1);
+    });
+
+    it("does not strike a copy whose read ends short without an error", async () => {
+      const kept = await exportWith(() =>
+        Readable.from([Buffer.from(content.slice(0, 8))]),
+      );
+      expect(kept).toHaveLength(1);
+    });
+
+    it("does not strike a copy that holds the right bytes by the time it would be struck", async () => {
+      const kept = await exportWith(() =>
+        Readable.from([Buffer.from("x".repeat(content.length))]),
+      );
+      expect(kept).toHaveLength(1);
+    });
+  });
+
   it("answers an NDJSON export of an item that names a lost blob, which carries no bytes", async () => {
     const ctx = await context();
     const hash = await upload(ctx, "bytes an NDJSON export never reads");
@@ -467,10 +731,10 @@ describe("a restore of an archive that lacks a blob it names", () => {
     expect(await res.json()).toMatchObject({ blobs_missing: [] });
   });
 
-  it("registers a blob it answers as missing, so every export after it names the blob too", async () => {
+  it("keeps no record of a blob it answers as missing, and a later export still names the file's blob", async () => {
     const source = await context();
     const hash = await upload(source, "bytes lost before the backup");
-    await noteNaming(source, hash);
+    await fileNaming(source, hash);
     await rm(diskPath(source, hash));
     const archive = Buffer.from(
       await (await exportArchive(source)).arrayBuffer(),
@@ -480,33 +744,27 @@ describe("a restore of an archive that lacks a blob it names", () => {
     const restored = await restore(target, archive);
     expect(restored.status, await restored.clone().text()).toBe(200);
     expect(await restored.json()).toMatchObject({ blobs_missing: [hash] });
-    expect(await target.storage.blobs.get(hash)).toEqual({
-      mime_type: "text/plain",
-      size_bytes: "bytes lost before the backup".length,
-    });
-    expect(await target.storage.blobs.listLocations(hash)).toEqual([]);
+    expect(await target.storage.blobs.get(hash)).toBeNull();
+    expect((await target.storage.blobs.count()).count).toBe(0);
 
-    // The jobs that walk the registry take a blob with no copy in their
-    // stride, and none of them claims a copy of it.
-    const { stores } = await withSecondStore(target);
-    const bounds = { maxBlobs: 100, maxBytes: 1024 * 1024 };
-    await new BlobReplicator(target.storage, stores, bounds).runOnce();
-    await new BlobIntegrityChecker(target.storage, stores, {
-      maxRows: 100,
-      maxBytes: 1024 * 1024,
-    }).runOnce();
-    await new BlobOrphanReporter(target.storage, stores, 0).runOnce();
-    expect(await target.storage.blobs.listLocations(hash)).toEqual([]);
-
-    const res = await request(target.app, "GET", "/export?format=archive", {
-      headers: { cookie: target.owner.cookie },
+    const { manifest } = await exported(target, true);
+    expect(manifest.missing_blobs).toEqual({
+      [hash]: { mime_type: null, size_bytes: null },
     });
-    expect(res.status).toBe(200);
-    const entries = await unpack(Buffer.from(await res.arrayBuffer()));
-    const manifest = JSON.parse(
-      entries.get("manifest.json")!.toString(),
-    ) as Manifest;
-    expect(Object.keys(manifest.missing_blobs)).toEqual([hash]);
+
+    // That archive, with no type or size for the blob, restores too.
+    const again = await (
+      await request(target.app, "GET", "/export?format=archive", {
+        headers: { cookie: target.owner.cookie },
+      })
+    ).arrayBuffer();
+    const third = await context();
+    const restoredAgain = await restore(third, Buffer.from(again));
+    expect(restoredAgain.status, await restoredAgain.clone().text()).toBe(200);
+    expect(await restoredAgain.json()).toMatchObject({
+      imported: 1,
+      blobs_missing: [hash],
+    });
   });
 
   it("answers 503 blob_store_unavailable and writes nothing when a store fails to answer for a named blob", async () => {

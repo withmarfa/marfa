@@ -80,11 +80,7 @@ import {
   archiveVersions,
   archiveWriter,
 } from "./restore-archive-history.js";
-import {
-  archiveLines,
-  readArchive,
-  type AbsentBlob,
-} from "./restore-archive-read.js";
+import { archiveLines, readArchive } from "./restore-archive-read.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
@@ -606,8 +602,6 @@ async function restoreRows(
   restore: {
     plan: ArchiveTypePlan;
     pending: readonly PendingBlob[];
-    /** Blobs the archive names and neither it nor the instance holds. */
-    absent: readonly AbsentBlob[];
     files: ReadArchive["lineFiles"];
     totalItems: number;
     totalEdges: number;
@@ -616,7 +610,7 @@ async function restoreRows(
     apiKey: AppEnv["Variables"]["apiKey"];
   },
 ) {
-  const { plan, pending, absent, files, uploader, actor } = restore;
+  const { plan, pending, files, uploader, actor } = restore;
   return runAuditedTransaction(
     storage,
     async () => {
@@ -645,30 +639,6 @@ async function restoreRows(
           },
         );
         await yieldBulkWork();
-      }
-
-      // A record with no copy, so every later export names the blob in
-      // `missing_blobs` as the archive did, rather than leaving it out of
-      // the manifest as a hash the instance never heard of.
-      if (absent.length > 0) {
-        await runAuditedTransaction(
-          storage,
-          async () => {
-            for (const blob of absent) {
-              await storage.blobs.register(
-                blob.hash,
-                blob.mimeType,
-                blob.sizeBytes,
-              );
-            }
-          },
-          {
-            ...actor,
-            action: "restore_archive.blobs_missing",
-            resource_type: "blob",
-            details: { hashes: absent.map((blob) => blob.hash) },
-          },
-        );
       }
 
       // A row carrying a property no type declares is refused wherever
@@ -1020,15 +990,15 @@ async function restoreRows(
 async function stillAbsent(
   storage: Storage,
   blobs: BlobLayer,
-  absent: readonly AbsentBlob[],
-): Promise<AbsentBlob[]> {
+  absent: readonly string[],
+): Promise<string[]> {
   const sizes = new Map<string, number>();
-  for (const blob of absent) {
-    const record = await storage.blobs.get(blob.hash);
-    if (record) sizes.set(blob.hash, record.size_bytes);
+  for (const hash of absent) {
+    const record = await storage.blobs.get(hash);
+    if (record) sizes.set(hash, record.size_bytes);
   }
   const copies = await wholeCopies(storage, blobs, sizes);
-  return absent.filter((blob) => !copies.get(blob.hash));
+  return absent.filter((hash) => !copies.get(hash));
 }
 
 export function restoreArchiveRoutes(
@@ -1137,7 +1107,7 @@ export function restoreArchiveRoutes(
 
       const releaseBlobs = await holdBlobUploadLocks([
         ...archive.blobs.map((blob) => blob.hash),
-        ...archive.absent.map((blob) => blob.hash),
+        ...archive.absent,
       ]);
       try {
         const absent = await stillAbsent(storage, blobs, archive.absent);
@@ -1147,7 +1117,6 @@ export function restoreArchiveRoutes(
           const result = await restoreRows(storage, blobs, {
             plan: typePlan,
             pending: archive.blobs,
-            absent,
             files: paths,
             totalItems,
             totalEdges,
@@ -1163,7 +1132,7 @@ export function restoreArchiveRoutes(
               edges_skipped: result.edgesSkipped,
               edges_skipped_reasons: result.edgesSkippedReasons,
               blobs_imported: archive.blobs.length,
-              blobs_missing: absent.map((blob) => blob.hash),
+              blobs_missing: absent,
               types_registered: result.types.typesRegistered,
               types_skipped: result.types.typesSkipped,
               edge_types_registered: result.types.edgeTypesRegistered,
