@@ -18,7 +18,7 @@ import {
 let server: FreshServer;
 let client: MarfaClient;
 
-/** Rows enough for three chunks, whatever the size of a chunk is within the contract's walk (`events/audit-job-chunk`). */
+/** Three chunks at the reference server's 100-row chunk size. */
 const ROWS = 250;
 
 beforeAll(async () => {
