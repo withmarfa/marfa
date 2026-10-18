@@ -254,10 +254,12 @@ export async function edgeReadable(
 export function assertFilterEdgeTermsReadable(
   c: Context<AppEnv>,
   filter: string | undefined,
+  reads?: (edgeType: string) => boolean,
 ): void {
   if (filter === undefined) return;
   for (const condition of parseFilter(filter).conditions) {
     if (condition.field.kind !== "edge") continue;
-    requireEdgePermission(c, condition.field.edge_type, "read");
+    if (!reads?.(condition.field.edge_type))
+      requireEdgePermission(c, condition.field.edge_type, "read");
   }
 }

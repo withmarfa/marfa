@@ -60,6 +60,7 @@ import {
 export function assertTypeFilter(
   c: Context<AppEnv>,
   type: string | undefined,
+  reads?: (type: string) => boolean,
 ): void {
   if (!type) return;
   if (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type)) {
@@ -70,7 +71,7 @@ export function assertTypeFilter(
   if (getTypeSchema(type) === undefined) {
     throw new MarfaError(ErrorCode.UNKNOWN_TYPE, `Unknown type: ${type}`);
   }
-  assertTypeReadable(c, type);
+  if (!reads?.(type)) assertTypeReadable(c, type);
 }
 
 /**

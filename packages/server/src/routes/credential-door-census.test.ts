@@ -337,3 +337,22 @@ describe("the credential gate", () => {
     expect(stale.sort()).toEqual([]);
   });
 });
+
+it("declares owner browser authority only on the two item summary and export reads", async () => {
+  const doc = ctx.app.getOpenAPI31Document({
+    openapi: "3.1.0",
+    info: { title: "owner read census", version: "0" },
+  });
+  for (const [path, operations] of Object.entries(doc.paths ?? {})) {
+    if (!["/items/stats", "/export"].includes(path)) continue;
+    const operation = (operations as { get?: { security?: unknown[] } }).get;
+    expect(operation?.security).toEqual([
+      { bearerAuth: [] },
+      { ownerSession: [] },
+    ]);
+    const owner = await ctx.ownerRequest(path);
+    expect(owner.status).toBe(200);
+    await owner.body?.cancel();
+    expect((await ctx.app.request(path)).status).toBe(401);
+  }
+});

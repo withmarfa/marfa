@@ -67,7 +67,6 @@ const DATA_PLANE = [
   "GET /edges",
   "GET /edges/:id",
   "GET /events",
-  "GET /export",
   "GET /items",
   "GET /items/:id",
   "GET /items/:id/backrefs",
@@ -76,7 +75,6 @@ const DATA_PLANE = [
   "GET /items/:id/extensions/:namespace",
   "GET /items/:id/metadata",
   "GET /items/:id/versions",
-  "GET /items/stats",
   "GET /metadata/tags",
   "GET /occurrences",
   "GET /search",
@@ -100,6 +98,8 @@ const DATA_PLANE = [
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
+  "GET /export": "reads some type, or owner browser session",
+  "GET /items/stats": "reads some type, or owner browser session",
   "GET /folders/:id/status": "reads some type, or owner or local command",
   "PUT /folders/:id/status": "reads some type, or owner or local command",
   "GET /owner": DIRECT,

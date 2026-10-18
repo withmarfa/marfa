@@ -10,7 +10,7 @@ import type { Storage } from "../storage/interface.js";
  */
 export async function withCascadeMarks(
   storage: Storage,
-  key: ApiKey,
+  key: ApiKey | ((type: string) => boolean),
   rows: Item[],
 ): Promise<Item[]> {
   const binned = rows.filter((row) => row.state === "trashed");
@@ -23,7 +23,8 @@ export async function withCascadeMarks(
       ? {
           ...row,
           ...cascadeMark(root, (type) => {
-            const readable = mayReadType(key, type);
+            const readable =
+              typeof key === "function" ? key(type) : mayReadType(key, type);
             if (readable) rememberItemSubject(root, "read");
             return readable;
           }),

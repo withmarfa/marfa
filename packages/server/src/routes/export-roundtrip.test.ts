@@ -79,6 +79,8 @@ interface RestoreResult {
   blobs_imported: number;
 }
 
+const withReader = describe.each(["key", "owner"] as const);
+
 const contexts: TestContext[] = [];
 async function newContext(): Promise<TestContext> {
   const ctx = await createTestContext();
@@ -90,7 +92,7 @@ afterAll(async () => {
   await closeTestContexts(contexts);
 });
 
-describe("export → restore round trip", () => {
+withReader("export and restore (%s)", (reader) => {
   it("reproduces items, ids, tags, extensions, and edges on a fresh database", async () => {
     const source = await newContext();
     const destination = await newContext();
@@ -145,7 +147,9 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.workingKey },
+      reader === "owner"
+        ? { headers: { cookie: source.owner.cookie } }
+        : { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -256,7 +260,9 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.workingKey },
+      reader === "owner"
+        ? { headers: { cookie: source.owner.cookie } }
+        : { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const restoreRes = await destination.app.request(`/restore`, {
@@ -310,7 +316,9 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive`,
-      { key: source.workingKey },
+      reader === "owner"
+        ? { headers: { cookie: source.owner.cookie } }
+        : { key: source.workingKey },
     );
     const archive = Buffer.from(await exportRes.arrayBuffer());
 
@@ -423,7 +431,9 @@ describe("export → restore round trip", () => {
     });
 
     const readEdgeLines = async (path: string): Promise<unknown[]> => {
-      const res = await request(ctx.app, "GET", path, { key: ctx.workingKey });
+      const res = await request(ctx.app, "GET", path, {
+        key: ctx.workingKey,
+      });
       expect(res.status).toBe(200);
       const text = await res.text();
       return text
@@ -461,7 +471,7 @@ describe("export → restore round trip", () => {
 // their blob hashes; an empty type map would make this witness vacuous.
 // ---------------------------------------------------------------------------
 
-describe("an archive's blobs", () => {
+withReader("archive blobs (%s)", (reader) => {
   it("carries the bytes, and a restore reads them back", async () => {
     const source = await newContext();
     const destination = await newContext();
@@ -497,7 +507,9 @@ describe("an archive's blobs", () => {
       source.app,
       "GET",
       "/export?format=archive",
-      { key: source.workingKey },
+      reader === "owner"
+        ? { headers: { cookie: source.owner.cookie } }
+        : { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
