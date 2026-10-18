@@ -71,6 +71,13 @@ describe("the clock", () => {
     await expect(server.advanceClock(1.5)).rejects.toThrow(/whole number/);
     expect((await serverNow()) - Date.now()).toBeLessThan(HOUR_MS + 10_000);
 
+    // A move past the largest offset a restart accepts is refused, and the
+    // clock stays where it was.
+    await expect(server.advanceClock(3_153_600_000_000)).rejects.toThrow(
+      /ahead/,
+    );
+    expect((await serverNow()) - Date.now()).toBeLessThan(HOUR_MS + 10_000);
+
     await server.restart();
     const after = (await serverNow()) - Date.now();
     expect(after).toBeGreaterThan(HOUR_MS - 10_000);
@@ -98,6 +105,12 @@ describe("a fault", () => {
     );
     await expect(server.setFault("deadline:trash-purge")).rejects.toThrow(
       /milliseconds/,
+    );
+    await expect(
+      server.setFault("hold:housekeeping:no-such-job"),
+    ).rejects.toThrow(/no housekeeping job/);
+    await expect(server.setFault("deadline:no-such-job=250")).rejects.toThrow(
+      /no housekeeping job/,
     );
     await server.clearFault("deadline:trash-purge");
     expect((await server.faults()).map((fault) => fault.name)).toEqual([
