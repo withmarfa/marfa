@@ -225,7 +225,7 @@ const InboundDeliverySchema = z
       ),
     headers: z
       .array(z.tuple([z.string(), z.string()]))
-      .describe("`[name, value]` pairs in the order and case they arrived."),
+      .describe("`[name, value]` pairs in the order and case they arrived, without any header whose name begins with `Tailscale-`."),
     size: z.number().int().describe("The size of the body in bytes."),
     sha256: z.string().describe("The SHA-256 hash of the body, in hex."),
     duplicate_of: z

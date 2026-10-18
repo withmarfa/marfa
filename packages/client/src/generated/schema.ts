@@ -3772,7 +3772,7 @@ export interface components {
             method: string;
             /** @description The query string as the sender sent it, without the `?`; empty if there was none. */
             query: string;
-            /** @description `[name, value]` pairs in the order and case they arrived. */
+            /** @description `[name, value]` pairs in the order and case they arrived, without any header whose name begins with `Tailscale-`. */
             headers: [
                 string,
                 string
