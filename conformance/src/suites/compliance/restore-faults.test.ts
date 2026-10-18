@@ -158,7 +158,6 @@ async function restoreAudit(since: string): Promise<string[]> {
     );
 }
 
-/** Nothing of the restore is on the instance: no row, type, edge type, blob or audit entry, and no bytes on disk. */
 async function expectNothingOf(rows: Carried, since: string): Promise<void> {
   expect((await working.getItem(rows.a)).status).toBe(404);
   expect((await working.getItem(rows.b)).status).toBe(404);
@@ -332,8 +331,8 @@ describe("a restore that is still writing", () => {
     const since = new Date().toISOString();
     await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
       const watch = watching(stream.response);
-      // Read once before the restore holds the write lock: a read that has
-      // to fill its cache waits for the lock.
+      // Record this key's use before the restore holds the write lock:
+      // authentication can write last_used_at even for a read request.
       expect((await operator.listEdgeTypes()).status).toBe(200);
       await server.setFault("hold:restore:before-commit");
       const restoring = ownerClient().restoreArchive(rows.archive);
@@ -404,7 +403,7 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     expect(new Uint8Array(read.data)).toEqual(kept);
   });
 
-  it("keeps the bytes of an upload of the same bytes that was told they are stored while the restore ran", async () => {
+  it("keeps the bytes of an upload requested while the failed restore ran", async () => {
     const shared = new TextEncoder().encode(`sent twice, ${uuidv7()}`);
     const rows = carryingBoth(carrying(), shared);
     const sharedHash = blobHash(shared);
@@ -431,7 +430,6 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
   });
 });
 
-/** The archive of `rows` with one more blob, named by its rows. */
 function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
   const extraHash = blobHash(extra);
   const entries = listTarGzEntries(rows.archive).map((entry) => {

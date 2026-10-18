@@ -1730,4 +1730,4 @@ When the server removes the blob bytes of a restore that did not commit, the ser
 
 **Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
 
-**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed row names, and removes those no row names`, `› keeps the bytes of an upload of the same bytes that was told they are stored while the restore ran`.
+**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed row names, and removes those no row names`, `› keeps the bytes of an upload requested while the failed restore ran`.

@@ -245,8 +245,8 @@ describe("a restore whose archive inflates past the room", () => {
 
   it("is answered 507 insufficient_storage and writes no row and no blob when an entry would take the volume inside the reserve", async () => {
     const body = archive();
-    // The body is a few KiB of compressed zeros and fits many times over; the
-    // entry it carries needs 6 MiB, and the volume has 5 MiB.
+    // Repeated bytes compress to a few KiB; the entry needs 6 MiB, and
+    // the volume has 5 MiB.
     expect(body.length).toBeLessThan(64 * 1024);
     await room({ database: 1024 * MiB, blobs: 5 * MiB });
     const refused = await ownerClient().restoreArchive(body);

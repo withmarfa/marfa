@@ -25,7 +25,7 @@ import { TEST_OWNER } from "../../utils/target.js";
  * restore that cannot work on this server.
  *
  * A body that outgrows the room as it arrives, and a volume that is full, are
- * in `disk-space-faults.test.ts`, which sets the room through the `free` fault.
+ * in `disk-space-faults.test.ts`, which uses `free` and `fail:blob-write`.
  */
 const HUGE_RESERVE = 2 ** 50;
 

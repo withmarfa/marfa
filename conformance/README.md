@@ -229,8 +229,10 @@ A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component
 of `GET /health` (both volumes). Setting it again while a body streams in
 changes what the next look at the volume finds, which is how a fixture fills a
-volume as the bytes arrive. The target looks at the volume every half of the
-reserve while a body streams, so a change is found within that many bytes.
+volume as the bytes arrive. The check interval is half the reserve, bounded
+to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
+A reserve of zero disables these checks. `<bytes>` is a decimal integer from
+0 through 9007199254740991.
 
 A `fail` fault makes the target fail at the point, once. It acts on the nth
 time the point is reached after the fault was set, the first unless the
