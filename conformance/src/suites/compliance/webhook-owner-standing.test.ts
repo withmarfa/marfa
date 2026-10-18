@@ -145,7 +145,6 @@ describe("a subscription whose credential stops standing", () => {
       expires_at: new Date(clock.now() + HOUR_MS).toISOString(),
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
-    // Asked of the server's address as it stands, which a restart changes.
     const owner = () => client(minted.data.key);
 
     // The key holds an expiry an hour off while it registers and is

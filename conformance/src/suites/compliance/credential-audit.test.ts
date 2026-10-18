@@ -229,13 +229,11 @@ describe("a grant retired for inactivity", () => {
         (await listed.json()) as { data: { client_id: string }[] }
       ).data.map((g) => g.client_id);
     };
-    // The witness: the grant stands, and nothing has retired it.
     expect(await grantsOf()).toContain(app.clientId);
     expect(await logged("auth.grant.retired", app.clientId)).toBe(0);
 
-    // A year of not using it is a long wait, so the server's clock is moved
-    // past the window instead. Every grant the file made earlier is as idle,
-    // so the entry is asked for by this client.
+    // Earlier grants are also idle after the move, so identify this client's
+    // audit entry rather than counting every retirement.
     await movedClock(server).advance(366 * DAY_MS);
     const run = await fetch(
       `${server.apiUrl}/housekeeping/grant-inactivity-retirement/run`,

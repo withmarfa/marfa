@@ -114,8 +114,6 @@ async function deliveries(webhookId: string): Promise<WebhookDelivery[]> {
   return listed.data.data;
 }
 
-/** Writes `count` notes and answers the deliveries they leave, once each has
- *  settled as `status`. */
 async function settled(
   webhookId: string,
   count: number,
@@ -364,10 +362,7 @@ describe("an outbound delivery's history", () => {
       const sent = () =>
         receiver.received.filter((r) => r.path === "/hook/history-cycle")
           .length;
-      // Drives the delivery through one cycle of attempts: each attempt
-      // waits out a backoff of seconds and then of minutes and hours, so
-      // the clock is moved past the longest of them before the next poll.
-      // Answers the delivery once it has given up.
+      // Advance past the longest backoff so retries do not wait on real time.
       const cycle = async (from: number): Promise<WebhookDelivery> => {
         let recorded = from;
         for (let round = 0; round < 12; round += 1) {
