@@ -240,13 +240,13 @@ When the server refuses a retention in `PUT /config`, the server MUST keep the s
 
 Where a retention is 0, the server MUST NOT expire records by age under it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-retention.test.ts › keeps every record of each kind, however far the clock moves`.
 
 ### `housekeeping/retention-positive-expires`
 
 Where a retention is positive, the server MUST expire the eligible records older than it.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-retention.test.ts › expires the records of each kind older than it, and keeps the newer`.
 
 ### `housekeeping/retention-maximum-runs`
 
@@ -260,25 +260,25 @@ Where a retention `PUT /config` sets is at the largest value it accepts, the ser
 
 Where a retention setting is at the largest value it accepts, the server MUST finish each cleanup job that reads that setting with `last_outcome` `ok`.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-settings.test.ts › finishes each cleanup job that reads a retention setting at the largest value with last_outcome ok`.
 
 ### `housekeeping/retention-setting-days-range`
 
 If `AUDIT_RETENTION_DAYS`, `TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the day settings that is not a whole number from 0 through 36500, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ### `housekeeping/retention-setting-hours-range`
 
 If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ### `housekeeping/retention-setting-ms-range`
 
 If `MARFA_BULK_ACTION_JOB_RETENTION_MS` holds a value that is neither empty nor an integer from 0 through 3153600000000 when the server starts, then the server MUST refuse to start and name the setting.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_BULK_ACTION_JOB_RETENTION_MS outside 0 through 3153600000000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ## Version thinning
 
@@ -296,7 +296,7 @@ When the `version-thinning` job thins an item's history, the server MUST keep th
 
 When no type in an item's type chain declares a field of `version_policy`, the server MUST take that field from the instance defaults when it thins the item.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-thinning.test.ts › takes recent_days from the instance default when no type in the chain declares it`, `› takes daily_snapshot_days from the instance default when no type in the chain declares it`, `› takes weekly_snapshot_days from the instance default when no type in the chain declares it`, `› takes max_versions from the instance default when no type in the chain declares it`.
 
 ### `housekeeping/thinning-minimum`
 
@@ -320,44 +320,44 @@ When an item's type is no longer registered, the server MUST NOT thin the item b
 
 When an item's type is no longer registered, the server MUST thin the item by the instance defaults.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-thinning.test.ts › thins an item whose type is no longer registered by the instance defaults`.
 
 ### `housekeeping/thinning-race`
 
 When a type is replaced while the `version-thinning` job thins its items, the server MUST thin each item by the policy as it stands when its snapshots are removed.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-thinning.test.ts › thins each item by the policy as it stands when its snapshots are removed`.
 
 ## Restarts and deadlines
 
-No fixture can restart the server yet. Nor can one hold a run past its deadline: the heartbeat and the webhook poll stop waiting for their receivers after 10 seconds, before their deadlines.
+The fixtures here restart the server, hold a run open and shorten its deadline through the target interface (`conformance/README.md`, "Target interface"): the adapter's `restart` command, and its `hold:housekeeping:<job>` and `deadline:<job>` faults.
 
 ### `housekeeping/schedule-survives-restart`
 
 When the server restarts, the server MUST NOT move a job's `next_run_at` later than it was.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-restart.test.ts › does not move a job's next_run_at later than it was`.
 
 ### `housekeeping/unfinished-run-cleared`
 
 When the server starts, the server MUST clear `running_since` from every run the previous process left unfinished.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-restart.test.ts › is cleared when the server starts, and the job runs again when asked`.
 
 ### `housekeeping/deadline-recorded`
 
 If a run outlives its deadline, then the server MUST record the run with `last_outcome` `error` and a `last_error` saying it did not finish in time.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-restart.test.ts › is recorded with last_outcome error and a last_error saying it did not finish in time`.
 
 ### `housekeeping/deadline-frees-job`
 
 If a run outlives its deadline, then the server MUST run that job again when asked, rather than answer `409 housekeeping_job_running`.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-restart.test.ts › frees the job, so it runs again when asked rather than answering 409 housekeeping_job_running`.
 
 ### `housekeeping/deadline-result-discarded`
 
 If a run that outlived its deadline later finishes, then the server MUST NOT record what it finished with.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/housekeeping-restart.test.ts › does not record what the run finishes with if it later finishes`.

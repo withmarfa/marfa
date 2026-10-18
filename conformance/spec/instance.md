@@ -914,6 +914,56 @@ When the configured private control socket path holds a file that is not a socke
 
 **Tests:** `compliance/control-socket.test.ts › refuses a non-socket control path and preserves its contents`.
 
+## Test hooks
+
+A test hook is a route on the private control socket that moves the server's clock or sets a fault. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so each rule here keeps them out of an instance that holds data.
+
+### `instance/test-hooks-off`
+
+While `MARFA_TEST_HOOKS` is not true, the server MUST NOT serve a test hook on any listener.
+
+**Reason:** a test hook can move the clock and hold a housekeeping job, which an instance that holds data must never allow.
+
+**Tests:** `compliance/test-hooks.test.ts › serves no test hook on any listener while MARFA_TEST_HOOKS is not true`.
+
+### `instance/test-hooks-http`
+
+The server MUST NOT serve a test hook on its HTTP listener, whatever `MARFA_TEST_HOOKS` holds.
+
+**Tests:** `compliance/test-hooks.test.ts › serves no test hook on the HTTP listener, even with MARFA_TEST_HOOKS true`.
+
+### `instance/test-hooks-production-refused`
+
+If `MARFA_TEST_HOOKS` is true and `NODE_ENV` is `production` when the server starts, then the server MUST refuse to start and name `MARFA_TEST_HOOKS`.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses to start in production with MARFA_TEST_HOOKS true, naming the setting`.
+
+### `instance/test-clock-offset-needs-hooks`
+
+If `MARFA_TEST_CLOCK_OFFSET_MS` is greater than 0 and `MARFA_TEST_HOOKS` is not true when the server starts, then the server MUST refuse to start and name `MARFA_TEST_CLOCK_OFFSET_MS`.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses a clock offset without MARFA_TEST_HOOKS, naming the setting`.
+
+### `instance/test-clock-offset`
+
+Where `MARFA_TEST_CLOCK_OFFSET_MS` is set, the server MUST read the time as that many milliseconds later than the system clock.
+
+**Tests:** `compliance/test-hooks.test.ts › reads the time as MARFA_TEST_CLOCK_OFFSET_MS later than the system clock`.
+
+### `instance/test-clock-forward`
+
+If the clock is asked to move back, then the server MUST refuse and keep the time it reads.
+
+**Reason:** ids, versions and cursors assume time does not go back.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses to move the clock back, and keeps the time it reads`.
+
+### `instance/test-faults-cleared-at-start`
+
+When the server starts, the server MUST hold no fault.
+
+**Tests:** `compliance/test-hooks.test.ts › holds no fault after a restart`.
+
 ## Settings refused at boot
 
 The server reads its settings once, when it starts, and the table at the end of this chapter gives each one's rule. A client meets a refused setting as a process that exits, so these rules are about the exit status, the log message and the files left behind.

@@ -1862,7 +1862,7 @@ When the server purges an item through `POST /items/{id}/purge` or a bulk `purge
 
 When the `trash-purge` housekeeping job purges an item, the server MUST record its tombstones as `items/tombstone` states.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/tombstone-housekeeping.test.ts › is recorded, for the link and the natural key, when the trash-purge job purges an item`.
 
 ### `items/tombstone-kept`
 
@@ -1870,7 +1870,7 @@ The server MUST NOT remove a tombstone in a housekeeping job.
 
 **Reason:** a vendor can keep a purged item for as long as it likes, and each tombstone is one small row.
 
-**Tests:** waiting on #1444.
+**Tests:** `compliance/tombstone-housekeeping.test.ts › is not removed by any housekeeping job, however far the clock moves`.
 
 ### `items/tombstone-own-type`
 
