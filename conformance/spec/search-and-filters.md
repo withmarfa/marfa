@@ -1258,7 +1258,7 @@ When one attached store's recorded copy of a blob that an archive carries is mis
 
 If the bytes `GET /export?format=archive` reads for a blob do not hash to the blob's name, then the server MUST end the response with an error and not with a clean end.
 
-**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. `blob-integrity` strikes such a copy, and the next export names the blob in `missing_blobs` or reads it from another store.
+**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. Once `blob-integrity` strikes such a copy, an export names the blob in `missing_blobs` or reads it from another store.
 
 **Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name`.
 
