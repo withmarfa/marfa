@@ -488,3 +488,22 @@ test(
     assert.equal(ended, "stopped");
   },
 );
+
+test(
+  "a follow told its caller was last told the server is unreachable tells it reachable at its first stream",
+  { timeout: 20_000 },
+  async (t) => {
+    const { core } = await hydrated(t, [held]);
+    /** @type {string[]} */
+    const told = [];
+    const subscription = core.follow(
+      (change) => told.push(change.kind),
+      () => {},
+      true,
+    );
+    t.after(() => subscription.stop());
+    const deadline = Date.now() + 10_000;
+    while (told.length === 0 && Date.now() < deadline) await sleep(20);
+    assert.deepEqual(told, ["serverReachable"]);
+  },
+);
