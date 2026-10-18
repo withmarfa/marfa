@@ -154,6 +154,42 @@ describe("a file whose bytes its writer never proved", () => {
     expect(await readingDoors(uploader.client, hash)).toEqual(SERVED);
   });
 
+  it("keeps no answer under the Idempotency-Key, so the write sent again after the upload is taken", async () => {
+    const uploader = await keyHolding({ "core.file": "write" });
+    const writer = await keyHolding({ "core.file": "write" });
+    const { hash, bytes } = await uploadAs(uploader.client, "bytes C sent");
+    const headers = { "Idempotency-Key": `file-proof-${ctx.runId}` };
+    const create = () =>
+      writer.client.rawRequest<{ item: { id: string } }>("/items", {
+        method: "POST",
+        headers,
+        body: { type: "core.file", properties: fileProperties(hash) },
+      });
+
+    const refused = await create();
+    expect(refused.status, JSON.stringify(refused.data)).toBe(404);
+    expect(refused.error?.error.code).toBe("blob_not_found");
+    // Sent again before the upload, the request is judged afresh.
+    const before = await create();
+    expect(before.status).toBe(404);
+    expect(before.headers.get("Idempotency-Replayed")).toBeNull();
+
+    const again = await writer.client.uploadBlob(bytes, "text/plain");
+    expect(again.status, JSON.stringify(again.error)).toBe(201);
+    const taken = await create();
+    expect(
+      taken.status,
+      "the retry the refusal asks for was answered with the kept refusal",
+    ).toBe(201);
+    expect(taken.headers.get("Idempotency-Replayed")).toBeNull();
+    trackItem(ctx, taken.data.item.id);
+    // Kept once taken: the next repeat is the replay of the create.
+    const replayed = await create();
+    expect(replayed.status).toBe(201);
+    expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(replayed.data.item.id).toBe(taken.data.item.id);
+  });
+
   it("answers bytes another key holds exactly as it answers a hash nothing holds", async () => {
     const owner = await keyHolding({ "core.note": "write" });
     const writer = await keyHolding({ "core.file": "write" });

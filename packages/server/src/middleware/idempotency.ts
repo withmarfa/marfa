@@ -151,6 +151,19 @@ const MAX_KEY_LENGTH = 255;
 const RELEASED_STATUSES = new Set([401, 403]);
 
 /**
+ * Refusals that give the key back, by status and error code.
+ *
+ * `404 blob_not_found` on these doors is only the refusal of a file whose
+ * bytes its writer never proved (`blobs/proof-file-refused`). It is raised
+ * inside the write's transaction, so nothing was written, and its body is
+ * the same whether or not the instance holds the bytes, so giving the key
+ * back says nothing a kept answer would not. Its own message asks the
+ * writer to upload the bytes and write again, and a kept answer would
+ * refuse that retry for the retention window.
+ */
+const RELEASED_REFUSALS = new Set([`404 ${ErrorCode.BLOB_NOT_FOUND}`]);
+
+/**
  * **This rule keys on the status, not on whether the request wrote**, and
  * that is safe only because no door here can write and then answer 401 or
  * 403 outside a transaction.
@@ -521,7 +534,7 @@ async function acquire(
  * replaced it. Both of those are how a duplicate write gets made, which is
  * what this whole mechanism exists to stop.
  *
- * **Three outcomes are given up rather than recorded**, and each for the
+ * **These outcomes are given up rather than recorded**, and each for the
  * same reason: it is not a property of the request.
  *
  *   - A 5xx is a server fault. Pinning one would turn a transient failure
@@ -531,9 +544,11 @@ async function acquire(
  *     refusal at a corrected credential would be a wrong answer to the
  *     question actually being asked. A conflict is the opposite — it says
  *     something about the request, which is why 409 IS recorded.
+ *   - A `404 blob_not_found` file refusal is a property of what the
+ *     credential has uploaded, which the caller fixes by uploading.
  *
- * A 404 is recorded, a hidden row's included: releasing that one alone
- * would tell a row the key cannot read from a missing one.
+ * Every other 404 is recorded, a hidden row's included: releasing that one
+ * alone would tell a row the key cannot read from a missing one.
  */
 async function recordOutcome(
   storage: Storage,
@@ -543,7 +558,15 @@ async function recordOutcome(
   authorization: ReplayRequirement[],
 ): Promise<void> {
   try {
-    if (response.status >= 500 || RELEASED_STATUSES.has(response.status)) {
+    // Read from a clone so the response the caller receives is untouched.
+    const body = await response.clone().text();
+    if (
+      response.status >= 500 ||
+      RELEASED_STATUSES.has(response.status) ||
+      RELEASED_REFUSALS.has(
+        `${String(response.status)} ${errorCodeOf(body) ?? ""}`,
+      )
+    ) {
       const released = await storage.idempotency.release(recordId, heldSince);
       if (!released) {
         log("warn", "Idempotency claim was already gone at release", {
@@ -554,8 +577,6 @@ async function recordOutcome(
       return;
     }
     const contentType = response.headers.get("Content-Type");
-    // Read from a clone so the response the caller receives is untouched.
-    const body = await response.clone().text();
     const retained =
       new TextEncoder().encode(body).byteLength <= MAX_STORED_BODY_BYTES;
     const recorded = await storage.idempotency.complete({

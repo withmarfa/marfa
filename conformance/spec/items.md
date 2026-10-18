@@ -726,6 +726,14 @@ When the server answers a request under an `Idempotency-Key` with `401`, `403` o
 
 **Tests:** `sync/idempotency-replay.test.ts › does not keep a 403 answer, so the key works once the grant is added`.
 
+### `items/idempotency-unproven-file-not-kept`
+
+When the server refuses a write under an `Idempotency-Key` with `404 blob_not_found` under `blobs/proof-file-refused`, the server MUST NOT keep the answer.
+
+**Reason:** the refusal writes nothing and answers the same whether or not the instance holds the bytes, and it asks the writer to upload the bytes and write again. A kept answer would refuse that write for as long as the key is kept.
+
+**Tests:** `compliance/file-blob-proof.test.ts › keeps no answer under the Idempotency-Key, so the write sent again after the upload is taken`.
+
 ### `items/replay-reauthorized`
 
 When the server replays an answer, the server MUST first hold the credential to every grant the first request needed and to read on everything the first answer disclosed, as they stand at the replay.
