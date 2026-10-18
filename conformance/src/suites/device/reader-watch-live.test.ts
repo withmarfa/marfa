@@ -8,12 +8,15 @@ import { requireBinary } from "./harness.js";
 
 it("tells a never-hydrated reader about a concurrent save without a hydration warning or server contact", async () => {
   const context = await createTestContext("device", "reader-watch");
+  const fixtureServer = new URL(context.apiUrl);
   let contacts = 0;
   const proxy = createServer((incoming, outgoing) => {
     contacts++;
+    const requested = new URL(incoming.url ?? "/", "http://fixture.invalid");
     const upstream = request(
-      new URL(incoming.url ?? "/", context.apiUrl),
+      fixtureServer,
       {
+        path: `${requested.pathname}${requested.search}`,
         method: incoming.method,
         headers: incoming.headers,
       },
