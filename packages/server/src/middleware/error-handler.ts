@@ -99,6 +99,8 @@ export function shapedError(err: unknown): ShapedError | undefined {
 export function createErrorHandler(config: {
   errorWebhookUrl: string;
   errorWebhookTimeoutMs?: number;
+  /** The environment an alert names. */
+  deploymentEnvironment?: string;
   /** Names the instance in an alert, so one channel can serve several. */
   authBaseUrl?: string;
 }): ErrorHandler<AppEnv> {
@@ -158,6 +160,7 @@ export function createErrorHandler(config: {
           ...(instance && { instance }),
         },
         config.errorWebhookTimeoutMs,
+        config.deploymentEnvironment,
       );
     }
   };

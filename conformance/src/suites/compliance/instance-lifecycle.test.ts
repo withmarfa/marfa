@@ -1452,6 +1452,12 @@ describe("starting with a setting outside its rule", () => {
       'MARFA_ENRICHMENT_ENABLED must be true or false (also 1/0, yes/no, on/off) (got "maybe")',
     ],
     [
+      "OTEL_RESOURCE_ATTRIBUTES",
+      "a list with a pair that has no value",
+      "team",
+      'OTEL_RESOURCE_ATTRIBUTES must be comma-separated key=value pairs with percent-encoded values (got "team")',
+    ],
+    [
       "S3_ENDPOINT",
       "not a URL",
       "nope",
@@ -1470,6 +1476,7 @@ describe("starting with a setting outside its rule", () => {
         SQLITE_BUSY_BUDGET_MS: "0",
         MARFA_ENRICHMENT_ENABLED: "OFF",
         S3_ENDPOINT: "https://objects.example.test",
+        OTEL_RESOURCE_ATTRIBUTES: "team=a%20b",
         // With no bucket the endpoint is parsed and never reached, whatever
         // object store the run's environment names.
         S3_BUCKET: "",

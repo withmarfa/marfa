@@ -66,8 +66,14 @@ async function main() {
     // own writes on the default.
     setBusyBudgetMs(config.sqliteBusyBudgetMs);
     const storage: Storage = await createSqliteStorage(config.sqlitePath);
-
     startupCleanup.push(() => storage.close());
+    // The root route keeps this value so it remains answerable if the
+    // database later becomes unavailable. Read as soon as the database can
+    // say it, so telemetry held for it leaves with the boot's own lines.
+    const instanceId = await ensureInstanceId(storage.settings);
+    (
+      globalThis as { __marfaTelemetryInstanceId?: (id: string) => void }
+    ).__marfaTelemetryInstanceId?.(instanceId);
     const publicListener = config.controlOnly
       ? undefined
       : await reservePublicListener(config);
@@ -133,10 +139,6 @@ async function main() {
       );
     setActivePermissionBundles(bundles);
     config.permissionBundles = bundles;
-
-    // The root route keeps this value so it remains answerable if the
-    // database later becomes unavailable.
-    const instanceId = await ensureInstanceId(storage.settings);
 
     const localApp = createApp(
       storage,

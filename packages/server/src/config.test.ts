@@ -398,6 +398,79 @@ describe("test hooks", () => {
 describe("OpenTelemetry settings", () => {
   const exporting = (extra: Record<string, string>) => loadConfig(extra).otel;
 
+  describe("the resource", () => {
+    const withEndpoint = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+    };
+
+    it("names the service marfa-server and the environment production unless told otherwise", () => {
+      const config = loadConfig(withEndpoint);
+      expect(config.otel?.serviceName).toBe("marfa-server");
+      expect(config.otel?.resourceAttributes).toEqual({});
+      expect(config.deploymentEnvironment).toBe("production");
+    });
+
+    it("reads OTEL_RESOURCE_ATTRIBUTES as key=value pairs with percent-encoded values", () => {
+      const config = loadConfig({
+        ...withEndpoint,
+        OTEL_RESOURCE_ATTRIBUTES:
+          "deployment.environment=staging, team=a%20b%2Cc,service.instance.id=rehearsal",
+      });
+      expect(config.otel?.resourceAttributes).toEqual({
+        "deployment.environment": "staging",
+        team: "a b,c",
+        "service.instance.id": "rehearsal",
+      });
+      expect(config.deploymentEnvironment).toBe("staging");
+    });
+
+    it("takes the environment from deployment.environment.name before deployment.environment", () => {
+      expect(
+        loadConfig({
+          OTEL_RESOURCE_ATTRIBUTES:
+            "deployment.environment=old,deployment.environment.name=rehearsal",
+        }).deploymentEnvironment,
+      ).toBe("rehearsal");
+    });
+
+    it("names the environment for the error notification with no endpoint set", () => {
+      const config = loadConfig({
+        OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=staging",
+      });
+      expect(config.otel).toBeUndefined();
+      expect(config.deploymentEnvironment).toBe("staging");
+    });
+
+    it("takes the service name from OTEL_SERVICE_NAME, then service.name, then marfa-server", () => {
+      const named = (extra: Record<string, string>) =>
+        loadConfig({ ...withEndpoint, ...extra }).otel;
+      expect(
+        named({
+          OTEL_SERVICE_NAME: "from-name",
+          OTEL_RESOURCE_ATTRIBUTES: "service.name=from-attributes",
+        })?.serviceName,
+      ).toBe("from-name");
+      const attributesOnly = named({
+        OTEL_RESOURCE_ATTRIBUTES: "service.name=from-attributes,a=b",
+      });
+      expect(attributesOnly?.serviceName).toBe("from-attributes");
+      // `service.name` is the service name, not a second copy of it.
+      expect(attributesOnly?.resourceAttributes).toEqual({ a: "b" });
+      expect(named({ OTEL_SERVICE_NAME: "   " })?.serviceName).toBe(
+        "marfa-server",
+      );
+    });
+
+    it("refuses a pair with no key, no value or a broken percent sign, naming the setting", () => {
+      for (const bad of ["=x", "a=", "novalue", "a=%zz"]) {
+        expect(
+          refusal({ ...withEndpoint, OTEL_RESOURCE_ATTRIBUTES: bad }),
+          bad,
+        ).toContain("OTEL_RESOURCE_ATTRIBUTES");
+      }
+    });
+  });
+
   it("is off with no endpoint, and has no second switch", () => {
     expect(exporting({})).toBeUndefined();
     expect(

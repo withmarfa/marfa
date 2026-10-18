@@ -189,6 +189,7 @@ export function createApp(
   const errorHandler = createErrorHandler({
     errorWebhookUrl: config.errorWebhookUrl,
     errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
+    deploymentEnvironment: config.deploymentEnvironment,
     authBaseUrl: config.authBaseUrl,
   });
   app.onError(errorHandler);

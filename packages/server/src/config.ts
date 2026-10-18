@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
+import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
@@ -312,6 +313,11 @@ export interface AppConfig {
    *  network. Optional on the type so test contexts constructing
    *  `AppConfig` literals keep the default, off. */
   webhookAllowPrivateAddresses?: boolean;
+  /** The environment exported telemetry and an error notification name:
+   *  `deployment.environment.name` or `deployment.environment` of
+   *  `OTEL_RESOURCE_ATTRIBUTES`, else `production`. Optional on the type so
+   *  a test context's `AppConfig` literal takes the default. */
+  deploymentEnvironment?: string;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -428,6 +434,9 @@ export interface Placement {
  */
 export interface OtelSettings {
   serviceName: string;
+  /** `OTEL_RESOURCE_ATTRIBUTES`, which replace the server's own of the same
+   *  name. `service.name` is not among them: it is `serviceName`. */
+  resourceAttributes: Record<string, string>;
   /** Each signal's resolved URL. */
   tracesEndpoint: string;
   logsEndpoint: string;
@@ -1356,10 +1365,14 @@ const settingsShape = {
     () => 0.05,
     "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
   ),
-  OTEL_SERVICE_NAME: setting(
-    text,
-    () => "marfa-server",
-    "The service name on exported telemetry.",
+  OTEL_SERVICE_NAME: optionalText(
+    "The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.",
+    "`marfa-server`",
+  ),
+  OTEL_RESOURCE_ATTRIBUTES: setting<Record<string, string>>(
+    otlpHeaders,
+    () => ({}),
+    "Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.",
   ),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
     "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
@@ -1600,6 +1613,15 @@ function otlpSignalUrl(
   return `${general.endsWith("/") ? general : `${general}/`}${path}`;
 }
 
+function withoutKey(
+  attributes: Record<string, string>,
+  key: string,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(([name]) => name !== key),
+  );
+}
+
 /** Telemetry is on exactly when the general endpoint is set. */
 function otelSettings(
   s: z.output<typeof settingsSchema>,
@@ -1607,7 +1629,11 @@ function otelSettings(
   const general = s.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (general === undefined) return undefined;
   return {
-    serviceName: s.OTEL_SERVICE_NAME,
+    serviceName:
+      s.OTEL_SERVICE_NAME ??
+      s.OTEL_RESOURCE_ATTRIBUTES["service.name"] ??
+      "marfa-server",
+    resourceAttributes: withoutKey(s.OTEL_RESOURCE_ATTRIBUTES, "service.name"),
     tracesEndpoint: otlpSignalUrl(
       s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
       general,
@@ -1760,6 +1786,10 @@ export function loadConfig(
     bulkActionPollBackoffMultiplier:
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
+    deploymentEnvironment:
+      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"] ??
+      s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"] ??
+      DEFAULT_DEPLOYMENT_ENVIRONMENT,
     errorWebhookUrl: s.ERROR_WEBHOOK_URL,
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
     trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,
