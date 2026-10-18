@@ -205,7 +205,8 @@ export function touchLastUsedCache(
  * promoted from a closure inside `authMiddleware` so route handlers
  * (token-issuance / refresh paths that don't carry a bearer header
  * through the middleware) can share the same throttle. Keys are
- * `oauth:<connection_item_id>`; values are millisecond timestamps.
+ * `oauth:<connection_item_id>` and `oauth-grantkey:<client>:<user>`;
+ * values are monotonic millisecond timestamps.
  *
  * **First-line short-circuit, not the floor.** The DB layer uses a
  * conditional UPDATE in `OauthProviderStore.updateLastUsedAt`, writing only
@@ -240,9 +241,9 @@ export async function stampOAuthGrantLastUsed(
   connectionItemId: string,
 ): Promise<void> {
   const cacheKey = `oauth:${connectionItemId}`;
-  const now = clock.nowMs();
-  const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
-  if (now - lastTracked <= DEBOUNCE_MS) return;
+  const now = clock.monotonicMs();
+  const lastTracked = oauthLastUsedCache.get(cacheKey);
+  if (lastTracked !== undefined && now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
     await storage.oauthProvider?.updateLastUsedAt(
@@ -261,14 +262,14 @@ export async function stampOAuthGrantLastUsed(
  * The bearer middleware needs this because the plugin's
  * `auth_oauth_access_token` row doesn't carry a FK to the projected
  * `system.connection`. We resolve the item id on first call inside the
- * debounce window, then call the existing `stampOAuthGrantLastUsed`.
- * Both lookups + stamp share the same `oauthLastUsedCache`, so
- * per-request cost is one cheap Map lookup once the cache is warm.
+ * debounce window, then stamp it. The lookup and stamp share the same
+ * `oauthLastUsedCache` entry, so per-request cost is one cheap Map lookup
+ * once the cache is warm.
  *
  * Cache key shape (`oauth-grantkey:<client>:<user>`) differs from
  * `stampOAuthGrantLastUsed`'s `oauth:<id>`, so the two keyspaces don't
- * collide but a write through either path correctly skips a second write
- * within the same window.
+ * collide. The DB-side conditional update remains the shared floor for
+ * writes that reach the same grant through different cache keys.
  *
  * Fire-and-forget; failures swallowed.
  */
@@ -280,9 +281,9 @@ export async function stampOAuthGrantLastUsedByGrantKey(
   },
 ): Promise<void> {
   const cacheKey = `oauth-grantkey:${opts.clientId}:${opts.authUserId}`;
-  const now = clock.nowMs();
-  const lastTracked = oauthLastUsedCache.get(cacheKey) ?? 0;
-  if (now - lastTracked <= DEBOUNCE_MS) return;
+  const now = clock.monotonicMs();
+  const lastTracked = oauthLastUsedCache.get(cacheKey);
+  if (lastTracked !== undefined && now - lastTracked <= DEBOUNCE_MS) return;
   // Mark BEFORE the lookup — if the lookup misses (no projection yet),
   // we still want to skip retrying for the rest of the window.
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
@@ -409,6 +410,7 @@ export function authMiddleware(storage: Storage, salt: string) {
   // OAuth grants get their throttle from `oauthLastUsedCache` (module-
   // scoped) so route-handler stampers can share the same window.
   const lastUsedCache = new Map<string, number>();
+  const pendingLastUsed = new Map<string, Promise<void>>();
 
   return createMiddleware<AppEnv>(async (c, next) => {
     c.set("authority", undefined);
@@ -502,15 +504,27 @@ export function authMiddleware(storage: Storage, salt: string) {
       c.set("apiKey", toRequestApiKey(stored));
       c.set("authType", "api_key");
 
-      // DB-side conditional UPDATE is the authoritative floor; this cache
-      // skips the round-trip when this instance already wrote within DEBOUNCE_MS.
+      // The DB floor uses a strict older-than comparison, so the cache must
+      // wait until more than DEBOUNCE_MS has elapsed before another attempt.
       const cacheKey = `key:${stored.id}`;
-      const now = clock.nowMs();
-      const lastTracked = lastUsedCache.get(cacheKey) ?? 0;
-      if (now - lastTracked > DEBOUNCE_MS) {
-        await storage.keys.updateLastUsed(stored.id);
-        touchLastUsedCache(lastUsedCache, cacheKey, now);
+      const now = clock.monotonicMs();
+      const lastTracked = lastUsedCache.get(cacheKey);
+      let pending = pendingLastUsed.get(cacheKey);
+      if (
+        !pending &&
+        (lastTracked === undefined || now - lastTracked > DEBOUNCE_MS)
+      ) {
+        pending = storage.keys
+          .updateLastUsed(stored.id)
+          .then(() => {
+            touchLastUsedCache(lastUsedCache, cacheKey, now);
+          })
+          .finally(() => {
+            pendingLastUsed.delete(cacheKey);
+          });
+        pendingLastUsed.set(cacheKey, pending);
       }
+      if (pending) await pending;
 
       return next();
     }

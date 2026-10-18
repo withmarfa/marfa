@@ -1,8 +1,9 @@
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DrizzleQueryError } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import * as clock from "../clock.js";
 import {
   healthRoutes,
   instanceReadCaller,
@@ -486,6 +487,17 @@ describe("instanceReadCaller", () => {
 });
 
 describe("the probes the app mounts", () => {
+  let elapsed: number;
+  let wall: number;
+
+  beforeEach(() => {
+    elapsed = 0;
+    wall = Date.parse("2026-01-01T00:00:00Z");
+    vi.spyOn(clock, "monotonicMs").mockImplementation(() => elapsed);
+    vi.spyOn(clock, "nowMs").mockImplementation(() => wall);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
   function settingsThat(set: () => Promise<void>) {
     const calls: string[] = [];
     return {
@@ -504,35 +516,74 @@ describe("the probes the app mounts", () => {
   const paths = { sqlitePath: ":memory:", blobPath: "." };
 
   it("commits one write and answers the callers that follow it within the reuse window from that one", async () => {
-    let clock = 1_000_000;
     const { calls, storage } = settingsThat(() => Promise.resolve());
-    const probes = storageProbes(storage, paths, () => clock);
+    const probes = storageProbes(storage, paths);
 
     await Promise.all([probes.write(), probes.write(), probes.write()]);
     await probes.write();
     expect(calls).toHaveLength(1);
 
-    clock += WRITE_PROBE_REUSE_MS;
+    wall += 86_400_000;
+    elapsed = WRITE_PROBE_REUSE_MS - 1;
+    await probes.write();
+    expect(calls).toHaveLength(1);
+
+    elapsed = WRITE_PROBE_REUSE_MS;
     await probes.write();
     expect(calls).toHaveLength(2);
   });
 
   it("answers a refused write with the refusal until the reuse window ends, and then tries again", async () => {
-    let clock = 1_000_000;
     let refuse = true;
     const { calls, storage } = settingsThat(() =>
       refuse ? Promise.reject(new Error("SQLITE_FULL")) : Promise.resolve(),
     );
-    const probes = storageProbes(storage, paths, () => clock);
+    const probes = storageProbes(storage, paths);
 
     await expect(probes.write()).rejects.toThrow("SQLITE_FULL");
     await expect(probes.write()).rejects.toThrow("SQLITE_FULL");
     expect(calls).toHaveLength(1);
 
     refuse = false;
-    clock += WRITE_PROBE_REUSE_MS;
+    wall += 86_400_000;
+    elapsed = WRITE_PROBE_REUSE_MS - 1;
+    await expect(probes.write()).rejects.toThrow("SQLITE_FULL");
+    expect(calls).toHaveLength(1);
+    elapsed = WRITE_PROBE_REUSE_MS;
     await expect(probes.write()).resolves.toBeUndefined();
     expect(calls).toHaveLength(2);
+  });
+
+  it("stores a wall-clock date and starts reuse only after an in-flight probe settles", async () => {
+    let settle!: () => void;
+    const set = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const probes = storageProbes(
+      { settings: { set } } as unknown as Parameters<typeof storageProbes>[0],
+      paths,
+    );
+    const first = probes.write();
+    expect(probes.write()).toBe(first);
+    expect(set).toHaveBeenCalledWith(
+      "health_probe",
+      new Date(wall).toISOString(),
+    );
+    elapsed = WRITE_PROBE_REUSE_MS * 2;
+    expect(probes.write()).toBe(first);
+    settle();
+    await first;
+    elapsed += WRITE_PROBE_REUSE_MS - 1;
+    await probes.write();
+    expect(set).toHaveBeenCalledTimes(1);
+    elapsed += 1;
+    const next = probes.write();
+    expect(set).toHaveBeenCalledTimes(2);
+    settle();
+    await next;
   });
 
   it("measures real room on the volumes it is given", async () => {
