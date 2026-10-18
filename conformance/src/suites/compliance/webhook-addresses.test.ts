@@ -108,6 +108,32 @@ describe("webhook addresses", () => {
     await working.deleteWebhook(created.data.id);
   });
 
+  it("refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one", async () => {
+    for (const url of [
+      "http://[::10.0.0.1]/hook",
+      "http://[::a00:1]/hook",
+      "http://[fc00::1]/hook",
+      "http://[fe80::1]/hook",
+      "http://[ff02::1]/hook",
+      "http://[2001:db8::1]/hook",
+      "http://[4000::1]/hook",
+    ]) {
+      const refused = await working.createWebhook({
+        url,
+        events: ["item.created"],
+      });
+      expect(refused.status, url).toBe(400);
+      expect(refused.error?.error.code, url).toBe("validation_error");
+    }
+    // The witness: a global address is accepted on the same door.
+    const accepted = await working.createWebhook({
+      url: "http://[2606:4700:4700::1111]/hook",
+      events: ["item.created"],
+    });
+    expect(accepted.status).toBe(201);
+    await working.deleteWebhook(accepted.data.id);
+  });
+
   it("refuses to point a subscription at an address that is not public, leaving the stored url", async () => {
     // A name that does not resolve is accepted and never reached.
     const stored = "http://receiver.invalid/hook/stored";

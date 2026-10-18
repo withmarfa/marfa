@@ -92,6 +92,39 @@ describe("isPublicAddress", () => {
     }
   });
 
+  it("takes an IPv6 address only inside 2000::/3, after an IPv4-mapped one is read as the IPv4 address it carries", () => {
+    for (const address of [
+      "2606:4700:4700::1111",
+      "2a00:1450:4009:81f::200e",
+      "2000::1",
+      "3fff:ffff::1",
+      "::ffff:8.8.8.8",
+    ]) {
+      expect(isPublicAddress(address), address).toBe(true);
+    }
+    for (const address of [
+      // ::/96, which carries an IPv4 address in its last 32 bits.
+      "::10.0.0.1",
+      "::a00:1",
+      "::7f00:1",
+      "::808:808",
+      "::ffff:0:808:808",
+      "fc00::1",
+      "fe80::1",
+      "ff02::1",
+      "ff0e::1",
+      "2001:db8::1",
+      // Outside 2000::/3.
+      "1fff::1",
+      "4000::1",
+      "8000::1",
+      "e000::1",
+      "::ffff:10.0.0.1",
+    ]) {
+      expect(isPublicAddress(address), address).toBe(false);
+    }
+  });
+
   it("judges an IPv4 address written as IPv6 as the IPv4 address it carries", () => {
     expect(isPublicAddress("::ffff:8.8.8.8")).toBe(true);
     expect(isPublicAddress("::ffff:192.168.0.1")).toBe(false);

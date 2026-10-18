@@ -40,13 +40,18 @@ class AddressNotPublicError extends Error {
   }
 }
 
+/** Global unicast, the only IPv6 block that is assigned to hosts on the internet. */
+const GLOBAL_UNICAST_V6 = ipaddr.IPv6.parseCIDR("2000::/3");
+
 /**
  * Whether `address` is one a delivery may connect to: a global unicast
  * address, with an IPv4 address written as IPv6 judged as the IPv4 address
- * it carries. Anything ipaddr.js names a special range is refused, which
- * takes in loopback, private, link-local, unique-local, carrier-grade NAT,
- * the unspecified address, multicast, and the translation prefixes that
- * embed an IPv4 address of either kind.
+ * it carries. An IPv4 address must not be in a range ipaddr.js names special,
+ * which takes in loopback, private, link-local, carrier-grade NAT, the
+ * unspecified address, multicast and the reserved blocks. An IPv6 address
+ * must lie in 2000::/3 as well, so every other block is refused whether or
+ * not ipaddr.js has a name for it: unique-local, link-local, multicast, the
+ * unspecified address, `::/96` and the translation prefixes among them.
  */
 export function isPublicAddress(address: string): boolean {
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
@@ -57,7 +62,11 @@ export function isPublicAddress(address: string): boolean {
   }
   if (parsed.kind() === "ipv6") {
     const v6 = parsed as ipaddr.IPv6;
-    if (v6.isIPv4MappedAddress()) parsed = v6.toIPv4Address();
+    if (v6.isIPv4MappedAddress()) {
+      parsed = v6.toIPv4Address();
+    } else if (!v6.match(GLOBAL_UNICAST_V6)) {
+      return false;
+    }
   }
   return parsed.range() === "unicast";
 }
