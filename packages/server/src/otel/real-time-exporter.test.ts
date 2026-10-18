@@ -33,7 +33,7 @@ it.each([
     const address = collector.address();
     if (!address || typeof address === "string")
       throw new Error("No collector port");
-    const exporter = realTimeExporter(
+    const exporter = realTimeExporter<never>(
       new Exporter({
         url: `http://127.0.0.1:${String(address.port)}/export`,
         timeoutMillis: 10_000,
