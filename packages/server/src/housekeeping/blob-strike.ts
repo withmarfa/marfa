@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { addAbortSignal } from "node:stream";
 import type { BlobStore } from "../storage/blob-store.js";
+import { storeChecks, within } from "../storage/blob-layer.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -58,20 +60,27 @@ export async function strikeCopy(
 /**
  * Whether `store`'s copy of `hash` holds the blob, read in full and hashed.
  * `false` when the store holds no copy, holds one of another size, or gives
- * exactly `sizeBytes` bytes that hash to another name. A read that fails or
- * ends short throws instead, because it says nothing of the copy.
+ * exactly `sizeBytes` bytes that hash to another name. A read that fails,
+ * ends short, does not open within the store check bound or is called off
+ * by `signal` throws instead, because it says nothing of the copy.
  */
 export async function copyIntact(
   store: BlobStore,
   hash: string,
   sizeBytes: number,
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const read = await store.get(hash);
+  const read = await within(
+    (cancel) => store.get(hash, undefined, cancel),
+    storeChecks.timeoutMs,
+    { signal, late: (gone) => gone?.stream.destroy() },
+  );
   if (!read) return false;
   if (read.size_bytes !== sizeBytes) {
     read.stream.destroy();
     return false;
   }
+  if (signal) addAbortSignal(signal, read.stream);
   const digest = createHash("sha256");
   let bytes = 0;
   for await (const chunk of read.stream) {
