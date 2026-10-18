@@ -137,7 +137,7 @@ When a stream's final drain consumes a logged live frame, the server MUST give `
 
 **Reason:** the drain settles delivery just as replay does, so its withheld frames are also covered by the marker.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › gives stream_live a cursor at or past a drained frame the credential withholds`.
 
 ### `events/stream-live-skips-covered`
 
@@ -155,7 +155,7 @@ When a client resumes from the `cursor` of `stream_live`, the server MUST send i
 
 If the server cannot read the log's head within its budget, and before `stream_live` the stream has neither read an event in a replay nor sent one, then the server MUST send `stream_live` with `cursor` `null`.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-opening-faults.test.ts › sends stream_live with a null cursor when it has read and sent no event`, `› names the furthest event it replayed instead when it read one`.
 
 ## Cursors
 
@@ -263,7 +263,7 @@ When the oldest event the log retains has an id exactly one above the cursor, th
 
 If the retention sweep retires the next events of a replay while it reads, then the server MUST end the stream with `catchup_too_old` rather than replay over the gap.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › ends with catchup_too_old instead of replaying over the gap`.
 
 ### `events/retention-prefix`
 
@@ -329,7 +329,7 @@ When a stream has sent or replayed events up to an id, the server MUST NOT send 
 
 **Reason:** an archive restore announces its events after it commits, by which time a stream opened since may have replayed them from the log.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › is not sent again to a stream that opened between the commit and the announcement`, `› is not sent again to a copy stream that opened between the commit and the announcement`.
 
 ### `events/unreadable-row-not-replayed`
 
@@ -343,7 +343,7 @@ If the log holds an event the server can no longer read, then the server MUST se
 
 **Reason:** the live copy is the one carrier the event has left. It is the one place ids are not ascending.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › sends an unreadable row's live copy after the replay, behind higher ids`.
 
 ## Filters
 
@@ -611,7 +611,7 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 **Reason:** a source the server cannot classify cannot be shown readable.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/edge-frame-no-source-type.test.ts › is not replayed to a subscriber`, `› is sent to no webhook`.
 
 ## A stream and the source filter
 
@@ -655,7 +655,7 @@ When replay or the final drain consumes a live frame selected by a stream's immu
 
 **Reason:** authority can widen while a frame waits, so an earlier credential read cannot settle whether it will be delivered.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › judges a frame held across a widening of the credential by the credential at the drain`, `› judges a frame held across a narrowing of the credential by the credential at the drain`, `› judges a frame a replay consumes by the credential at the replay`.
 
 ### `events/replay-consumed`
 
@@ -663,7 +663,7 @@ When a replay has sent or legitimately withheld a readable logged event, the ser
 
 **Reason:** replay has settled the row, and a later widening cannot revive it behind a higher delivered cursor; `events/unreadable-row-live-copy` still governs rows the replay could not classify.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › suppresses the live twin of an event the replay withheld, after the credential widens`, `› sends an event the replay sent once`.
 
 ### `events/credential-narrowed`
 
@@ -773,13 +773,13 @@ When the server has sent `stream_incomplete`, the server MUST close the stream.
 
 If the server's read of the log's head fails when a stream opens, a read of the log fails while the stream replays, or the read of the stream's credential before a page of the replay fails, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `replay_failed`.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-opening-faults.test.ts › ends with replay_failed when the read of the head fails as it opens`, `› ends a copy stream's opening with replay_failed when the read of the head fails`, `› ends with replay_failed when a read of the log fails while it replays, naming the last event it sent`, `› ends a copy stream's replay with replay_failed when a read of the log fails`, `› ends with replay_failed when the read of its credential before a page of the replay fails`, `› ends a copy stream's replay with replay_failed when its credential cannot be read`.
 
 ### `events/live-delivery-failed`
 
 If the read of a stream's credential at a heartbeat or before a batch of live frames fails, or the server cannot go on receiving the frames published for the stream, then the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `live_delivery_failed`.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-opening-faults.test.ts › ends with live_delivery_failed when the read of its credential before a batch fails`, `› ends a copy stream with live_delivery_failed when the read of its credential before a batch fails`, `› ends with live_delivery_failed when the read of its credential at a heartbeat fails`, `› ends every stream with live_delivery_failed when the server cannot confirm a commit whose events they wait for`.
 
 ### `events/backlog-overflow`
 
@@ -787,7 +787,7 @@ If more than 500 live frames selected by a stream's immutable `type` and `edges`
 
 **Reason:** the frames a stream holds while it opens are bounded, including those excluded only by mutable credential authority because that authority can widen before delivery. A replay takes over held frames it can read again from the log, but an unreadable row's live copy is the one carrier its event has.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-prologue-holds.test.ts › ends with backlog_overflow when more than 500 selected frames wait and no replay is reading`, `› ends with backlog_overflow when a row the replay reads is unreadable and its live copy was given up to the replay`.
 
 ## Registering a subscription
 

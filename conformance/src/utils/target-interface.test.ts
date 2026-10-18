@@ -107,6 +107,22 @@ describe("a fault", () => {
       /no fail point/,
     );
     await expect(server.setFault("fail:lock=0")).rejects.toThrow(/from 1/);
+    await expect(server.setFault("hold:stream-drain=1")).rejects.toThrow(
+      /no argument/,
+    );
+    await expect(
+      server.setFault("fail:stream-head=items.bulk"),
+    ).rejects.toThrow(/from 1/);
+    await server.setFault("hold:stream-drain");
+    await server.setFault("fail:stream-credential=2");
+    expect(await server.faults()).toContainEqual({
+      name: "fail:stream-credential",
+      arg: "2",
+      waiting: 0,
+      fired: 0,
+    });
+    await server.clearFault("hold:stream-drain");
+    await server.clearFault("fail:stream-credential");
     await expect(server.setFault("fail:commit=items.bulk@0")).rejects.toThrow(
       /<action>@<n>/,
     );

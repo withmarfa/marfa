@@ -224,6 +224,12 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:blob-orphans:purge`    | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                  |
 | `hold:restore:before-commit` | A restore waits with every row written and the bytes placed, before it commits.                                  |
 | `free:<volume>=<bytes>`      | The target reads that many bytes of free space on the volume, `database` or `blobs`, until the fault is cleared. |
+| `hold:stream-open`           | A request for `GET /events`, with or without `copy=1`, waits at the door of the stream, after it was authenticated and before the target has built the stream.                                                            |
+| `hold:stream-head`           | The read of the log's head that a stream makes as it opens waits. The bound the stream puts on that read, five seconds, still runs: an event stream then goes on with no head announced and a copy stream ends.           |
+| `hold:stream-replay`         | A stream resumed from a cursor waits before each page of the log its replay reads, after it announced its position.                                                                                                       |
+| `hold:stream-drain`          | A stream waits after its replay, or at once where it has none, before it delivers the frames it held while it opened and announces `stream_live`.                                                                         |
+| `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
+| `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component
@@ -233,6 +239,12 @@ volume as the bytes arrive. The check interval is half the reserve, bounded
 to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
 A reserve of zero disables these checks. `<bytes>` is a decimal integer from
 0 through 9007199254740991.
+
+Every caller that reaches a held point waits, and `waiting` in the fault's
+listing counts them. A stream held at a point stays open until the fault is
+cleared or the target stops. A target told to stop releases its faults as the
+stop begins, so a request held at `hold:stream-open` goes on after the stop
+has begun, which is how a fixture opens a stream during a stop.
 
 A `fail` fault makes the target fail at the point, once. It acts on the nth
 time the point is reached after the fault was set, the first unless the
@@ -273,6 +285,9 @@ without an action counts every write.
 | `fail:blob-read-short[=<n>]`    | When each read of a blob's bytes from a store opens.                                             | The read carries the first half of the bytes it would and then ends cleanly, with no error.                                                                                                                                                                     |
 | `fail:blob-write[=<n>]`         | Before each placing of a blob's bytes in a store.                                                | The write fails with `ENOSPC`, as a volume with no room fails it, and the store keeps no bytes.                                                                                                                                                                 |
 | `fail:blob-delete[=<n>]`        | Before each deletion of a blob's bytes from a store.                                             | The deletion fails with `EIO` and the store keeps the bytes.                                                                                                                                                                                                    |
+| `fail:stream-head[=<n>]`        | Before the read of the log's head that a stream makes as it opens.                                                          | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `fail:stream-replay[=<n>]`      | Before each page of the log that a stream's replay reads.                                                                   | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `fail:stream-credential[=<n>]`  | Each time an open stream reads its credential again: before a page of its replay, before a batch of frames, at a heartbeat. | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
 
 `<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
 cannot fail a point as described says so by refusing its name, and the fixtures

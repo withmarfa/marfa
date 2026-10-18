@@ -181,7 +181,7 @@ describe("a stream whose read of the log fails", () => {
     await again.until(named("stream_live"), "the same stream live");
   });
 
-  it("ends a copy stream's opening the same way", async () => {
+  it("ends a copy stream's opening with replay_failed when the read of the head fails", async () => {
     await server.setFault("fail:stream-head");
     const tap = await open({ query: COPY_QUERY });
     await tap.untilClosed();
@@ -252,7 +252,7 @@ describe("a stream whose read of the log fails", () => {
     expect(events.some((event) => event.event === "item.created")).toBe(true);
   });
 
-  it("ends a copy stream's replay the same way when its credential cannot be read", async () => {
+  it("ends a copy stream's replay with replay_failed when its credential cannot be read", async () => {
     const proof = await copyProof();
     await note("copy-replay-credential-fails");
     await server.setFault("fail:stream-credential");
@@ -289,7 +289,7 @@ describe("a live stream that cannot go on delivering", () => {
     expect(events.some(announces(sent))).toBe(true);
   });
 
-  it("ends a copy stream the same way", async () => {
+  it("ends a copy stream with live_delivery_failed when the read of its credential before a batch fails", async () => {
     const tap = await open({ query: COPY_QUERY });
     await tap.until(named("stream_live"), "the copy stream live");
     await server.setFault("fail:stream-credential");
