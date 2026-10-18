@@ -263,6 +263,21 @@ async function sessionCookie(address: string): Promise<string> {
   return cookie!;
 }
 
+/** The consent screen's address for the authorization a sign-in page was sent
+ *  for. The sign-in page carries the signed query itself, and the consent
+ *  screen takes the same one. */
+function consentLink(signInUrl: URL): URL {
+  const authorize = new URL(
+    signInUrl.searchParams.get("return_to") ?? "",
+    server!.apiUrl,
+  );
+  const signed = new URLSearchParams(signInUrl.search);
+  signed.delete("return_to");
+  authorize.search = signed.toString();
+  authorize.pathname = "/auth/authorize";
+  return authorize;
+}
+
 /** Register an app the way any program can, and start its authorization:
  *  answered with where the instance sends a person who is not signed in. */
 async function startAuthorization(name: string): Promise<URL> {
@@ -363,17 +378,9 @@ describe("the pages a person reads at sign-in", () => {
 
   it("tells a link edited after it was signed that it is invalid, not that it has expired", async () => {
     const cookie = await sessionCookie("192.0.2.53");
-    const signInUrl = await startAuthorization("Conformance Edited");
-    const authorize = new URL(
-      signInUrl.searchParams.get("return_to") ?? "",
-      server!.apiUrl,
+    const authorize = consentLink(
+      await startAuthorization("Conformance Edited"),
     );
-    // The sign-in page carries the signed query itself; the consent screen
-    // takes the same one.
-    const signed = new URLSearchParams(signInUrl.search);
-    signed.delete("return_to");
-    authorize.search = signed.toString();
-    authorize.pathname = "/auth/authorize";
     const edited = new URL(authorize);
     edited.searchParams.set("exp", String(Math.floor(Date.now() / 1000) - 60));
     const refused = await fetch(edited, { headers: { cookie } });
@@ -414,5 +421,25 @@ describe("the pages a person reads at sign-in", () => {
     });
     expect(program.status).toBe(400);
     expect(program.headers.get("content-type")).toContain("application/json");
+  });
+
+  it("tells a link whose window has closed that the request has expired", async () => {
+    const cookie = await sessionCookie("192.0.2.54");
+    const link = consentLink(await startAuthorization("Conformance Lapsed"));
+    // The witness: the link reaches the consent screen while its window is
+    // open.
+    const open = await fetch(link, { headers: { cookie } });
+    expect(open.status).toBe(200);
+    const shown = await open.text();
+    expect(shown).not.toContain("has expired");
+    expect(shown).not.toContain("We could not verify this request");
+
+    // The window is ten minutes.
+    await server!.advanceClock(11 * 60_000);
+    const lapsed = await fetch(link, { headers: { cookie } });
+    expect(lapsed.status).toBe(400);
+    const text = await lapsed.text();
+    expect(text).toContain("This request has expired");
+    expect(text).not.toContain("We could not verify this request");
   });
 });

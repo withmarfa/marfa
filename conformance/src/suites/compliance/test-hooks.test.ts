@@ -10,6 +10,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { runJob } from "../../utils/moved-clock.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * The test hooks: the routes on the private control socket that move the
@@ -189,6 +190,48 @@ describe("the test hooks", () => {
   );
 
   it(
+    "stamps a sign-in with the time the server reads",
+    async () => {
+      const ahead = await bootFreshServer("test-hooks-sign-in-ahead", {
+        MARFA_TEST_CLOCK_OFFSET_MS: String(24 * HOUR_MS),
+      });
+      const level = await bootFreshServer("test-hooks-sign-in-level");
+      try {
+        const createdAt = async (server: FreshServer): Promise<number> => {
+          const origin = new URL(server.apiUrl).origin;
+          const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin },
+            body: JSON.stringify(TEST_OWNER),
+          });
+          expect(signedIn.status).toBe(200);
+          const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+            signedIn.headers.get("set-cookie") ?? "",
+          )?.[1];
+          const session = await fetch(`${server.apiUrl}/auth/get-session`, {
+            headers: { cookie: cookie! },
+          });
+          expect(session.status).toBe(200);
+          return Date.parse(
+            ((await session.json()) as { session: { createdAt: string } })
+              .session.createdAt,
+          );
+        };
+        // The witness: with no offset the library's time is the system's.
+        expect(Math.abs((await createdAt(level)) - Date.now())).toBeLessThan(
+          10_000,
+        );
+        expect(
+          Math.abs((await createdAt(ahead)) - (Date.now() + 24 * HOUR_MS)),
+        ).toBeLessThan(10_000);
+      } finally {
+        await Promise.all([ahead.stop(), level.stop()]);
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "refuses to move the clock back, and keeps the time it reads",
     async () => {
       const server = await bootFreshServer("test-hooks-forward");
@@ -221,6 +264,69 @@ describe("the test hooks", () => {
       }
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a contract version without MARFA_TEST_HOOKS, naming the setting",
+    async () => {
+      const refused = await bootRefused("test-hooks-contract", {
+        extraEnv: {
+          MARFA_TEST_HOOKS: "false",
+          MARFA_TEST_CONTRACT_VERSION: "1",
+        },
+      });
+      try {
+        expect(refused).toMatchObject({ code: 1, signal: null });
+        expect(listened(refused)).toBe(false);
+        expect(settingLines(refused)).toEqual([
+          'MARFA_TEST_CONTRACT_VERSION needs MARFA_TEST_HOOKS to be true (got "1")',
+        ]);
+      } finally {
+        await refused.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document",
+    async () => {
+      const second = await bootFreshServer("test-hooks-contract-second", {
+        MARFA_TEST_CONTRACT_VERSION: "2",
+      });
+      const own = await bootFreshServer("test-hooks-contract-own");
+      try {
+        const named = async (server: FreshServer) => {
+          const root = await fetch(`${server.apiUrl}/`, {
+            headers: { Accept: "application/json" },
+          });
+          const document = await fetch(`${server.apiUrl}/openapi.json`);
+          return {
+            root: ((await root.json()) as { contract: number }).contract,
+            header: root.headers.get("X-Marfa-Contract"),
+            document: ((await document.json()) as { info: { version: string } })
+              .info.version,
+          };
+        };
+        // The witness: a server with no setting names its own version, which
+        // is not 2.
+        const built = await named(own);
+        expect(built.root).not.toBe(2);
+        expect(built).toEqual({
+          root: built.root,
+          header: String(built.root),
+          document: String(built.root),
+        });
+        expect(await named(second)).toEqual({
+          root: 2,
+          header: "2",
+          document: "2",
+        });
+      } finally {
+        await Promise.all([second.stop(), own.stop()]);
+      }
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(

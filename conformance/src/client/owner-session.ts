@@ -69,6 +69,7 @@ export async function authenticateOwner(
   baseUrl: string,
   cookie: string | undefined,
   credentials: { email: string; password: string },
+  serverNow: number = Date.now(),
 ): Promise<{ cookie: string; authenticatedAt: number }> {
   if (cookie) {
     const current = await fetch(`${baseUrl}/auth/get-session`, {
@@ -82,7 +83,7 @@ export async function authenticateOwner(
       } | null;
       const authenticatedAt =
         Date.parse(session?.session?.createdAt ?? "") || 0;
-      const age = Date.now() - authenticatedAt;
+      const age = serverNow - authenticatedAt;
       if (age >= 0 && age < 240_000) return { cookie, authenticatedAt };
     }
   }
@@ -101,5 +102,5 @@ export async function authenticateOwner(
     .find((value) => value.startsWith("marfa.auth.session_token="))
     ?.split(";")[0];
   if (!nextCookie) throw new Error("Owner reauthentication set no cookie");
-  return { cookie: nextCookie, authenticatedAt: Date.now() };
+  return { cookie: nextCookie, authenticatedAt: serverNow };
 }

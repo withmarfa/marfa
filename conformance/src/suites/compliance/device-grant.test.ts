@@ -214,16 +214,8 @@ describe("a device code", () => {
     const flow = await startDeviceFlow(server!, ["core.note:read"]);
     // The witness: the code is answered on its state before it ages.
     expect((await flow.poll()).body.error).toBe("authorization_pending");
-    // Ten minutes is a long wait, so the code is aged in place, found by the
-    // client this flow registered for itself.
-    withInstanceDatabase(server!.sqlitePath, (db) => {
-      const aged = db
-        .prepare(
-          "UPDATE auth_oauth_device_code SET expires_at = 1 WHERE client_id = ?",
-        )
-        .run(flow.clientId);
-      expect(aged.changes).toBe(1);
-    });
+    // Past the ten minutes the code lives.
+    await server!.advanceClock(11 * 60_000);
     await waitOut(flow.interval);
     const expired = await flow.poll();
     expect(expired.status).toBe(400);

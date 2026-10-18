@@ -17,9 +17,10 @@ import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
  * with that credential: a key that reaches its `expires_at`, an app whose
  * grant is revoked.
  *
- * A server of its own. A key's expiry is reached by moving the server's clock,
- * which would put a sign-in token out of step with it, so the case that needs
- * an app's token, which also needs the instance's one owner, comes first.
+ * A server of its own, because a key's expiry is reached by moving the
+ * server's clock, and the case that needs an app's token, which also needs the
+ * instance's one owner, comes first, so its token is made before the move ages
+ * it.
  */
 let server: FreshServer | undefined;
 let clock: ReturnType<typeof movedClock>;

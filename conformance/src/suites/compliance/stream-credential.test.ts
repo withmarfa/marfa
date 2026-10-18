@@ -509,4 +509,50 @@ describe("a stream answers to a credential only a server of its own can make", (
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it(
+    "ends a stream with credential_ended once its access token expires",
+    async ({ signal }) => {
+      const server = tokenServer!;
+      const app = await approvedApp(server);
+
+      await withStream(server.apiUrl, app.token, {}, async (stream) => {
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => e.event === "stream_cursor"),
+          "the frame announcing the stream's position",
+          signal,
+        );
+        // The witness: the app reads the stream while its token stands.
+        const before = await noteOn(server, "token-expiry-before");
+        const first = await collectUntil(
+          stream,
+          (events) => arrived(events, before),
+          `the note ${before} before the token expires`,
+          signal,
+        );
+        const frame = first.events.find(
+          (e) => (e.data as { item?: { id?: string } }).item?.id === before,
+        );
+
+        // An access token lives an hour.
+        await server.advanceClock(2 * 3_600_000);
+        const after = await noteOn(server, "token-expiry-after");
+        const { events } = await collectUntil(
+          stream,
+          (seen) => seen.some((e) => e.event === "stream_incomplete"),
+          "the stream to say it ended",
+          signal,
+        );
+        const ended = events.find((e) => e.event === "stream_incomplete");
+        expect((ended?.data as { reason?: string }).reason).toBe(
+          "credential_ended",
+        );
+        expect((ended?.data as { cursor?: string }).cursor).toBe(frame?.id);
+        expect(ended?.id).toBeUndefined();
+        expect(arrived(events, after)).toBe(false);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

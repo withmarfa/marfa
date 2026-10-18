@@ -195,15 +195,34 @@ The offset may not exceed 3153600000000 ms (100 years), the largest
 `MARFA_TEST_CLOCK_OFFSET_MS`, so a restart can always take the offset back. A
 move past it is refused and the clock stays where it was.
 
+Every time the target records or compares follows the clock, including the
+times a component it builds on sets for itself. The sign-in library's sessions,
+tokens, authorization links and registrations are stamped and judged by the
+target's clock, so a fixture that moves the clock ages them too and writes none
+of those times. The server does this by making the process's `Date` follow the
+offset when the hooks are on, before it creates the sign-in library; a second
+implementation provides the same by whatever means its components allow.
+
 Timers and elapsed-time measures stay on real time: a job's deadline, a busy
 wait, a stream's heartbeat and the server's uptime do not follow the clock. A
 fixture moves the clock and then runs the job it tests with
 `POST /housekeeping/{name}/run`.
 
-After a clock move, no fixture may rely on an OAuth token, an owner session's
-step-up, or the `Retry-After` date of a webhook receiver. Each compares a time
-that the sign-in library or a peer sets in real time with the target's clock,
-which the move has put out of step with it.
+Two times are a peer's and stay on its own clock: the `Retry-After` date of a
+webhook receiver, and what a fixture reads from its own machine. After a clock
+move, a fixture does not rely on either. A client that judges how old a
+sign-in is takes the target's time from `FreshServer.clockOffsetMs`, the sum of
+the steps the fixture moved, because the age it reads is the target's.
+
+### The contract version
+
+The target reports a contract version in the root's `contract`, in
+`X-Marfa-Contract` and as the document's `info.version`. `up` and `restart`
+take `--env MARFA_TEST_CONTRACT_VERSION=<n>`, a whole number, to boot the
+target onto another version for that boot alone: the boot after it is back on
+the target's own. The setting is refused unless the hooks are on. A fixture
+uses it to show what a change of contract does to what the target kept, such as
+the answer stored for a repeated request.
 
 ### Faults
 
@@ -230,6 +249,7 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:stream-drain`          | A stream waits after its replay, or at once where it has none, before it delivers the frames it held while it opened and announces `stream_live`.                                                                         |
 | `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
 | `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
+| `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms. |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component

@@ -10,7 +10,12 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
+import {
+  DAY_MS,
+  HOUR_MS,
+  MINUTE_MS,
+  movedClock,
+} from "../../utils/moved-clock.js";
 import { HeldLock } from "../../utils/held-lock.js";
 import {
   connect,
@@ -385,11 +390,9 @@ describe("folder sync reports", () => {
       (await call("PUT", `/folders/${id}/status`, report, "", cookie2)).status,
     ).toBe(200);
     const current = (await get(id)).sign_ins.find((g) => g.current)!;
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare("UPDATE auth_session SET expires_at=0 WHERE id=?").run(
-        current.sign_in.id,
-      );
-    });
+    // A session ends a week and a minute after its last use.
+    expect(current.current).toBe(true);
+    await clock.advance(8 * DAY_MS);
     expect((await get(id)).sign_ins.every((g) => !g.current)).toBe(true);
   });
   it("uses the app grant identity across token refresh and retains history after grant revocation", async () => {
@@ -406,11 +409,8 @@ describe("folder sync reports", () => {
     await put(id, report, token.access_token!);
     const before = (await get(id)).sign_ins[0]!;
     expect(before.sign_in.kind).toBe("app");
-    withInstanceDatabase(server.sqlitePath, (db) => {
-      db.prepare(
-        "UPDATE auth_oauth_access_token SET expires_at=0 WHERE client_id=?",
-      ).run(app.clientId);
-    });
+    // The access token lives an hour. The grant it came from stands.
+    await clock.advance(2 * HOUR_MS);
     expect((await get(id)).sign_ins[0]!.current).toBe(true);
     expect(
       (await call("PUT", `/folders/${id}/status`, report, token.access_token!))

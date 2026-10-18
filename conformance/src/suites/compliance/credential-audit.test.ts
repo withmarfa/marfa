@@ -212,9 +212,8 @@ describe("a security observation", () => {
 });
 
 /**
- * Last in the file, because moving the server's clock a year puts every
- * sign-in token and owner session made before it out of step with the
- * server.
+ * Last in the file, because moving the server's clock a year ends every
+ * sign-in token and owner session made before it.
  */
 describe("a grant retired for inactivity", () => {
   it("is in the audit log when the inactivity retirement retires a grant", async () => {

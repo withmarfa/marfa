@@ -698,7 +698,7 @@ If a credential repeats a request under its `Idempotency-Key` after the server h
 
 **Reason:** the kept answer is shaped for the contract it was made under.
 
-**Tests:** waiting on #2075.
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_key_reused and writes nothing again`.
 
 ### `items/idempotency-credential`
 

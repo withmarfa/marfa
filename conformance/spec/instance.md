@@ -994,7 +994,7 @@ When the configured private control socket path holds a file that is not a socke
 
 ## Test hooks
 
-A test hook is a route on the private control socket that moves the server's clock or sets a fault. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so each rule here keeps them out of an instance that holds data.
+A test hook is a route on the private control socket that moves the server's clock or sets a fault, or a setting that starts the server at another time or contract version. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so each rule here keeps them out of an instance that holds data.
 
 ### `instance/test-hooks-off`
 
@@ -1028,6 +1028,14 @@ Where `MARFA_TEST_CLOCK_OFFSET_MS` is set, the server MUST read the time as that
 
 **Tests:** `compliance/test-hooks.test.ts › reads the time as MARFA_TEST_CLOCK_OFFSET_MS later than the system clock`.
 
+### `instance/test-clock-sign-in`
+
+While `MARFA_TEST_HOOKS` is true, the server MUST stamp the times the sign-in library records, a session's creation among them, with the time the server reads.
+
+**Reason:** A session, a sign-in token and an authorization link carry a time the server later compares with its clock. If the library kept the system's, moving the clock would put the two out of step.
+
+**Tests:** `compliance/test-hooks.test.ts › stamps a sign-in with the time the server reads`.
+
 ### `instance/test-clock-forward`
 
 If the clock is asked to move back, then the server MUST refuse and keep the time it reads.
@@ -1035,6 +1043,20 @@ If the clock is asked to move back, then the server MUST refuse and keep the tim
 **Reason:** ids, versions and cursors assume time does not go back.
 
 **Tests:** `compliance/test-hooks.test.ts › refuses to move the clock back, and keeps the time it reads`.
+
+### `instance/test-contract-version-needs-hooks`
+
+If `MARFA_TEST_CONTRACT_VERSION` is set and `MARFA_TEST_HOOKS` is not true when the server starts, then the server MUST refuse to start and name `MARFA_TEST_CONTRACT_VERSION`.
+
+**Tests:** `compliance/test-hooks.test.ts › refuses a contract version without MARFA_TEST_HOOKS, naming the setting`.
+
+### `instance/test-contract-version`
+
+Where `MARFA_TEST_CONTRACT_VERSION` is set, the server MUST name that version as the root's `contract`, in `X-Marfa-Contract` and as the document's `info.version`.
+
+**Reason:** A harness shows what a change of contract does to what the server kept, such as a stored answer to a repeated request, by restarting the server onto the next version.
+
+**Tests:** `compliance/test-hooks.test.ts › names MARFA_TEST_CONTRACT_VERSION as the contract in the root, the header and the document`.
 
 ### `instance/test-faults-cleared-at-start`
 
@@ -1188,6 +1210,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `MARFA_CONTROL_ONLY`                        | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Start only the private control listener, without public HTTP or background jobs, for local recovery.                                                                                                                                                         |
 | `MARFA_TEST_HOOKS`                          | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener, and refused when `NODE_ENV` is production. Leave off on every instance that holds real data.                                      |
 | `MARFA_TEST_CLOCK_OFFSET_MS`                | `0` ms                        | Whole number of milliseconds, 0 to 3153600000000                   | How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.                                                                                 |
+| `MARFA_TEST_CONTRACT_VERSION`               | The build's contract version  | Whole number, 0 to 2147483647                                      | The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept. |
 | `SQLITE_BUSY_BUDGET_MS`                     | `5000` ms                     | Whole number of milliseconds, 0 to 2147483647                      | How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.                                                                                                               |
 | `BLOB_PATH`                                 | `./data/blobs`                | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                      |
 | `MARFA_DISK_RESERVE_BYTES`                  | `134217728` bytes             | Whole number of bytes, 0 or more                                   | The free space on the disk store's volume that an upload or a restore must leave. A body that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                               |

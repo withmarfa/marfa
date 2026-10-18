@@ -721,7 +721,7 @@ When a key that holds a stream open passes its `expires_at`, the server MUST end
 
 When the sign-in token that holds a stream open passes its expiry, the server MUST end the stream with a terminal `stream_incomplete` frame whose `reason` is `credential_ended`.
 
-**Tests:** waiting on #2075.
+**Tests:** `compliance/stream-credential.test.ts › ends a stream with credential_ended once its access token expires`.
 
 ### `events/credential-reconnect`
 
