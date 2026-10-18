@@ -201,12 +201,9 @@ export function touchLastUsedCache(
 // ---------------------------------------------------------------------------
 
 /**
- * Module-scoped debounce cache for OAuth-grant `last_used_at` writes,
- * promoted from a closure inside `authMiddleware` so route handlers
- * (token-issuance / refresh paths that don't carry a bearer header
- * through the middleware) can share the same throttle. Keys are
- * `oauth:<connection_item_id>` and `oauth-grantkey:<client>:<user>`;
- * values are monotonic millisecond timestamps.
+ * Module-scoped debounce cache for OAuth-grant `last_used_at` writes. Keys
+ * are `oauth-grantkey:<client>:<user>`; values are monotonic millisecond
+ * timestamps.
  *
  * **First-line short-circuit, not the floor.** The DB layer uses a
  * conditional UPDATE in `OauthProviderStore.updateLastUsedAt`, writing only
@@ -219,43 +216,6 @@ export function touchLastUsedCache(
 const oauthLastUsedCache = new Map<string, number>();
 
 /**
- * Stamp `last_used_at` on the underlying `system.connection`
- * (kind: app) for an OAuth grant. Two-layer debounce:
- *
- *   1. Module-scoped in-memory cache (`oauthLastUsedCache`) — skips
- *      the DB round-trip when this instance has already stamped
- *      inside `DEBOUNCE_MS`.
- *   2. DB-side conditional UPDATE in `OauthProviderStore.updateLastUsedAt` —
- *      collapses concurrent writes from any number of instances to at
- *      most one row write per `DEBOUNCE_MS` per grant.
- *
- * Callers fire-and-forget — failures must never break the auth path.
- *
- * Used by:
- *   - `authMiddleware` for every authenticated bearer-bearing request.
- *   - The `/auth/oauth2/token` handlers, which issue tokens without
- *     resolving a bearer through the middleware.
- */
-export async function stampOAuthGrantLastUsed(
-  storage: Storage,
-  connectionItemId: string,
-): Promise<void> {
-  const cacheKey = `oauth:${connectionItemId}`;
-  const now = clock.monotonicMs();
-  const lastTracked = oauthLastUsedCache.get(cacheKey);
-  if (lastTracked !== undefined && now - lastTracked <= DEBOUNCE_MS) return;
-  touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
-  try {
-    await storage.oauthProvider?.updateLastUsedAt(
-      connectionItemId,
-      DEBOUNCE_MS,
-    );
-  } catch {
-    // Best-effort; the cache mark above prevents a stampede.
-  }
-}
-
-/**
  * Stamp `last_used_at` keyed by (clientId, authUserId)
  * instead of a pre-resolved `connection_item_id`.
  *
@@ -266,10 +226,7 @@ export async function stampOAuthGrantLastUsed(
  * `oauthLastUsedCache` entry, so per-request cost is one cheap Map lookup
  * once the cache is warm.
  *
- * Cache key shape (`oauth-grantkey:<client>:<user>`) differs from
- * `stampOAuthGrantLastUsed`'s `oauth:<id>`, so the two keyspaces don't
- * collide. The DB-side conditional update remains the shared floor for
- * writes that reach the same grant through different cache keys.
+ * The DB-side conditional update is the shared floor across instances.
  *
  * Fire-and-forget; failures swallowed.
  */
@@ -300,8 +257,8 @@ export async function stampOAuthGrantLastUsedByGrantKey(
 }
 
 /** Test helper: drops every entry from the OAuth grant debounce cache.
- *  Tests calling `stampOAuthGrantLastUsed` directly or exercising the
- *  refresh / userinfo paths use this between cases to avoid carryover. */
+ *  Tests stamping a grant directly or exercising the refresh / userinfo
+ *  paths use this between cases to avoid carryover. */
 export function _clearOAuthLastUsedCacheForTesting(): void {
   oauthLastUsedCache.clear();
 }
@@ -322,9 +279,7 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
  * by refreshing.
  *
  * **A revoke followed by a fresh consent from the same app and person lands
- * on the same handle**, and an idempotent replay is served before the door's
- * authorization runs, so a narrower token of that pair sending the same
- * request under the same key is handed the first one's answer.
+ * on the same handle.**
  */
 export function credentialHandle(c: Context<AppEnv>): string {
   const apiKey = c.get("apiKey");
@@ -906,14 +861,6 @@ export function requireReadableRow<T extends { type: string }>(
  * included. `requireTypeAccess` names the type it refuses, which is right
  * where the caller named it and a disclosure where a key resolved it.
  */
-export function requireResolvedRowWrite(
-  c: Context<AppEnv>,
-  row: { type: string },
-): void {
-  checkResolvedRowWrite(c.get("apiKey"), row);
-}
-
-/** `requireResolvedRowWrite` for a credential in hand. */
 export function checkResolvedRowWrite(
   apiKey: ApiKey | undefined,
   row: { type: string },

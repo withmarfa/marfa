@@ -159,7 +159,7 @@
     "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
       "KeyStore.updateLastUsed": 1,
-      "OauthProviderStore.updateLastUsedAt": 2
+      "OauthProviderStore.updateLastUsedAt": 1
     }
   },
   "middleware/idempotency.ts": {
