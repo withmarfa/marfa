@@ -1445,6 +1445,30 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription naming a unique-local, carrier-grade NAT, unspecified or multicast address`.
 
+### `events/address-name-refused`
+
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
+
+**Reason:** a subscription the server would refuse to deliver to at every attempt is better refused when it is registered than found later in the delivery log. Any address, not every address, because a delivery to a name with one public and one non-public address is refused as well. A receiver reached by a name on a Tailscale or home network resolves to a carrier-grade NAT or private address, so this is the refusal such a person meets first. A lookup that does not finish is `events/address-name-unresolved`, and the check at each attempt (`events/address-name-unsent`) still has the final say.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
+
+### `events/address-refusal-setting`
+
+Where the instance does not allow private addresses, if the server answers `400 validation_error` to a `url` for an address that is not public, then the server MUST name `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` in the error's `message`.
+
+**Reason:** the caller reading the refusal is often the person who runs the instance, and the setting is the one thing that changes the answer.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses a subscription naming a loopback, private or link-local address`, `› refuses a subscription whose host name resolves to an address that is not public, naming the setting`.
+
+### `events/address-name-unresolved`
+
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, whose lookup does not finish within the registration limit of 3 seconds, or whose lookup the server does not make because it is already making two for registrations, then the server MUST answer `201`.
+
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A lookup cannot be cancelled and holds a thread the server shares, so the number running at once is bounded, and the check at each attempt (`events/address-name-unsent`) still has the final say. The attempt records `The receiver could not be reached.` if it still fails.
+
+**Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
+
 ### `events/address-mapped`
 
 Where the instance does not allow private addresses, the server MUST judge an IPv4 address written as IPv6 as the IPv4 address it carries.
@@ -1457,19 +1481,33 @@ Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` n
 
 **Tests:** `compliance/webhook-addresses.test.ts › refuses to point a subscription at an address that is not public, leaving the stored url`.
 
+### `events/address-name-update`
+
+Where the instance does not allow private addresses, if `PATCH /webhooks/{id}` names a `url` whose host is a name, and the server's lookup of the name finishes and finds any address that is not public, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses to point a subscription at an address that is not public, leaving the stored url`.
+
 ### `events/address-name-unsent`
 
 Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST NOT contact it.
 
 **Reason:** a name that resolved to a public address at registration can resolve to a private one later.
 
-**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
 ### `events/address-name-recorded`
 
 Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves to any address that is not public, then the server MUST record `The receiver's address is not public.` as the delivery's `error`.
 
-**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, and records why`.
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
+
+### `events/address-name-dead-letter`
+
+Where the instance does not allow private addresses, if a subscription's `url` names a host that resolves, at the attempt, to any address that is not public, then the server MUST record the delivery `dead_letter` at that attempt.
+
+**Reason:** the refusal is the instance's own rule, not the receiver's answer, so a later attempt would meet it again and the delivery would show `pending` for hours while it did. A redelivery sends it again once the name or the setting has changed.
+
+**Tests:** `compliance/webhook-addresses.test.ts › sends nothing to a name that resolves to loopback, records why, and gives up at once`.
 
 ### `events/address-resolved-once`
 

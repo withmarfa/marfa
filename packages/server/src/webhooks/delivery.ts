@@ -246,6 +246,26 @@ export async function deliverWebhookAttempt(
       return;
     }
 
+    if (outcome.kind === "refused") {
+      if (
+        !(await store.markFailed(
+          delivery.id,
+          delivery.claim_token,
+          undefined,
+          outcome.error,
+          nextAttempt,
+          null,
+        ))
+      )
+        return;
+      log("error", "Webhook dead-lettered", {
+        ...logged,
+        attempt: nextAttempt,
+        error: outcome.error,
+      });
+      return;
+    }
+
     if (outcome.kind === "redirected") {
       if (
         !(await store.markFailed(
