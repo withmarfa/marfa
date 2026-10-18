@@ -909,7 +909,7 @@ export const answers = {
     kind: "json",
     status: 200,
     body: {
-      name: "marfa",
+      name: "Marfa",
       version: "dev",
       instance_id: instanceId,
       contract,

@@ -5,10 +5,12 @@
  * authorization sent them.
  */
 
+import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { confirmIcon, escapeHtml } from "./auth-html.js";
 
 interface SignedInPageParams {
+  instanceName?: string;
   /** The nonce the response's content security policy names. */
   nonce: string;
   /** The signed-in person's email, so the page says who. */
@@ -30,9 +32,9 @@ export function renderSignedInPage(params: SignedInPageParams): string {
   const bodyHtml = `
     ${confirmIcon("check")}
     <h1 class="title">You're signed in</h1>
-    <p class="sub" role="status">You're signed in to Marfa as <b>${escapeHtml(params.email)}</b>. To use your data, open an app and connect it to this server.</p>
+    <p class="sub" role="status">You're signed in to ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)} as <b>${escapeHtml(params.email)}</b>. To use your data, open an app and connect it to this server.</p>
     ${next}
-    <p><a href="/auth/owner/manage">Manage Marfa</a></p>
+    <p><a href="/auth/owner/manage">Manage ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)}</a></p>
   `;
 
   return renderAuthLayout({

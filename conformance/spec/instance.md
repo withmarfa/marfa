@@ -146,9 +146,9 @@ When `GET /` is answered with the description, the server MUST give it `name`, `
 
 ### `instance/root-name`
 
-When `GET /` is answered with the description, the server MUST answer `name` as `marfa`.
+When `GET /` is answered with the description, the server MUST answer `name` as the configured display name, or `Marfa` when no name is configured.
 
-**Tests:** `compliance/instance.test.ts › describes itself at the root`, `› answers a browser at the root with a page and a program with the JSON`.
+**Tests:** `compliance/instance.test.ts › describes itself at the root`, `› answers a browser at the root with a page and a program with the JSON`, `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`.
 
 ### `instance/root-version`
 
@@ -734,7 +734,37 @@ When the server completes an unfinished database, the server MUST leave the rows
 
 ## The configuration operations
 
-`GET /config` and `PUT /config` hold the instance's levers beside its retention settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
+`GET /config` and `PUT /config` hold the instance's display name, levers and retention settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
+
+### `instance/config-name`
+
+When `PUT /config` supplies `name`, the server MUST store it with whitespace at each end removed.
+
+**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`.
+
+### `instance/config-name-invalid`
+
+If a supplied `name` is empty after trimming, exceeds 200 Unicode code points after trimming, or contains a C0 control, DEL, C1 control or Unicode bidirectional control character, then the server MUST refuse `PUT /config` with `400 validation_error`.
+
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
+
+### `instance/config-name-live`
+
+When `PUT /config` has acknowledged a display name, the server MUST use that name in subsequent root descriptions and existing page labels that identify the instance, without requiring a restart.
+
+**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`, `› refuses invalid names and escapes the name in pages on later requests`.
+
+### `instance/config-name-durable`
+
+When the server restarts on the same database, the server MUST retain the configured display name.
+
+**Tests:** `compliance/instance-config.test.ts › sets, trims, persists and clears the name without changing identity`.
+
+### `instance/config-name-page-escaped`
+
+When an HTML page identifies the instance by its display name, the server MUST render that name as text.
+
+**Tests:** `compliance/instance-config.test.ts › refuses invalid names and escapes the name in pages on later requests`.
 
 ### `instance/config-unauthenticated`
 

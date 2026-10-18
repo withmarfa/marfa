@@ -16,6 +16,7 @@ import {
   requireOwnerOrigin,
   requireSecureOwnerTransport,
 } from "../auth/owner-browser.js";
+import { readInstanceName } from "../instance-name.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
 import { ownerWire } from "./owner-wire.js";
@@ -51,14 +52,16 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
       "Content-Security-Policy",
       `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'; form-action 'self'`,
     );
+    const instanceName = await readInstanceName(storage.settings);
+    const safeName = escapeHtml(instanceName);
     const claimed = (await getClaimStatus(storage)).claimed;
     const setupReady = await hasSetupSession(
       storage,
       getCookie(c, SETUP_COOKIE) ?? "",
     );
     const body = claimed
-      ? `<h1>Marfa is ready</h1><p>This Marfa has already been claimed.</p><a href="/auth/sign-in">Sign in</a>`
-      : `<h1>Set up your Marfa</h1>
+      ? `<h1>${safeName} is ready</h1><p>${safeName} has already been claimed.</p><a href="/auth/sign-in">Sign in</a>`
+      : `<h1>Set up ${safeName}</h1>
 <p>Use the setup code from the machine running Marfa, or open a new setup link there.</p>
 <p id="status" role="status"></p>
 <form id="code-form"${setupReady ? " hidden" : ""}><label for="code">Setup code</label><input id="code" name="code" autocomplete="off" required><button type="submit">Continue</button></form>
@@ -85,7 +88,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
     return c.html(
       renderAuthLayout({
         nonce: c.var.cspNonce,
-        title: "Set up Marfa",
+        title: `Set up ${instanceName}`,
         bodyHtml: body,
       }),
     );

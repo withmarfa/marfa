@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Describe the instance
-         * @description Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
+         * @description Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.
          */
         get: operations["getInstance"];
         put?: never;
@@ -1353,7 +1353,7 @@ export interface paths {
         };
         /**
          * Get the configuration
-         * @description Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.
+         * @description Returns the instance configuration: its display name, enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.
          */
         get: operations["getConfig"];
         /**
@@ -2143,11 +2143,8 @@ export interface components {
         };
         /** @description An instance: its identity, build, contract version and features. */
         InstanceDescription: {
-            /**
-             * @description Always `marfa`.
-             * @enum {string}
-             */
-            name: "marfa";
+            /** @description The instance's display name. Defaults to `Marfa`. */
+            name: string;
             /** @description The build the instance runs. */
             version: string;
             /** @description Unique identifier for the instance. `GET /config` and an archive's manifest show the same value. */
@@ -4116,10 +4113,12 @@ export interface components {
                 };
             };
         };
-        /** @description The instance configuration: its enforcement levers and retention settings, with the instance's ID. */
+        /** @description The instance configuration: its display name, enforcement levers and retention settings, with the instance's ID. */
         InstanceConfig: {
             /** @description Unique identifier for the instance, the same value `GET /` returns. */
             instance_id: string;
+            /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
+            name?: string;
             /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
             enforcement?: {
                 strict_mode?: components["schemas"]["TypeLever"] & unknown;
@@ -20900,6 +20899,8 @@ export interface operations {
                 "application/json": {
                     /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
                     instance_id?: string;
+                    /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
+                    name?: string;
                     /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
                     enforcement?: {
                         strict_mode?: components["schemas"]["TypeLeverStrict"] & unknown;
@@ -20936,7 +20937,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {

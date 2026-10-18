@@ -2,6 +2,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
+import { InstanceNameSchema } from "../instance-name.js";
 import { MAX_RETENTION_DAYS, MAX_RETENTION_HOURS } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -28,6 +29,7 @@ const KEPT_FOREVER = "`0` keeps them with no age limit.";
 const SERVER_DEFAULT = "Absent: the server's default applies.";
 
 const instanceConfigShape = (strict: boolean) => ({
+  name: InstanceNameSchema.optional(),
   enforcement: (strict ? EnforcementWriteSchema : EnforcementReadSchema)
     .optional()
     .describe(
@@ -103,7 +105,7 @@ const InstanceConfigSchema = z
     ...instanceConfigShape(false),
   })
   .describe(
-    "The instance configuration: its enforcement levers and retention settings, with the instance's ID.",
+    "The instance configuration: its display name, enforcement levers and retention settings, with the instance's ID.",
   )
   .openapi("InstanceConfig");
 
@@ -150,7 +152,7 @@ const getConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Get the configuration",
   description:
-    "Returns the instance configuration: its enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
+    "Returns the instance configuration: its display name, enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   responses: {
@@ -213,7 +215,7 @@ const putConfigRoute = createRoute({
         },
       },
       description:
-        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, or `instance_id` names a different instance.",
+        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.",
     },
     401: {
       content: {

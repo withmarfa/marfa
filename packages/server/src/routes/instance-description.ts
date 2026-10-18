@@ -3,7 +3,9 @@ import { makeErrorResponseSchema } from "../openapi.js";
 
 export const InstanceDescriptionSchema = z
   .object({
-    name: z.literal("marfa").describe("Always `marfa`."),
+    name: z
+      .string()
+      .describe("The instance's display name. Defaults to `Marfa`."),
     version: z.string().describe("The build the instance runs."),
     instance_id: z
       .string()
@@ -33,7 +35,7 @@ export const instanceDescriptionRoute = createRoute({
   tags: ["Instance"],
   summary: "Describe the instance",
   description:
-    "Describes the instance: its `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
+    "Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
   responses: {
     200: {
       description:

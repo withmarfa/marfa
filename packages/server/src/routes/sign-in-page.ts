@@ -12,10 +12,12 @@ import { authAssetUrl } from "./auth-static.js";
  * the `renderAuthLayout` helper; no inline `<style>` block.
  */
 
+import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml, unverifiedAppCallout } from "./auth-html.js";
 
 interface SignInPageParams {
+  instanceName?: string;
   /** The nonce the response's content security policy names, which the
    *  script tags carry. */
   nonce: string;
@@ -119,7 +121,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   const appCallout = params.app ? unverifiedAppCallout() : "";
 
   const body = `
-    <h1 class="title">Sign in to Marfa</h1>
+    <h1 class="title">Sign in to ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)}</h1>
     <p class="sub">${lede}</p>
     ${appCallout}
     ${errorBanner}
@@ -133,7 +135,7 @@ export function renderSignInPage(params: SignInPageParams): string {
   `;
 
   return renderAuthLayout({
-    title: "Sign in to Marfa",
+    title: `Sign in to ${params.instanceName ?? DEFAULT_INSTANCE_NAME}`,
     bodyHtml: body,
     nonce: params.nonce,
   });

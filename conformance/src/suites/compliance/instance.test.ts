@@ -135,7 +135,7 @@ describe("the instance", () => {
   it("describes itself at the root", async () => {
     const r = await client.root();
     expect(r.ok).toBe(true);
-    expect(r.data.name).toBe("marfa");
+    expect(r.data.name).toBe("Marfa");
     expect(typeof r.data.version).toBe("string");
     expect(r.data.instance_id).toMatch(UUID_V7);
     await expectMatchesSchema("GET", "/", 200, r.data);
@@ -180,7 +180,7 @@ describe("the instance", () => {
       });
       expect(program.headers.get("content-type")).toContain("application/json");
       expect(program.headers.get("vary")).toContain("Accept");
-      expect(((await program.json()) as { name: string }).name).toBe("marfa");
+      expect(((await program.json()) as { name: string }).name).toBe("Marfa");
     }
   });
 

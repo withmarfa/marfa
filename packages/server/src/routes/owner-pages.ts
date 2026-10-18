@@ -1,4 +1,5 @@
 import { authAssetUrl } from "./auth-static.js";
+import { readInstanceName } from "../instance-name.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import { escapeHtml } from "./auth-html.js";
 import { managementPages } from "./management-pages.js";
@@ -40,7 +41,7 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
 <ul id="passkeys"></ul>
 <label for="passkey-name">Passkey name</label><input id="passkey-name" name="passkey-name" maxlength="200" autocomplete="off">
 <button type="button" id="add-passkey">Add passkey</button><p id="passkey-status" role="status"></p>
-<p><a href="/auth/owner/manage">Manage Marfa</a></p>
+<p><a href="/auth/owner/manage">Manage ${escapeHtml(await readInstanceName(storage.settings))}</a></p>
 <script src="${authAssetUrl("passkeys.js")}" nonce="${escapeHtml(c.var.cspNonce)}"></script>`,
       }),
     );
@@ -79,6 +80,6 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
       }),
     );
   });
-  router.route("/", managementPages());
+  router.route("/", managementPages(storage));
   return router;
 }
