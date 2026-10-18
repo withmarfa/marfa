@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 /**
  * Shared HTML scaffold for every auth-surface page. `renderAuthLayout`
  * is the single source of truth for the `<!DOCTYPE>...</html>` envelope,
@@ -65,7 +66,7 @@ export function renderAuthLayout(params: AuthLayoutParams): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${safeTitle}</title>
-  <link rel="stylesheet" href="/auth/static/auth.css" nonce="${escapeHtml(params.nonce)}">
+  <link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="${escapeHtml(params.nonce)}">
 </head>
 <body>
   <main class="${cardClass}" aria-label="${safeAria}">

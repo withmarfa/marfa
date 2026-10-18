@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -22,7 +23,7 @@ describe("renderAuthErrorPage", () => {
   it("uses the shared auth layout and links back to sign-in", () => {
     const html = renderAuthErrorPage("invalid_client");
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(html).toContain("Back to sign in");
     expect(html).toContain('href="/auth/sign-in"');

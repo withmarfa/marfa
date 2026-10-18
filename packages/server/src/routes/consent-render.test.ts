@@ -1,3 +1,4 @@
+import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
@@ -113,7 +114,7 @@ describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain(
-      '<link rel="stylesheet" href="/auth/static/auth.css" nonce="test-nonce">',
+      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
     );
     expect(html).not.toContain("<style>");
   });

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -210,4 +212,21 @@ describe("GET /auth/static/submit-state.js", () => {
     );
     expect(res.status).toBe(200);
   });
+});
+
+it.each([
+  "auth.css",
+  "password-toggle.js",
+  "submit-state.js",
+  "passkeys.js",
+] as const)("versions %s with the hash of its served bytes", async (name) => {
+  ctx = await createTestContext();
+  const url = authAssetUrl(name);
+  const response = await ctx.app.request(url);
+  expect(response.status).toBe(200);
+  const hash = createHash("sha1")
+    .update(await response.text())
+    .digest("hex");
+  expect(new URL(url, "http://localhost").searchParams.get("v")).toBe(hash);
+  expect(response.headers.get("etag")).toBe(`"${hash}"`);
 });
