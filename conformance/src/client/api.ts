@@ -1476,6 +1476,7 @@ export class MarfaClient {
     ApiResponse<{
       name: string;
       version: string;
+      release?: string;
       instance_id: string;
       contract: number;
       features: string[];
@@ -1484,6 +1485,7 @@ export class MarfaClient {
     return this.request<{
       name: string;
       version: string;
+      release?: string;
       instance_id: string;
       contract: number;
       features: string[];

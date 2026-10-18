@@ -383,6 +383,10 @@ export interface AppConfig {
    *  report `"dev"`. It is not the contract version, which `GET /` answers
    *  as `contract`. */
   versionSha?: string;
+  /** The release the image was built as, `major.minor.patch`: the `release`
+   *  in `version.json`, surfaced on `GET /` as `release`. Unset for a build
+   *  that is not a release, which says nothing rather than a placeholder. */
+  releaseVersion?: string;
   /** The whole of `version.json`, which `/health` reports. */
   versionFile?: Record<string, unknown>;
   /** Where this deployment says it runs, reported on `/health`; unset when
@@ -1687,6 +1691,27 @@ function readVersionFile(): Record<string, unknown> | undefined {
 }
 
 /**
+ * The release `version.json` names, if it names one. A value that is not
+ * `major.minor.patch` stops the boot rather than being reported, because the
+ * root document would otherwise tell a client a release that no tag carries.
+ */
+function releaseOf(
+  file: Record<string, unknown> | undefined,
+): string | undefined {
+  if (file === undefined || !("release" in file)) return undefined;
+  const release = file.release;
+  if (
+    typeof release !== "string" ||
+    !/^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}$/.test(release)
+  ) {
+    throw new SettingsError([
+      "version.json release must be a version of the form major.minor.patch",
+    ]);
+  }
+  return release;
+}
+
+/**
  * Read every setting from `env` through the schema. Throws a
  * {@link SettingsError} naming each setting whose value breaks its rule.
  */
@@ -1710,6 +1735,7 @@ export function loadConfig(
   const warnings = misspelledSettings(env);
   const versionFile = readVersionFile();
   const sha = versionFile?.sha;
+  const release = releaseOf(versionFile);
   const placement = {
     ...(s.MARFA_PLACEMENT_REGION && { region: s.MARFA_PLACEMENT_REGION }),
     ...(s.MARFA_PLACEMENT_LOCATION && { location: s.MARFA_PLACEMENT_LOCATION }),
@@ -1820,6 +1846,7 @@ export function loadConfig(
     },
     connectorHoldMs: s.MARFA_CONNECTOR_HOLD_MS,
     versionSha: typeof sha === "string" && sha !== "" ? sha : undefined,
+    releaseVersion: release,
     versionFile,
     placement: Object.keys(placement).length > 0 ? placement : undefined,
     otel: otelSettings(s),

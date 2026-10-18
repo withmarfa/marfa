@@ -69,6 +69,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
     "the directory that stands in for the home directory when the CLI writes a login agent, read by the CLI",
   XDG_CONFIG_HOME:
     "the directory the CLI writes a systemd user unit under on Linux, read by the CLI",
+  VERSION_RELEASE:
+    "the build argument that makes an image a release, read by the image's build",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:
