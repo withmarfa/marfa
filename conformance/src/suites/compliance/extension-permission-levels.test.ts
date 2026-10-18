@@ -77,6 +77,68 @@ function storedMap(map: Record<string, unknown>): void {
 }
 
 describe("stored extension permission levels", () => {
+  it("keeps an exact read ceiling when minting or updating wildcard write", async () => {
+    // Set the valid map through the API, without changing a stored row.
+    const narrowed = await api(
+      "PATCH",
+      `/keys/${key.id}`,
+      {
+        extension_permissions: { "*": "write", named: "read" },
+      },
+      key.key,
+    );
+    expect(narrowed.status).toBe(200);
+    expect(
+      (
+        await api(
+          "GET",
+          `/items/${itemId}/extensions/named`,
+          undefined,
+          key.key,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await api(
+          "PUT",
+          `/items/${itemId}/extensions/named`,
+          { marker: "refused" },
+          key.key,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await api(
+          "POST",
+          "/keys",
+          {
+            label: "wildcard-child",
+            source: "wildcard-child",
+            extension_permissions: { "*": "write" },
+          },
+          key.key,
+        )
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await api(
+          "PATCH",
+          `/keys/${key.id}`,
+          {
+            extension_permissions: { "*": "write" },
+          },
+          key.key,
+        )
+      ).status,
+    ).toBe(403);
+    const witness = await api("PUT", `/items/${itemId}/extensions/named`, {
+      marker: "named-extension-value",
+    });
+    expect(witness.status).toBe(200);
+  });
   it.each(["read", "write"])("grants a normal %s level", async (level) => {
     storedMap({ named: level });
     const read = await api(

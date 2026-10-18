@@ -233,7 +233,7 @@ If a working key's mint names a permission, or a type, edge, metadata or profile
 
 If a working key's mint or update names an extension namespace at a level the caller does not hold, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`, `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
+**Tests:** `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`, `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`, `compliance/extension-permission-levels.test.ts › keeps an exact read ceiling when minting or updating wildcard write`.
 
 ### `keys-and-oauth/plaintext-once`
 

@@ -20,6 +20,17 @@ describe("extension mint ceiling", () => {
       ).toBe("named");
     },
   );
+  it("retains a valid exact read restriction beneath wildcard write", () => {
+    expect(
+      firstUncoveredExtension({ "*": "write" }, { "*": "write" }),
+    ).toBeNull();
+    expect(
+      firstUncoveredExtension(
+        { "*": "write", named: "read" },
+        { "*": "write" },
+      ),
+    ).toBe("named");
+  });
   it("preserves write/read coverage and refuses breadth or write escalation", () => {
     expect(
       firstUncoveredExtension({ "*": "write" }, { named: "read" }),
