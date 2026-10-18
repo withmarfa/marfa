@@ -66,20 +66,45 @@ export function storeUnavailable(
   );
 }
 
-/** `work`, or a rejection once `ms` have passed without it settling. */
-export async function within<T>(work: Promise<T>, ms: number): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
+/**
+ * `work`, or a rejection once `ms` have passed without it settling or once
+ * `signal` aborts. Either way the signal `work` was handed aborts, so the
+ * store gives the request up, and an answer that comes after all is handed
+ * to `late`, so a stream it opened is not left open.
+ */
+export async function within<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  options: { signal?: AbortSignal; late?: (value: T) => void } = {},
+): Promise<T> {
+  const controller = new AbortController();
+  const { signal: outer, late } = options;
+  const stop = () => {
+    controller.abort(outer?.reason);
+  };
+  if (outer?.aborted) stop();
+  else outer?.addEventListener("abort", stop, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`no answer within ${String(ms)} ms`));
+  }, ms);
+  const running = work(controller.signal);
   try {
     return await Promise.race([
-      work,
+      running,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error(`no answer within ${String(ms)} ms`));
-        }, ms);
+        const given = () => {
+          reject(controller.signal.reason as Error);
+        };
+        if (controller.signal.aborted) given();
+        else controller.signal.addEventListener("abort", given, { once: true });
       }),
     ]);
+  } catch (error) {
+    running.then(late ?? (() => undefined), () => undefined);
+    throw error;
   } finally {
     clearTimeout(timer);
+    outer?.removeEventListener("abort", stop);
   }
 }
 
@@ -89,48 +114,67 @@ export async function within<T>(work: Promise<T>, ms: number): Promise<T> {
  * of the stores themselves; `null` when none does. The log is read once for
  * the lot.
  *
- * Throws `blob_store_unavailable` when a store it asks fails or does not
- * answer in time: a store that cannot answer is not evidence that a copy is
- * gone.
+ * Throws `blob_store_unavailable` when no store holds a blob whole and a
+ * store it asked failed or did not answer in time: a store that cannot
+ * answer is not evidence that a copy is gone. The checks still running then
+ * are called off.
  */
 export async function wholeCopies(
   storage: Storage,
   blobs: BlobLayer,
   sizes: ReadonlyMap<string, number>,
+  signal?: AbortSignal,
 ): Promise<Map<string, BlobStore | null>> {
   const recorded = await storage.blobs.storeIdsOf([...sizes.keys()]);
   const found = new Map<string, BlobStore | null>();
   const queue = [...sizes];
-  let failed = false;
+  const decided = new AbortController();
+  const stop = () => {
+    decided.abort(signal?.reason);
+  };
+  if (signal?.aborted) stop();
+  else signal?.addEventListener("abort", stop, { once: true });
   const check = async (hash: string, size: number) => {
     const ids = new Set(recorded.get(hash) ?? []);
+    let failure: MarfaError | undefined;
     for (const store of blobs.stores.filter((one) => ids.has(one.id))) {
       let held: { size_bytes: number } | null;
       try {
-        held = await within(store.has(hash), storeChecks.timeoutMs);
+        held = await within(
+          (cancel) => store.has(hash, cancel),
+          storeChecks.timeoutMs,
+          { signal: decided.signal },
+        );
       } catch (error) {
-        throw storeUnavailable(store, hash, error);
+        decided.signal.throwIfAborted();
+        failure ??= storeUnavailable(store, hash, error);
+        continue;
       }
       if (held?.size_bytes === size) return store;
     }
+    if (failure) throw failure;
     return null;
   };
   const worker = async () => {
-    for (let next = queue.shift(); next && !failed; next = queue.shift()) {
-      try {
-        found.set(next[0], await check(next[0], next[1]));
-      } catch (error) {
-        failed = true;
-        throw error;
-      }
+    for (
+      let next = queue.shift();
+      next && !decided.signal.aborted;
+      next = queue.shift()
+    ) {
+      found.set(next[0], await check(next[0], next[1]));
     }
   };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(storeChecks.concurrency, queue.length) },
-      worker,
-    ),
-  );
+  try {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(storeChecks.concurrency, queue.length) },
+        worker,
+      ),
+    );
+  } finally {
+    decided.abort();
+    signal?.removeEventListener("abort", stop);
+  }
   return found;
 }
 

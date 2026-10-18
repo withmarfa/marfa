@@ -49,10 +49,23 @@ export interface BlobStore {
    * under this name are left alone.
    */
   put(hash: string, source: BlobSource): Promise<void>;
-  /** The bytes, or a range of them, as a stream. `null` when absent. */
-  get(hash: string, range?: ByteRange): Promise<BlobRead | null>;
-  /** Presence, with the size the store reports. `null` when absent. */
-  has(hash: string): Promise<{ size_bytes: number } | null>;
+  /**
+   * The bytes, or a range of them, as a stream. `null` when absent. Once
+   * `signal` aborts, the store gives up the request and rejects.
+   */
+  get(
+    hash: string,
+    range?: ByteRange,
+    signal?: AbortSignal,
+  ): Promise<BlobRead | null>;
+  /**
+   * Presence, with the size the store reports. `null` when absent. Once
+   * `signal` aborts, the store gives up the request and rejects.
+   */
+  has(
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<{ size_bytes: number } | null>;
   /** Idempotent: an absent blob is not an error. */
   delete(hash: string): Promise<void>;
   /**
@@ -270,7 +283,12 @@ export class DiskBlobStore implements BlobStore {
     await moveIntoPlace(spool, final);
   }
 
-  async get(hash: string, range?: ByteRange): Promise<BlobRead | null> {
+  async get(
+    hash: string,
+    range?: ByteRange,
+    signal?: AbortSignal,
+  ): Promise<BlobRead | null> {
+    signal?.throwIfAborted();
     // Opened here, not by the stream: a stream opens its path later, and one
     // destroyed unread then throws uncaught if the file went in between.
     let handle: FileHandle;
@@ -282,7 +300,11 @@ export class DiskBlobStore implements BlobStore {
     }
     let size: number;
     try {
+      // A file system call cannot be called off, so a request given up
+      // while it ran closes what it opened.
+      signal?.throwIfAborted();
       size = (await handle.stat()).size;
+      signal?.throwIfAborted();
     } catch (err) {
       await handle.close();
       throw err;
@@ -311,13 +333,20 @@ export class DiskBlobStore implements BlobStore {
     }
   }
 
-  async has(hash: string): Promise<{ size_bytes: number } | null> {
+  async has(
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<{ size_bytes: number } | null> {
+    signal?.throwIfAborted();
+    let size: number;
     try {
-      return { size_bytes: (await stat(this.pathFor(hash))).size };
+      size = (await stat(this.pathFor(hash))).size;
     } catch (err) {
       if (isEnoent(err)) return null;
       throw err;
     }
+    signal?.throwIfAborted();
+    return { size_bytes: size };
   }
 
   async delete(hash: string): Promise<void> {

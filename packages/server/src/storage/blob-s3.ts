@@ -178,7 +178,11 @@ export class S3BlobStore implements BlobStore {
     await upload.done();
   }
 
-  async get(hash: string, range?: ByteRange): Promise<BlobRead | null> {
+  async get(
+    hash: string,
+    range?: ByteRange,
+    signal?: AbortSignal,
+  ): Promise<BlobRead | null> {
     try {
       const response = await this.client.send(
         new GetObjectCommand({
@@ -188,6 +192,7 @@ export class S3BlobStore implements BlobStore {
             ? { Range: `bytes=${String(range.start)}-${String(range.end)}` }
             : {}),
         }),
+        { abortSignal: signal },
       );
       if (!response.Body) return null;
       const size = range
@@ -212,10 +217,14 @@ export class S3BlobStore implements BlobStore {
     }
   }
 
-  async has(hash: string): Promise<{ size_bytes: number } | null> {
+  async has(
+    hash: string,
+    signal?: AbortSignal,
+  ): Promise<{ size_bytes: number } | null> {
     try {
       const response = await this.client.send(
         new HeadObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+        { abortSignal: signal },
       );
       return { size_bytes: response.ContentLength ?? 0 };
     } catch (err) {
