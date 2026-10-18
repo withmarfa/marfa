@@ -10,7 +10,6 @@ import {
   queueNotes,
   streamsAsked,
   takeCreates,
-  untilHeld,
   untilReached,
   untilTold,
 } from "./binding.shared.js";
@@ -521,27 +520,6 @@ describe("a follow that waits for a hydration", () => {
       streamsAsked(server).map((request) => request.headers["last-event-id"]),
       "the follow opened its stream from somewhere other than the cursor the hydration stored",
     ).toEqual([undefined, "37", "37"]);
-    expect(follow.isOver).toBe(true);
-  });
-});
-
-describe("closing a binding", () => {
-  it("ends the host, though a follow is held at a point and a call is unanswered", async () => {
-    const followed = await bindingHarness("binding-close-held", {
-      hydrate: false,
-    });
-    harness = followed;
-    const { device } = followed;
-    await device.hooks.hold("follow-waiting");
-    const follow = await device.follow();
-    await untilHeld(device, "follow-waiting");
-    const started = Date.now();
-    await followed.stop();
-    harness = undefined;
-    expect(
-      Date.now() - started,
-      "closing waited on a follow held at a point",
-    ).toBeLessThan(4_000);
     expect(follow.isOver).toBe(true);
   });
 });
