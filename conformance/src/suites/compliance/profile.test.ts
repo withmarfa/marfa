@@ -8,6 +8,11 @@ import {
 import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  bootUnclaimedServer,
+  stopServer,
+} from "../../../scripts/marfa-server.js";
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("profile");
@@ -153,6 +158,17 @@ describe("owner and delegated profile changes", () => {
     await expectMatchesSchema("PATCH", "/profile", 200, result);
   });
   it("requires a recent direct owner and refuses explicit email-write grants", async () => {
+    for (const path of ["/owner", "/profile"]) {
+      const unauthenticated = await fetch(server.apiUrl + path, {
+        method: "PATCH",
+        headers: { "content-type": "application/json", origin: server.apiUrl },
+        body: JSON.stringify({ name: "No credential" }),
+      });
+      expect(unauthenticated.status, path).toBe(401);
+      const body = await unauthenticated.json();
+      expect(body).toMatchObject({ error: { code: "unauthorized" } });
+      await expectMatchesSchema("PATCH", path, 401, body);
+    }
     expect(
       (
         await fetch(server.apiUrl + "/owner", {
@@ -190,6 +206,104 @@ describe("owner and delegated profile changes", () => {
     expect(local.status).toBe(200);
     expect(local.body.name).toBe("Local owner");
   });
+
+  it(
+    "refuses owner and profile updates without recreating an unavailable persisted owner",
+    async () => {
+      const missing = await bootFreshServer("profile-missing-owner");
+      try {
+        const claimed = await controlRequest(
+          missing.controlSocket,
+          "/_control/setup/status",
+        );
+        expect(claimed.body.claimed).toBe(true);
+        const changed = await controlRequest(missing.controlSocket, "/owner", {
+          method: "PATCH",
+          body: { name: "Existing owner" },
+        });
+        expect(changed.status).toBe(200);
+        expect(changed.body.name).toBe("Existing owner");
+        await expectMatchesSchema("PATCH", "/owner", 200, changed.body);
+        const writeProfile = () =>
+          fetch(missing.apiUrl + "/profile", {
+            method: "PATCH",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${missing.workingKey}`,
+            },
+            body: JSON.stringify({ name: "Existing profile" }),
+          });
+        const updated = await writeProfile();
+        expect(updated.status).toBe(200);
+        const updatedBody = await updated.json();
+        expect(updatedBody).toEqual({ ok: true });
+        await expectMatchesSchema("PATCH", "/profile", 200, updatedBody);
+        expect(
+          (await controlRequest(missing.controlSocket, "/owner")).body.name,
+        ).toBe("Existing profile");
+
+        await stopServer({ state: missing.stateDir });
+        withInstanceDatabase(missing.sqlitePath, (db) => {
+          db.exec("PRAGMA foreign_keys = OFF");
+          db.exec(
+            "DELETE FROM auth_session; DELETE FROM auth_account; DELETE FROM auth_user",
+          );
+        });
+        const restarted = await bootUnclaimedServer({
+          state: missing.stateDir,
+        });
+        missing.apiUrl = restarted.url;
+        missing.controlSocket = restarted.controlSocket;
+        const current = await fetch(missing.apiUrl + "/keys/current", {
+          headers: { authorization: `Bearer ${missing.workingKey}` },
+        });
+        expect(current.status).toBe(200);
+
+        const assertOwnerRemainsUnavailable = async () => {
+          expect(
+            (await controlRequest(missing.controlSocket, "/owner")).status,
+          ).toBe(404);
+          expect(
+            (
+              await controlRequest(
+                missing.controlSocket,
+                "/_control/setup/status",
+              )
+            ).body,
+          ).toEqual(claimed.body);
+          withInstanceDatabase(missing.sqlitePath, (db) => {
+            expect(
+              db.prepare("SELECT count(*) AS count FROM auth_user").get()
+                ?.count,
+            ).toBe(0);
+          });
+        };
+        const ownerRefused = await controlRequest(
+          missing.controlSocket,
+          "/owner",
+          { method: "PATCH", body: { name: "Do not recreate owner" } },
+        );
+        expect(ownerRefused.status).toBe(404);
+        expect(ownerRefused.body).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema("PATCH", "/owner", 404, ownerRefused.body);
+        await assertOwnerRemainsUnavailable();
+
+        const profileRefused = await writeProfile();
+        expect(profileRefused.status).toBe(404);
+        const profileBody = await profileRefused.json();
+        expect(profileBody).toMatchObject({
+          error: { code: "owner_not_found" },
+        });
+        await expectMatchesSchema("PATCH", "/profile", 404, profileBody);
+        await assertOwnerRemainsUnavailable();
+      } finally {
+        await missing.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 it("refuses explicit email-write OAuth scopes", async () => {

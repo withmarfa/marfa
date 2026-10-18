@@ -254,6 +254,14 @@ Where control-only mode is enabled, when another process holds the configured pu
 
 ## Owner and delegated profile changes
 
+### `instance-claim/profile-owner-unavailable`
+
+If the persisted owner is unavailable, then the server MUST answer `PATCH /owner` and `PATCH /profile` with `404 owner_not_found` without creating an owner.
+
+**Reason:** An update cannot replace the owner's existing identity or reopen a completed claim.
+
+**Tests:** `compliance/profile.test.ts › refuses owner and profile updates without recreating an unavailable persisted owner`.
+
 ### `instance-claim/owner-update`
 
 When a direct owner authenticated within the last five minutes or the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, or both, the server MUST return the updated owner.
