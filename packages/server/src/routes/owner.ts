@@ -1,3 +1,4 @@
+import { ownerPasskeyRoutes } from "./owner-passkeys.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { getCookie, deleteCookie } from "hono/cookie";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
@@ -444,5 +445,6 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     deleteCookie(c, SETUP_COOKIE, { path: "/" });
     return c.json(ownerWire(owner), 201);
   });
+  router.route("/passkeys", ownerPasskeyRoutes(storage, auth));
   return router;
 }

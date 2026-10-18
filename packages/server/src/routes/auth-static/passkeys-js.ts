@@ -11,9 +11,9 @@ export const PASSKEYS_JS = `(() => {
     if (add) add.disabled = true;
     if (signIn) signIn.disabled = true;
   }
-  async function request(path, body) {
-    const response = await fetch('/auth/passkey/' + path, {
-      method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin',
+  async function request(path, body, method = body === undefined ? 'GET' : 'POST') {
+    const response = await fetch(path.startsWith('/') ? path : '/auth/passkey/' + path, {
+      method, credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
@@ -31,14 +31,14 @@ export const PASSKEYS_JS = `(() => {
     } finally { button.disabled = false; }
   }
   async function refresh() {
-    const rows = await request('list-user-passkeys');
+    const { data: rows } = await request('/owner/passkeys');
     list.replaceChildren();
     for (const row of rows) {
       const item = document.createElement('li');
       const label = document.createElement('span'); label.textContent = row.name || 'Passkey';
       const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove';
       remove.addEventListener('click', () => run(remove, async () => {
-        await request('delete-passkey', { id: row.id }); await refresh(); status.textContent = 'Passkey removed.';
+        await request('/owner/passkeys/' + encodeURIComponent(row.id), undefined, 'DELETE'); await refresh(); status.textContent = 'Passkey removed.';
       }));
       item.append(label, ' ', remove); list.append(item);
     }

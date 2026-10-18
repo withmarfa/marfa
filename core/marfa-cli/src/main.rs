@@ -371,7 +371,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         && matches!(
             &cli.command,
             Command::Owner {
-                command: owner::OwnerCommand::Recover(_)
+                command: owner::OwnerCommand::Recover(_) | owner::OwnerCommand::Passkeys { .. }
             } | Command::Setup {
                 command: owner::SetupCommand::Status
                     | owner::SetupCommand::Code

@@ -1,3 +1,4 @@
+import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
 import {
   buildPasskeyPlugin,
@@ -102,6 +103,7 @@ export interface MarfaAuthOptions {
  * as an account this path created.
  */
 interface BetterAuthCredentialContext {
+  adapter: DBAdapter;
   password: {
     hash: (password: string) => Promise<string>;
     config: { minPasswordLength: number; maxPasswordLength: number };
@@ -275,7 +277,25 @@ export interface PreparedPassword {
   previousHash?: string;
 }
 
+export interface OwnerPasskey {
+  id: string;
+  name: string | null;
+  createdAt: Date;
+}
+
 export interface MarfaAuth {
+  listOwnerPasskeys: (userId: string) => Promise<OwnerPasskey[]>;
+  renameOwnerPasskey: (
+    userId: string,
+    id: string,
+    name: string,
+    clientIp: string | null,
+  ) => Promise<OwnerPasskey | null>;
+  removeOwnerPasskey: (
+    userId: string,
+    id: string,
+    clientIp: string | null,
+  ) => Promise<boolean>;
   /**
    * Serve a request through Better Auth, as coming from `clientAddress`:
    * the address `clientIpMiddleware` resolved, which Better Auth keys its
@@ -1084,6 +1104,64 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     );
   };
 
+  const passkeyWire = (row: OwnerPasskey): OwnerPasskey => ({
+    id: row.id,
+    name: row.name ?? null,
+    createdAt: row.createdAt,
+  });
+  const listOwnerPasskeys = async (userId: string): Promise<OwnerPasskey[]> => {
+    const ctx = await credentialContext();
+    if ((await requireStorage().owner?.find())?.id !== userId) return [];
+    const rows = await ctx.adapter.findMany<OwnerPasskey>({
+      model: "passkey",
+      where: [{ field: "userId", value: userId }],
+    });
+    return rows
+      .sort(
+        (a, b) =>
+          a.createdAt.getTime() - b.createdAt.getTime() ||
+          a.id.localeCompare(b.id),
+      )
+      .map(passkeyWire);
+  };
+  const mutateOwnerPasskey = async (
+    userId: string,
+    id: string,
+    name: string | undefined,
+    clientIp: string | null,
+  ): Promise<OwnerPasskey | null> => {
+    const ctx = await credentialContext();
+    const storage = requireStorage();
+    return withCredentialRequest({ path: "/owner/passkeys", clientIp }, () =>
+      runAuditedTransaction(
+        storage,
+        async () => {
+          if ((await storage.owner?.find())?.id !== userId) return null;
+          const where = [
+            { field: "id", value: id },
+            { field: "userId", value: userId },
+          ];
+          const row = await ctx.adapter.findOne<OwnerPasskey>({
+            model: "passkey",
+            where,
+          });
+          if (!row) return null;
+          if (name === undefined) {
+            await ctx.adapter.delete({ model: "passkey", where });
+            return passkeyWire(row);
+          }
+          const updated = await ctx.adapter.update<OwnerPasskey>({
+            model: "passkey",
+            where,
+            update: { name },
+          });
+          return updated ? passkeyWire(updated) : null;
+        },
+        () => null,
+      ),
+    );
+  };
+
   const clearedSessionCookie = async (): Promise<string> =>
     sessionCookie(await credentialContext(), "", 0);
 
@@ -1116,11 +1194,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
         const storage = options.storage;
         const ownerOperation = PASSKEY_OWNER_PATHS.has(path);
-        const recent = path !== "/passkey/list-user-passkeys";
         const validate = async () => {
           if (ownerOperation)
             await requireOwnerSession(storage, facade, request.headers, {
-              recent,
+              recent: true,
             });
         };
         await validate();
@@ -1290,6 +1367,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       credentialOperation("/device/deny", () =>
         deviceDecision((params) => api.deviceDeny(params))(code, headers),
       ),
+    listOwnerPasskeys,
+    renameOwnerPasskey: (userId, id, name, clientIp) =>
+      mutateOwnerPasskey(userId, id, name, clientIp),
+    removeOwnerPasskey: async (userId, id, clientIp) =>
+      (await mutateOwnerPasskey(userId, id, undefined, clientIp)) !== null,
     useSession,
     listBrowserSessions,
     endBrowserSession,

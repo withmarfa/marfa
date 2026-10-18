@@ -86,6 +86,7 @@ export enum ErrorCode {
   WEBHOOK_NOT_FOUND = "webhook_not_found",
   API_KEY_NOT_FOUND = "api_key_not_found",
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
+  PASSKEY_NOT_FOUND = "passkey_not_found",
   SIGN_IN_NOT_FOUND = "sign_in_not_found",
   /**
    * The instance already has an owner, so `POST /owner` has nothing to
@@ -479,6 +480,10 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.OAUTH_GRANT_NOT_FOUND]: {
     status: 404,
     summary: "No app grant has this id.",
+  },
+  [ErrorCode.PASSKEY_NOT_FOUND]: {
+    status: 404,
+    summary: "No passkey of the owner has this id.",
   },
   [ErrorCode.SIGN_IN_NOT_FOUND]: {
     status: 404,

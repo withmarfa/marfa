@@ -32,16 +32,19 @@ inBrowser("passkey pages with a virtual authenticator", () => {
     const page = await context.newPage();
     const cdp = await context.newCDPSession(page);
     await cdp.send("WebAuthn.enable");
-    await cdp.send("WebAuthn.addVirtualAuthenticator", {
-      options: {
-        protocol: "ctap2",
-        transport: "internal",
-        hasResidentKey: true,
-        hasUserVerification: true,
-        isUserVerified: true,
-        automaticPresenceSimulation: true,
+    const { authenticatorId } = await cdp.send(
+      "WebAuthn.addVirtualAuthenticator",
+      {
+        options: {
+          protocol: "ctap2",
+          transport: "internal",
+          hasResidentKey: true,
+          hasUserVerification: true,
+          isUserVerified: true,
+          automaticPresenceSimulation: true,
+        },
       },
-    });
+    );
     const csp: string[] = [];
     page.on("console", (message) => {
       if (message.text().includes("Content Security Policy"))
@@ -56,6 +59,39 @@ inBrowser("passkey pages with a virtual authenticator", () => {
       await page.fill('[name="passkey-name"]', "Browser passkey");
       await page.click("#add-passkey");
       await page.getByText("Browser passkey", { exact: true }).waitFor();
+      const firstCredentials = await cdp.send("WebAuthn.getCredentials", {
+        authenticatorId,
+      });
+      const firstCredential = firstCredentials.credentials[0];
+      if (!firstCredential) throw new Error("Missing first virtual credential");
+      await cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+        authenticatorId,
+        enabled: false,
+      });
+      const { authenticatorId: otherAuthenticatorId } = await cdp.send(
+        "WebAuthn.addVirtualAuthenticator",
+        {
+          options: {
+            protocol: "ctap2",
+            transport: "usb",
+            hasResidentKey: true,
+            hasUserVerification: true,
+            isUserVerified: true,
+            automaticPresenceSimulation: true,
+          },
+        },
+      );
+      await page.fill('[name="passkey-name"]', "Other browser passkey");
+      await page.click("#add-passkey");
+      await page.getByText("Other browser passkey", { exact: true }).waitFor();
+      const allCredentials = await cdp.send("WebAuthn.getCredentials", {
+        authenticatorId: otherAuthenticatorId,
+      });
+      const otherCredential = allCredentials.credentials.find(
+        (row) => row.credentialId !== firstCredential.credentialId,
+      );
+      if (!otherCredential)
+        throw new Error("Missing second virtual credential");
       await context.clearCookies();
       const registration = await ctx.app.request(
         origin + "/auth/oauth2/register",
@@ -92,8 +128,34 @@ inBrowser("passkey pages with a virtual authenticator", () => {
       await page.waitForURL(/\/callback\?.*code=/);
       await page.goto(origin + "/auth/owner/passkeys");
       await page.getByText("Browser passkey", { exact: true }).waitFor();
-      await page.getByRole("button", { name: "Remove" }).click();
-      await page.getByText("No passkeys yet.", { exact: true }).waitFor();
+      await page
+        .locator("li")
+        .filter({ has: page.getByText("Browser passkey", { exact: true }) })
+        .getByRole("button", { name: "Remove" })
+        .click();
+      await page.getByText("Passkey removed.", { exact: true }).waitFor();
+      await page.getByText("Other browser passkey", { exact: true }).waitFor();
+      await context.clearCookies();
+      const authenticate = async (credentialId: string) => {
+        await cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+          authenticatorId,
+          enabled: credentialId === firstCredential.credentialId,
+        });
+        await cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+          authenticatorId: otherAuthenticatorId,
+          enabled: credentialId !== firstCredential.credentialId,
+        });
+        return page.evaluate(`(async () => {
+          const options = await (await fetch('/auth/passkey/generate-authenticate-options')).json();
+          options.allowCredentials = [{type:'public-key',id:${JSON.stringify(Buffer.from(credentialId, "base64").toString("base64url"))}}];
+          options.userVerification = 'required';
+          const credential = await navigator.credentials.get({publicKey:PublicKeyCredential.parseRequestOptionsFromJSON(options)});
+          const response = await fetch('/auth/passkey/verify-authentication',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({response:credential.toJSON()})});
+          return response.status;
+        })()`);
+      };
+      expect(await authenticate(firstCredential.credentialId)).toBe(401);
+      expect(await authenticate(otherCredential.credentialId)).toBe(200);
       expect(csp).toEqual([]);
     } finally {
       await context.close();

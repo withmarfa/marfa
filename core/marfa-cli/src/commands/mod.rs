@@ -18,6 +18,7 @@ pub mod metadata;
 pub mod metrics;
 pub mod operations;
 pub mod owner;
+pub mod owner_passkeys;
 pub mod restore;
 pub mod search;
 pub mod sign_ins;

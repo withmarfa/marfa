@@ -194,6 +194,62 @@ Show the instance's owner.
 marfa owner show [OPTIONS]
 ```
 
+### marfa owner passkeys
+
+Manage the owner's registered passkeys using private machine authority.
+
+```text
+marfa owner passkeys [OPTIONS] <COMMAND>
+```
+
+### marfa owner passkeys list
+
+List every registered owner passkey (private socket required).
+
+```text
+marfa owner passkeys list [OPTIONS]
+```
+
+### marfa owner passkeys rename
+
+Rename one owner passkey (private socket required).
+
+```text
+marfa owner passkeys rename [OPTIONS] --name <NAME> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The passkey's ID. |
+
+| Option | Description |
+| --- | --- |
+| `--name <NAME>` | The new name. Spaces at each end are trimmed. |
+
+### marfa owner passkeys remove
+
+Remove one passkey. Existing sign-ins and other passkeys stay usable (private socket required).
+
+```text
+marfa owner passkeys remove [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The passkey's ID. |
+
+### marfa owner passkeys add
+
+Open the owner's passkey page through a fresh browser sign-in (private socket required).
+
+```text
+marfa owner passkeys add [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--no-browser` | Print the sign-in URL without opening a browser. |
+
 ### marfa owner recover
 
 Recover the owner's password using private machine authority; revoke browser sessions.
