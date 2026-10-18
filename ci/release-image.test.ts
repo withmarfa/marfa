@@ -122,22 +122,45 @@ describe("the server image in a release", () => {
     expect(publish?.if).toBe(PUSH);
   });
 
-  it("tags the image and checks it as the public sees it before the release is public", () => {
+  it("tags the image and checks it as the public sees it before npm is published to", () => {
     const tag = indexOfStep(publishSteps, "Tag the server image");
     const verify = indexOfStep(
       publishSteps,
       "Check the published server image",
     );
+    const npm = indexOfStep(publishSteps, "Publish @withmarfa/core");
     const open = indexOfStep(publishSteps, "Make the GitHub release public");
     const draft = indexOfStep(publishSteps, "Draft the GitHub release");
     expect(draft).toBeLessThan(tag);
     expect(tag).toBeLessThan(verify);
-    expect(verify).toBeLessThan(open);
+    expect(verify).toBeLessThan(npm);
+    expect(npm).toBeLessThan(open);
     // Signed out, so a package that is still private fails here.
     expect(publishSteps[verify]?.run).toMatch(
       /docker logout ghcr\.io[\s\S]*docker pull/,
     );
     expect(publishSteps[verify]?.run).toContain("scripts/check-image.sh");
+  });
+
+  it("boots the pushed digest on the platform it was built for, before holding it", () => {
+    const push = indexOfStep(imageSteps, "Push the image by digest");
+    const boot = indexOfStep(imageSteps, "Boot the pushed image");
+    const hold = indexOfStep(imageSteps, "Hold the digest");
+    expect(boot).toBe(push + 1);
+    expect(boot).toBeLessThan(hold);
+    expect(imageSteps[boot]?.if).toBe(PUSH);
+    expect(imageSteps[boot]?.run).toContain('docker pull "$IMAGE@$DIGEST"');
+    expect(imageSteps[boot]?.run).toContain(
+      'scripts/check-image.sh "$IMAGE@$DIGEST"',
+    );
+  });
+
+  it("keeps the digests as long as a run's other artifacts, so a re-run finds them", () => {
+    const upload = imageSteps.find((step) =>
+      step.uses?.startsWith("actions/upload-artifact@"),
+    );
+    expect(upload).toBeDefined();
+    expect(upload?.with).not.toHaveProperty("retention-days");
   });
 
   it("pins Docker's actions by commit", () => {

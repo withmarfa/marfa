@@ -162,7 +162,7 @@ When `GET /` is answered with the description, the server MUST answer `version` 
 
 Where the server runs a build made as a numbered release, the server MUST answer `GET /` with `release` as that release's version, three dot-separated whole numbers.
 
-**Reason:** `version` names the build and stays what it was, so that a deployment can be traced to its commit. A person who is upgrading names a release, and reads it here.
+**Reason:** `version` names the build and stays what it was, so that a deployment can be traced to its commit. A person who is upgrading names a release, and reads it here. The fixtures boot a checkout, which is not a release, so they hold only the form of the number; `scripts/check-image.sh` boots a built release image and holds the field to the release it was made as.
 
 **Tests:** `compliance/instance.test.ts › names a release only as the version a tag carries`.
 

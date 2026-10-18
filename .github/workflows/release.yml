@@ -19,10 +19,11 @@ name: Release
 # the repository holds one (`ci/version-fields.test.ts`).
 #
 # The image is built and booted on a runner of each platform, and for a tag
-# each runner pushes it untagged, by digest. The publish job then tags one
-# manifest for both, `<version>` and `latest`, and boots the tag as a stranger
-# pulls it, signed out, before the release is made public. The registry is
-# written with the job's own token, `packages: write`.
+# each runner pushes it untagged, by digest, and boots the pushed digest. The
+# publish job then tags one manifest for both, `<version>` and `latest`, and
+# boots the tag as a stranger pulls it, signed out, after the draft release
+# and before npm. The registry is written with the job's own token,
+# `packages: write`.
 #
 # npm publishes by trusting this workflow's OIDC identity, with no stored
 # token; the GitHub release uses the job's own token. Trusted publishing is
@@ -434,6 +435,16 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ env.VERSION }}
 
+      # The bytes the registry holds, by the digest it answered, booted on the
+      # platform they were built for.
+      - name: Boot the pushed image
+        if: github.event_name == 'push'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          docker pull "$IMAGE@$DIGEST"
+          scripts/check-image.sh "$IMAGE@$DIGEST" "$GITHUB_SHA" "$VERSION"
+
       - name: Hold the digest for the publish job
         if: github.event_name == 'push'
         env:
@@ -454,27 +465,29 @@ jobs:
           name: image-digest-${{ needs.build.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
           if-no-files-found: error
-          retention-days: 1
 
   # Never reached by a dry run. Ordered so a failure part way leaves what a
   # re-run of the same tag can finish, and never a version half out: the
   # preflight asks every registry what it holds, and every registry that
   # will be published to is shown to trust this run, before anything is
-  # made; the draft release, which can be undone, comes next; the
-  # registries, which never take a version back, come after it; and the
+  # made; the draft release, which can be undone, comes next, and the image's
+  # tags with their check; the npm registry, which never takes a version
+  # back, comes after them; and the
   # release is made public only once everything is out. Every step asks
   # whether its version is already there and skips if it is, so a re-run
   # repeats nothing.
   #
   # Publishing needs the GitHub-hosted OIDC identity trusted by npm.
   #
-  # The image's tags come after npm and before the release is made public,
-  # and are checked signed out. The images themselves were pushed by the
-  # `image` jobs, which this job waits for, so a push that failed has already
-  # stopped the release before it was drafted. A package the first push
-  # created is private until its visibility is set once in GitHub's package
-  # settings; the check fails there, and re-running this job finishes the
-  # release.
+  # The image's tags come right after the draft release and before npm, and
+  # are checked signed out, so a private package or an image that will not
+  # boot stops the release before any registry that never takes a version
+  # back. The images themselves were pushed by the `image` jobs, which this
+  # job waits for, so a push that failed has already stopped the release
+  # before it was drafted. A package the first push created is private until
+  # its visibility is set once in GitHub's package settings; the check fails
+  # there, and re-running this job tags again, finds the tag made, and carries
+  # on.
   publish:
     name: Publish
     needs: [build, sign, image]
@@ -642,26 +655,6 @@ jobs:
             exit 1
           fi
 
-      # By trusted publishing: npm exchanges the job's OIDC identity itself,
-      # so no token is set anywhere.
-      - name: Publish @withmarfa/core and @withmarfa/client to npm
-        run: |
-          for package in core client; do
-            name="@withmarfa/$package"
-            if found=$(npm view "$name@$VERSION" version 2> "$RUNNER_TEMP/npm-view.err"); then
-              if [ "$found" = "$VERSION" ]; then
-                echo "$name@$VERSION is already on npm"
-                continue
-              fi
-            elif ! grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
-              cat "$RUNNER_TEMP/npm-view.err"
-              exit 1
-            fi
-            # A path, not `artifacts/…`, which npm reads as GitHub shorthand
-            # for a repository and tries to clone.
-            npm publish "./artifacts/withmarfa-$package-$VERSION.tgz" --access public
-          done
-
       - uses: actions/download-artifact@v8
         with:
           pattern: image-digest-${{ needs.build.outputs.version }}-*
@@ -725,6 +718,26 @@ jobs:
             exit 1
           fi
           scripts/check-image.sh "$IMAGE:$VERSION" "$GITHUB_SHA" "$VERSION"
+
+      # By trusted publishing: npm exchanges the job's OIDC identity itself,
+      # so no token is set anywhere.
+      - name: Publish @withmarfa/core and @withmarfa/client to npm
+        run: |
+          for package in core client; do
+            name="@withmarfa/$package"
+            if found=$(npm view "$name@$VERSION" version 2> "$RUNNER_TEMP/npm-view.err"); then
+              if [ "$found" = "$VERSION" ]; then
+                echo "$name@$VERSION is already on npm"
+                continue
+              fi
+            elif ! grep -q E404 "$RUNNER_TEMP/npm-view.err"; then
+              cat "$RUNNER_TEMP/npm-view.err"
+              exit 1
+            fi
+            # A path, not `artifacts/…`, which npm reads as GitHub shorthand
+            # for a repository and tries to clone.
+            npm publish "./artifacts/withmarfa-$package-$VERSION.tgz" --access public
+          done
 
       - name: Make the GitHub release public
         env:
