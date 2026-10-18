@@ -601,3 +601,117 @@ describe("the source filter on the edges an item read carries", () => {
     ).toEqual(sorted(made));
   });
 });
+
+describe("the source filter on backref filter terms", () => {
+  /** The ids a door answers for one `backref` term, scoped to this file's notes. */
+  type Door = (reader: MarfaClient, term: string) => Promise<string[]>;
+
+  const scoped = (term: string): string =>
+    encodeURIComponent(`source eq "${shownSource}" AND ${term}`);
+
+  const doors: [string, Door][] = [
+    [
+      "GET /items",
+      async (reader, term) => {
+        const r = await reader.rawRequest<{ data: { id: string }[] }>(
+          `/items?type=core.note&limit=200&filter=${scoped(term)}`,
+        );
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        return r.data.data.map((row) => row.id);
+      },
+    ],
+    [
+      "GET /search",
+      async (reader, term) => {
+        const r = await reader.rawRequest<{
+          data: { item: { id: string } }[];
+        }>(
+          `/search?q=${encodeURIComponent(ctx.runId)}&type=core.note&limit=100&filter=${scoped(term)}`,
+        );
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        return r.data.data.map((row) => row.item.id);
+      },
+    ],
+    [
+      "POST /items/bulk-actions",
+      async (reader, term) => {
+        const r = await reader.rawRequest<{ ids?: string[] }>(
+          "/items/bulk-actions",
+          {
+            method: "POST",
+            body: {
+              filter: {
+                type: "core.note",
+                filter: `source eq "${shownSource}" AND ${term}`,
+              },
+              action: "update_tags",
+              add: ["backref-source-filter"],
+              dry_run: true,
+            },
+          },
+        );
+        expect(r.status, JSON.stringify(r.error)).toBe(200);
+        return r.data.ids ?? [];
+      },
+    ],
+  ];
+
+  /** `GET /items/stats` answers a count, so it is asked for one. */
+  async function counted(reader: MarfaClient, term: string): Promise<number> {
+    const r = await reader.rawRequest<Record<string, number>>(
+      `/items/stats?by=type&type=core.note&filter=${scoped(term)}`,
+    );
+    expect(r.status, JSON.stringify(r.error)).toBe(200);
+    return r.data["core.note"] ?? 0;
+  }
+
+  it("counts only edges whose source item the filter shows, on GET /items, GET /search, GET /items/stats and POST /items/bulk-actions", async () => {
+    const hiddenPointer = await note(hiddenWriter);
+    const shownPointer = await note(shownWriter);
+    const pointedByHidden = await note(shownWriter);
+    const pointedByShown = await note(shownWriter);
+    await edge(hiddenWriter, hiddenPointer, pointedByHidden);
+    await edge(shownWriter, shownPointer, pointedByShown);
+
+    // The single door the terms have to agree with.
+    const backrefs = await filtered.listItemBackrefs(pointedByHidden, {
+      edge_type: edgeType,
+    });
+    expect(backrefs.status, JSON.stringify(backrefs.error)).toBe(200);
+    expect(backrefs.data.data).toEqual([]);
+
+    const exists = `backref[${edgeType}] exists`;
+    const fromHidden = `backref[${edgeType}] eq "${hiddenPointer}"`;
+    const fromShown = `backref[${edgeType}] eq "${shownPointer}"`;
+    for (const [name, door] of doors) {
+      // The witness: with no filter both edges count.
+      const whole = await door(unfiltered, exists);
+      expect(whole, name).toEqual(
+        expect.arrayContaining([pointedByHidden, pointedByShown]),
+      );
+      expect(await door(unfiltered, fromHidden), name).toEqual([
+        pointedByHidden,
+      ]);
+
+      const narrowed = await door(filtered, exists);
+      expect(narrowed, name).toContain(pointedByShown);
+      expect(narrowed, name).not.toContain(pointedByHidden);
+      expect(await door(filtered, fromHidden), name).toEqual([]);
+      expect(await door(filtered, fromShown), name).toEqual([pointedByShown]);
+    }
+
+    expect(await counted(unfiltered, fromHidden)).toBe(1);
+    expect(await counted(filtered, fromHidden)).toBe(0);
+    expect(await counted(filtered, fromShown)).toBe(1);
+  });
+
+  it("matches a backref not_exists term on an item whose every inbound edge the filter hides", async () => {
+    const hiddenPointer = await note(hiddenWriter);
+    const pointed = await note(shownWriter);
+    await edge(hiddenWriter, hiddenPointer, pointed);
+    const [, list] = doors[0]!;
+    const term = `backref[${edgeType}] not_exists`;
+    expect(await list(unfiltered, term)).not.toContain(pointed);
+    expect(await list(filtered, term)).toContain(pointed);
+  });
+});

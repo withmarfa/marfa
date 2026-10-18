@@ -681,12 +681,18 @@ describe("every announcement names its source's type", () => {
     expect(
       unnamed.map((e) => `${e.type} ${e.edge.id}: ${String(e.sourceType)}`),
     ).toEqual([]);
+    // And names the source item's source, which a source filter decides by.
+    const sourceless = announced.filter(
+      (e) => typeof e.sourceItemSource !== "string",
+    );
+    expect(sourceless.map((e) => `${e.type} ${e.edge.id}`)).toEqual([]);
   });
 
   it("at every place the server publishes one", () => {
     // Read from the source, comments aside, so a door added later has to
     // name it before it can publish: each call's argument up to its
-    // closing brace names `sourceType`.
+    // closing brace carries `announcedSource`, its source item's type and
+    // source.
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const missing: string[] = [];
     let calls = 0;
@@ -701,7 +707,7 @@ describe("every announcement names its source's type", () => {
       for (const match of text.matchAll(/(?<![\w$.])publishEdge\s*\(\s*\{/g)) {
         calls += 1;
         const end = text.indexOf("})", match.index);
-        if (!text.slice(match.index, end).includes("sourceType")) {
+        if (!text.slice(match.index, end).includes("announcedSource(")) {
           missing.push(`${entry} at offset ${String(match.index)}`);
         }
       }

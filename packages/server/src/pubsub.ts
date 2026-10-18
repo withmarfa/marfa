@@ -75,11 +75,34 @@ export interface EdgeEvent extends FanoutControl {
    * the credential may read.
    */
   sourceType?: string;
+  /**
+   * The source item's `source` when the event was published, carried for the
+   * reason `sourceType` is: a reader's source filter decides an edge by its
+   * source item (`events/source-filter-edge`). Kept in the log and never
+   * sent: `frameFor` strips it.
+   */
+  sourceItemSource?: string;
   /** On `edge_deleted` alone: the item whose purge took the edge. */
   purgedWith?: string;
 }
 
 export type PubsubEvent = ItemEvent | EdgeEvent;
+
+/** An edge's source item, as much of it as decides who is told of the edge. */
+export interface EdgeSource {
+  type: string;
+  source: string;
+}
+
+/** The fields an edge event carries about its source item, or none where the
+ *  source could not be read. */
+export function announcedSource(
+  source: EdgeSource | null | undefined,
+): Pick<EdgeEvent, "sourceType" | "sourceItemSource"> {
+  return source
+    ? { sourceType: source.type, sourceItemSource: source.source }
+    : {};
+}
 
 /**
  * The frame as the log stores it: what a reader of every type is sent, plus
@@ -91,6 +114,9 @@ export function storedFrame(event: PubsubEvent): Record<string, unknown> {
       event_type: wireEventName(event.type),
       edge: event.edge,
       ...(event.sourceType !== undefined && { source_type: event.sourceType }),
+      ...(event.sourceItemSource !== undefined && {
+        source_item_source: event.sourceItemSource,
+      }),
       ...(event.purgedWith !== undefined && { purged_with: event.purgedWith }),
     };
   }
@@ -124,8 +150,9 @@ export function cascadeMark(
 }
 
 /**
- * A mark stays only where its named row's type is readable, since a frame
- * decoded from the log gets no more trust than one built live.
+ * The frame a reader is sent. A mark stays only where its named row's type
+ * is readable, since a frame decoded from the log gets no more trust than one
+ * built live, and an edge frame's `source_item_source` stays in the log.
  */
 export function frameFor(
   stored: Record<string, unknown>,
@@ -136,6 +163,7 @@ export function frameFor(
     restored_with_type: restoredType,
     ...frame
   } = stored;
+  delete frame.source_item_source;
   const readable = (type: unknown): boolean =>
     typeof type === "string" && mayRead(type);
   const item: unknown = frame.item;
@@ -316,6 +344,9 @@ function emitLogged(row: {
       edge: frame.edge as Edge,
       ...(typeof frame.source_type === "string" && {
         sourceType: frame.source_type,
+      }),
+      ...(typeof frame.source_item_source === "string" && {
+        sourceItemSource: frame.source_item_source,
       }),
       ...(typeof frame.purged_with === "string" && {
         purgedWith: frame.purged_with,

@@ -8,7 +8,11 @@ import type { ApiKey, Edge } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { mayReadType, requireEdgePermission } from "../middleware/auth.js";
-import type { SourceFilterSettings } from "../storage/filter-sql.js";
+import {
+  sourceFilterCovers,
+  type SourceFilterSettings,
+} from "../storage/filter-sql.js";
+import type { EdgeSource } from "../pubsub.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -49,6 +53,25 @@ export function announcedEdgeReadable(
     edgeKindReadable(key, edge) &&
     sourceType !== undefined &&
     mayReadType(key, sourceType)
+  );
+}
+
+/**
+ * Whether a reader's source filter shows an announced edge, decided by the
+ * source item the event carries, as the edge listings decide it by the row
+ * (`edges/read-source-filter`). An event that carries no source for a type
+ * the filter names cannot be shown to pass, so it is withheld.
+ */
+export function announcedEdgeSourceShown(
+  filter: SourceFilterSettings | undefined,
+  sourceType: string | undefined,
+  sourceItemSource: string | undefined,
+): boolean {
+  if (filter === undefined) return true;
+  if (sourceType === undefined) return false;
+  if (!sourceFilterCovers(filter, sourceType)) return true;
+  return (
+    sourceItemSource !== undefined && filter.sources.includes(sourceItemSource)
   );
 }
 
@@ -135,7 +158,7 @@ async function readableEdgeSet(
 ): Promise<Edge[]> {
   const ofReadableKind = edges.filter((edge) => edgeKindReadable(key, edge));
   if (ofReadableKind.length === 0) return [];
-  const types = await sourceTypesFor(
+  const sources = await edgeSourcesFor(
     storage,
     ofReadableKind.flatMap((edge) =>
       endpoints === "both"
@@ -143,25 +166,27 @@ async function readableEdgeSet(
         : [edge.source_id],
     ),
   );
+  const typeOf = (id: string): string | undefined => sources.get(id)?.type;
   const readable = ofReadableKind.filter((edge) => {
-    if (!sourceTypeReadable(key, types.get(edge.source_id))) return false;
+    if (!sourceTypeReadable(key, typeOf(edge.source_id))) return false;
     if (endpoints === "source") return true;
-    const targetType = types.get(edge.target_id);
+    const targetType = typeOf(edge.target_id);
     return targetType !== undefined && mayReadType(key, targetType);
   });
   for (const edge of readable) {
     rememberEdgeSubject(
       edge,
       "read",
-      types.get(edge.source_id),
-      endpoints === "both" ? types.get(edge.target_id) : undefined,
+      typeOf(edge.source_id),
+      endpoints === "both" ? typeOf(edge.target_id) : undefined,
     );
   }
   return readable;
 }
 
 /**
- * The types of these source items, deduplicated and read in one query.
+ * The type and source of these source items, deduplicated and read in one
+ * query.
  *
  * Trashed sources are read too, for the reason the single door reads
  * them: a plain `items.get` answers null for a trashed source, and a null
@@ -170,18 +195,23 @@ async function readableEdgeSet(
  * answer, which `sourceTypeReadable` reads as a source with no type.
  *
  * Also what every door announcing an edge reads, so the event carries its
- * source's type (`EdgeEvent.sourceType`).
+ * source's type and source (`announcedSource`).
  */
-export async function sourceTypesFor(
+export async function edgeSourcesFor(
   storage: Storage,
   sourceIds: string[],
-): Promise<Map<string, string>> {
+): Promise<Map<string, EdgeSource>> {
   const unique = [...new Set(sourceIds)];
   if (unique.length === 0) return new Map();
   const sources = await storage.items.getMany(unique, {
     includeTrashed: true,
   });
-  return new Map([...sources].map(([id, item]) => [id, item.type]));
+  return new Map(
+    [...sources].map(([id, item]) => [
+      id,
+      { type: item.type, source: item.source },
+    ]),
+  );
 }
 
 /**

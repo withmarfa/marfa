@@ -6,8 +6,8 @@ import {
 } from "../storage/edge-constraints.js";
 import type { Storage } from "../storage/interface.js";
 import type { Edge } from "@withmarfa/shared";
-import { publishEdge } from "../pubsub.js";
-import { sourceTypesFor } from "./_edge-visibility.js";
+import { announcedSource, publishEdge } from "../pubsub.js";
+import { edgeSourcesFor } from "./_edge-visibility.js";
 
 /** What one `applyInlineEdges` call changed. */
 export interface InlineEdgeChanges {
@@ -133,16 +133,24 @@ export async function announceInlineEdges(
    *  batch's own answer, which is off unless asked for. */
   enableFanout = true,
 ): Promise<void> {
-  const sourceTypes = await sourceTypesFor(
+  const sources = await edgeSourcesFor(
     storage,
     [...changes.deleted, ...changes.created].map((edge) => edge.source_id),
   );
   for (const edge of changes.deleted) {
-    const sourceType = sourceTypes.get(edge.source_id);
-    await publishEdge({ type: "edge_deleted", edge, sourceType, enableFanout });
+    await publishEdge({
+      type: "edge_deleted",
+      edge,
+      ...announcedSource(sources.get(edge.source_id)),
+      enableFanout,
+    });
   }
   for (const edge of changes.created) {
-    const sourceType = sourceTypes.get(edge.source_id);
-    await publishEdge({ type: "edge_created", edge, sourceType, enableFanout });
+    await publishEdge({
+      type: "edge_created",
+      edge,
+      ...announcedSource(sources.get(edge.source_id)),
+      enableFanout,
+    });
   }
 }

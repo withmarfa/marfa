@@ -15,7 +15,8 @@ import {
 } from "../auth/live-credential.js";
 import { ItemSchema, EdgeSchema, MetadataSchema } from "../routes/_schemas.js";
 import { WEBHOOK_EVENTS } from "../routes/webhooks.js";
-import { frameInReach } from "./reach.js";
+import { deliveryReach, frameInReach } from "./reach.js";
+import type { DeliveryReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 import { errorMessage } from "../error-text.js";
 
@@ -167,7 +168,10 @@ export async function deliveryInReach(
   if (typeof stored !== "object" || stored === null) {
     return { cancel: DELIVERY_CANCELED.unreadable };
   }
-  const frame = frameInReach(credential.key, stored as Record<string, unknown>);
+  const frame = frameInReach(
+    await deliveryReach(storage, credential),
+    stored as Record<string, unknown>,
+  );
   if (!frame) return { cancel: DELIVERY_CANCELED.unreadable };
   // Deleted so the spread below cannot keep the frame's `event_type` first:
   // the body's `event_type` follows the frame's own fields.
@@ -442,7 +446,7 @@ export class WebhookScheduler {
       let scannedBytes = 0;
       let queuedBytes = 0;
       const byteTarget = 8 * 1024 * 1024;
-      const credentials = new Map<string, Promise<LiveCredential | null>>();
+      const reaches = new Map<string, Promise<DeliveryReach | null>>();
       while (fetched < 128 && examined < 50 && scheduled < 50) {
         if (position.eventId === null) {
           position.lastEventId = await storage.eventLog.getNonFanoutEnd(
@@ -518,14 +522,17 @@ export class WebhookScheduler {
           }
           if (eligible) {
             const name = ownerName(subscription.owner);
-            let credential = credentials.get(name);
-            if (!credential) {
-              credential = ownerCredential(storage, subscription.owner);
-              credentials.set(name, credential);
+            let reach = reaches.get(name);
+            if (!reach) {
+              reach = ownerCredential(storage, subscription.owner).then(
+                (standing) =>
+                  standing === null ? null : deliveryReach(storage, standing),
+              );
+              reaches.set(name, reach);
             }
-            const standing = await credential;
+            const standing = await reach;
             eligible =
-              standing !== null && frameInReach(standing.key, frame) !== null;
+              standing !== null && frameInReach(standing, frame) !== null;
           }
           if (eligible) {
             // Allow one valid oversized payload; never reject accepted work.

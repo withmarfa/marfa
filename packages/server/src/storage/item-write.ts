@@ -58,7 +58,8 @@ import {
   announceInlineEdges,
   applyInlineEdges,
 } from "../routes/_edges-inline.js";
-import { publish, publishEdge } from "../pubsub.js";
+import { announcedSource, publish, publishEdge } from "../pubsub.js";
+import type { EdgeSource } from "../pubsub.js";
 import type { InlineEdgeChanges } from "../routes/_edges-inline.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
@@ -67,7 +68,7 @@ import { edgeTargetNotFound } from "./edge-constraints.js";
 import { planCascadeDelete } from "./edge-cascade.js";
 import {
   readableBlockingEdges,
-  sourceTypesFor,
+  edgeSourcesFor,
 } from "../routes/_edge-visibility.js";
 import { refuseUnlessUninstalled } from "../routes/_connection-refusal.js";
 import { staleVersion } from "./conflict.js";
@@ -224,10 +225,10 @@ export interface ItemMoved {
   broughtBack: Item[];
   /** Edges a purge took with the row. */
   edges: Edge[];
-  /** The type of each such edge's source, read before the purge took the
-   * row, which its announcement carries (`events/edge-frame-published-type`).
-   * */
-  edgeSourceTypes: Map<string, string>;
+  /** The type and source of each such edge's source item, read before the
+   *  purge took the row, which its announcement carries
+   *  (`events/edge-frame-published-type`). */
+  edgeSources: Map<string, EdgeSource>;
   /** The trash a purged row was taken by, read before the purge. */
   trashedWith?: CascadeRoot;
 }
@@ -499,7 +500,7 @@ async function announceMove(
         await publishEdge({
           type: "edge_deleted",
           edge,
-          sourceType: moved.edgeSourceTypes.get(edge.source_id),
+          ...announcedSource(moved.edgeSources.get(edge.source_id)),
           purgedWith: moved.item.id,
           enableFanout,
         });
@@ -1175,7 +1176,7 @@ function moved(
     trashed: [],
     broughtBack: [],
     edges: [],
-    edgeSourceTypes: new Map(),
+    edgeSources: new Map(),
     ...rest,
   };
 }
@@ -1332,7 +1333,7 @@ async function purgeRow(
     ...(await storage.edges.deleteBySource(row.id)),
     ...(await storage.edges.deleteByTarget(row.id)),
   ];
-  const edgeSourceTypes = await sourceTypesFor(
+  const edgeSources = await edgeSourcesFor(
     storage,
     edges.map((edge) => edge.source_id),
   );
@@ -1341,7 +1342,7 @@ async function purgeRow(
   });
   return moved(row, row.state, {
     edges,
-    edgeSourceTypes,
+    edgeSources,
     ...(trashedWith && { trashedWith }),
   });
 }

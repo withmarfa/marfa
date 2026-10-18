@@ -5,7 +5,12 @@ import { invalidReadViewRequest } from "../middleware/read-view.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { type Context, type MiddlewareHandler } from "hono";
 import { EventQuerySchema, eventStreamRoute } from "./events-schema.js";
-import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  matchesTypeFilter,
+  resolveEnforcement,
+} from "@withmarfa/shared";
 import { assertTypeFilter } from "./_type-filter.js";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
@@ -34,7 +39,15 @@ import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata, TypeFilter } from "@withmarfa/shared";
 import { readableMetadata } from "./_extension-reach.js";
-import { announcedEdgeReadable } from "./_edge-visibility.js";
+import {
+  announcedEdgeReadable,
+  announcedEdgeSourceShown,
+} from "./_edge-visibility.js";
+import {
+  sourceFilterIncludesItem,
+  type SourceFilterSettings,
+} from "../storage/filter-sql.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
 import { errorMessage } from "../error-text.js";
 import type { StreamIncompleteReason } from "./_stream-incomplete.js";
 
@@ -311,6 +324,15 @@ export function itemFrameFor(
   });
 }
 
+/** The edge frame a subscriber is sent, live or replayed: the stored frame
+ *  without what the log keeps for the server's own decisions. */
+export function edgeFrameFor(
+  stored: Record<string, unknown>,
+  apiKey: ApiKey,
+): string {
+  return JSON.stringify(frameFor(stored, (type) => mayReadType(apiKey, type)));
+}
+
 /**
  * Read `?type=` as one type or several.
  *
@@ -355,9 +377,18 @@ function parseTypeFilter(
   return parts;
 }
 
+/** A stored edge event, decoded: the frame, its edge and what it carries
+ *  about the edge's source item. */
+export interface StoredEdge {
+  frame: Record<string, unknown>;
+  edge: Edge;
+  sourceType: string | undefined;
+  sourceItemSource: string | undefined;
+}
+
 /**
- * The edge inside a stored event payload, with the source type the event
- * carries, or null if the row cannot be read as one.
+ * The edge inside a stored event payload, with what the event carries about
+ * its source item, or null if the row cannot be read as one.
  *
  * Null rather than a throw, and the caller withholds the row and names it
  * in the log: a stored string's declared shape is a claim about it rather
@@ -367,9 +398,7 @@ function parseTypeFilter(
  * is a defect somebody has to find, and a silent skip leaves no trace of
  * it anywhere.
  */
-export function decodeStoredEdge(
-  payload: string,
-): { edge: Edge; sourceType: string | undefined } | null {
+export function decodeStoredEdge(payload: string): StoredEdge | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(payload);
@@ -377,9 +406,14 @@ export function decodeStoredEdge(
     return null;
   }
   if (typeof parsed !== "object" || parsed === null) return null;
-  const { edge, source_type: sourceType } = parsed as {
+  const {
+    edge,
+    source_type: sourceType,
+    source_item_source: sourceItemSource,
+  } = parsed as {
     edge?: unknown;
     source_type?: unknown;
+    source_item_source?: unknown;
   };
   if (typeof edge !== "object" || edge === null) return null;
   const { edge_type: kind, source_id: source } = edge as {
@@ -388,8 +422,11 @@ export function decodeStoredEdge(
   };
   if (typeof kind !== "string" || typeof source !== "string") return null;
   return {
+    frame: parsed as Record<string, unknown>,
     edge: edge as Edge,
     sourceType: typeof sourceType === "string" ? sourceType : undefined,
+    sourceItemSource:
+      typeof sourceItemSource === "string" ? sourceItemSource : undefined,
   };
 }
 
@@ -628,22 +665,33 @@ export function eventRoutes(
                * Read again before each batch, after a backpressure wait, and at
                * each heartbeat, through the resolver every long-lived piece of work
                * shares, because the stream outlives the request that opened it:
-               * a key revoked, narrowed or expired, a sign-in's token revoked or
+               * a key revoked, narrowed or expired, a source filter changed
+               * (`events/source-filter-current`), a sign-in's token revoked or
                * expired, or an app disconnected would otherwise go on being
                * shown everything the credential could read when it connected.
                * Each frame in a batch was published before the read began, so
                * none is judged by a credential older than itself.
                */
-              const reach: { key: ApiKey; typeFilter: TypeFilter } = {
+              const reach: {
+                key: ApiKey;
+                typeFilter: TypeFilter;
+                /** The key's effective source filter, resolved by
+                 *  `refreshReach`, which runs before any frame is sent. */
+                sourceFilter: SourceFilterSettings | undefined;
+              } = {
                 key: apiKey,
                 typeFilter,
+                sourceFilter: undefined,
               };
               /** False when the credential no longer stands, having ended the
                *  stream and said so. */
               const refreshReach = async (): Promise<boolean> => {
-                const live = await resolveLiveCredential(storage, apiKey.id, {
-                  tokenOutlivesExpiry: false,
-                });
+                const [live, instanceConfig] = await Promise.all([
+                  resolveLiveCredential(storage, apiKey.id, {
+                    tokenOutlivesExpiry: false,
+                  }),
+                  readInstanceConfig(storage.settings),
+                ]);
                 if (state.closed) return false;
                 if (live === null) {
                   failStream("credential_ended");
@@ -651,6 +699,10 @@ export function eventRoutes(
                 }
                 reach.key = live.key;
                 reach.typeFilter = computeTypeFilter(live.key);
+                reach.sourceFilter = resolveEnforcement(
+                  instanceConfig,
+                  live.key,
+                ).source_filter;
                 return true;
               };
 
@@ -734,7 +786,8 @@ export function eventRoutes(
 
               /** Current authority, applied only when a candidate is consumed. */
               const itemPassesProjection = (event: ItemEventWithId): boolean =>
-                matchesTypeFilter(event.item.type, reach.typeFilter);
+                matchesTypeFilter(event.item.type, reach.typeFilter) &&
+                sourceFilterIncludesItem(reach.sourceFilter, event.item);
 
               /** Whether edge frames reach this stream at all. Read once:
                *  `?edges=` is a request parameter, not a per-frame property. */
@@ -773,7 +826,16 @@ export function eventRoutes(
               // of the source type the event carries.
               const edgeFrameShown = (event: EdgeEventWithId): boolean =>
                 edgesReachThisStream &&
-                announcedEdgeReadable(reach.key, event.edge, event.sourceType);
+                announcedEdgeReadable(
+                  reach.key,
+                  event.edge,
+                  event.sourceType,
+                ) &&
+                announcedEdgeSourceShown(
+                  reach.sourceFilter,
+                  event.sourceType,
+                  event.sourceItemSource,
+                );
 
               const sendEdgeEvent = (
                 eventId: bigint | undefined,
@@ -785,7 +847,7 @@ export function eventRoutes(
                   eventId !== undefined ? `id: ${String(eventId)}\n` : "";
                 if (eventId !== undefined) lastSentId = eventId;
                 send(
-                  `${idField}event: ${wireType}\ndata: ${JSON.stringify(storedFrame(event))}\n\n`,
+                  `${idField}event: ${wireType}\ndata: ${edgeFrameFor(storedFrame(event), reach.key)}\n\n`,
                 );
               };
 
@@ -1150,10 +1212,7 @@ export function eventRoutes(
 
                     // The batch's edge rows, decoded once, so an edge payload
                     // is parsed once whichever question reads it.
-                    const replayEdges = new Map<
-                      bigint,
-                      { edge: Edge; sourceType: string | undefined }
-                    >();
+                    const replayEdges = new Map<bigint, StoredEdge>();
                     for (const row of batch) {
                       if (row.edge_id === null || edgeMode === "none") continue;
                       const decoded = decodeStoredEdge(row.payload);
@@ -1255,6 +1314,15 @@ export function eventRoutes(
                           consumeReplayRow(event.id);
                           continue;
                         }
+                        if (
+                          !sourceFilterIncludesItem(reach.sourceFilter, {
+                            type: named,
+                            source: (parsedItem as { source?: unknown }).source,
+                          })
+                        ) {
+                          consumeReplayRow(event.id);
+                          continue;
+                        }
                       }
 
                       // The edge row's own gate: the pair the live path
@@ -1271,6 +1339,7 @@ export function eventRoutes(
                       // cannot classify a row has no business handing it
                       // over. A missing source type is also unclassifiable,
                       // so that row keeps the same live-carrier exception.
+                      let edgeFrame: Record<string, unknown> | null = null;
                       if (isEdge) {
                         const stored = replayEdges.get(event.id);
                         if (stored?.sourceType === undefined) {
@@ -1283,11 +1352,17 @@ export function eventRoutes(
                             reach.key,
                             stored.edge,
                             stored.sourceType,
+                          ) ||
+                          !announcedEdgeSourceShown(
+                            reach.sourceFilter,
+                            stored.sourceType,
+                            stored.sourceItemSource,
                           )
                         ) {
                           consumeReplayRow(event.id);
                           continue;
                         }
+                        edgeFrame = stored.frame;
                       }
 
                       const replayWireType = loggedWireEventName(
@@ -1295,7 +1370,7 @@ export function eventRoutes(
                       );
                       lastSentId = event.id;
                       send(
-                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${parsed === null ? event.payload : itemFrameFor(parsed, reach.key)}\n\n`,
+                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${edgeFrame !== null ? edgeFrameFor(edgeFrame, reach.key) : parsed === null ? event.payload : itemFrameFor(parsed, reach.key)}\n\n`,
                       );
                       consumeReplayRow(event.id);
                     }

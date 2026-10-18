@@ -4602,7 +4602,7 @@ export interface components {
                 };
             };
         };
-        /** @description An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions. */
+        /** @description An item event: a change to an item, or, as `metadata.changed`, to its tags or extensions. Except on a copy stream, you receive it only if your source filter shows the item. */
         ItemEventFrame: {
             /**
              * @description The event, which is also the frame's `event:`.
@@ -4617,7 +4617,7 @@ export interface components {
             /** @description Only on a copy stream: `true` if the item is in the set you can list, `false` if you can read it only by ID. */
             listed?: boolean;
         };
-        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`. */
+        /** @description An edge event: a change to an edge. You receive it only if you can read both the edge type and `source_type`, and, except on a copy stream, only if your source filter shows the edge's source item. */
         EdgeEventFrame: {
             /**
              * @description The event, which is also the frame's `event:`.

@@ -1303,4 +1303,204 @@ describe("outbound webhook delivery", () => {
       await hook.close();
     }
   });
+
+  describe("and the source filter of the subscription's credential", () => {
+    const writer = async (label: string) =>
+      keyWith(label, {
+        type_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+      });
+    const filterOf = (shown: string) => ({
+      types: ["core.note"],
+      sources: [shown],
+    });
+    const written = async (
+      by: MarfaClient,
+      type: "core.note" | "core.task",
+    ): Promise<string> => {
+      const r = await by.createItem(
+        type === "core.note"
+          ? createNote({ properties: { body: `hook-source-filter` } })
+          : createTask({ properties: { title: `hook-source-filter` } }),
+      );
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const linked = async (
+      by: MarfaClient,
+      source: string,
+      target: string,
+      edgeType: string,
+    ): Promise<string> => {
+      const r = await by.createEdge({
+        source_id: source,
+        target_id: target,
+        edge_type: edgeType,
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
+      return r.data.edge.id;
+    };
+    /** The item or edge id of each delivery a hook of the receiver took. */
+    const deliveredIds = (label: string): string[] =>
+      receiver.received
+        .filter((r) => r.path === `/hook/${label}`)
+        .map((r) => {
+          const body = JSON.parse(r.body) as {
+            item?: { id: string };
+            edge?: { id: string };
+          };
+          return (body.item ?? body.edge)!.id;
+        });
+
+    it("delivers no item or edge event whose source item the filter hides", async () => {
+      const shown = await writer("source-filter-shown");
+      const hidden = await writer("source-filter-hidden");
+      const reach = {
+        type_permissions: { "*": "read" },
+        edge_permissions: { "*": "read" },
+      };
+      const shownSource = `${ctx.source}-source-filter-shown`;
+      const filtered = await keyWith("source-filter-filtered", {
+        ...reach,
+        enforcement_override: { source_filter: filterOf(shownSource) },
+      });
+      const witness = await keyWith("source-filter-witness", reach);
+      const events = ["item.created", "edge.created"];
+      const subs: Record<string, string> = {};
+      for (const [label, owner] of [
+        ["source-filter-filtered", filtered],
+        ["source-filter-witness", witness],
+      ] as const) {
+        const created = await owner.client.createWebhook({
+          url: receiver.hookUrl(label),
+          events,
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+        trackWebhook(ctx, created.data.id, owner.client);
+        subs[label] = created.data.id;
+      }
+      const edgeType = await registerEdgeType("source-filter");
+
+      const shownNote = await written(shown.client, "core.note");
+      const hiddenNote = await written(hidden.client, "core.note");
+      const hiddenTask = await written(hidden.client, "core.task");
+      const hiddenToShown = await linked(
+        hidden.client,
+        hiddenNote,
+        shownNote,
+        edgeType,
+      );
+      const shownToHidden = await linked(
+        shown.client,
+        shownNote,
+        hiddenNote,
+        edgeType,
+      );
+      const sentinel = await written(shown.client, "core.note");
+
+      for (const label of ["source-filter-filtered", "source-filter-witness"]) {
+        await receiver.waitFor(
+          (r) => r.path === `/hook/${label}` && r.body.includes(sentinel),
+        );
+      }
+      // The witness: every event was deliverable.
+      await waitFor("the witness's deliveries", async () =>
+        deliveredIds("source-filter-witness").length >= 6 ? true : undefined,
+      );
+      expect(deliveredIds("source-filter-witness").sort()).toEqual(
+        [
+          shownNote,
+          hiddenNote,
+          hiddenTask,
+          hiddenToShown,
+          shownToHidden,
+          sentinel,
+        ].sort(),
+      );
+      // The scheduler examines events in order, so with the sentinel
+      // scheduled nothing before it is still to come.
+      const rows = await filtered.client.listWebhookDeliveries(
+        subs["source-filter-filtered"]!,
+      );
+      expect(rows.ok).toBe(true);
+      expect(rows.data.data).toHaveLength(4);
+      await waitFor("the filtered deliveries", async () =>
+        deliveredIds("source-filter-filtered").length >= 4 ? true : undefined,
+      );
+      expect(deliveredIds("source-filter-filtered").sort()).toEqual(
+        [shownNote, hiddenTask, shownToHidden, sentinel].sort(),
+      );
+    });
+
+    it("settles unsent a pending delivery whose source the credential's filter comes to hide, and sends nothing later from that source", async () => {
+      const shown = await writer("narrowed-source-shown");
+      const hidden = await writer("narrowed-source-hidden");
+      const shownSource = `${ctx.source}-narrowed-source-shown`;
+      const owner = await keyWith("narrowed-source-owner", {
+        type_permissions: { "*": "read" },
+      });
+      let refuse = true;
+      const hook = await startScriptedReceiver((label, n) => ({
+        status: label === "control" ? (n > 1 ? 200 : 500) : refuse ? 500 : 200,
+      }));
+      try {
+        const narrowed = await subscribe(hook, "narrowed-source", owner.client);
+        const control = await subscribe(hook, "control");
+        const before = await written(hidden.client, "core.note");
+        const pending = await deliveryOf(
+          narrowed.id,
+          (r) => r.attempt === 1,
+          owner.client,
+        );
+        await deliveryOf(control.id, (r) => r.attempt === 1);
+        expect(pending).toMatchObject({ status: "pending", status_code: 500 });
+        // The witness: the pending attempt carried the hidden source's row.
+        expect(hook.attempts("narrowed-source")[0]!.body).toContain(before);
+
+        const update = await client.updateKey(owner.id, {
+          enforcement_override: { source_filter: filterOf(shownSource) },
+        });
+        expect(update.ok, JSON.stringify(update.error)).toBe(true);
+        refuse = false;
+        const lastFirst = Math.max(
+          hook.attempts("narrowed-source")[0]!.at,
+          hook.attempts("control")[0]!.at,
+        );
+        await runRetriesUntil(
+          () =>
+            hook.attempts("control").length >= 2 &&
+            Date.now() >= lastFirst + 1500,
+          "the retry of the control subscription",
+        );
+        const row = await deliveryOf(narrowed.id, () => true, owner.client);
+        expect(row).toMatchObject({
+          id: pending.id,
+          status: "canceled",
+          error:
+            "The credential the subscription belongs to may not read this event.",
+          attempt: 1,
+        });
+
+        const after = await written(hidden.client, "core.note");
+        const sentinel = await written(shown.client, "core.note");
+        await waitFor("the sentinel's delivery", async () =>
+          hook
+            .attempts("narrowed-source")
+            .some((a) => a.body.includes(sentinel))
+            ? true
+            : undefined,
+        );
+        expect(
+          hook
+            .attempts("narrowed-source")
+            .filter((a) => a.body.includes(after)),
+        ).toEqual([]);
+        expect(hook.attempts("narrowed-source")).toHaveLength(2);
+      } finally {
+        await hook.close();
+      }
+    });
+  });
 });

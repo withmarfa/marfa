@@ -684,7 +684,17 @@ Where the `enforcement.source_allowlist` that holds for the writing key, its own
 
 Where the `enforcement.source_filter` that holds for the reading key, its own override's if the override names one and else the instance's, names types and sources, the server MUST leave out of every read that returns a set, a listing, search, export, stats and the tag counts among them, each item of a named type or a type under it whose source the filter does not name.
 
+**Reason:** the event stream and webhook deliveries carry whole items too, and are held to the same filter by `events/source-filter-item` and `events/delivery-source-filter-item`.
+
 **Tests:** `compliance/schema-enforcement.test.ts › narrows reads to listed sources`, `› narrows every read that returns a set, not just the list route`, `› narrows only the types the source filter names, and their subtypes`.
+
+### `types/source-filter-missing-source`
+
+The server MUST judge an item that carries no source, under a source filter, as an item whose source is `unknown`.
+
+**Reason:** every read answers such an item's `source` as `unknown`, so a filter naming `unknown` names it.
+
+**Tests:** `compliance/source-filter-missing-source.test.ts › is decided by the source filter as an item whose source is unknown`.
 
 ### `types/source-filter-by-id`
 

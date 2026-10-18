@@ -613,6 +613,40 @@ If an edge event carries no `source_type`, then the server MUST NOT send it to a
 
 **Tests:** waiting on #1444.
 
+## A stream and the source filter
+
+The source filter is `enforcement.source_filter` as it holds for the stream's credential: its own override's if the override names one, and else the instance's (`types/source-filter`). A copy stream is held to `read-views/frame-excluded` instead.
+
+### `events/source-filter-item`
+
+Where the source filter names an item's type or a type above it and does not name the item's source, the server MUST withhold the item's events from a stream that is not a copy stream, live and on a replay from a cursor.
+
+**Reason:** a stream frame carries the whole item, so a stream that sent it would hand over a row every listing leaves out.
+
+**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
+
+### `events/source-filter-edge`
+
+Where the source filter applies to a stream that is not a copy stream, the server MUST withhold an edge event from it, live and on a replay from a cursor, when the filter leaves out the source item the event carried when it was published, and not when it leaves out only the edge's target item.
+
+**Reason:** an edge listing decides an edge by its source item (`edges/read-source-filter`), and a stream frame is the same disclosure.
+
+**Tests:** `compliance/stream-source-filter.test.ts › leaves out of a live stream the items and edges whose source item the filter hides, and nothing else`, `› leaves the same frames out of a replay from a cursor`.
+
+### `events/source-filter-current`
+
+When the source filter that holds for an open stream's credential changes, the server MUST judge each frame it sends after the change by the filter as changed.
+
+**Tests:** `compliance/stream-source-filter.test.ts › narrows an open stream when the key's own source filter changes`.
+
+### `events/source-filter-copy`
+
+Where the source filter leaves out an item the credential may read, the server MUST still send the item's events on a copy stream, with `listed` `false`.
+
+**Reason:** `read-views/frame-excluded` holds the copy stream to every row a device may hold.
+
+**Tests:** `compliance/stream-source-filter.test.ts › still sends a row the filter hides on a copy stream, with listed false`.
+
 ## A stream and its credential
 
 ### `events/held-authority`
@@ -1100,6 +1134,30 @@ When a purge has taken an edge's source item, the server MUST withhold the edge'
 **Reason:** the stream holds the same rule, `events/edge-frame-published-type`, and a webhook that told its owner what the stream would not would disclose an edge's ends.
 
 **Tests:** `compliance/webhook-delivery.test.ts › sends no edge.deleted for an edge a purge took to an owner who may not read the purged item's type, and sends it for a type the owner reads`.
+
+### `events/delivery-source-filter-item`
+
+Where the `enforcement.source_filter` that holds for a subscription's credential names an item's type or a type above it and does not name the item's source, the server MUST NOT deliver the item's events to the subscription.
+
+**Reason:** the stream holds the same rule, `events/source-filter-item`.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers no item or edge event whose source item the filter hides`.
+
+### `events/delivery-source-filter-edge`
+
+Where an `enforcement.source_filter` holds for a subscription's credential, the server MUST withhold an edge event from the subscription when the filter leaves out the source item the event carried when it was published, and not when it leaves out only the edge's target item.
+
+**Reason:** the stream holds the same rule, `events/source-filter-edge`.
+
+**Tests:** `compliance/webhook-delivery.test.ts › delivers no item or edge event whose source item the filter hides`.
+
+### `events/delivery-source-filter-current`
+
+When the `enforcement.source_filter` that holds for a subscription's credential comes to leave out the item of an event whose delivery is pending, the server MUST settle that delivery unsent.
+
+**Reason:** a delivery is decided at each attempt, by the credential as it stands then (`events/delivery-credential-current`).
+
+**Tests:** `compliance/webhook-delivery.test.ts › settles unsent a pending delivery whose source the credential's filter comes to hide, and sends nothing later from that source`.
 
 ### `events/delivery-credential-current`
 

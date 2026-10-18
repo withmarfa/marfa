@@ -129,14 +129,38 @@ export function notSystemTypeSql(column: SQLWrapper): SQL {
 }
 
 /**
- * The clause a `backref` term adds so it counts only edges whose source the
- * caller may read, as every door that serves an edge does; empty for no
- * credential. The source item must exist even when the map reads every type.
+ * What a `backref` term may count: the edges whose source item the reader
+ * may read under its type map and that its source filter shows, as every
+ * door that serves an edge decides (`edges/read-source-filter`).
  */
-function readableSourceSql(sources: TypeFilter | undefined): SQL {
-  if (sources?.allowed === undefined) return sql``;
-  const readable = typeFilterSql(sql`s.type`, sources) ?? sql`1=1`;
-  return sql`AND EXISTS (SELECT 1 FROM items s WHERE s.id = e.source_id AND ${readable})`;
+export interface ReadableSources {
+  /** The reader's type map; omitted for no credential, which counts every
+   *  edge the source filter shows. */
+  types?: TypeFilter;
+  source_filter?: SourceFilterSettings;
+}
+
+/**
+ * The clause a `backref` term adds so it counts only edges whose source
+ * item `sources` admits; empty when nothing narrows it. The source item must
+ * exist even when the map reads every type.
+ */
+function readableSourceSql(sources: ReadableSources | undefined): SQL {
+  const byType =
+    sources?.types?.allowed === undefined
+      ? undefined
+      : (typeFilterSql(sql`s.type`, sources.types) ?? sql`1=1`);
+  const bySource = sourceFilterToSql(
+    sources?.source_filter,
+    sql`s.type`,
+    sql`s.source`,
+  );
+  if (byType === undefined && bySource === undefined) return sql``;
+  const admitted = sql.join(
+    [byType, bySource].filter((clause) => clause !== undefined),
+    sql` AND `,
+  );
+  return sql`AND EXISTS (SELECT 1 FROM items s WHERE s.id = e.source_id AND ${admitted})`;
 }
 
 /**
@@ -206,7 +230,7 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
 function conditionToSql(
   condition: FilterCondition,
   table: ItemsTableRef,
-  sources: TypeFilter | undefined,
+  sources: ReadableSources | undefined,
 ): SQL {
   const { field, op, value } = condition;
 
@@ -249,7 +273,7 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
-  sources: TypeFilter | undefined,
+  sources: ReadableSources | undefined,
 ): SQL {
   if (direction === "outbound") {
     switch (op) {
@@ -448,7 +472,7 @@ function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {
 export function filterToSqlConditions(
   expr: FilterExpression,
   table: ItemsTableRef,
-  sources?: TypeFilter,
+  sources?: ReadableSources,
 ): SQL[] {
   return expr.conditions.map((c) => conditionToSql(c, table, sources));
 }
@@ -491,18 +515,38 @@ function decomposeCoveredTypes(types: string[]): {
   return { global: false, roots };
 }
 
+/**
+ * The source a row stored without one is read as, by every read
+ * (`rowToItem`), and so by the source filter in SQL and here alike.
+ */
+export const MISSING_SOURCE = "unknown";
+
+/** Whether the filter names this type, or a type it is under. */
+export function sourceFilterCovers(
+  filter: SourceFilterSettings | undefined,
+  type: string,
+): boolean {
+  if (!filter) return false;
+  const { global, roots } = decomposeCoveredTypes(filter.types);
+  return (
+    global || roots.some((root) => type === root || type.startsWith(`${root}.`))
+  );
+}
+
+/**
+ * The JavaScript twin of `sourceFilterToSql`, for a row already read. A
+ * `source` that is not a string, which no stored row reads as, is named by
+ * no filter.
+ */
 export function sourceFilterIncludesItem(
   filter: SourceFilterSettings | undefined,
-  item: { type: string; source: string },
+  item: { type: string; source?: unknown },
 ): boolean {
-  if (!filter) return true;
-  const { global, roots } = decomposeCoveredTypes(filter.types);
-  const covered =
-    global ||
-    roots.some(
-      (root) => item.type === root || item.type.startsWith(`${root}.`),
-    );
-  return !covered || filter.sources.includes(item.source);
+  if (filter === undefined || !sourceFilterCovers(filter, item.type))
+    return true;
+  return (
+    typeof item.source === "string" && filter.sources.includes(item.source)
+  );
 }
 
 export function canonicalSourceFilter(
@@ -556,7 +600,7 @@ export function sourceFilterToSql(
   // Emitting `IN ()` instead is a syntax error.
   if (filter.sources.length === 0) return sql`NOT (${covered})`;
 
-  return sql`(NOT (${covered}) OR ${sourceCol} IN (${sql.join(
+  return sql`(NOT (${covered}) OR COALESCE(${sourceCol}, ${MISSING_SOURCE}) IN (${sql.join(
     filter.sources.map((source) => sql`${source}`),
     sql`, `,
   )}))`;

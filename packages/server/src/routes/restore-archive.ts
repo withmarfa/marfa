@@ -37,7 +37,12 @@ import {
   validateTransition,
   SYSTEM_DEFAULT_STATE,
 } from "@withmarfa/shared";
-import { announceFromLog, publish, publishEdge } from "../pubsub.js";
+import {
+  announceFromLog,
+  announcedSource,
+  publish,
+  publishEdge,
+} from "../pubsub.js";
 import type { Edge, Item } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -68,7 +73,7 @@ import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
-import { sourceTypesFor } from "./_edge-visibility.js";
+import { edgeSourcesFor } from "./_edge-visibility.js";
 import {
   archiveDates,
   archiveVersions,
@@ -653,7 +658,7 @@ async function restoreRows(
       // the log at the next turn, so they are held for one stretch at most.
       let unlogged: Edge[] = [];
       const logEdges = async (): Promise<void> => {
-        const sourceTypes = await sourceTypesFor(
+        const sources = await edgeSourcesFor(
           storage,
           unlogged.map((edge) => edge.source_id),
         );
@@ -663,7 +668,7 @@ async function restoreRows(
               {
                 type: "edge_created",
                 edge,
-                sourceType: sourceTypes.get(edge.source_id),
+                ...announcedSource(sources.get(edge.source_id)),
                 enableFanout: false,
               },
               { announce: "from_log" },

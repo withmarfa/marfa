@@ -283,7 +283,10 @@ export class SqliteSearchStore implements SearchStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const terms = filterToSqlConditions(expr, i, filters.readable_sources);
+      const terms = filterToSqlConditions(expr, i, {
+        types: filters.readable_sources,
+        source_filter: filters.source_filter,
+      });
       conditions.push(
         sql`(${sql.join(terms, expr.logical === "OR" ? sql` OR ` : sql` AND `)})`,
       );
