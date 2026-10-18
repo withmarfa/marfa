@@ -1404,8 +1404,12 @@ impl Scanned {
     fn document(&self) -> document::Document {
         if carries_frontmatter(&self.path) {
             document::read(&self.text)
-        } else {
+        } else if is_document(&self.path) {
             document::read_body(&self.text)
+        } else {
+            document::read_body(&String::from_utf8_lossy(
+                self.source.as_deref().unwrap_or_default(),
+            ))
         }
     }
 }
@@ -1720,13 +1724,16 @@ impl Folder {
             }
             // A document whose bytes are not UTF-8 is held as one whose
             // frontmatter does not parse is: decoded, it would be sent and
-            // written back with every byte that is not replaced.
-            let (text, not_text) = match text_of(&bytes) {
-                Ok(text) => (text.to_string(), None),
-                Err(reason) => (
-                    String::from_utf8_lossy(&bytes).into_owned(),
-                    is_document(&path).then_some(reason),
-                ),
+            // written back with every byte that is not replaced. Any other
+            // file is decoded only where a text item asks for its body, so a
+            // large file item is never held in memory twice.
+            let (text, not_text) = if !is_document(&path) {
+                (String::new(), None)
+            } else {
+                match text_of(&bytes) {
+                    Ok(text) => (text.to_string(), None),
+                    Err(reason) => (String::from_utf8_lossy(&bytes).into_owned(), Some(reason)),
+                }
             };
             let decodes = not_text.is_none();
             let read = (decodes && carries_frontmatter(&path)).then(|| document::read(&text));
@@ -2017,14 +2024,15 @@ impl Folder {
                 }) => {
                     self.unbind_if_still(&bound)?;
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
-                    let document = file.document();
+                    let document = carries_frontmatter(&file.path).then(|| file.document());
                     let retitle =
-                        self.renamed_title(&item_id, &bound, file, Some(&document), &catalog)?;
+                        self.renamed_title(&item_id, &bound, file, document.as_ref(), &catalog)?;
                     // A title typed in the line in the same pass goes first,
                     // so the item's history holds it as well as the name's.
                     let typed = retitle
                         .as_ref()
-                        .and_then(|retitle| typed_title(&bound, &document, retitle));
+                        .zip(document.as_ref())
+                        .and_then(|(retitle, document)| typed_title(&bound, document, retitle));
                     // A title the copy would refuse leaves the file as the
                     // person wrote it, held, and only its placement moves.
                     if let Some(error) = retitle.as_ref().and_then(|retitle| {
@@ -3031,7 +3039,11 @@ impl Folder {
         )?;
         self.queue_default_edges(&item_id, settings, None)?;
         self.place(&item_id, &file.key, withheld)?;
-        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), Kept::default())
+        let kept = Kept {
+            bytes: true,
+            ..Kept::default()
+        };
+        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), kept)
     }
 
     /// The defaults' edges for a new item. A `parent-of` default names the
@@ -3394,6 +3406,7 @@ impl Folder {
                 held: None,
                 writes,
                 named,
+                bytes: false,
             },
         )?;
         work.push(self.edge_work(file, item_id, bound));
@@ -3416,6 +3429,7 @@ impl Folder {
             held: Some(held),
             writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
             named: named.cloned(),
+            bytes: false,
         };
         self.bind_scanned(file, item_id, links, lines, kept)
     }
@@ -3669,6 +3683,7 @@ impl Folder {
         };
         let kept = Kept {
             writes: bound.writes.clone(),
+            bytes: true,
             ..Kept::default()
         };
         self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), kept)?;
@@ -3691,7 +3706,7 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: file.mark.clone(),
                 content_hash: file.hash.clone(),
-                presentation: file.unreadable.is_none().then(|| {
+                presentation: (file.unreadable.is_none() && !kept.bytes).then(|| {
                     let presentation = file.document().presentation();
                     match kept.named {
                         Some((field, title)) => presentation.with(&field, title),
@@ -5698,6 +5713,9 @@ struct Kept {
     /// A title line edited away from the title the file's name was made
     /// from: the field, and what the agreed presentation goes on showing.
     named: Option<(String, Option<Value>)>,
+    /// Bound as a file item, whose binding holds no presentation, as a pull's
+    /// does: its bytes are no text.
+    bytes: bool,
 }
 
 #[derive(Debug, Default)]
@@ -6395,6 +6413,59 @@ mod tests {
         std::fs::write(&path, b"still writing").unwrap();
         assert!(changed_within(&std::fs::metadata(&path).unwrap(), settle));
         assert_eq!(captured.read_settled(Some(settle)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_scanned_file_item_is_bound_with_no_text_copy_of_its_bytes() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        let id = "01a00000-0000-7000-8000-000000000001";
+        crate::store::upsert_item(
+            &core.conn().unwrap(),
+            &crate::store::testing::wire_item(
+                id,
+                "system.folder",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "search": {} }),
+            ),
+            None,
+            &Default::default(),
+        )
+        .unwrap();
+        settings_file::bind(&core, id).unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        // Lone continuation bytes, none of them UTF-8, so a lossy decode
+        // would triple them.
+        let binary: Vec<u8> = (0..1 << 20).map(|at| 0x80 | (at % 64) as u8).collect();
+        std::fs::write(dir.path().join("archive.bin"), &binary).unwrap();
+        std::fs::write(dir.path().join("table.csv"), "a,b\n1,2\n".repeat(1 << 16)).unwrap();
+        std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(report.created, 3, "{report:?}");
+        let conn = folder.core.conn().unwrap();
+        let bound = |path: &str| state::bound_at(&conn, path).unwrap().unwrap();
+        // The witness: a document's binding holds its presentation.
+        assert!(bound("note.md").presentation.is_some());
+        for path in ["archive.bin", "table.csv"] {
+            let bound = bound(path);
+            assert!(
+                bound.presentation.is_none(),
+                "{path} is bound with a text copy of its bytes"
+            );
+            assert!(bound.held.is_none(), "{path} is held: {:?}", bound.held);
+        }
+        let stored: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(LENGTH(presentation)), 0) FROM folder_files",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(stored < 1024, "the bindings hold {stored} bytes of text");
     }
 
     #[test]

@@ -14,6 +14,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -5542,6 +5543,25 @@ describe("a file that is not a document", () => {
       )?.type,
       "a file whose subtype the server does not register was not pushed as a file",
     ).toBe("core.file");
+    const db = new DatabaseSync(join(harness.dir, ".marfa", "core.sqlite"), {
+      readOnly: true,
+    });
+    const presentation = (path: string) =>
+      (
+        db
+          .prepare("SELECT presentation FROM folder_files WHERE path = ?")
+          .get(path) as { presentation: string | null } | undefined
+      )?.presentation;
+    try {
+      expect(presentation("note.md")).toEqual(expect.any(String));
+      for (const path of ["photo.png", "song.mp3"])
+        expect(
+          presentation(path),
+          `${path} is bound with a text copy of its bytes, so the folder's store grows with every file item`,
+        ).toBeNull();
+    } finally {
+      db.close();
+    }
 
     const file = sentCreates(harness).find(
       (create) =>
