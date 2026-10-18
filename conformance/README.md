@@ -234,12 +234,20 @@ A fixture's own machine keeps real time. A client that judges how old a
 sign-in is takes the target's time from `FreshServer.clockOffsetMs`, the boot
 offset plus subsequent advances, because the age it reads is the target's.
 
-Packed WebAuthn attestation is a remaining limitation of the clock adapter.
-The installed passkey verifier checks attestation certificate validity with
-the process's `Date` and has no callback for that check. Marfa requests `none`
-attestation, which has no certificate-time check. Fixtures using the moved
-clock must not claim coverage of packed certificate validity. Production
-does not install the shim.
+Two external-verifier paths remain unsupported by the clock adapter:
+
+- The OAuth provider checks DPoP proofs with the process's `Date`. A valid
+  real-time proof can fail after the target clock advances. Its token and
+  userinfo handlers expose no clock or verifier callback; widening the proof
+  age window would incorrectly admit stale proofs.
+- The passkey verifier checks packed-attestation certificate validity with
+  the process's `Date` and has no callback for that check. Marfa requests
+  `none` attestation, which has no certificate-time check, but the verifier
+  also accepts authenticator-supplied packed attestation.
+
+Fixtures using the moved clock must not claim coverage of real-time DPoP
+proof acceptance or packed certificate validity. Production does not install
+the shim.
 
 ### The contract version
 
