@@ -3319,6 +3319,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_changed_catalog_catches_up_past_unreadable_properties_and_repairs_them() {
+        for damaged in [r#"{"title":"#, "[1]"] {
+            let server = Scripted::start();
+            server.on("/types", vec![registered()]);
+            server.on(
+                "/events",
+                vec![
+                    stream(
+                        vec![
+                            connected(),
+                            event(
+                                "11",
+                                "item.created",
+                                &item_payload("item.created", "neighbor", NOTE, 1),
+                            ),
+                            stream_live(Some("11")),
+                        ],
+                        Then::End,
+                    ),
+                    stream(
+                        vec![
+                            connected(),
+                            event(
+                                "12",
+                                "item.updated",
+                                &item_payload("item.updated", "damaged", NOTE, 2),
+                            ),
+                            stream_live(Some("12")),
+                        ],
+                        Then::End,
+                    ),
+                ],
+            );
+            let (_dir, core) = hydrated(&server);
+            {
+                let conn = core.conn().unwrap();
+                let row =
+                    store::testing::note("damaged", "original", "body", "2026-01-01T00:00:00Z");
+                store::put_server_item(
+                    &conn,
+                    &row,
+                    Some(&["genuinetag".into()]),
+                    &Catalog::load(&conn).unwrap(),
+                )
+                .unwrap();
+                conn.execute(
+                    "UPDATE items SET properties = ?1 WHERE id = 'damaged'",
+                    [damaged],
+                )
+                .unwrap();
+            }
+            let why = core
+                .get_kept("damaged")
+                .unwrap()
+                .unwrap()
+                .1
+                .unreadable_properties
+                .unwrap();
+
+            let report = core.catch_up().unwrap();
+
+            assert!(report.catalog_changed);
+            assert!(core.get("neighbor").unwrap().is_some());
+            assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+            assert!(core.item_type("user.late").is_ok());
+            let kept = core.get_kept("damaged").unwrap().unwrap();
+            assert!(kept.0.properties.is_empty());
+            assert_eq!(kept.1.unreadable_properties, Some(why));
+            let raw: String = core
+                .conn()
+                .unwrap()
+                .query_row(
+                    "SELECT properties FROM items WHERE id = 'damaged'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(raw, damaged);
+
+            assert!(!core.catch_up().unwrap().catalog_changed);
+            let repaired = core.get_shown("damaged").unwrap().unwrap();
+            assert_eq!(repaired.0.version, 2);
+            assert_eq!(repaired.0.properties["title"], "damaged");
+            assert_eq!(repaired.1.unreadable_properties, None);
+            assert_eq!(stored_cursor(&core).as_deref(), Some("12"));
+        }
+    }
+
     /// The failure of a catch-up whose `/types` and `/events` answer as
     /// given, raising `stop` once the stream has been asked for when told to.
     fn failed_catch_up(types: Vec<Answer>, events: Answer, stopped: bool) -> CatchUpFailed {

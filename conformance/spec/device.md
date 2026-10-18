@@ -564,7 +564,7 @@ If a hydration's replay ends before a valid live marker, then a device MUST end 
 
 When a device hydrates, a device MUST replace the rows and edges it held with those of the slice the hydration declares.
 
-**Tests:** `device/hydration.test.ts › replaces what the store held`.
+**Tests:** `device/hydration.test.ts › replaces what the store held`, `device/catalog-damaged-items.test.ts › hydrates a changed catalog and repairs $name`.
 
 ### `device/hydrate-edge-types-replaced`
 
@@ -576,7 +576,7 @@ When a device hydrates, a device MUST hold whole only the edge types that hydrat
 
 When a device hydrates, a device MUST replace the item type and edge type catalogs it holds with the server's.
 
-**Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `› replaces a server's catalog it holds with the one the next hydration reads`.
+**Tests:** `device/catalog.test.ts › answers every catalog read on a copy that has never reached a server with the types Marfa ships`, `› replaces a server's catalog it holds with the one the next hydration reads`, `device/catalog-damaged-items.test.ts › hydrates a changed catalog and repairs $name`.
 
 ### `device/hydrate-keeps-queue`
 
@@ -2515,6 +2515,22 @@ When a device reads the catalog while a refresh replaces it, a device MUST answe
 If a refresh of the catalog fails part way, then a device MUST keep the catalogs and the catalog version it held.
 
 **Tests:** `device/catalog.test.ts › keeps the catalogs and the version it held when a refresh fails after the item types`.
+
+### `device/catalog-damaged-properties`
+
+When a catalog refresh reindexes a held item whose stored properties are not a JSON object, a device MUST index that item with empty properties and its held tags.
+
+**Reason:** damage to one item's properties must not block a changed catalog or the events that can repair it; stale property text must leave the index.
+
+**Tests:** `device/catalog-damaged-items.test.ts › reindexes past $name, preserving its bytes and tags until a later event repairs it`.
+
+### `device/catalog-damaged-bytes`
+
+When a catalog refresh reindexes a held item whose stored properties are not a JSON object, a device MUST preserve the stored property bytes.
+
+**Reason:** reindexing is not a repair; a later server event or hydration supplies readable properties.
+
+**Tests:** `device/catalog-damaged-items.test.ts › reindexes past $name, preserving its bytes and tags until a later event repairs it`.
 
 ### `device/catalog-shipped`
 
