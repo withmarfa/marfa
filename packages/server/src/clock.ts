@@ -32,8 +32,7 @@ export function realNowMs(): number {
 
 /** Keep a library and its asynchronous work on its external peer's clock. */
 export function withRealTime<T>(run: () => T): T {
-  // Startup can schedule library work before the shim is installed.
-  return realTime.run(true, run);
+  return installed ? realTime.run(true, run) : run();
 }
 
 /** The latest instant a `Date` can hold, in milliseconds since the epoch. */
@@ -114,8 +113,10 @@ export function setClockOffset(ms: number): void {
  */
 export function installDateShim(): void {
   if (installed) return;
+  // Work scheduled before installation keeps its unmarked, real-time context.
+  realTime.enterWith(false);
   const shifted = (): number =>
-    systemNow() + (realTime.getStore() ? 0 : offsetMs);
+    systemNow() + (realTime.getStore() === false ? offsetMs : 0);
   const shim = new Proxy(SystemDate, {
     construct: (target, args: unknown[], newTarget): object =>
       Reflect.construct(
@@ -148,4 +149,5 @@ export function resetClockForTests(): void {
   });
   globalThis.Date = SystemDate;
   installed = false;
+  realTime.enterWith(true);
 }

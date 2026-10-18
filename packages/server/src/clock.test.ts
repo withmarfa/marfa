@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   advanceClock,
@@ -15,10 +16,23 @@ import {
 
 afterEach(() => {
   resetClockForTests();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe("clock", () => {
+  it("enters a real-time context only when the shim is installed", () => {
+    const run = vi.spyOn(AsyncLocalStorage.prototype, "run");
+    const callback = vi.fn(() => 42);
+    expect(withRealTime(callback)).toBe(42);
+    expect(callback).toHaveBeenCalledExactlyOnceWith();
+    expect(run).not.toHaveBeenCalled();
+
+    installDateShim();
+    expect(withRealTime(callback)).toBe(42);
+    expect(run).toHaveBeenCalledExactlyOnceWith(true, callback);
+  });
+
   it.each([false, true])(
     "keeps external asynchronous work on real time when the shim was already installed: %s",
     async (installedBefore) => {
