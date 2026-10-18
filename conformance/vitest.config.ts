@@ -105,6 +105,17 @@ export default defineConfig({
         },
       },
       {
+        // The image's database replica: the shipped entrypoint and
+        // Litestream against the object store, which the restore drill's job
+        // installs. Every body boots and stops the entrypoint several times.
+        test: {
+          name: "backup",
+          include: ["src/suites/backup/**/*.test.ts"],
+          testTimeout: 120_000,
+          hookTimeout: 120_000,
+        },
+      },
+      {
         test: {
           name: "load",
           include: ["src/suites/load/**/*.test.ts"],

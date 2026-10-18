@@ -386,9 +386,19 @@ describe("what a change runs", () => {
       ["ci-sqlite", ...CONFORMANCE, "restore-drill", "image"],
     ],
     [
-      "the entrypoint, which the image runs and a ci/ test runs",
+      "the entrypoint, which the image, a ci/ test and the drill's backup fixtures run",
       ["deploy/entrypoint.sh"],
+      ["ci-sqlite", "workspace", "restore-drill", "image"],
+    ],
+    [
+      "the ignore file the image's build reads",
+      ["deploy/Dockerfile.dockerignore"],
       ["ci-sqlite", "workspace", "image"],
+    ],
+    [
+      "the image's replica fixtures, which the drill's job runs",
+      ["conformance/src/suites/backup/replica-paths.test.ts"],
+      ["ci-sqlite", "workspace", "conformance-offline", "restore-drill"],
     ],
     [
       "the script that boots the image",

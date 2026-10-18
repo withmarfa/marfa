@@ -631,6 +631,14 @@ jobs:
         working-directory: conformance
         run: pnpm drill:restore --state "$RUNNER_TEMP/drill/state"
 
+      # Where the image keeps each instance's replica, and which replica a
+      # fresh volume restores: the shipped entrypoint and Litestream against
+      # the same object store.
+      - name: Run the backup fixtures
+        if: ${{ !cancelled() }}
+        working-directory: conformance
+        run: pnpm exec vitest run --project backup
+
       - name: Stop the object store
         if: always()
         working-directory: conformance

@@ -226,12 +226,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // which the offline lane's own test reads too.
   [/^deploy\/Dockerfile$/, ["restore-drill", "image"]],
   [/^deploy\/litestream\.yml$/, ["restore-drill", ...CONFORMANCE, "image"]],
-  // The image copies the entrypoint and the ignore file into its build, and
-  // `ci/entrypoint.test.ts` runs the entrypoint.
-  [
-    /^deploy\/(entrypoint\.sh|Dockerfile\.dockerignore)$/,
-    ["workspace", "image"],
-  ],
+  // The image copies the entrypoint and the ignore file into its build;
+  // `ci/entrypoint.test.ts` and the drill's backup fixtures run the
+  // entrypoint.
+  [/^deploy\/entrypoint\.sh$/, ["workspace", "restore-drill", "image"]],
+  [/^deploy\/Dockerfile\.dockerignore$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
   // The control socket's tests and the global setup and test settings they
@@ -275,6 +274,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [
     /^conformance\/src\/suites\/compliance\//,
     ["workspace", "conformance-offline", "conformance-compliance"],
+  ],
+  // The image's replica fixtures run in the drill's job.
+  [
+    /^conformance\/src\/suites\/backup\//,
+    ["workspace", "conformance-offline", "restore-drill"],
   ],
   [
     /^conformance\/src\/suites\/(correctness|sync)\//,
