@@ -18,10 +18,8 @@ import { createGzip } from "node:zlib";
 import type { Context } from "hono";
 import * as tar from "tar-stream";
 import type { Item } from "@withmarfa/shared";
-import { edgeKindReadable } from "./_edge-visibility.js";
-import { withCascadeMarks } from "./_cascade-marks.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireAuth, typeReader } from "../middleware/auth.js";
+import type { OwnerItemRead } from "./_owner-item-read.js";
 import type { Storage, ItemFilters } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import type { BlobRead } from "../storage/blob-store.js";
@@ -30,8 +28,6 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
-import { mayReadBlob } from "./_blob-reach.js";
-import { readableMetadata } from "./_extension-reach.js";
 import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
 import * as clock from "../clock.js";
 
@@ -123,13 +119,8 @@ export async function handleArchiveExport(
   /** The instance writing the archive, for the manifest. */
   instanceId: string,
   filter: ExportFilter,
+  reader: OwnerItemRead,
 ): Promise<Response> {
-  const callerKey = requireAuth(c);
-  const permissions =
-    c.get("authType") === "oauth"
-      ? (c.get("oauthGrant")?.scopes ?? [])
-      : callerKey.permissions;
-  const readsHistory = typeReader(c);
   const clientGone = c.req.raw.signal;
   const spool = new ExportSpool(() => blobs.disk.spoolPath());
 
@@ -137,9 +128,7 @@ export async function handleArchiveExport(
   try {
     selection = await collectSelection({
       storage,
-      callerKey,
-      permissions,
-      readsHistory,
+      reader,
       filter,
       spool,
       signal: clientGone,
@@ -266,22 +255,13 @@ export async function handleArchiveExport(
 
 async function collectSelection(input: {
   storage: Storage;
-  callerKey: ReturnType<typeof requireAuth>;
-  permissions: readonly string[];
-  readsHistory: ReturnType<typeof typeReader>;
+  reader: OwnerItemRead;
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
 }): Promise<Selection> {
-  const {
-    storage,
-    callerKey,
-    permissions,
-    readsHistory,
-    filter,
-    spool,
-    signal,
-  } = input;
+  const { storage, reader, filter, spool, signal } = input;
+  const readsHistory = reader.reads;
   const items = await spool.text();
   const edges = await spool.text();
   const types = await spool.text();
@@ -320,15 +300,8 @@ async function collectSelection(input: {
     const restoredAt = await storage.items.restoredAtOf(
       result.data.map((item) => item.id),
     );
-    for (const item of await withCascadeMarks(
-      storage,
-      callerKey,
-      result.data,
-    )) {
-      const metadata = readableMetadata(
-        await storage.metadata.get(item.id),
-        callerKey,
-      );
+    for (const item of await reader.cascade(storage, result.data)) {
+      const metadata = reader.metadata(await storage.metadata.get(item.id));
       // Which of the row's digests lend its reach, so a restore credits
       // those and no others. An extension namespace's are carried only for
       // the namespaces the line carries.
@@ -371,9 +344,7 @@ async function collectSelection(input: {
     // The NDJSON path's twin, and the same two halves: the endpoint rule
     // settles the source, and the edge map has to be asked for the kind of
     // relationship.
-    const readable = page.data.filter((edge) =>
-      edgeKindReadable(callerKey, edge),
-    );
+    const readable = page.data.filter((edge) => reader.edge(edge));
     const exported = await itemIds.held(
       readable.flatMap((edge) => [edge.source_id, edge.target_id]),
     );
@@ -429,7 +400,7 @@ async function collectSelection(input: {
   await types.append(typeLines.join(""));
 
   // An archive carries only bytes the blob doors would serve this
-  // credential: naming a digest in a row it may read lends nothing the
+  // caller: naming a digest in a row it may read lends nothing the
   // door would not, wherever in the row the digest sits.
   let blobCount = 0;
   let after: string | undefined;
@@ -439,7 +410,7 @@ async function collectSelection(input: {
     const listed: string[] = [];
     const entries: string[] = [];
     for (const hash of page) {
-      if (!(await mayReadBlob(callerKey, storage, hash, permissions))) continue;
+      if (!(await reader.blob(storage, hash))) continue;
       const record = await storage.blobs.get(hash);
       if (!record) continue;
       listed.push(hash);
@@ -484,7 +455,7 @@ async function collectSelection(input: {
 async function historyBelow(
   storage: Storage,
   item: Item,
-  reads: ReturnType<typeof typeReader>,
+  reads: OwnerItemRead["reads"],
   hashes: Set<string>,
 ) {
   const versions = [];

@@ -105,8 +105,9 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "routes/blobs.ts": "the doors this census walks",
   "routes/export.ts": "hands the layer to the archive export below",
   "routes/export-archive.ts":
-    "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
-  "routes/restore-archive.ts": "the restore, management key only, writes bytes",
+    "the export archive, whose explicit read context admits owner reads and applies mayReadBlob to credentials",
+  "routes/restore-archive.ts":
+    "the restore, recently authenticated owner or private local authority only, writes bytes",
   "routes/health.ts": "a probe of the disk store under a fixed name",
 };
 
@@ -140,7 +141,13 @@ describe("every blob door is held to the credential's reach", () => {
       join(import.meta.dirname, "export-archive.ts"),
       "utf8",
     );
-    expect(exporter).toContain("mayReadBlob(");
+    expect(exporter).toContain("await reader.blob(storage, hash)");
+    const reader = readFileSync(
+      join(import.meta.dirname, "_owner-item-read.ts"),
+      "utf8",
+    );
+    expect(reader).toContain("mayReadBlob(key, storage, hash, permissions)");
+    expect(reader).toContain('c.get("authority")?.kind === "owner"');
     const candidates = readFileSync(
       join(import.meta.dirname, "../storage/sqlite/enrichment-store.ts"),
       "utf8",

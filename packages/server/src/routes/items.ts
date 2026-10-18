@@ -1,4 +1,10 @@
 import {
+  ownerItemRead,
+  ownerItemReadSecurity,
+  readsOwnerItems,
+  type OwnerItemRead,
+} from "./_owner-item-read.js";
+import {
   ConflictSnapshotSchema,
   CONFLICT_SIDES,
   StaleVersionSchema,
@@ -484,9 +490,9 @@ const getItemStatsRoute = createRoute({
   tags: ["Items"],
   summary: "Get item counts",
   description:
-    "Returns counts of the items you can read, grouped by state or by type. It takes the filters `GET /items` takes, but without `state` it counts every state, not only active items.",
-  security: [{ bearerAuth: [] }],
-  middleware: readsSomeType,
+    "Returns item counts by state or type using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.",
+  security: ownerItemReadSecurity,
+  middleware: readsOwnerItems,
   request: {
     query: z.object({
       by: z
@@ -1603,20 +1609,17 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  /**
-   * What a listing's query narrows to, apart from ordering and paging. The
-   * listing and the stats door both read their filters through here, so a
-   * count is taken over exactly the rows the listing walks.
-   */
+  /** A count and a listing resolve the same filters before querying storage. */
   async function listingFilters(
     c: Context<AppEnv>,
     query: ListingFilterQuery,
     includeSet: ReadonlySet<string>,
+    reader?: OwnerItemRead,
   ): Promise<ItemFilters> {
     const type = query.type;
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
-    assertTypeFilter(c, type);
+    assertTypeFilter(c, type, reader?.owner ? reader.reads : undefined);
 
     // `any` is a widening, not a state, so it never reaches the column
     // comparison. Shared with `GET /export`, which reads the same filter.
@@ -1668,7 +1671,11 @@ export function itemRoutes(storage: Storage) {
     }
     // The shorthand and the full form are one expression by this point,
     // so one pass over it covers both. `GET /search` makes the same call.
-    assertFilterEdgeTermsReadable(c, filter);
+    assertFilterEdgeTermsReadable(
+      c,
+      filter,
+      reader?.owner ? () => true : undefined,
+    );
     // The validated query holds only `library`, `feed` or `all`, and `all`
     // narrows nothing.
     const tier =
@@ -1686,7 +1693,7 @@ export function itemRoutes(storage: Storage) {
       instanceConfigForRead,
       callerKeyForRead,
     );
-    const typeFilterForList = getTypeFilter(c);
+    const typeFilterForList = reader?.types ?? getTypeFilter(c);
     return {
       type,
       state,
@@ -1712,12 +1719,13 @@ export function itemRoutes(storage: Storage) {
   }
 
   router.openapi(getItemStatsRoute, async (c) => {
-    requireAuth(c);
+    const reader = ownerItemRead(c);
     const query = c.req.valid("query");
     const filters = await listingFilters(
       c,
       query,
       new Set(query.include === undefined ? [] : [query.include]),
+      reader,
     );
     // Every state when none is named, because the default answer is the
     // breakdown across them.

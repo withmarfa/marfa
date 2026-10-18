@@ -858,6 +858,48 @@ The server MUST NOT put markup in an excerpt other than pairs of `<mark>` and `<
 
 **Tests:** `compliance/search-matching.test.ts › escapes the row's text in an excerpt and marks only the match`.
 
+## Owner browser reads
+
+### `search-and-filters/owner-count-export`
+
+When a request to `GET /items/stats` or `GET /export` carries a live browser session of the instance's owner and no Authorization header, the server MUST admit the request as the owner without requiring authentication within the last five minutes.
+
+**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`.
+
+### `search-and-filters/owner-read-reach`
+
+When an owner browser session reads counts or an export, the server MUST apply the operation's filters and instance source filtering with read access to every type, edge type, extension namespace, history snapshot and referenced blob.
+
+**Reason:** The browser session is explicit owner authority, not a key with a projected permission map. The operation's existing state and system-item defaults still apply.
+
+**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`, `› refuses undeclared and invalid filters and accepts an empty selection`, `› keeps instance source filtering on owner counts and both exports`.
+
+### `search-and-filters/owner-read-no-key`
+
+When the owner reads counts or an export through their browser session, the server MUST create no API key for that read.
+
+**Tests:** `compliance/owner-item-read.test.ts › admits the owner to filtered counts and both exports without creating a key`.
+
+### `search-and-filters/owner-read-bearer`
+
+When a request to counts or export carries an Authorization header alongside an owner browser cookie, the server MUST decide access using the presented credential alone.
+
+**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
+
+### `search-and-filters/owner-read-boundary`
+
+When a request carries only owner browser authority to another item, edge, search, occurrence or tag content route, or only private local authority to counts or export, the server MUST retain that route's existing credential requirement.
+
+**Reason:** Owner browser counts and exports admit no other content operation or transport.
+
+**Tests:** `compliance/owner-item-read.test.ts › keeps other content doors and private socket reads closed with credential witnesses`.
+
+### `search-and-filters/owner-read-ended`
+
+When a request to counts or export carries only an ended or expired owner browser session, the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/owner-item-read.test.ts › refuses the ended browser session on counts and exports`.
+
 ## Counting
 
 `GET /items/stats` counts the rows a listing matches.
@@ -1100,7 +1142,7 @@ When the rows of a page fill it exactly and it holds the last row, the server MU
 
 ## Export
 
-`GET /export` answers the items the credential may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
+`GET /export` admits the owner browser session or a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
 
 ### `search-and-filters/export-lines`
 
@@ -1118,15 +1160,15 @@ When `GET /export` answers items, the server MUST follow the item lines with a l
 
 ### `search-and-filters/export-type-map`
 
-The server MUST leave out of an export the items of every type that the credential's type map may not read.
+When a credential requests an export, the server MUST leave out the items of every type that its type map may not read.
 
 **Tests:** `compliance/export.test.ts › respects type permissions on a scoped key`.
 
 ### `search-and-filters/export-extensions`
 
-When `GET /export` answers a row, the server MUST carry on it only the extension namespaces that the credential may read, in both formats.
+When `GET /export` answers a credential with a row, the server MUST carry on it only the extension namespaces that credential may read, in both formats.
 
-**Reason:** an archive restores only the namespaces that the key which wrote it may read. `keys-and-oauth/extension-map-only` states what a credential may read of an extension.
+**Reason:** an archive written by a credential restores only the namespaces that credential may read. `keys-and-oauth/extension-map-only` states what a credential may read of an extension.
 
 **Tests:** `compliance/export.test.ts › carries on each row only the extension namespaces the key may read, on both output formats`.
 
@@ -1218,7 +1260,7 @@ When `GET /export?format=archive` carries an item, the server MUST carry with it
 
 ### `search-and-filters/archive-history-reach`
 
-When `GET /export?format=archive` carries a snapshot, the server MUST carry it only if the credential may read the type that snapshot had.
+When an archive requested by a credential carries a snapshot, the server MUST carry it only if that credential may read the type that snapshot had.
 
 **Reason:** a current grant on a type does not grant access to an item's earlier type.
 
@@ -1226,7 +1268,7 @@ When `GET /export?format=archive` carries a snapshot, the server MUST carry it o
 
 ### `search-and-filters/archive-history-bytes`
 
-When a snapshot that an archive carries names a blob, the server MUST carry the blob's bytes if and only if the credential could read that blob through the blob operations.
+When a snapshot in an archive requested by a credential names a blob, the server MUST carry the blob's bytes if and only if that credential could read the blob through the blob operations.
 
 **Reason:** a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs/lend-earlier-version`).
 

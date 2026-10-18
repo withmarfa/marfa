@@ -2,14 +2,8 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
-import { edgeKindReadable } from "./_edge-visibility.js";
-import { withCascadeMarks } from "./_cascade-marks.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import {
-  requireAuth,
-  getTypeFilter,
-  readsSomeType,
-} from "../middleware/auth.js";
+import { authorityId } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
@@ -20,7 +14,11 @@ import { streamFailure } from "../process-faults.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
-import { readableMetadata } from "./_extension-reach.js";
+import {
+  ownerItemRead,
+  ownerItemReadSecurity,
+  readsOwnerItems,
+} from "./_owner-item-read.js";
 
 /**
  * What an export answers when the caller names no state.
@@ -49,9 +47,9 @@ const exportRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Export items and edges",
   description:
-    "Exports the items you can read, with their tags and readable extensions, followed by the edges between them. Without `state`, trashed items are left out. With `format=archive`, returns a file that `POST /restore` reads.",
-  security: [{ bearerAuth: [] }],
-  middleware: readsSomeType,
+    "Exports readable items, metadata and edges, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
+  security: ownerItemReadSecurity,
+  middleware: readsOwnerItems,
   request: {
     query: z.object({
       type: z
@@ -148,7 +146,7 @@ export function exportRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, async (c) => {
-    const callerKey = requireAuth(c);
+    const reader = ownerItemRead(c);
 
     const query = c.req.valid("query");
 
@@ -165,7 +163,7 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    assertTypeFilter(c, type);
+    assertTypeFilter(c, type, reader.owner ? reader.reads : undefined);
 
     // Same resolution as `GET /items`, sentinel included: `any` means the
     // same thing on every door that reads items. What this door does not
@@ -189,14 +187,14 @@ export function exportRoutes(
     );
     const source = query.source;
 
-    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+    const { allowed: allowedTypes, excluded: excludedTypes } = reader.types;
 
     // Audited once the request is accepted and before streaming starts, for
     // both formats: an export is a bulk extraction of the instance, so the
     // record has to exist whether or not the stream that follows completes.
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: authorityId(c),
       action: "export.run",
       resource_type: "export",
       details: {
@@ -208,18 +206,25 @@ export function exportRoutes(
     // the filter the NDJSON path has just validated rather than the raw
     // query.
     if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobs, instanceId, {
-        type,
-        state,
-        all_states: allStates,
-        source,
-        exclude_states: EXPORT_EXCLUDED_STATES,
-        occurred_after: occurredAfter,
-        occurred_before: occurredBefore,
-        allowed_types: allowedTypes,
-        excluded_types: excludedTypes,
-        source_filter: sourceFilter,
-      });
+      return handleArchiveExport(
+        c,
+        storage,
+        blobs,
+        instanceId,
+        {
+          type,
+          state,
+          all_states: allStates,
+          source,
+          exclude_states: EXPORT_EXCLUDED_STATES,
+          occurred_after: occurredAfter,
+          occurred_before: occurredBefore,
+          allowed_types: allowedTypes,
+          excluded_types: excludedTypes,
+          source_filter: sourceFilter,
+        },
+        reader,
+      );
     }
 
     const encoder = new TextEncoder();
@@ -247,15 +252,8 @@ export function exportRoutes(
           cursor,
         });
 
-        for (const item of await withCascadeMarks(
-          storage,
-          callerKey,
-          result.data,
-        )) {
-          const metadata = readableMetadata(
-            await storage.metadata.get(item.id),
-            callerKey,
-          );
+        for (const item of await reader.cascade(storage, result.data)) {
+          const metadata = reader.metadata(await storage.metadata.get(item.id));
           exportedIds.add(item.id);
           yield JSON.stringify({ item, metadata }) + "\n";
         }
@@ -276,16 +274,16 @@ export function exportRoutes(
         for (const edge of page.data) {
           // Both halves of the edge read gate, answered differently
           // because this door has already answered one of them.
-          // `exportedIds` is the set of items this credential may read,
+          // `exportedIds` is the set of items this caller may read,
           // so requiring both endpoints in it settles the source half
           // more strictly than the gate asks. The edge type is the other
-          // half: the credential's edge map decides which kinds of
-          // relationship among those items it may read, as it does on
+          // half: the read context decides which kinds of
+          // relationship among those items the caller may read, as on
           // `GET /edges`.
           if (
             exportedIds.has(edge.source_id) &&
             exportedIds.has(edge.target_id) &&
-            edgeKindReadable(callerKey, edge)
+            reader.edge(edge)
           ) {
             yield JSON.stringify({ edge }) + "\n";
           }

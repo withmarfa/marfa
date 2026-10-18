@@ -5,12 +5,12 @@ import { cascadeMark } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
- * Mirrors the stream's redaction: a mark names its row only to a credential
+ * Mirrors the stream's redaction: a mark names its row only to a caller
  * that may read that row's type.
  */
 export async function withCascadeMarks(
   storage: Storage,
-  key: ApiKey,
+  key: ApiKey | ((type: string) => boolean),
   rows: Item[],
 ): Promise<Item[]> {
   const binned = rows.filter((row) => row.state === "trashed");
@@ -23,7 +23,8 @@ export async function withCascadeMarks(
       ? {
           ...row,
           ...cascadeMark(root, (type) => {
-            const readable = mayReadType(key, type);
+            const readable =
+              typeof key === "function" ? key(type) : mayReadType(key, type);
             if (readable) rememberItemSubject(root, "read");
             return readable;
           }),

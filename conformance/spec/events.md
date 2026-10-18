@@ -1621,6 +1621,12 @@ When the server accepts an export, the server MUST record an `export.run` entry 
 
 **Tests:** `compliance/audit.test.ts › records export.run before the export's stream begins, and none for an export it refuses`.
 
+### `events/owner-export-actor`
+
+When the server accepts an export through an owner browser session, the server MUST attribute its `export.run` audit entry to `owner:<session ID>`.
+
+**Tests:** `compliance/owner-item-read.test.ts › refuses an invalid bearer with an owner cookie and attributes owner exports`.
+
 ### `events/audit-export-refused`
 
 If the server refuses an export, then the server MUST NOT record an `export.run` entry for it.

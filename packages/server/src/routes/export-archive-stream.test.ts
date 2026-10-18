@@ -9,6 +9,8 @@ import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
 
+const withReader = describe.each(["key", "owner"] as const);
+
 let ctx: TestContext;
 beforeEach(async () => {
   ctx = await createTestContext();
@@ -66,12 +68,16 @@ async function seedEdges(target: TestContext, count: number, step: number) {
 
 function exportArchive(
   target: TestContext,
+  reader: "key" | "owner",
   query = "",
   signal?: AbortSignal,
 ): Promise<Response> {
   return Promise.resolve(
     target.app.request(`/export?format=archive${query}`, {
-      headers: { Authorization: `Bearer ${target.workingKey}` },
+      headers:
+        reader === "owner"
+          ? { cookie: target.owner.cookie }
+          : { Authorization: `Bearer ${target.workingKey}` },
       signal,
     }),
   );
@@ -157,7 +163,7 @@ async function attach(target: TestContext, hash: string) {
   expect(res.status, await res.clone().text()).toBe(201);
 }
 
-describe("GET /export?format=archive gives other requests a turn", () => {
+withReader("archive scheduling (%s)", (credential) => {
   it("between pages of items and between pages of edges", async () => {
     await seedNotes(ctx, 450);
     await seedEdges(ctx, 450, 1);
@@ -178,7 +184,7 @@ describe("GET /export?format=archive gives other requests a turn", () => {
         );
         return result;
       });
-      const res = await exportArchive(ctx);
+      const res = await exportArchive(ctx, credential);
       expect(res.status).toBe(200);
       await res.arrayBuffer();
       // A turn of the event loop came after the first page and before the
@@ -191,13 +197,13 @@ describe("GET /export?format=archive gives other requests a turn", () => {
   });
 });
 
-describe("GET /export?format=archive keeps what it reads in the spool", () => {
+withReader("archive spool (%s)", (credential) => {
   it("writes the manifest first, then the line files, then the blobs, each as long as it said", async () => {
     await seedNotes(ctx, 120);
     await seedEdges(ctx, 120, 7);
     const hash = await upload(ctx, randomBytes(1000));
     await attach(ctx, hash);
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/gzip");
     // The tar's own headers carry the sizes the spool counted, so a mismatch
@@ -234,7 +240,7 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
 
   it("holds the spool while it writes and removes it when the body ends", async () => {
     await seedNotes(ctx, 30);
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     // The witness: what the spool holds is there to be removed.
     expect(spool().length).toBeGreaterThan(0);
     await res.arrayBuffer();
@@ -258,7 +264,7 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
       },
     });
     expect(bulk.status, await bulk.clone().text()).toBe(200);
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     const entries = await unpack(Buffer.from(await res.arrayBuffer()));
     const manifest = JSON.parse(entries[0]!.data.toString()) as {
       blob_count: number;
@@ -275,7 +281,7 @@ describe("GET /export?format=archive keeps what it reads in the spool", () => {
   }, 120_000);
 
   it("restores an archive of nothing", async () => {
-    const res = await exportArchive(ctx, "&type=core.bookmark");
+    const res = await exportArchive(ctx, credential, "&type=core.bookmark");
     const archive = Buffer.from(await res.arrayBuffer());
     const entries = await unpack(archive);
     expect(entries.find((e) => e.name === "items.ndjson")!.data).toHaveLength(
@@ -313,14 +319,14 @@ async function watchingFaults<T>(
   }
 }
 
-describe("GET /export?format=archive reports a fault, and not a client leaving", () => {
+withReader("archive fault reporting (%s)", (credential) => {
   it("logs and reports nothing when the client leaves while the tar is being written", async () => {
     await seedNotes(ctx, 5);
     const hash = await upload(ctx, randomBytes(8 * 1024 * 1024));
     await attach(ctx, hash);
 
     const { logged, reported } = await watchingFaults(async () => {
-      const res = await exportArchive(ctx);
+      const res = await exportArchive(ctx, credential);
       const reader = res.body!.getReader();
       expect((await reader.read()).done).toBe(false);
       await reader.cancel();
@@ -355,7 +361,7 @@ describe("GET /export?format=archive reports a fault, and not a client leaving",
     });
 
     const { logged, reported } = await watchingFaults(async () => {
-      const res = await exportArchive(ctx);
+      const res = await exportArchive(ctx, credential);
       await expect(res.arrayBuffer()).rejects.toThrow();
       await untilSpoolEmpty();
     });
@@ -366,14 +372,14 @@ describe("GET /export?format=archive reports a fault, and not a client leaving",
   });
 });
 
-describe("GET /export?format=archive ends", () => {
+withReader("archive cleanup (%s)", (credential) => {
   it("with the spool removed when the client leaves while the tar is being written", async () => {
     await seedNotes(ctx, 5);
     // Random bytes do not compress, so the writer is held by the reader
     // mid-blob however large the buffers are.
     const hash = await upload(ctx, randomBytes(8 * 1024 * 1024));
     await attach(ctx, hash);
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     const reader = res.body!.getReader();
     expect((await reader.read()).done).toBe(false);
     expect(spool().length).toBeGreaterThan(0);
@@ -391,7 +397,7 @@ describe("GET /export?format=archive ends", () => {
       if (pages === 3) abort.abort();
       return list(filters);
     });
-    const res = await exportArchive(ctx, "", abort.signal);
+    const res = await exportArchive(ctx, credential, "", abort.signal);
     // Nobody is left to read the answer, and nothing more was read for it.
     expect(res.status).toBe(499);
     expect(pages).toBe(3);
@@ -403,7 +409,7 @@ describe("GET /export?format=archive ends", () => {
     vi.spyOn(ctx.storage.edges, "list").mockRejectedValue(
       new Error("edge read failed"),
     );
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     expect(res.status).toBe(500);
     expect(spool()).toEqual([]);
   });
@@ -415,7 +421,7 @@ describe("GET /export?format=archive ends", () => {
     await attach(ctx, hash);
 
     // The witness: the same export, undisturbed, is a whole archive.
-    const whole = await exportArchive(ctx);
+    const whole = await exportArchive(ctx, credential);
     const entries = await unpack(Buffer.from(await whole.arrayBuffer()));
     expect(entries.at(-1)).toMatchObject({ name: `blobs/${hash}` });
     expect(entries.at(-1)!.data).toHaveLength(bytes.length);
@@ -438,14 +444,14 @@ describe("GET /export?format=archive ends", () => {
       read.stream.destroy();
       return { ...read, stream: broken };
     });
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     expect(res.status).toBe(200);
     await expect(res.arrayBuffer()).rejects.toThrow();
     await untilSpoolEmpty();
   });
 });
 
-describe("GET /export?format=archive read across commits", () => {
+withReader("archive concurrent writes (%s)", (credential) => {
   it("restores an archive of an instance written to between its pages", async () => {
     await seedNotes(ctx, 300);
     await seedEdges(ctx, 300, 100);
@@ -487,7 +493,7 @@ describe("GET /export?format=archive read across commits", () => {
       }
       return page;
     });
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     expect(res.status, await res.clone().text()).toBe(200);
     const archive = Buffer.from(await res.arrayBuffer());
     expect(pages).toBeGreaterThan(2);
@@ -567,7 +573,7 @@ describe("GET /export?format=archive read across commits", () => {
       return page;
     });
 
-    const res = await exportArchive(ctx);
+    const res = await exportArchive(ctx, credential);
     expect(res.status, await res.clone().text()).toBe(200);
     const entries = await unpack(Buffer.from(await res.arrayBuffer()));
     expect(edgePages).toBeGreaterThan(1);

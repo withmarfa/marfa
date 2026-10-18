@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns counts of the items you can read, grouped by state or by type. It takes the filters `GET /items` takes, but without `state` it counts every state, not only active items.
+         * @description Returns item counts by state or type using the filters of `GET /items`. Counts every state unless you name one. The owner can use their browser session.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -1505,7 +1505,7 @@ export interface paths {
         };
         /**
          * Export items and edges
-         * @description Exports the items you can read, with their tags and readable extensions, followed by the edges between them. Without `state`, trashed items are left out. With `format=archive`, returns a file that `POST /restore` reads.
+         * @description Exports readable items, metadata and edges, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.
          */
         get: operations["exportData"];
         put?: never;
