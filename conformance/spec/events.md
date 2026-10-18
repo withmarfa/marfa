@@ -1469,6 +1469,14 @@ Where the instance does not allow private addresses, if `POST /webhooks` names a
 
 **Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
 
+### `events/address-ipv6-global`
+
+Where the instance does not allow private addresses, the server MUST treat an IPv6 address as public only if it lies in `2000::/3`, after an IPv4 address written as IPv6 has been read as the IPv4 address it carries.
+
+**Reason:** `2000::/3` is the block assigned to hosts on the internet. Any other block is reserved, local or a translation prefix, so a rule that named the blocks to refuse would accept whatever it did not name.
+
+**Tests:** `compliance/webhook-addresses.test.ts › refuses an IPv6 address outside 2000::/3 and the documentation block, and accepts a global one`.
+
 ### `events/address-mapped`
 
 Where the instance does not allow private addresses, the server MUST judge an IPv4 address written as IPv6 as the IPv4 address it carries.

@@ -41,23 +41,50 @@ class AddressNotPublicError extends Error {
 }
 
 /**
+ * An IPv6 address with its dotted IPv4 tail written as two hexadecimal
+ * groups, and no zone. ipaddr.js reads any dotted tail as IPv4-mapped, so
+ * `::8.8.8.8` in `::/96` would be taken for `::ffff:8.8.8.8`, while libuv
+ * writes an address in `::/96` with a dotted tail. Whether an address is
+ * mapped is then decided by its bits: `::ffff:808:808` is, `::808:808` is not.
+ */
+function withHexTail(address: string): string {
+  const bare = address.replace(/%.*$/, "");
+  const dotted = /^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(bare);
+  if (dotted === null) return bare;
+  const octets = dotted.slice(2).map(Number);
+  if (octets.some((octet) => octet > 255)) return bare;
+  const [a = 0, b = 0, c = 0, d = 0] = octets;
+  const hex = (high: number, low: number) => (high * 256 + low).toString(16);
+  return `${dotted[1] ?? ""}${hex(a, b)}:${hex(c, d)}`;
+}
+
+/** Global unicast, the only IPv6 block that is assigned to hosts on the internet. */
+const GLOBAL_UNICAST_V6 = ipaddr.IPv6.parseCIDR("2000::/3");
+
+/**
  * Whether `address` is one a delivery may connect to: a global unicast
  * address, with an IPv4 address written as IPv6 judged as the IPv4 address
- * it carries. Anything ipaddr.js names a special range is refused, which
- * takes in loopback, private, link-local, unique-local, carrier-grade NAT,
- * the unspecified address, multicast, and the translation prefixes that
- * embed an IPv4 address of either kind.
+ * it carries. An IPv4 address must not be in a range ipaddr.js names special,
+ * which takes in loopback, private, link-local, carrier-grade NAT, the
+ * unspecified address, multicast and the reserved blocks. An IPv6 address
+ * must lie in 2000::/3 as well, so every other block is refused whether or
+ * not ipaddr.js has a name for it: unique-local, link-local, multicast, the
+ * unspecified address, `::/96` and the translation prefixes among them.
  */
 export function isPublicAddress(address: string): boolean {
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
   try {
-    parsed = ipaddr.parse(address);
+    parsed = ipaddr.parse(withHexTail(address));
   } catch {
     return false;
   }
   if (parsed.kind() === "ipv6") {
     const v6 = parsed as ipaddr.IPv6;
-    if (v6.isIPv4MappedAddress()) parsed = v6.toIPv4Address();
+    if (v6.isIPv4MappedAddress()) {
+      parsed = v6.toIPv4Address();
+    } else if (!v6.match(GLOBAL_UNICAST_V6)) {
+      return false;
+    }
   }
   return parsed.range() === "unicast";
 }
