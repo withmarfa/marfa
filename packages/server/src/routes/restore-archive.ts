@@ -852,11 +852,12 @@ async function restoreRows(
       }
 
       // Edges restore after every item the archive carries exists, and
-      // only where both endpoints resolve in the database, so a
-      // partial or hand-edited archive cannot plant a reference to an
-      // item that is not there.
+      // only where both endpoints resolve in the database, in the bin
+      // or out of it, so a partial or hand-edited archive cannot plant
+      // a reference to an item that is not there.
       const endpointResolves = async (id: string): Promise<boolean> =>
-        resolvableIds.has(id) || (await storage.items.get(id)) !== null;
+        resolvableIds.has(id) ||
+        (await storage.items.getIncludingTrashed(id)) !== null;
 
       let edgeIndex = 0;
       const restoreEdge = async ({
@@ -902,8 +903,10 @@ async function restoreRows(
         // The archive's own edge types resolve because they were
         // registered earlier in this transaction. `replay` lets a
         // revoked folder keep the placements it held before its
-        // revoke, and keeps an edge stored before its type declared a
-        // `property_schema`, which stands until it is next written.
+        // revoke, keeps an edge stored before its type declared a
+        // `property_schema`, which stands until it is next written, and
+        // keeps an edge whose end is in the bin, which an export of
+        // `state=any` carries.
         try {
           await assertEdgesCanBeCreated(
             storage,
