@@ -726,12 +726,15 @@ impl Http {
 
     pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
         let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
-        for row in &page.data {
+        for (index, row) in page.data.iter().enumerate() {
             serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
                 if self.view.is_some() {
                     crate::read_view::invalid()
                 } else {
-                    CoreError::Decoding(format!("an edge type the server listed: {error}"))
+                    crate::error::unreadable(
+                        &format!("edge type {index} the server listed"),
+                        &error,
+                    )
                 }
             })?;
         }
@@ -1477,40 +1480,35 @@ impl Http {
         if !certified {
             return Err(crate::read_view::invalid());
         }
-        let decode = || -> Result<T, CoreError> {
-            let value: serde_json::Value = serde_json::from_str(&text)
-                .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))?;
-            if conditional.is_some()
-                && body.is_none()
-                && segments.first() == Some(&"items")
-                && (segments.len() == 1 || segments.len() == 2)
-            {
-                let valid =
-                    |row: &serde_json::Value| row.get("listed").and_then(|v| v.as_bool()).is_some();
-                if segments.len() == 1 {
-                    if !value
-                        .get("data")
-                        .and_then(|v| v.as_array())
-                        .is_some_and(|rows| {
-                            rows.iter().all(|row| valid(row) && row["listed"] == true)
-                        })
-                    {
-                        return Err(crate::read_view::invalid());
-                    }
-                } else if !valid(&value) {
+        // A body that is not JSON says nothing against the copy's read view,
+        // and reading it again fails the same way. A body that parses and
+        // does not fit what a certified answer carries is a proof the copy
+        // cannot accept.
+        if conditional.is_none() {
+            return serde_json::from_str(&text)
+                .map_err(|error| crate::error::unreadable(url.path(), &error));
+        }
+        let value: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| crate::error::unreadable(url.path(), &error))?;
+        if body.is_none()
+            && segments.first() == Some(&"items")
+            && (segments.len() == 1 || segments.len() == 2)
+        {
+            let valid =
+                |row: &serde_json::Value| row.get("listed").and_then(|v| v.as_bool()).is_some();
+            if segments.len() == 1 {
+                if !value
+                    .get("data")
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|rows| rows.iter().all(|row| valid(row) && row["listed"] == true))
+                {
                     return Err(crate::read_view::invalid());
                 }
+            } else if !valid(&value) {
+                return Err(crate::read_view::invalid());
             }
-            serde_json::from_value(value)
-                .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))
-        };
-        decode().map_err(|error| {
-            if conditional.is_some() {
-                crate::read_view::invalid()
-            } else {
-                error
-            }
-        })
+        }
+        serde_json::from_value(value).map_err(|_| crate::read_view::invalid())
     }
 }
 

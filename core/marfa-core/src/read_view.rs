@@ -34,7 +34,17 @@ pub(crate) fn event_payload(
     id: Option<&str>,
     data: &str,
 ) -> Result<crate::wire::EventPayload> {
-    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|_| invalid())?;
+    // Data that is not JSON says nothing against the copy's read view, and
+    // reading it again fails the same way; JSON that is not an event is a
+    // frame the copy cannot accept.
+    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|error| {
+        use serde_json::error::Category::{Eof, Syntax};
+        if matches!(error.classify(), Syntax | Eof) {
+            crate::error::unreadable("an event the stream sent", &error)
+        } else {
+            invalid()
+        }
+    })?;
     if matches!(name, Some("stream_cursor" | "stream_live"))
         || matches!(payload.event_type.as_str(), "stream_cursor" | "stream_live")
     {

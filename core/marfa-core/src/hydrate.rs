@@ -1092,6 +1092,138 @@ mod tests {
         assert_eq!(hydrate(&core).unwrap().items, 2);
     }
 
+    fn row_of(id: &str) -> Value {
+        let payload: Value =
+            serde_json::from_str(&scripted::item_payload("item.updated", id, "core.note", 1))
+                .unwrap();
+        payload["item"].clone()
+    }
+
+    fn page_body() -> Value {
+        json!({
+            "data": [{"item": row_of("row"), "metadata": {"tags": []}, "listed": true}],
+            "next_cursor": null,
+        })
+    }
+
+    /// The first half of `body`, which no JSON reader takes.
+    fn cut_short(body: &Value) -> String {
+        let text = body.to_string();
+        text[..text.len() / 2].to_string()
+    }
+
+    /// An answer that is not JSON says nothing against the copy's read view,
+    /// and reading it again fails the same way, so the hydration ends
+    /// `decoding` and does not expire the copy.
+    #[test]
+    fn an_answer_that_is_not_json_ends_a_hydration_decoding_and_keeps_the_copy() {
+        let page = page_body();
+        let bulk_json = bulk_body(&[("pin-000", true)]);
+        let edge_types = json!({"data": [{"id": "link"}], "next_cursor": null});
+        let cases = [
+            (
+                "an items page",
+                "/items",
+                cut_short(&page),
+                scripted::certified(scripted::json(200, &page.to_string())),
+            ),
+            (
+                "a bulk read",
+                "/items/bulk-get",
+                cut_short(&bulk_json),
+                bulk(&[("pin-000", true)]),
+            ),
+            (
+                "the edge types",
+                "/edge-types",
+                cut_short(&edge_types),
+                scripted::certified(scripted::edge_types(&[("link", None)])),
+            ),
+        ];
+        for (case, path, cut, witness) in cases {
+            let server = Scripted::start();
+            let (core, pinned) = pinned_copy(&server, 1);
+            server.on(path, vec![scripted::certified(scripted::json(200, &cut))]);
+            match hydrate(&core) {
+                Err(CoreError::Decoding(message)) => {
+                    assert!(message.starts_with(path), "{case}: {message}");
+                }
+                other => panic!("{case}: ended {other:?}"),
+            }
+            let conn = core.conn().unwrap();
+            assert!(!crate::read_view::expired(&conn).unwrap(), "{case}");
+            assert_eq!(store::pins(&conn).unwrap(), pinned, "{case}");
+            drop(conn);
+
+            // The witness: the whole answer is read.
+            let server = Scripted::start();
+            let (core, _) = pinned_copy(&server, 1);
+            server.on(path, vec![witness]);
+            if path != "/items/bulk-get" {
+                server.on("/items/bulk-get", vec![bulk(&[("pin-000", true)])]);
+            }
+            assert!(hydrate(&core).is_ok(), "{case}: the witness");
+        }
+    }
+
+    /// Each is an answer that is JSON and is not what a certified answer
+    /// carries, so the copy cannot take it as the server's word.
+    #[test]
+    fn an_answer_that_is_json_and_does_not_fit_expires_the_copy() {
+        let edges_without_cursor = |mut row: Value| {
+            row["edges"] = json!({"link": {"data": []}});
+            row
+        };
+        let mut pages = Vec::new();
+        for listed in [json!("yes"), json!(1), json!(false), json!(null)] {
+            let mut page = page_body();
+            page["data"][0]["listed"] = listed;
+            pages.push(page);
+        }
+        let mut page = page_body();
+        page.as_object_mut().unwrap().remove("next_cursor");
+        pages.push(page);
+        let mut page = page_body();
+        page["data"][0]["item"] = edges_without_cursor(row_of("row"));
+        pages.push(page);
+
+        let mut bulks = Vec::new();
+        let mut bulk = bulk_body(&[("pin-000", true)]);
+        bulk["listed"] = json!([true, "yes"]);
+        bulks.push(bulk);
+        let mut bulk = bulk_body(&[("pin-000", true)]);
+        bulk["listed"] = json!("yes");
+        bulks.push(bulk);
+        let mut bulk = bulk_body(&[("pin-000", true)]);
+        bulk["items"][0] = edges_without_cursor(bulk["items"][0].clone());
+        bulks.push(bulk);
+
+        let cases = pages
+            .into_iter()
+            .map(|body| ("/items", body))
+            .chain(bulks.into_iter().map(|body| ("/items/bulk-get", body)))
+            .chain([(
+                "/edge-types",
+                json!({"data": [{"unexpected": 1}], "next_cursor": null}),
+            )]);
+        for (path, body) in cases {
+            let server = Scripted::start();
+            let (core, _) = pinned_copy(&server, 1);
+            server.on(
+                path,
+                vec![scripted::certified(scripted::json(200, &body.to_string()))],
+            );
+            assert_eq!(
+                hydrate(&core).unwrap_err(),
+                CoreError::CopyExpired {
+                    reason: "read_view_invalid".into()
+                },
+                "{path}: {body}"
+            );
+            assert!(crate::read_view::expired(&core.conn().unwrap()).unwrap());
+        }
+    }
+
     #[test]
     fn a_hydration_stopped_between_reads_of_pinned_rows_asks_for_no_more() {
         let server = Scripted::start();
