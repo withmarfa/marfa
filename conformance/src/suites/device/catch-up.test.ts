@@ -71,6 +71,13 @@ function cutShortEvent(id: string): { raw: string } {
   };
 }
 
+/** An event frame the stream ends in before the frame is finished. */
+function endedMidEvent(id: string): { raw: string } {
+  return {
+    raw: `id: ${id}\nevent: item.created\ndata: {"event_type":"item.created","item":{"id"`,
+  };
+}
+
 describe("catch-up replays from the cursor", () => {
   it("resumes at the stored cursor and applies what the stream carries", async () => {
     harness = await startHarness("replay-resume");
@@ -1326,6 +1333,34 @@ describe("catch-up replays from the cursor", () => {
     ).toBe(true);
 
     // The witness: the same event whole is taken.
+    const taken = await device.catchUp();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect((await device.get("n11")).ok).toBe(true);
+  });
+
+  it("takes an event the stream ended in as not sent, keeping the cursor it had", async () => {
+    harness = await startHarness("catch-up-ended-mid-event");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyIncompleteReplay("11", [endedMidEvent("11")]),
+      copyReplay("11", [copyItemEvent("11", "item.created", row)]),
+    );
+    // The hydration's own head read answers once more first.
+    expect((await device.catchUp()).ok).toBe(true);
+    const cut = await device.catchUp();
+    expect(cut.ok, "a catch-up took an event the stream ended in").toBe(false);
+    if (!cut.ok) {
+      expect(cut.refusal.code, JSON.stringify(cut)).toBe("stream_incomplete");
+    }
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("10");
+
+    // The witness: the same event, finished, is taken.
     const taken = await device.catchUp();
     expect(taken.ok, JSON.stringify(taken)).toBe(true);
     expect((await device.get("n11")).ok).toBe(true);
@@ -4676,6 +4711,28 @@ describe("what a held stream takes and tells", () => {
     const again = await device.follow(4);
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect((await device.get("n11")).ok).toBe(true);
+  });
+
+  it("opens a held stream again, rather than ending, when the stream ended part way through an event", async () => {
+    harness = await startHarness("follow-ended-mid-event");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyIncompleteReplay("11", [endedMidEvent("11")]),
+      copyLiveReplay("11", [copyItemEvent("11", "item.created", row)]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(4);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect(
+      followed.ok &&
+        followed.value.changes
+          .filter((change) => !change.event.startsWith("server."))
+          .map((change) => change.cursor),
+    ).toEqual(["11"]);
   });
 
   it("opens a held stream again from its cursor when the server calls it incomplete", async () => {
