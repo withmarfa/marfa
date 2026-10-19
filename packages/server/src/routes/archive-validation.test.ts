@@ -33,6 +33,7 @@ const edgeIdAt = (n: number) =>
 function selection(
   items: number,
   edges: Iterable<[source: number, target: number, type: string]>,
+  typeOf: (item: number) => string = () => "core.note",
 ) {
   const itemLines: string[] = [];
   for (let n = 1; n <= items; n++)
@@ -40,7 +41,7 @@ function selection(
       JSON.stringify({
         item: {
           id: idAt(n),
-          type: "core.note",
+          type: typeOf(n),
           properties: { body: `note ${String(n)}` },
         },
       }),
@@ -186,6 +187,37 @@ it("still holds an edge of a registered type to its constraints", async () => {
   expect(refused).toBeInstanceOf(SelectionRefusal);
   expect((refused as SelectionRefusal).row).toMatchObject({
     kind: "edge",
+    type: "in-collection",
+    code: "edge_constraint_violation",
+  });
+});
+
+// `in-collection` names its permitted targets, and a note is not one. Item 2
+// is of a type a forced delete removed.
+const forgottenSecond = (item: number) =>
+  item === 2 ? "user.forgotten" : "core.note";
+
+it("takes an edge whose end is of an item type nothing registers", async () => {
+  await expect(
+    validate(selection(3, [[1, 2, "in-collection"]], forgottenSecond)),
+  ).resolves.toBeUndefined();
+});
+
+it("still refuses an edge to a registered end the edge does not allow, beside an unregistered one", async () => {
+  const refused = await refusalOf(
+    selection(
+      3,
+      [
+        [1, 2, "in-collection"],
+        [1, 3, "in-collection"],
+      ],
+      forgottenSecond,
+    ),
+  );
+  expect(refused).toBeInstanceOf(SelectionRefusal);
+  expect((refused as SelectionRefusal).row).toMatchObject({
+    kind: "edge",
+    id: edgeIdAt(2),
     type: "in-collection",
     code: "edge_constraint_violation",
   });

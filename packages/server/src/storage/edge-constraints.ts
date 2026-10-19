@@ -2,6 +2,7 @@ import {
   ErrorCode,
   MarfaError,
   getEdgeTypeSchema,
+  getTypeSchema,
   satisfiesEdgeConstraint,
   validateDeclaredProperties,
 } from "@withmarfa/shared";
@@ -179,6 +180,10 @@ export interface EdgeProposal {
  *    may read both types: an end it may not read is answered as missing.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
+ *    For 3 and 4, `replay` takes an end whose item type is not registered,
+ *    as a forced delete leaves it: the type's parent and roles went with it,
+ *    so what the constraint asked of the end cannot be derived again. An end
+ *    of a registered type is judged as ever.
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
  * 6. Exact duplicate (source, target, edge_type) rejected — both DB and in-batch.
  * 7. A self-loop is rejected on every edge type; a longer cycle on
@@ -269,6 +274,9 @@ export async function assertEdgesFitGraph(
   const itemMap = await itemStore.getMany(Array.from(itemIds), {
     includeTrashed: opts.replay === true,
   });
+  const endFits = (type: string, constraints: readonly string[]) =>
+    (opts.replay === true && getTypeSchema(type) === undefined) ||
+    satisfiesEdgeConstraint(type, constraints);
   for (const { p, schema } of resolved) {
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);
@@ -285,7 +293,7 @@ export async function assertEdgesFitGraph(
     // Endpoint types resolve through the registry, exactly as the edge type
     // itself did above, so a constraint naming a runtime-registered type
     // resolves like one naming a shipped type.
-    if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
+    if (!endFits(source.type, schema.source_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow source type "${source.type}"`,
@@ -296,7 +304,7 @@ export async function assertEdgesFitGraph(
         },
       );
     }
-    if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
+    if (!endFits(target.type, schema.target_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow target type "${target.type}"`,

@@ -22,7 +22,8 @@
  * An item that is not of a `core` or `system` type that this build ships
  * keeps the properties the archive holds, whatever shape its type has now and
  * whether or not the type is registered, and an edge whose edge type is not
- * registered is kept as the archive holds it.
+ * registered, or one of whose ends is of an item type that is not registered,
+ * is kept as the archive holds it.
  *
  * Paired with GET /export?format=archive.
  */
@@ -694,9 +695,10 @@ async function restoreRows(
         // registered earlier in this transaction. `replay` lets a
         // revoked folder keep the placements it held before its
         // revoke, keeps an edge stored before its type declared a
-        // `property_schema`, which stands until it is next written, and
+        // `property_schema`, which stands until it is next written,
         // keeps an edge whose end is in the bin, which an export of
-        // `state=any` carries.
+        // `state=any` carries, and takes an end of an item type that is
+        // not registered, which no constraint can be judged against.
         try {
           await assertEdgesCanBeCreated(
             storage,

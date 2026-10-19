@@ -893,6 +893,14 @@ If `POST /edges` names a target whose type the edge type's `target_type_constrai
 
 **Tests:** `correctness/edges/edges-type-constraints.test.ts › refuses an end of the wrong type on POST /edges, naming the type and the types allowed`, `› non-matching target type rejected`.
 
+### `edges/endpoint-unregistered`
+
+If `POST /edges` names an end whose item type is not registered, and the edge type's constraint list for that end is not empty and does not hold `*`, then the server MUST answer `400 edge_constraint_violation`.
+
+**Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`search-and-filters/restore-edges-end-unregistered`).
+
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`.
+
 ### `edges/endpoint-bulk`
 
 If an entry of `POST /edges/bulk` names an end of a type the edge type does not admit, then the server MUST refuse the entry `edge_constraint_violation` with the `details` `POST /edges` gives, as `error` on the entry under `atomic: false` and as `details.details` of the rollback under `atomic: true`.
