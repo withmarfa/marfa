@@ -1498,7 +1498,7 @@ When `marfa export --format archive` has received an archive whose manifest name
 
 **Reason:** the exit says the archive is not a whole backup.
 
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`.
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
 
 ### `search-and-filters/cli-export-lacking-kept`
 

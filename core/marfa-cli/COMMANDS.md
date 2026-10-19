@@ -1606,7 +1606,7 @@ Export the instance's data.
 
 An archive is kept even when it lacks blobs that no store could read whole. Its manifest lists them under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
 
-With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. Without `--output`, the archive goes to standard output.
+With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output.
 
 ```text
 marfa export [OPTIONS]

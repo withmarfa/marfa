@@ -169,8 +169,9 @@ enum Command {
     /// kept beside it as `<PATH>.incomplete`, which replaces only an earlier
     /// file of that name, and the file at the path stays as it was, so a
     /// script that reads the path never gets an archive that lacks files. The
-    /// message names both paths. Without `--output`, the archive goes to
-    /// standard output.
+    /// message names both paths. When that name cannot be taken, the archive
+    /// stays in a hidden partial file beside the path, and the message names
+    /// it. Without `--output`, the archive goes to standard output.
     Export(export::ExportArgs),
     /// Restore an archive with direct owner or local authority.
     ///

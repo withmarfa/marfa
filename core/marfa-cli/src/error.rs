@@ -497,8 +497,8 @@ fn contract_said(served: Option<&str>, status: Option<u16>) -> String {
     }
 }
 
-/// The first few hashes, and how many more: a message names what is
-/// missing without growing with an instance that lost every file.
+/// The message of an archive kept beside its path: what it lacks, where it
+/// is, and whether the path was left alone.
 fn archive_kept_apart(
     missing: &[String],
     target: &std::path::Path,
@@ -533,6 +533,8 @@ fn archive_kept_apart(
     )
 }
 
+/// The first few hashes, and how many more: a message names what is
+/// missing without growing with an instance that lost every file.
 fn hash_list(hashes: &[String]) -> String {
     const SHOWN: usize = 10;
     let shown = hashes[..hashes.len().min(SHOWN)].join(", ");
