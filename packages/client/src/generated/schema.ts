@@ -20559,7 +20559,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: this operation requires its explicit permission or direct owner or local authority. `details.required_scope` names it. */
+            /** @description - `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

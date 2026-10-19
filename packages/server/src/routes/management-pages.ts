@@ -36,9 +36,9 @@ export function managementPages(storage: Storage) {
 <h2>Server</h2><pre id="health">Loading…</pre>
 <h2>Maintenance</h2><p>Maintenance can permanently delete data that is eligible for removal.</p><ul id="jobs"></ul>
 <h2>Signed-in browsers</h2><p>A browser stays signed in until it goes unused for seven days. To sign a browser out, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="browsers"></ul>
-<h2>Connected apps</h2><ul id="apps"></ul>
+<h2>Connected apps</h2><p>To disconnect an app, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="apps"></ul>
 <h2>Connectors</h2><ul id="connectors"></ul>
-<h2>Keys</h2><p>To create or change a key, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="keys"></ul>
+<h2>Keys</h2><p>To create, change or revoke a key, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fmanage">Sign in again</a></p><ul id="keys"></ul>
 <details><summary>Create a key</summary><p>A key keeps access until you revoke it. Choose only the access it needs.</p>
 <form id="mint"><label for="label">Name</label><input id="label" name="label" required maxlength="200"><label for="source">Source name</label><input id="source" name="source" required maxlength="200">
 <label><input type="checkbox" name="content"> Read and write all content</label>

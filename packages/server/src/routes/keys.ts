@@ -434,7 +434,8 @@ const revokeKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: KEYS_MINT_REFUSAL,
+      description:
+        "- `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission.",
     },
     404: {
       content: {
@@ -1016,7 +1017,11 @@ export function keyRoutes(storage: Storage, salt: string) {
     // success, and the key meant would stay live with nothing saying so.
     await runAuditedTransaction(
       storage,
-      () => keysInReach(storage, c).revoke(id),
+      () => {
+        if (c.get("authority")?.kind === "owner")
+          requireRecentOwnerAuthentication(c);
+        return keysInReach(storage, c).revoke(id);
+      },
       {
         client_ip: c.get("clientIp") ?? null,
         key_id: authorityId(c),

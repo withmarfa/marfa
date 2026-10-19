@@ -153,7 +153,7 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   // instance-claim/profile-email-write-scope.
   "GET /auth/oauth2/authorize": [200, 302, 400],
   "GET /auth/authorize": [200, 302, 400, 404],
-  "POST /auth/authorize/decision": [200, 302, 400, 403, 500],
+  "POST /auth/authorize/decision": [200, 302, 303, 400, 403, 500],
   "GET /auth/error": [200],
   "POST /auth/oauth2/token": [200, 400, 401],
   "POST /auth/oauth2/revoke": [200, 400, 401],
@@ -165,7 +165,7 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/device": [200],
   "POST /auth/device": [302, 403],
   "GET /auth/device/consent": [200, 302, 400],
-  "POST /auth/device/consent": [200, 302, 400, 403, 404],
+  "POST /auth/device/consent": [200, 302, 303, 400, 403, 404],
   "GET /auth/grants": [200, 401, 403],
   "DELETE /auth/grants/{id}": [204, 401, 403, 404, 500],
   "GET /auth/static/auth.css": [200],

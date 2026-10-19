@@ -53,7 +53,7 @@ marfa status
 
 The key has the five maps named above and no additional permissions. Use narrower maps for an app that needs only part of the dataset. Add named permissions only when needed; [the glossary](./GLOSSARY.md#permissions) lists all twelve. `keys.mint` permits delegation within the caller's own access; `keys.manage` permits key administration but does not grant content access or unrestricted minting.
 
-On a system without a keychain, supply the ordinary key through `MARFA_API_KEY` and skip `keys keep`. Owner password recovery requires the private socket; see [Recovering the owner](./deploy/README.md#recovering-the-owner). Creating or changing keys through an owner browser session requires a password sign-in within the last five minutes.
+On a system without a keychain, supply the ordinary key through `MARFA_API_KEY` and skip `keys keep`. Owner password recovery requires the private socket; see [Recovering the owner](./deploy/README.md#recovering-the-owner). Creating, changing, or revoking keys through an owner browser session requires a sign-in within the last five minutes.
 
 ## Code style
 

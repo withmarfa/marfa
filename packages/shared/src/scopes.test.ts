@@ -14,6 +14,8 @@ import {
   PERMISSIONS,
   hasPermission,
   requiresExplicitConsent,
+  grantableOnOlderSignIn,
+  needsRecentSignIn,
   scopesOfferedOffByDefaultOnly,
   grantCoversScope,
 } from "./scopes.js";
@@ -1648,5 +1650,110 @@ describe("requiresExplicitConsent", () => {
     // working while the real check is the one that fired.
     expect(requiresExplicitConsent("keys.not_a_real_one")).toBe(false);
     expect(requiresExplicitConsent("")).toBe(false);
+  });
+});
+
+describe("grantableOnOlderSignIn", () => {
+  it("is true for reading in every scope family", () => {
+    for (const literal of [
+      "core.note:read",
+      "core.*:read",
+      "*:read",
+      "user.thing:read",
+      "content:read",
+      "metadata:read",
+      "metadata.types:read",
+      "edge.parent-of:read",
+      "edge.*:read",
+      "edge.karakeep.list-member:read",
+      "profile:read",
+      "profile.name:read",
+      "profile.email:read",
+      "profile.avatar:read",
+      "openid",
+      "profile",
+      "email",
+      "offline_access",
+    ]) {
+      expect(grantableOnOlderSignIn(literal), literal).toBe(true);
+    }
+  });
+
+  it("is false for writing in every scope family", () => {
+    for (const literal of [
+      "core.note:write",
+      "core.*:write",
+      "*:write",
+      "content:write",
+      "metadata:write",
+      "metadata.types:write",
+      "edge.parent-of:write",
+      "edge.*:write",
+      "profile:write",
+      "profile.name:write",
+      "profile.avatar:write",
+    ]) {
+      expect(grantableOnOlderSignIn(literal), literal).toBe(false);
+    }
+  });
+
+  it("is false for every permission", () => {
+    for (const literal of PERMISSIONS) {
+      expect(grantableOnOlderSignIn(literal), literal).toBe(false);
+    }
+  });
+
+  it("is false for anything the grammar does not recognize", () => {
+    for (const literal of [
+      "",
+      "read",
+      ":read",
+      "keys:read",
+      "keys.not_a_real_one",
+      "schema.*:read",
+      "content.*:read",
+      "profile.phone:read",
+      "core.note:delete",
+      "OPENID",
+      "openid ",
+    ]) {
+      expect(grantableOnOlderSignIn(literal), literal).toBe(false);
+    }
+  });
+});
+
+describe("needsRecentSignIn", () => {
+  it("is false when every approved scope is a read", () => {
+    expect(needsRecentSignIn(["openid", "core.note:read", "*:read"], [])).toBe(
+      false,
+    );
+  });
+
+  it("is true when any approved scope is a write or a permission the app does not hold", () => {
+    expect(needsRecentSignIn(["core.note:read", "core.note:write"], [])).toBe(
+      true,
+    );
+    expect(needsRecentSignIn(["keys.manage"], ["*:write"])).toBe(true);
+    expect(needsRecentSignIn(["core.note:write"], undefined)).toBe(true);
+  });
+
+  it("is false for a scope the app already holds", () => {
+    expect(needsRecentSignIn(["keys.manage"], ["keys.manage"])).toBe(false);
+    expect(needsRecentSignIn(["core.note:write"], ["core.*:write"])).toBe(
+      false,
+    );
+  });
+
+  it("is true when only some of the gated scopes are already held", () => {
+    expect(
+      needsRecentSignIn(
+        ["keys.manage", "blobs.manage"],
+        ["keys.manage", "core.note:read"],
+      ),
+    ).toBe(true);
+  });
+
+  it("is false for nothing approved", () => {
+    expect(needsRecentSignIn([], [])).toBe(false);
   });
 });

@@ -104,20 +104,27 @@ export function requireDirectAuthority(c: Context<AppEnv>): void {
   }
 }
 
-export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
-  requireDirectAuthority(c);
+/**
+ * Whether the direct authority signed in within the last five minutes. The
+ * private local command always counts; a request with no direct authority
+ * does not.
+ */
+export function isRecentOwnerAuthentication(c: Context<AppEnv>): boolean {
   const authority = c.get("authority");
-  if (!authority)
-    throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
-  if (
+  if (!authority) return false;
+  return !(
     authority.kind === "owner" &&
     (clock.nowMs() - authority.authenticatedAt > 300_000 ||
       authority.authenticatedAt > clock.nowMs())
-  ) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "Sign in again to perform this operation",
-    );
+  );
+}
+
+export const SIGN_IN_AGAIN_MESSAGE = "Sign in again to perform this operation";
+
+export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
+  requireDirectAuthority(c);
+  if (!isRecentOwnerAuthentication(c)) {
+    throw new MarfaError(ErrorCode.FORBIDDEN, SIGN_IN_AGAIN_MESSAGE);
   }
   rememberRecentAuthentication();
 }
