@@ -1171,6 +1171,8 @@ impl Captured {
         }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-scan-read");
         Ok(Some(bytes))
     }
 
@@ -2817,7 +2819,7 @@ impl Folder {
             return Ok(());
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
-        let now = crate::store::now_iso();
+        let now = crate::store::iso_at(crate::clock::system_time());
         let members = OnceCell::new();
         for (path, item_id, missing_since) in journaled {
             if !elapsed_past(&missing_since, &now, RENAME_GRACE) {

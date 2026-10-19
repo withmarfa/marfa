@@ -4,7 +4,7 @@
 
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::registry::Registry;
 use super::watch::WatchError;
@@ -93,15 +93,14 @@ fn taking_back<E>(
     mut reopen: impl FnMut() -> Result<Folder>,
     mut held_elsewhere: impl FnMut() -> std::result::Result<(), E>,
 ) -> std::result::Result<TakeBack, WatchError<E>> {
-    let mut asked_at = Instant::now();
+    let mut asked_at = crate::clock::now();
     let mut held = false;
     loop {
-        let until = Instant::now() + timing.retry;
-        while Instant::now() < until {
-            if stop.load(Ordering::SeqCst) {
-                return Ok(TakeBack::Stopped);
-            }
-            std::thread::sleep(POLL.min(timing.retry));
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-take-back-wait");
+        crate::clock::wait(stop, timing.retry, POLL.min(timing.retry));
+        if stop.load(Ordering::SeqCst) {
+            return Ok(TakeBack::Stopped);
         }
         if !Folder::is_at(root) {
             return Ok(TakeBack::Removed);
@@ -110,7 +109,7 @@ fn taking_back<E>(
             return Ok(TakeBack::Unlisted);
         }
         if Folder::asked_at(root) {
-            asked_at = Instant::now();
+            asked_at = crate::clock::now();
             continue;
         }
         match reopen() {
@@ -121,7 +120,7 @@ fn taking_back<E>(
                 });
             }
             Err(CoreError::ReadingHandle) => {
-                if !held && asked_at.elapsed() >= timing.held {
+                if !held && crate::clock::now().saturating_duration_since(asked_at) >= timing.held {
                     held = true;
                     held_elsewhere().map_err(WatchError::Told)?;
                 }

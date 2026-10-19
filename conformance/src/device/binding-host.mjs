@@ -13,6 +13,10 @@
 //   { op: "call", handle, method, args }   the method of the core opened as
 //                                          `handle`; an argument of the form
 //                                          { $stop: name } is that stop
+//   { op: "folder-call", method, args }  a Folders method, including debug
+//                                        retained-folder operations
+//   { op: "folder-watch", name, dir }    a folder watch with ordered events
+//   { op: "reentry", action, handle }    dispatcher probe start/answers/stop
 //   { op: "stop", name, action: "new" | "raise" }
 //   { op: "subscribe", handle, name, kind: "follow" | "watch", toldUnreachable,
 //     slowMs?, throwAt?, openOnEnd? }   a listener that blocks `slowMs` in each
@@ -38,8 +42,12 @@ if (modulePath === undefined || modulePath === "") {
   throw new Error("MARFA_DEVICE_MODULE is unset");
 }
 const binding = createRequire(import.meta.url)(modulePath);
+// Counters are opt-in so ordinary debug clients never pay to record them.
+binding.testHooks?.observe(true);
 
 const cores = new Map();
+let folders;
+let reentryProbe;
 const stops = new Map();
 const subscriptions = new Map();
 // Cores a fixture opened to see whether it could, kept so they are not
@@ -132,6 +140,7 @@ async function handle(message) {
   switch (message.op) {
     case "open": {
       const { MarfaCore } = binding;
+      folders = new binding.Folders(message.url, message.key);
       cores.set(
         message.handle,
         message.reader === true
@@ -146,6 +155,23 @@ async function handle(message) {
         throw new Error(`a core has no ${message.method}`);
       }
       return await target[message.method](...message.args.map(argument));
+    }
+    case "folder-call":
+      return await folders[message.method](...message.args.map(argument));
+    case "folder-watch": {
+      const { name, dir } = message;
+      subscriptions.set(
+        name,
+        folders.watch(
+          dir,
+          (change) => process.send({ event: "folder-change", name, change }),
+          (error) => {
+            subscriptions.delete(name);
+            process.send({ event: "end", name, error: describe(error) });
+          },
+        ),
+      );
+      return null;
     }
     case "stop": {
       if (message.action === "new") {
@@ -173,6 +199,18 @@ async function handle(message) {
     }
     case "try-open":
       return tryOpen(message);
+    case "reentry":
+      if (message.action === "start") {
+        reentryProbe = debugOnly("testHooks").probeReentry(
+          core(message.handle),
+        );
+        return null;
+      }
+      if (message.action === "stop") {
+        reentryProbe?.stop();
+        return null;
+      }
+      return reentryProbe.answers();
     case "hook":
       return debugOnly("testHooks")[message.name](message.point, message.arg);
     case "clock":

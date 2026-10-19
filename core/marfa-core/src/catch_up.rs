@@ -673,7 +673,8 @@ pub(crate) fn ask_unless_stopped<T: Send + 'static>(
     let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
     thread::spawn(move || {
         if sender.send(read(&reading)).is_err() {
-            crate::fault::hold("answer-dropped");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "answer-dropped");
         }
     });
     loop {

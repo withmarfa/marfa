@@ -489,7 +489,11 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     conn.execute(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
          VALUES (?1, ?2, ?3)",
-        params![path, item_id, now_iso()],
+        params![
+            path,
+            item_id,
+            crate::store::iso_at(crate::clock::system_time())
+        ],
     )?;
     Ok(())
 }

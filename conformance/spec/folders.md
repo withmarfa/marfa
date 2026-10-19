@@ -294,7 +294,7 @@ When a folder’s first sync is confirmed, a device MUST process the directory a
 
 While a folder’s first sync waits, a device MUST refuse submission of its settings-file edit with `first_sync_waiting`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › refuses a settings-file submission while first sync waits, then submits the same edit once confirmed`.
 
 ### `folders/first-sync-restore-refused`
 
@@ -2444,7 +2444,7 @@ While a watch holds a placement write whose give-way read failed, a device MUST 
 
 **Reason:** a watch drains every second, and a read refused for good, made again at each drain, would spend the key's rate limit. The exact threshold needs a fixture-controlled clock.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › suppresses a failed give-way reread before sixty seconds and reads again afterwards`.
 
 ### `folders/placement-give-way-watch-throttled`
 
@@ -2464,13 +2464,13 @@ When a device gives way to another machine's placement, a device MUST expose the
 
 **Reason:** A concurrent caller must not observe the withdrawn local move without the placement that replaces it.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › exposes the accepted placement and withdrawal together while a reader observes the transaction`.
 
 ### `folders/placement-forget-unchanged`
 
 When a placement read during giving way finds an edge missing from the server, a device MUST remove that edge from its working copy only if the edge has not changed in the copy since the read began.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › forgets a missing placement only if the copy has not changed since the read began (%s)`.
 
 ### `folders/placement-collision-order`
 
@@ -2580,7 +2580,7 @@ While a watch holds refused placements, a device MUST limit key rereads, includi
 
 **Reason:** The exact one-minute threshold needs a fixture-controlled clock; real-time watch fixtures prove suppression between passes and eventual recovery.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › suppresses a refused placement's key reread before sixty seconds and reads again afterwards, including failed reads (%s)`.
 
 ### `folders/placement-grant-restored`
 
@@ -2892,9 +2892,11 @@ When a scan sends a missing file's item deletion or finds its item already trash
 
 ### `folders/placement-last-binding`
 
-While another file in the folder remains bound to an item, a device MUST NOT end that folder's placement of the item.
+When a bound file moves or is renamed within its folder and its placement edge still exists, a device MUST update that `in-folder` edge rather than end it and create another.
 
-**Tests:** waiting on #1890.
+**Reason:** A move changes the placement path without creating a new relationship.
+
+**Tests:** `device/binding-folders-placement.test.ts › keeps the existing placement edge when its file moves, and ends it only when the file is deleted`.
 
 ### `folders/placement-end-retry`
 
@@ -3098,7 +3100,7 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 **Reason:** The exact grace boundary requires a fixture-controlled clock; real-time fixtures assert deferral and cancellation but not the threshold.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-clock.test.ts › defers a missing file until the five-second rename grace ends`.
 
 ### `folders/delete-rename-cancels`
 
@@ -3224,7 +3226,7 @@ While the opened folder's directory is replaced by a different directory, a devi
 
 When a pull detects that the root directory disappeared or was replaced after the folder was opened, a device MUST report the reason in `root_gone`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › reports root_gone when a retained folder's directory is replaced before its pull`.
 
 ### `folders/root-gone-command-refusal`
 
@@ -3672,7 +3674,7 @@ When a folder watch hydration fails environmentally, a device MUST retry hydrati
 
 When a folder watch repeatedly fails to hydrate environmentally, a device MUST double its retry delay from one second up to thirty seconds, except for a longer `Retry-After` delay capped at 300 seconds.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-retry.test.ts › retries folder hydration at $name on the manual clock`.
 
 ### `folders/catchup-failure-pull`
 
@@ -4332,7 +4334,7 @@ Where an app works a folder through a binding, when a call that adds, syncs, con
 
 **Reason:** A watch that syncs every folder from login holds each of them, so a call that did not ask would be refused for as long as the watch runs.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › lets a watch go to %s and tells each handover once`.
 
 ### `folders/handover-binding-refused`
 
@@ -4340,7 +4342,7 @@ If the process that holds a folder does not let it go within 10 seconds of a bin
 
 **Reason:** A watch that is suspended or stuck never lets go, and a call must not wait on it without end. The refusal names the folder, so an app can say which one.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › refuses an asking call at ten seconds without changing the held folder`.
 
 ### `folders/handover-binding-lets-go`
 
@@ -4348,7 +4350,7 @@ When a command or a binding call asks for a folder that an app's watch through a
 
 **Reason:** A write cut off mid-pass would be sent again, or its answer lost (`folders/handover-step-whole`).
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › finishes the scan step before letting the caller work the folder`.
 
 ### `folders/handover-binding-let-go-told`
 
@@ -4356,13 +4358,13 @@ When an app's watch through a binding lets a folder go, a device MUST tell the a
 
 **Reason:** An app that shows whether a folder is in step would show a folder it is not watching as watched. The Swift binding tells it as `HandedOver`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › lets a watch go to %s and tells each handover once`.
 
 ### `folders/handover-binding-taken-back`
 
 When the command or call that an app's watch through a binding let a folder go to ends and the folder is still a folder on the registry, a device MUST keep the folder in step again without the app starting another watch.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › lets a watch go to %s and tells each handover once`.
 
 ### `folders/handover-binding-back-told`
 
@@ -4370,7 +4372,7 @@ When an app's watch through a binding takes back a folder it let go, a device MU
 
 **Reason:** The Swift binding tells it as `TakenBack`, in place of a second `Watching`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › lets a watch go to %s and tells each handover once`.
 
 ### `folders/handover-binding-gone-ends`
 
@@ -4378,7 +4380,7 @@ When the command or call that an app's watch through a binding let a folder go t
 
 **Reason:** There is no folder left to keep in step. The Swift binding tells `Removed` or `Unlisted` first, so an app can tell the end from its own stop.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › lets a watch go to %s and tells each handover once`, `device/binding-folders-handover.test.ts › ends after the recipient takes the folder off the registry`.
 
 ### `folders/handover-binding-held-elsewhere`
 
@@ -4386,7 +4388,7 @@ If a folder that an app's watch through a binding let go is held by another proc
 
 **Reason:** Another watch, or an app that takes the folder, keeps it until it ends, so a folder reported as let go to a call would hide why it is not synced. The Swift binding tells it as `HeldElsewhere`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › reports another holder once at ten seconds and takes the folder back after it leaves`.
 
 ### `folders/handover-binding-watch-refused`
 
@@ -4394,7 +4396,7 @@ While a process holds a folder, a device MUST refuse an app's watch of the folde
 
 **Reason:** A watch does not ask for a folder (`folders/one-watch-per-folder`).
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-handover.test.ts › refuses a second binding watch while the first holds the folder`.
 
 ### `folders/one-watch-per-folder`
 
@@ -5504,7 +5506,7 @@ When a purged folder item’s file is retained by the large-removal pause, a dev
 
 When item and edge catalogs refresh during a folder status read, a device MUST use one consistent catalog revision for that status.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-placement.test.ts › uses the item and edge catalogs from one revision while a refresh commits between their reads`.
 
 ## Watching and executable files
 
@@ -5530,13 +5532,13 @@ When a quick folder scan reads a file carrying the ID of an otherwise skipped fi
 
 When a folder file changes while a watch scan reads it, a device MUST read it again at a subsequent pass rather than treat the concurrent save as already scanned.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-clock.test.ts › reads a save made during a scan on a subsequent pass`.
 
 ### `folders/watch-periodic-full-pass`
 
 While a folder watch runs, a device MUST perform a full scan at its first pass and at the first pass after sixty seconds since the previous full scan.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-clock.test.ts › performs a full first pass and the first pass past sixty seconds`.
 
 ### `folders/executable-created`
 
@@ -5638,7 +5640,7 @@ While a folder receives changes more frequently than its settle window, a device
 
 When five seconds have elapsed since a folder watch’s previous pass ended, a device MUST start the next pass at its next wake without waiting for the folder to settle.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-folders-clock.test.ts › starts a pass after five seconds even while filesystem changes keep arriving`.
 
 ### `folders/binary-waits-for-settle`
 

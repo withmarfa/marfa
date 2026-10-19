@@ -63,6 +63,83 @@ impl Drop for Listening {
     }
 }
 
+/// Answers from operations attempted by a listener on the dispatcher thread.
+#[cfg(debug_assertions)]
+#[derive(Clone)]
+pub struct ReentryAnswers {
+    pub hydration: Result<()>,
+    pub catch_up: Result<()>,
+}
+
+#[cfg(debug_assertions)]
+struct ReentryListener {
+    core: std::sync::Weak<Core>,
+    answers: Arc<Mutex<Option<ReentryAnswers>>>,
+}
+
+#[cfg(debug_assertions)]
+impl WatchListener for ReentryListener {
+    fn changed(&self, _: &Change) {
+        let Some(core) = self.core.upgrade() else {
+            return;
+        };
+        if self
+            .answers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_none()
+        {
+            let answers = ReentryAnswers {
+                hydration: core.hydrate(&[], crate::SliceTier::All).map(|_| ()),
+                catch_up: core.catch_up().map(|_| ()),
+            };
+            *self
+                .answers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(answers);
+        }
+    }
+
+    fn ended(&self, _: Option<CoreError>) {}
+}
+
+/// A debug listener that exercises bindings which call back on the engine's
+/// dispatcher thread. Its handle keeps the registration alive.
+#[cfg(debug_assertions)]
+pub struct ReentryProbe {
+    listening: Listening,
+    answers: Arc<Mutex<Option<ReentryAnswers>>>,
+}
+
+#[cfg(debug_assertions)]
+impl ReentryProbe {
+    pub fn answers(&self) -> Option<ReentryAnswers> {
+        self.answers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
+    pub fn stop(&self) {
+        self.listening.stop();
+    }
+}
+
+#[cfg(debug_assertions)]
+impl Core {
+    pub fn probe_watch_reentry(self: &Arc<Self>) -> Result<ReentryProbe> {
+        let answers = Arc::new(Mutex::new(None));
+        let listening = self.watch(
+            false,
+            Arc::new(ReentryListener {
+                core: Arc::downgrade(self),
+                answers: Arc::clone(&answers),
+            }),
+        )?;
+        Ok(ReentryProbe { listening, answers })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Source {
     Follow,

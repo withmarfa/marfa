@@ -256,7 +256,7 @@ impl Folder {
         })
         .map_err(WatchError::Told)?;
 
-        let mut gate = Gate::new(Instant::now());
+        let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
         let mut last_full: Option<Instant> = None;
         let mut send_again_at: Option<Instant> = None;
@@ -268,7 +268,9 @@ impl Folder {
             if asked.load(Ordering::SeqCst) {
                 return Ok(WatchEnd::HandedOver);
             }
-            match events.recv_timeout(TICK) {
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-watch-turn");
+            match crate::clock::recv_timeout(events, stop, TICK) {
                 Ok(Wake::File(Ok(event))) => {
                     // `Access` is an open or the close after a write, which has
                     // already shown itself as a modify.
@@ -279,9 +281,11 @@ impl Folder {
                                 && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
                         });
                     if !passed_over {
-                        gate.changed(Instant::now());
+                        gate.changed(crate::clock::now());
+                        #[cfg(debug_assertions)]
+                        crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
-                    } else if !gate.passed_over_is_due(Instant::now()) {
+                    } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
                     }
                 }
@@ -312,13 +316,17 @@ impl Folder {
             // No pass runs while the server's rate limit lasts, since a write
             // sent before it ends is refused again: changes on disk wait
             // unscanned and nothing is pulled.
-            if send_again_at.is_some_and(|at| Instant::now() < at) || !gate.due(Instant::now()) {
+            if send_again_at.is_some_and(|at| crate::clock::now() < at)
+                || !gate.due(crate::clock::now())
+            {
                 continue;
             }
-            let full = full_due(last_full, Instant::now());
+            let full = full_due(last_full, crate::clock::now());
             if full {
-                last_full = Some(Instant::now());
+                last_full = Some(crate::clock::now());
             }
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-pass-start");
             let passed = self.pass(full, asked, &mut telling, tell, health);
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 self.health_observe(false, full, None, Some(error), false);
@@ -333,10 +341,12 @@ impl Folder {
                     }
                     continue;
                 }
-                other => send_again_at = other?.map(|wait| Instant::now() + wait),
+                other => send_again_at = other?.map(|wait| crate::clock::now() + wait),
             }
             telling.settled();
-            gate.passed(Instant::now());
+            gate.passed(crate::clock::now());
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-pass-ended");
             lists = self.settings().and_then(|settings| settings.lists()).ok();
         }
         Ok(WatchEnd::Stopped)
@@ -358,6 +368,14 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| {
+            if full {
+                "folder-full-scan"
+            } else {
+                "folder-quick-scan"
+            }
+        });
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
         // it left off once the directory is back.
@@ -563,14 +581,7 @@ fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) 
 }
 
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
-    let until = Instant::now() + wait;
-    while !stop.load(Ordering::SeqCst) {
-        let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() {
-            return;
-        }
-        std::thread::sleep(left.min(Duration::from_millis(250)));
-    }
+    crate::clock::wait(stop, wait, Duration::from_millis(250));
 }
 
 fn full_due(last: Option<Instant>, now: Instant) -> bool {

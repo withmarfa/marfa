@@ -1120,7 +1120,11 @@ pub fn untaken_creates_for_item(
 }
 
 pub fn now_iso() -> String {
-    let now = std::time::SystemTime::now()
+    iso_at(std::time::SystemTime::now())
+}
+
+pub(crate) fn iso_at(now: std::time::SystemTime) -> String {
+    let now = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = now.as_secs() as i64;
@@ -1891,7 +1895,8 @@ fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
 pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool, CoreError> {
     catalog_scope(conn, |conn| {
         let types = replace_types(conn, &catalog.types)?;
-        crate::fault::hold("catalog-replacing");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "catalog-replacing");
         let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
         // A server's catalog replaces the copy's own, which is a change
         // whether or not the rows differ.
