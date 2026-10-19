@@ -323,6 +323,30 @@ describe("buildAccess", () => {
     ]);
   });
 
+  it("treats an app that holds only the mechanisms as new, with nothing marked New", () => {
+    const model = buildAccess({
+      scopes: [scope("core.note:read"), scope("keys.mint")],
+      held: ["openid", "offline_access"],
+      bundles,
+    });
+    expect(model.returning).toBe(false);
+    expect(model.held).toEqual([]);
+    expect(model.data.every((row) => !row.isNew)).toBe(true);
+    expect(
+      model.powers.every((section) => section.rows.every((row) => !row.isNew)),
+    ).toBe(true);
+  });
+
+  it("treats an app that holds any access beyond the mechanisms as returning", () => {
+    const model = buildAccess({
+      scopes: [scope("core.note:read"), scope("core.task:read")],
+      held: ["openid", "core.note:read"],
+      bundles,
+    });
+    expect(model.returning).toBe(true);
+    expect(model.data.map((row) => row.isNew)).toEqual([true]);
+  });
+
   it("lists everything the app holds, including what this request does not ask for", () => {
     const model = buildAccess({
       scopes: [scope("core.task:read")],

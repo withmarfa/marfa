@@ -412,6 +412,17 @@ describe("renderConsentScreen: asking again", () => {
     expect(text).toContain("Notes Read only");
   });
 
+  it("greets an app that holds only openid as a first request", () => {
+    const html = render(BASE, { priorScopes: ["openid", "offline_access"] });
+    const text = visibleText(html);
+    expect(text).toContain("Test CLI wants access to Marfa");
+    expect(text).not.toContain("wants more access");
+    expect(text).not.toContain("already has access");
+    expect(text).not.toContain("Already allowed");
+    expect(text).not.toContain("New");
+    expect(text).toContain("Authorize Test CLI");
+  });
+
   it("marks what is new, and what the row holds now", () => {
     const text = visibleText(render(BASE, { priorScopes: ["core.note:read"] }));
     expect(text).toContain("Now: Read only");

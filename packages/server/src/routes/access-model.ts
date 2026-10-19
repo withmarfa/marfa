@@ -191,7 +191,7 @@ function describe(
 /** Build the controls for a request. */
 export function buildAccess(input: AccessInput): AccessModel {
   const held = input.held ?? [];
-  const returning = held.length > 0;
+  const returning = held.some((literal) => !isMechanism(literal));
   const withheld = [...scopesOfferedOffByDefaultOnly(input.bundles)];
   // A scope starts on unless a power, or unless it is one only an
   // off-by-default bundle offers or covers. A wildcard that covers a withheld
