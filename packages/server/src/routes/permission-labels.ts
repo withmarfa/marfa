@@ -12,27 +12,35 @@
 import type { Permission } from "@withmarfa/shared";
 import { isPermission } from "@withmarfa/shared";
 
-/** A full verb phrase, because the row is a power the person hands over, not a category of content. */
+/**
+ * A full verb phrase, because the row is a power someone hands over, not a
+ * category of content. It says everything the permission permits, in words
+ * that read the same whoever holds it: an app a person approves, or a key.
+ */
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  "keys.mint": "Make keys",
-  "keys.manage": "See, narrow and revoke every key",
-  "grants.manage": "See and disconnect your other apps",
-  "config.manage": "Change Marfa's settings",
-  "instance.read": "See health and storage reports",
-  "instance.maintain": "Run housekeeping",
-  "schema.write": "Change or remove the types it can edit",
-  "blobs.manage": "Read all files and manage where they're kept",
-  "webhooks.manage": "Send your data to other services",
-  "connectors.manage": "Manage all connectors",
+  "keys.mint": "Make, see, edit and revoke keys",
+  "keys.manage": "See, edit, narrow and revoke every key",
+  "grants.manage": "See and disconnect other apps",
+  "config.manage": "See and change Marfa's settings",
+  "instance.read": "See health, metrics, storage and job status",
+  "instance.maintain":
+    "Run housekeeping, reset platform types and cancel bulk jobs",
+  "schema.write": "Replace or remove type definitions",
+  "blobs.manage": "Read and add any file, and manage file storage",
+  "webhooks.manage": "Manage webhooks that send events to other services",
+  "connectors.manage": "See, manage and remove all connectors",
   "audit.read": "Read the activity log",
   "items.purge": "Delete items in the trash for good",
 };
 
 /** A line under the label, where the label alone leaves out what matters. */
 export const PERMISSION_NOTES: Partial<Record<Permission, string>> = {
-  "keys.mint": "Each key it makes holds no more than it holds itself.",
-  "instance.maintain": "Some jobs delete data that is due to go.",
-  "webhooks.manage": "Using webhooks.",
+  "keys.mint": "Keys made this way never hold more than their maker.",
+  "keys.manage": "A key's access can be narrowed, never widened.",
+  "instance.maintain": "Some jobs permanently delete data that is due to go.",
+  "schema.write": "Only for types and relationships with edit access.",
+  "webhooks.manage": "Includes seeing webhooks and sending events again.",
+  "connectors.manage": "Includes clearing what a connector has saved.",
 };
 
 /**
@@ -44,6 +52,20 @@ export const DESTRUCTIVE_PERMISSIONS: ReadonlySet<Permission> = new Set([
   "schema.write",
   "items.purge",
 ]);
+
+/**
+ * The line under a permission's label wherever a person decides whether to
+ * grant it: its note, and a mark where it can't be undone. One home, so the
+ * approval pages and the key form say the same.
+ */
+export function permissionDescription(
+  permission: Permission,
+): string | undefined {
+  const note = PERMISSION_NOTES[permission];
+  return DESTRUCTIVE_PERMISSIONS.has(permission)
+    ? [note, "Can't be undone."].filter(Boolean).join(" ")
+    : note;
+}
 
 export interface PermissionGroup {
   id: "keys" | "run" | "out";

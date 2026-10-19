@@ -6,7 +6,10 @@ import { PERMISSIONS } from "@withmarfa/shared";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
-import { PERMISSION_LABELS } from "./permission-labels.js";
+import {
+  PERMISSION_LABELS,
+  permissionDescription,
+} from "./permission-labels.js";
 
 /** These pages call the API's own documented operations, as the owner's browser. */
 export function managementPages(storage: Storage) {
@@ -21,10 +24,10 @@ export function managementPages(storage: Storage) {
   });
   router.get("/manage", async (c) => {
     const instanceName = await readInstanceName(storage.settings);
-    const permissions = PERMISSIONS.map(
-      (permission) =>
-        `<label><input type="checkbox" name="permission" value="${escapeHtml(permission)}"> ${escapeHtml(PERMISSION_LABELS[permission])}</label>`,
-    ).join("");
+    const permissions = PERMISSIONS.map((permission) => {
+      const description = permissionDescription(permission);
+      return `<label><input type="checkbox" name="permission" value="${escapeHtml(permission)}"> ${escapeHtml(PERMISSION_LABELS[permission])}${description ? ` <small>${escapeHtml(description)}</small>` : ""}</label>`;
+    }).join("");
     return c.html(
       renderAuthLayout({
         nonce: c.var.cspNonce,

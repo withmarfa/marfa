@@ -293,6 +293,64 @@ describe("what the approval pages offer", () => {
   });
 });
 
+describe("what the approval pages and the key form say of a permission", () => {
+  const booted = bootFor("approval-words");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const TWELVE = [
+    "audit.read",
+    "blobs.manage",
+    "config.manage",
+    "connectors.manage",
+    "grants.manage",
+    "instance.maintain",
+    "instance.read",
+    "items.purge",
+    "keys.manage",
+    "keys.mint",
+    "schema.write",
+    "webhooks.manage",
+  ];
+
+  it("describes each permission in the same words on both pages and on the key form", async () => {
+    const pages = await bothPages(`core.note:read ${TWELVE.join(" ")}`);
+    const manage = await fetch(`${server.apiUrl}/auth/owner/manage`, {
+      headers: { cookie },
+    });
+    expect(manage.status).toBe(200);
+    const form = await manage.text();
+    for (const permission of TWELVE) {
+      const entry = new RegExp(
+        `<label><input[^>]*value="${permission}"[^>]*>([\\s\\S]*?)</label>`,
+      ).exec(form);
+      const onForm = visibleText(entry?.[1] ?? "");
+      expect(onForm, `the key form: ${permission}`).not.toBe("");
+      for (const [page, html] of pages) {
+        const row = readRows(html).find((r) => r.control.value === permission);
+        expect(row?.text.endsWith(onForm), `${page}: ${permission}`).toBe(true);
+      }
+    }
+  });
+
+  it("marks the permissions that delete for good on the key form, and no other", async () => {
+    const marked = ["instance.maintain", "schema.write", "items.purge"];
+    const manage = await fetch(`${server.apiUrl}/auth/owner/manage`, {
+      headers: { cookie },
+    });
+    const form = await manage.text();
+    for (const permission of TWELVE) {
+      const entry = new RegExp(
+        `<label><input[^>]*value="${permission}"[^>]*>([\\s\\S]*?)</label>`,
+      ).exec(form);
+      expect(
+        /can't be undone/i.test(visibleText(entry?.[1] ?? "")),
+        permission,
+      ).toBe(marked.includes(permission));
+    }
+  });
+});
+
 describe("what the approval pages show of what an app holds", () => {
   const booted = bootFor("approval-held");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);

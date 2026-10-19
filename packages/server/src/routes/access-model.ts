@@ -25,7 +25,7 @@ import {
 import {
   DESTRUCTIVE_PERMISSIONS,
   PERMISSION_GROUPS,
-  PERMISSION_NOTES,
+  permissionDescription,
 } from "./permission-labels.js";
 import { reachLine } from "./scope-openness.js";
 import { SCOPE_LABELS, scopeTitle } from "./scope-copy.js";
@@ -290,22 +290,16 @@ export function buildAccess(input: AccessInput): AccessModel {
       carried.push(literal);
       continue;
     }
+    const permission =
+      scope.kind === "permission" ? scope.permission : undefined;
     const destructive =
-      scope.kind === "permission" &&
-      scope.permission !== undefined &&
-      DESTRUCTIVE_PERMISSIONS.has(scope.permission);
-    const note =
-      scope.kind === "permission" && scope.permission
-        ? PERMISSION_NOTES[scope.permission]
-        : undefined;
+      permission !== undefined && DESTRUCTIVE_PERMISSIONS.has(permission);
     const row: SwitchRow = {
       kind: "switch",
       id: nextId(),
       literal,
       title: scopeTitle(scope),
-      description: destructive
-        ? [note, "Can't be undone."].filter(Boolean).join(" ")
-        : note,
+      description: permission ? permissionDescription(permission) : undefined,
       destructive,
       checked: startsOn(literal),
       isNew: returning,

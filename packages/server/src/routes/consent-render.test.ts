@@ -258,7 +258,9 @@ describe("renderConsentScreen: powers", () => {
     for (const note of marked) expect(note).toContain("Can't be undone");
     const text = visibleText(html);
     expect(text).toContain("Delete items in the trash for good");
-    expect(text).toContain("Some jobs delete data that is due to go.");
+    expect(text).toContain(
+      "Some jobs permanently delete data that is due to go.",
+    );
   });
 
   it("starts a power off even when a default-on bundle claims it", () => {
@@ -520,7 +522,7 @@ describe("renderConsentScreen: asking again", () => {
     });
     expect(switches(html).map((c) => c.value)).toEqual(["webhooks.manage"]);
     expect(defaultSubmission(html, "scopes")).toEqual(["keys.mint"]);
-    expect(visibleText(html)).toContain("Make keys On");
+    expect(visibleText(html)).toContain("Make, see, edit and revoke keys On");
   });
 });
 

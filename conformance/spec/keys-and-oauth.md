@@ -1295,6 +1295,22 @@ Where a request names `instance.maintain`, `schema.write` or `items.purge`, the 
 
 **Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`.
 
+### `keys-and-oauth/approval-powers-words`
+
+The server MUST describe each of the twelve permissions in the same words on the consent screen, the device approval page and the key form on the Manage page.
+
+**Reason:** The same grant reads the same wherever a person decides on it, so a power read once is recognized everywhere.
+
+**Tests:** `compliance/approval-screens.test.ts › describes each permission in the same words on both pages and on the key form`.
+
+### `keys-and-oauth/manage-powers-marked`
+
+Where the key form on the Manage page offers `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each as unable to be undone.
+
+**Reason:** `keys-and-oauth/approval-powers-marked` holds for the approval pages, and a key holds the same powers.
+
+**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good on the key form, and no other`.
+
 ### `keys-and-oauth/approval-held-shown`
 
 While an app holds consent, the server MUST show on the consent screen and the device approval page what the app holds, apart from what the request newly asks for.

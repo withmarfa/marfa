@@ -119,7 +119,9 @@ describe("renderDeviceConsentScreen", () => {
       }),
     );
     expect(text).toContain("Notes");
-    expect(text).toContain("Send your data to other services");
+    expect(text).toContain(
+      "Manage webhooks that send events to other services",
+    );
     expect(text).not.toContain("core.note");
     expect(text).not.toContain("webhooks.manage");
   });

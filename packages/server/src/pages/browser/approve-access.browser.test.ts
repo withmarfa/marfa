@@ -318,7 +318,9 @@ describe("Approve access in a browser", () => {
         expect(await illegible(b.page)).toEqual([]);
         for (const name of ["Notes", "Tasks"])
           await b.page.getByRole("combobox", { name }).scrollIntoViewIfNeeded();
-        await b.page.getByRole("switch", { name: /Make keys/ }).check();
+        await b.page
+          .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+          .check();
       } finally {
         await b.context.close();
       }

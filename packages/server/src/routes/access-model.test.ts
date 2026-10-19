@@ -331,7 +331,7 @@ describe("buildAccess", () => {
     });
     expect(model.held).toEqual([
       { title: "Notes", value: "Read and edit" },
-      { title: "Make keys", value: "On" },
+      { title: "Make, see, edit and revoke keys", value: "On" },
     ]);
   });
 
