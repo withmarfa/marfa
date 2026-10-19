@@ -1968,7 +1968,7 @@ If `POST /items/tombstones` names a `type` nothing registered, then the server M
 
 ### `items/json-depth`
 
-If a request body, other than one posted to an inbound webhook endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
+If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound webhook endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
@@ -1976,7 +1976,7 @@ If a request body, other than one posted to an inbound webhook endpoint, nests m
 
 ### `items/json-text-well-formed`
 
-If a request body, other than one posted to an inbound webhook endpoint, is JSON that holds a string or an object key that is not well-formed UTF-16, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
+If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound webhook endpoint, is JSON that holds a string or an object key that is not well-formed UTF-16, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
