@@ -643,3 +643,30 @@ it.each(HOLDS)(
     expect((await ran).job?.status).toBe("completed");
   },
 );
+
+it("hydrates an ordinary read without entering a hold unless a fault is armed", async () => {
+  const created = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type: "core.note", properties: { body: "read boundary" } },
+  });
+  expect(created.status).toBe(201);
+  const { item } = (await created.json()) as { item: { id: string } };
+  spies.hold.mockClear();
+  const read = () =>
+    request(ctx.app, "GET", `/items/${item.id}`, { key: ctx.workingKey });
+  expect((await read()).status).toBe(200);
+  expect(spies.hold).not.toHaveBeenCalled();
+  setFault("hold:read-hydration", null);
+  const held = read();
+  try {
+    await vi.waitFor(() => {
+      expect(
+        activeFaults().find((f) => f.name === "hold:read-hydration")?.waiting,
+      ).toBe(1);
+    });
+    expect(spies.hold).toHaveBeenCalledTimes(1);
+  } finally {
+    clearFaults();
+  }
+  expect((await held).status).toBe(200);
+});

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readdirSync } from "node:fs";
 import { Readable } from "node:stream";
 import { setImmediate } from "node:timers";
@@ -456,40 +457,53 @@ withReader("archive concurrent writes (%s)", (credential) => {
     await seedNotes(ctx, 300);
     await seedEdges(ctx, 300, 100);
     const list = ctx.storage.items.list.bind(ctx.storage.items);
+    const outsideRead = AsyncLocalStorage.snapshot();
     let pages = 0;
     vi.spyOn(ctx.storage.items, "list").mockImplementation(async (filters) => {
       const page = await list(filters);
       pages++;
       if (pages === 2) {
-        // Pages walk newest first. These land after two pages were read:
-        // the first rewrites a row already carried, the second trashes one
-        // not yet read (with its edges), the third adds a row and an edge to
-        // a row not yet read.
-        const patched = await request(ctx.app, "PATCH", `/items/${idAt(300)}`, {
-          key: ctx.workingKey,
-          body: { version: 1, properties: { body: "rewritten" } },
+        await outsideRead(async () => {
+          // Pages walk newest first. These land after two pages were read:
+          // the first rewrites a row already carried, the second trashes one
+          // not yet read (with its edges), the third adds a row and an edge to
+          // a row not yet read.
+          const patched = await request(
+            ctx.app,
+            "PATCH",
+            `/items/${idAt(300)}`,
+            {
+              key: ctx.workingKey,
+              body: { version: 1, properties: { body: "rewritten" } },
+            },
+          );
+          expect(patched.status, await patched.clone().text()).toBe(200);
+          const trashed = await request(
+            ctx.app,
+            "DELETE",
+            `/items/${idAt(20)}`,
+            {
+              key: ctx.workingKey,
+            },
+          );
+          expect(trashed.status).toBe(200);
+          const added = await request(ctx.app, "POST", "/items", {
+            key: ctx.workingKey,
+            body: { type: "core.note", properties: { body: "added" } },
+          });
+          expect(added.status).toBe(201);
+          const addedId = ((await added.json()) as { item: { id: string } })
+            .item.id;
+          const linked = await request(ctx.app, "POST", "/edges", {
+            key: ctx.workingKey,
+            body: {
+              source_id: addedId,
+              target_id: idAt(250),
+              edge_type: "references",
+            },
+          });
+          expect(linked.status, await linked.clone().text()).toBe(201);
         });
-        expect(patched.status, await patched.clone().text()).toBe(200);
-        const trashed = await request(ctx.app, "DELETE", `/items/${idAt(20)}`, {
-          key: ctx.workingKey,
-        });
-        expect(trashed.status).toBe(200);
-        const added = await request(ctx.app, "POST", "/items", {
-          key: ctx.workingKey,
-          body: { type: "core.note", properties: { body: "added" } },
-        });
-        expect(added.status).toBe(201);
-        const addedId = ((await added.json()) as { item: { id: string } }).item
-          .id;
-        const linked = await request(ctx.app, "POST", "/edges", {
-          key: ctx.workingKey,
-          body: {
-            source_id: addedId,
-            target_id: idAt(250),
-            edge_type: "references",
-          },
-        });
-        expect(linked.status, await linked.clone().text()).toBe(201);
       }
       return page;
     });
@@ -555,13 +569,15 @@ withReader("archive concurrent writes (%s)", (credential) => {
       return ((await res.json()) as { edge: { id: string } }).edge.id;
     };
     const created: Record<string, string> = {};
+    const outsideRead = AsyncLocalStorage.snapshot();
     const listItems = ctx.storage.items.list.bind(ctx.storage.items);
     let itemPages = 0;
     vi.spyOn(ctx.storage.items, "list").mockImplementation(async (filters) => {
       const page = await listItems(filters);
       itemPages++;
       // Both ends are on the first page, which the export has carried.
-      if (itemPages === 2) created.duringItems = await link(300, 299);
+      if (itemPages === 2)
+        created.duringItems = await outsideRead(() => link(300, 299));
       return page;
     });
     const listEdges = ctx.storage.edges.list.bind(ctx.storage.edges);
@@ -569,7 +585,8 @@ withReader("archive concurrent writes (%s)", (credential) => {
     vi.spyOn(ctx.storage.edges, "list").mockImplementation(async (filters) => {
       const page = await listEdges(filters);
       edgePages++;
-      if (edgePages === 1) created.afterFirstEdgePage = await link(300, 298);
+      if (edgePages === 1)
+        created.afterFirstEdgePage = await outsideRead(() => link(300, 298));
       return page;
     });
 

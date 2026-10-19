@@ -1,3 +1,4 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
 /**
  * "What is on my calendar next Tuesday."
  *
@@ -106,6 +107,7 @@ import {
   requireAuth,
   getTypeFilter,
   readsSomeType,
+  mayReadRow,
 } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -119,6 +121,7 @@ import {
 } from "../events/expand-recurrence.js";
 import { instantColumnValues } from "../storage/instant-columns.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -668,14 +671,7 @@ export async function gatherSeriesSeeds(
   );
 }
 
-/**
- * Items for the given ids, read in batches. See `ID_BATCH_SIZE`.
- *
- * Narrowed to `active` because that is what the scans selected on.
- * `getMany` excludes trashed rows and nothing else, so an item archived
- * between a scan and this read would otherwise be rendered inside a 200
- * carrying a state this route has never emitted.
- */
+/** Items for the returned occurrences, bounded by `ID_BATCH_SIZE`. */
 async function fetchItemsBatched(
   storage: Storage,
   ids: readonly string[],
@@ -1399,6 +1395,7 @@ export function occurrenceRoutes(
     // The only place a whole row is read, and it is reached only for the
     // occurrences being returned. One row can answer many occurrences, so
     // the ids are deduplicated on the way in.
+    if (faultsArmed()) await holdAt("read-hydration");
     const shownById = await fetchItemsBatched(
       storage,
       pending.map((occurrence) => occurrence.item_id),
@@ -1413,41 +1410,18 @@ export function occurrenceRoutes(
     }[] = [];
     for (const occurrence of pending) {
       const shown = shownById.get(occurrence.item_id);
-      // Deleted, trashed or moved out of `active` between the scan and
-      // this read. Dropping it is the right direction: a meeting removed
-      // or filed away a moment ago should not render.
-      if (shown === undefined) continue;
+      // Expansion can outlive a read snapshot. Authorize the hydrated row
+      // itself so a retype or source change cannot reuse the scan's access.
+      if (
+        shown === undefined ||
+        !mayReadRow(c, shown) ||
+        !typeAnswersSubtreeFilter(shown.type, query.type ?? EVENT_TYPE) ||
+        !sourceFilterIncludesItem(enforcement.source_filter, shown)
+      )
+        continue;
 
-      /**
-       * One rule decides what time a row is shown at: **the fetched
-       * item is the authority for its own times, and only a computed
-       * occurrence — which the item does not carry a time for — comes
-       * from the expansion.**
-       *
-       * One rule, because the yields above widen the gap between scan
-       * and fetch to the length of the whole request. A standalone row
-       * rendered from the scan-time projection, beside a replacement
-       * re-derived from the fetched item, would have two rows in one
-       * response follow opposite rules, and a meeting moved while the
-       * request was in flight would render its old slot beside the new
-       * `item.properties.starts_at`, in the same object, contradicting
-       * itself.
-       *
-       * A computed occurrence is exempt because there is nothing to
-       * re-derive: the item is the series, and its `starts_at` is the
-       * rule's anchor rather than this slot. That leaves one residual,
-       * which nothing cheap fixes — a series rescheduled mid-request
-       * shows slots computed from the anchor it had when it was read.
-       * Re-expanding at render time would mean holding every seed and
-       * repeating the walk this route is trying to bound.
-       *
-       * The window stays a filter over which rows appear, not a
-       * constraint on what time they are shown at. That is the rule
-       * `replaces` follows — a moved instance is shown at its
-       * own time, which may fall outside the window — and applying it to
-       * a standalone row that moved is the same answer to the same
-       * question.
-       */
+      // A series carries its anchor, not the time of each computed slot.
+      // Standalone events and replacements carry their own occurrence times.
       const itemIsAuthority =
         occurrence.series_id === undefined || occurrence.replaces !== undefined;
 

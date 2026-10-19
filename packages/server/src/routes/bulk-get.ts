@@ -1,3 +1,5 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 /**
  * Bulk read of items by id.
  *
@@ -159,7 +161,7 @@ const bulkGetRoute = createRoute({
 export function bulkGetRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(bulkGetRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, bulkGetRoute), async (c) => {
     const apiKey = requireAuth(c);
     const body = c.req.valid("json");
     const ids = body.ids;
@@ -232,6 +234,7 @@ export function bulkGetRoutes(storage: Storage) {
       visible.push(item);
     }
 
+    if (faultsArmed()) await holdAt("read-hydration");
     const visibleIds = visible.map((item) => item.id);
 
     const edgesMap = includeEdges
