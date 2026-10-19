@@ -129,7 +129,8 @@ describe("signInAgainBeforeConsent", () => {
 });
 
 describe("answerSignInAgain", () => {
-  const BROWSER = "text/html,application/xhtml+xml,application/json;q=0.9";
+  const BROWSER =
+    "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
 
   function answer(
     refusal: unknown,

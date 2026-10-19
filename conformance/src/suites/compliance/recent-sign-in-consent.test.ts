@@ -127,7 +127,7 @@ async function refused(response: Response): Promise<void> {
 
 /** What a browser sends with a form it submits. */
 const BROWSER = {
-  accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+  accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 };
 
 /** Signs in through the sign-in form the way a redirect to it asks. */

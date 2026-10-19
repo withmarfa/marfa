@@ -1209,7 +1209,7 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 ### `keys-and-oauth/consent-recent-needed`
 
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before `application/json`, then the server MUST answer `403 forbidden`.
+If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before any `application/json`, then the server MUST answer `403 forbidden`.
 
 **Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password.
 
@@ -1217,7 +1217,7 @@ If a browser session that signed in more than five minutes ago accepts on the co
 
 ### `keys-and-oauth/consent-recent-browser`
 
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/authorize` with the request's signed query as `return_to`.
+If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before any `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/authorize` with the request's signed query as `return_to`.
 
 **Reason:** A screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same request, if its signed window has not closed.
 
@@ -1719,7 +1719,7 @@ When a browser session that signed in more than five minutes ago approves a devi
 
 ### `keys-and-oauth/device-recent-needed`
 
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before `application/json`, then the server MUST answer `403 forbidden`.
+If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before any `application/json`, then the server MUST answer `403 forbidden`.
 
 **Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
 
@@ -1727,7 +1727,7 @@ If a browser session that signed in more than five minutes ago approves a device
 
 ### `keys-and-oauth/device-recent-browser`
 
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/device/consent` with the code as `return_to`.
+If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before any `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/device/consent` with the code as `return_to`.
 
 **Reason:** As on the authorization screen, a screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same code, if it has not expired.
 
