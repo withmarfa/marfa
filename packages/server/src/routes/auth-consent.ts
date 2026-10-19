@@ -1325,11 +1325,11 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
 
   // Entities
   //
-  // `core.entity` names the same grant here that its toggle label names on
+  // `core.entity` names the same grant here that its row title names on
   // the authorize screen, and "and other entities" was the half that did
   // not. It reached wider than the label without saying how much wider, so
   // one grant read two ways depending on which screen a person was looking
-  // at, and the narrower reading was the one above the toggles. The registry
+  // at, and the narrower reading was the one above the controls. The registry
   // lists a company, a band, a team, a charity, a brand and a school. Three
   // are named below and the rest sit under "organizations", a brand
   // excepted, so the sentence lands where the label does instead of past it.
