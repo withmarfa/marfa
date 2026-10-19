@@ -1,3 +1,5 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   rememberEdgeSubject,
@@ -629,7 +631,7 @@ const deleteEdgeRoute = createRoute({
 export function edgeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listEdgesRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listEdgesRoute), async (c) => {
     const key = requireAuth(c);
 
     // The same question every other data-plane listing asks. Its answer
@@ -656,6 +658,7 @@ export function edgeRoutes(storage: Storage) {
     // cursor is the store's and is untouched, so a page can come back
     // short — empty, even, with a cursor still to follow — and paging still
     // walks the whole listing.
+    if (faultsArmed()) await holdAt("read-hydration");
     const visible = await readableEdges(storage, key, result.data);
     return c.json({ ...result, data: visible }, 200);
   });
@@ -794,7 +797,7 @@ export function edgeRoutes(storage: Storage) {
       : c.json({ edge: outcome.edge }, 201);
   });
 
-  router.openapi(getEdgeRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, getEdgeRoute), async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const { edge: existing } = await readableEdge(c, storage, id);
@@ -1114,7 +1117,7 @@ const listBackrefsRoute = createRoute({
 export function itemEdgeListingRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listFromSourceRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listFromSourceRoute), async (c) => {
     const key = requireAuth(c);
 
     const { id } = c.req.valid("param");
@@ -1142,6 +1145,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
       await storage.items.getIncludingTrashed(id),
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
     );
+    if (faultsArmed()) await holdAt("read-hydration");
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -1158,7 +1162,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     return c.json({ ...result, data: visible }, 200);
   });
 
-  router.openapi(listBackrefsRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listBackrefsRoute), async (c) => {
     const key = requireAuth(c);
 
     const { id } = c.req.valid("param");
@@ -1186,6 +1190,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
       await storage.items.getIncludingTrashed(id),
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
     );
+    if (faultsArmed()) await holdAt("read-hydration");
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),

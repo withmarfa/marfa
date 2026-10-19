@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import * as tar from "tar-stream";
@@ -70,16 +71,19 @@ describe("the writer an archive line names", () => {
     expect(changed.status).toBe(200);
 
     const list = ctx.storage.items.list.bind(ctx.storage.items);
+    const outsideRead = AsyncLocalStorage.snapshot();
     let wrote = false;
     vi.spyOn(ctx.storage.items, "list").mockImplementation(async (filters) => {
       const page = await list(filters);
       if (!wrote) {
         wrote = true;
-        // Lands between the read of the row and anything read beside it.
-        const late = await request(ctx.app, "PATCH", `/items/${id}`, {
-          key: second.key,
-          body: { version: 2, properties: { body: "three" } },
-        });
+        // A separate request must not inherit the export's read-only scope.
+        const late = await outsideRead(() =>
+          request(ctx.app, "PATCH", `/items/${id}`, {
+            key: second.key,
+            body: { version: 2, properties: { body: "three" } },
+          }),
+        );
         expect(late.status, await late.clone().text()).toBe(200);
       }
       return page;
@@ -94,6 +98,10 @@ describe("the writer an archive line names", () => {
     );
     // The witness: the line carries the row as it was read, at version 2.
     expect((line!.item as { version: number }).version).toBe(2);
+    expect(await ctx.storage.items.get(id)).toMatchObject({
+      version: 3,
+      properties: { body: "three" },
+    });
     expect(line!.writer).toEqual({
       kind: "key",
       id: first.id,

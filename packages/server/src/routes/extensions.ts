@@ -1,3 +1,5 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Extension routes — namespaced metadata on items.
@@ -325,7 +327,7 @@ const deleteExtensionRoute = createRoute({
 export function extensionRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listExtensionsRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listExtensionsRoute), async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -339,11 +341,12 @@ export function extensionRoutes(storage: Storage) {
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
     );
 
+    if (faultsArmed()) await holdAt("read-hydration");
     const extensions = await storage.metadata.getExtensions(id);
     return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 
-  router.openapi(getExtensionRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, getExtensionRoute), async (c) => {
     requireAuth(c);
     const { id, namespace } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -359,6 +362,7 @@ export function extensionRoutes(storage: Storage) {
 
     checkExtensionPermission(apiKey, namespace, "read");
 
+    if (faultsArmed()) await holdAt("read-hydration");
     const extensions = await storage.metadata.getExtensions(id);
     const data = extensions[namespace] ?? null;
 

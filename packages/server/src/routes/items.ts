@@ -1,3 +1,4 @@
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import {
   ownerItemRead,
   ownerItemReadSecurity,
@@ -11,6 +12,7 @@ import {
 } from "./_item-conflict.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { itemListed } from "../storage/read-view.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -1493,13 +1495,17 @@ export function itemRoutes(storage: Storage) {
             type,
             properties: body.properties,
             ...(body.id !== undefined && { id: body.id }),
-            ...(body.state !== undefined && { state: body.state as ItemState }),
+            ...(body.state !== undefined && {
+              state: body.state as ItemState,
+            }),
             ...(body.tier !== undefined && { tier: body.tier }),
             ...(body.occurred_at !== undefined && {
               occurred_at: body.occurred_at,
             }),
             ...(body.source !== undefined && { source: body.source }),
-            ...(body.source_id !== undefined && { source_id: body.source_id }),
+            ...(body.source_id !== undefined && {
+              source_id: body.source_id,
+            }),
             ...(body.version !== undefined && { version: body.version }),
             ...(body.capture_latitude !== undefined && {
               capture_latitude: body.capture_latitude,
@@ -1513,7 +1519,17 @@ export function itemRoutes(storage: Storage) {
           },
         );
         return {
-          result,
+          result:
+            result.outcome === "unchanged"
+              ? {
+                  ...result,
+                  response: await acknowledgedItemBody(
+                    storage,
+                    key,
+                    result.item,
+                  ),
+                }
+              : result,
           hydrated:
             result.outcome === "updated"
               ? await hydrateEdgesForItem(storage, key, result.item.id)
@@ -1555,10 +1571,7 @@ export function itemRoutes(storage: Storage) {
       case "unchanged":
         // A repeat of a create the server performed, or a re-sync of a row
         // the person has since deleted: nothing written, nothing announced.
-        return c.json(
-          await acknowledgedItemBody(storage, key, result.item),
-          200,
-        );
+        return c.json(result.response, 200);
       case "conflict":
         // Returned rather than thrown, so the error handler that sets this
         // never runs.
@@ -1736,7 +1749,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(stats, 200);
   });
 
-  router.openapi(listItemsRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listItemsRoute), async (c) => {
     requireAuth(c);
 
     const query = c.req.valid("query");
@@ -1778,6 +1791,7 @@ export function itemRoutes(storage: Storage) {
       limit: query.limit,
       cursor: query.cursor,
     });
+    if (faultsArmed()) await holdAt("read-hydration");
     const rows = await withCascadeMarks(storage, requireAuth(c), result.data);
 
     const ids = rows.map((item) => item.id);
@@ -1830,7 +1844,7 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  router.openapi(getItemRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, getItemRoute), async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -1860,6 +1874,7 @@ export function itemRoutes(storage: Storage) {
     // The base shape — item (with outbound edges) + metadata — is unconditional;
     // it's what every existing caller already depends on. The three include
     // blocks are additive and default-off so the lean read stays lean.
+    if (faultsArmed()) await holdAt("read-hydration");
     const [metadata, edges, backrefs, versions] = await Promise.all([
       storage.metadata.get(id),
       hydrateEdgesForItem(storage, callerKey, id),
@@ -2182,7 +2197,7 @@ export function itemRoutes(storage: Storage) {
   // --- Metadata sub-routes ---
 
   // GET /items/:id/metadata
-  router.openapi(getMetadataRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, getMetadataRoute), async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -2193,6 +2208,7 @@ export function itemRoutes(storage: Storage) {
       await storage.items.get(id),
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
     );
+    if (faultsArmed()) await holdAt("read-hydration");
     const metadata = await storage.metadata.get(id);
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },

@@ -1,3 +1,5 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 // The doors a connector finds its rows, and the tombstones its purges left, by.
 
@@ -348,7 +350,7 @@ function mayRead(key: ApiKey, type: string): boolean {
 export function itemsLookupRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(lookupRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, lookupRoute), async (c) => {
     const apiKey = requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
@@ -378,6 +380,7 @@ export function itemsLookupRoutes(storage: Storage) {
       if (!mayRead(apiKey, item.type)) continue;
       readable.push(item);
     }
+    if (faultsArmed()) await holdAt("read-hydration");
     const rows = await withCascadeMarks(storage, apiKey, readable);
 
     const tombstones =

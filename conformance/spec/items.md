@@ -2,6 +2,16 @@
 
 An item is a typed row: an `id`, a `type`, `properties` the type validates, a `source` and `source_id`, a lifecycle `state`, a `tier`, an `occurred_at` and a `version`. Its tags and extensions live in its `metadata`.
 
+## Every read
+
+### `items/read-authorized-state`
+
+When the server returns item data or related metadata, extensions, edges, history or occurrences, the server MUST authorize that data against the same item and relationship state from which it returns the data.
+
+**Reason:** a retype between authorization and hydration must not disclose data added while the item is unreadable to the caller.
+
+**Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› authorizes occurrence parent relationships with their source state`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
+
 ## Every write
 
 ### `items/refusal-writes-nothing`

@@ -1,4 +1,5 @@
 import type { Item, Version } from "@withmarfa/shared";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
@@ -739,22 +740,21 @@ describe("complete archive round trips", () => {
     expect(earlier.map((snapshot) => snapshot.version)).toEqual([1]);
 
     const list = source.storage.items.list.bind(source.storage.items);
+    const outsideRead = AsyncLocalStorage.snapshot();
     const intercepted = vi
       .spyOn(source.storage.items, "list")
       .mockImplementationOnce(async (filter) => {
         const page = await list(filter);
         expect(page.data.find((row) => row.id === item.id)).toEqual(selected);
-        const response = await request(
-          source.app,
-          "PATCH",
-          `/items/${item.id}`,
-          {
+        // A separate request must not inherit the export's read-only scope.
+        const response = await outsideRead(() =>
+          request(source.app, "PATCH", `/items/${item.id}`, {
             key: source.workingKey,
             body: {
               version: selected.version,
               properties: { body: "concurrent content" },
             },
-          },
+          }),
         );
         expect(response.status, await response.clone().text()).toBe(200);
         return page;

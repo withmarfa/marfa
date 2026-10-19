@@ -379,11 +379,13 @@ export async function untilNotBusy<T>(
  */
 function waitingForTheLock(url: string): {
   client: Client;
+  requestWal: () => Promise<void>;
   captureRead: CaptureRead;
   closeReads: () => Promise<void>;
 } {
   const client = createClient({ url });
-  const transactions = transactionConnections(url);
+  let concurrentSnapshots = false;
+  const transactions = transactionConnections(url, () => concurrentSnapshots);
   let tail: Promise<unknown> = Promise.resolve();
   const one = <T>(attempt: () => Promise<T>): Promise<T> => {
     const turn = tail.then(
@@ -434,6 +436,10 @@ function waitingForTheLock(url: string): {
   };
   return {
     client: wrapped,
+    requestWal: async () => {
+      const result = await wrapped.execute("PRAGMA journal_mode = WAL");
+      concurrentSnapshots = result.rows[0]?.journal_mode === "wal";
+    },
     captureRead: transactions.captureRead,
     closeReads: transactions.closeReads,
   };
@@ -493,7 +499,10 @@ type CaptureRead = <T>(
   lifetime: ReadLifetime,
 ) => Promise<{ reader: Transaction; captured: T }>;
 
-function transactionConnections(url: string): {
+function transactionConnections(
+  url: string,
+  concurrentSnapshots: () => boolean,
+): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
   close: () => void;
   captureRead: CaptureRead;
@@ -501,7 +510,6 @@ function transactionConnections(url: string): {
 } {
   const idle: Client[] = [];
   let shut = false;
-  let lastWriter: Promise<void> = Promise.resolve();
   const awaitTurn = async (turn: Promise<void>): Promise<void> => {
     const budgetMs = busyBudgetMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -527,29 +535,36 @@ function transactionConnections(url: string): {
     if (shut) throw new LibsqlError("The client is closed", "CLIENT_CLOSED");
   };
 
-  const admission = async (
-    wait: (turn: Promise<void>) => Promise<void>,
-  ): Promise<() => void> => {
-    const turn = lastWriter;
-    let left = false;
-    let resolve!: () => void;
-    lastWriter = new Promise<void>((done) => {
-      resolve = done;
-    });
-    const leave = () => {
-      if (left) return;
-      left = true;
-      void turn.then(resolve);
+  const admissionQueue = () => {
+    let tail = Promise.resolve();
+    return async (
+      wait: (turn: Promise<void>) => Promise<void>,
+    ): Promise<() => void> => {
+      const turn = tail;
+      let left = false;
+      let resolve!: () => void;
+      tail = new Promise<void>((done) => {
+        resolve = done;
+      });
+      const leave = () => {
+        if (left) return;
+        left = true;
+        void turn.then(resolve);
+      };
+      try {
+        await wait(turn);
+        refuseOnceShut();
+        return leave;
+      } catch (error) {
+        leave();
+        throw error;
+      }
     };
-    try {
-      await wait(turn);
-      refuseOnceShut();
-      return leave;
-    } catch (error) {
-      leave();
-      throw error;
-    }
   };
+  const writerAdmission = admissionQueue();
+  // A reader can use committed WAL state while a writer is open. Only its
+  // SQL/registry capture must exclude COMMIT and registry publication or recovery.
+  const publicationAdmission = admissionQueue();
   const begin = async (
     mode: TransactionMode,
     independent = false,
@@ -558,7 +573,7 @@ function transactionConnections(url: string): {
     if (mode === "write") assertRegistryReady();
     let leave: () => void = () => undefined;
     if (mode === "write") {
-      leave = await admission(awaitTurn);
+      leave = await writerAdmission(awaitTurn);
       try {
         assertRegistryReady();
       } catch (error) {
@@ -679,11 +694,13 @@ function transactionConnections(url: string): {
     let readTail: Promise<unknown> = Promise.resolve();
     const end = async (statement: "COMMIT" | "ROLLBACK") => {
       let attempted = false;
+      let leavePublication: (() => void) | undefined;
       open = false;
       try {
         if (mode === "read") await readTail.catch(() => undefined);
         if (statement === "COMMIT") {
           control.participant?.seal();
+          leavePublication = await publicationAdmission((turn) => turn);
           if (control.participant?.structuralChanged)
             await advanceStructuralGeneration(conn);
           control.participant?.prepare();
@@ -731,6 +748,8 @@ function transactionConnections(url: string): {
         }
         control.assertUsable();
         throw error;
+      } finally {
+        leavePublication?.();
       }
       finish(control.state === "usable");
     };
@@ -905,6 +924,11 @@ function transactionConnections(url: string): {
     readers.add(abandon);
     try {
       assertRegistryReady();
+      // Memory databases keep their shared-cache table locks even when WAL
+      // is requested, so their captures must wait for the writer to settle.
+      const admission = concurrentSnapshots()
+        ? publicationAdmission
+        : writerAdmission;
       leave = await admission((turn) => lifetime.wait(turn));
       lifetime.assertAlive();
       assertRegistryReady();
@@ -974,7 +998,7 @@ function toLibsqlUrl(pathOrUrl: string): string {
 }
 
 /**
- * Opens a libsql connection, enables WAL mode, creates all tables
+ * Opens a libsql connection, requests WAL mode, creates all tables
  * (idempotent), and returns both the Drizzle db and the raw libsql client.
  */
 export async function createConnection(sqlitePath: string): Promise<{
@@ -998,7 +1022,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   // The wrapper rather than a `PRAGMA busy_timeout` for the same reason
   // the native option is not used, and because a pragma reaches one
   // connection while the transaction path opens its own.
-  const { client, captureRead, closeReads } = waitingForTheLock(
+  const { client, requestWal, captureRead, closeReads } = waitingForTheLock(
     toLibsqlUrl(sqlitePath),
   );
 
@@ -1092,7 +1116,7 @@ export async function createConnection(sqlitePath: string): Promise<{
 
   // WAL: readers do not block the writer, and it is what Litestream
   // replicates.
-  await client.execute("PRAGMA journal_mode = WAL");
+  await requestWal();
   await client.execute("PRAGMA foreign_keys = ON");
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS).

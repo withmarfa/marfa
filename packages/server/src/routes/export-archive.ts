@@ -44,8 +44,10 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
+import { readableExportEdges } from "./export-read.js";
 import * as clock from "../clock.js";
 
 /** How many edges, blob digests or history snapshots are read at once. */
@@ -435,9 +437,7 @@ async function collectSelection(input: {
   const missingEntries = await spool.text();
   const { itemIds, blobHashes, fileRefs, listedBlobs } = await spool.sets();
 
-  // Between pages, and nowhere else, the event loop gets its turn: a page is
-  // read as a unit, so an item's row, metadata, lending digests and history
-  // come from the same moment.
+  // End each page's database snapshot before spool I/O or a pacing wait.
   const turn = async () => {
     signal.throwIfAborted();
     await yieldBulkWork();
@@ -448,59 +448,74 @@ async function collectSelection(input: {
   let cursor: string | undefined;
   do {
     await turn();
-    const result = await withStatementFault("export-read", () =>
-      storage.items.list({
-        ...filter,
-        limit: ITEMS_PER_PAGE,
-        cursor,
-      }),
-    );
-    const lines: string[] = [];
-    const ids: string[] = [];
-    const hashes = new Set<string>();
-    const refs = new Set<string>();
-    // Of the version each row was read at, which a write since may have
-    // moved the row past. A writer is held to the reach that holds the
-    // snapshots, so a caller that may not read the history learns none.
-    const writers = await storage.items.writersAt(
-      result.data
-        .filter((item) => readsHistory(item.type))
-        .map((item) => ({ id: item.id, version: item.version })),
-    );
-    const restoredAt = await storage.items.restoredAtOf(
-      result.data.map((item) => item.id),
-    );
-    for (const item of await reader.cascade(storage, result.data)) {
-      const metadata = reader.metadata(await storage.metadata.get(item.id));
-      // Which of the row's digests lend its reach, so a restore credits
-      // those and no others. An extension namespace's are carried only for
-      // the namespaces the line carries.
-      const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
-      const lendingExtensions = Object.fromEntries(
-        Object.entries(
-          await storage.blobs.lendingHashesOfExtensions(item.id),
-        ).filter(([namespace]) => namespace in metadata.extensions),
+    const { result, lines, ids, hashes, refs } =
+      await storage.runInReadSnapshot(
+        async () => {
+          const result = await withStatementFault("export-read", () =>
+            storage.items.list({
+              ...filter,
+              limit: ITEMS_PER_PAGE,
+              cursor,
+            }),
+          );
+          if (faultsArmed()) await holdAt("read-hydration");
+          const lines: string[] = [];
+          const ids: string[] = [];
+          const hashes = new Set<string>();
+          const refs = new Set<string>();
+          // Of the version each row was read at, which a write since may have
+          // moved the row past. A writer is held to the reach that holds the
+          // snapshots, so a caller that may not read the history learns none.
+          const writers = await storage.items.writersAt(
+            result.data
+              .filter((item) => readsHistory(item.type))
+              .map((item) => ({ id: item.id, version: item.version })),
+          );
+          const restoredAt = await storage.items.restoredAtOf(
+            result.data.map((item) => item.id),
+          );
+          for (const item of await reader.cascade(storage, result.data)) {
+            const metadata = reader.metadata(
+              await storage.metadata.get(item.id),
+            );
+            // Which of the row's digests lend its reach, so a restore credits
+            // those and no others. An extension namespace's are carried only for
+            // the namespaces the line carries.
+            const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
+            const lendingExtensions = Object.fromEntries(
+              Object.entries(
+                await storage.blobs.lendingHashesOfExtensions(item.id),
+              ).filter(([namespace]) => namespace in metadata.extensions),
+            );
+            const versions = await historyBelow(
+              storage,
+              item,
+              readsHistory,
+              hashes,
+            );
+            for (const row of [item, ...versions]) {
+              const ref = fileBlobRef(row);
+              if (ref) refs.add(ref);
+            }
+            lines.push(
+              JSON.stringify({
+                item,
+                metadata,
+                versions,
+                writer: writers.get(item.id) ?? null,
+                restored_at: restoredAt.get(item.id) ?? null,
+                lending_blobs: lendingBlobs,
+                lending_extensions: lendingExtensions,
+              }),
+            );
+            ids.push(item.id);
+            collectBlobHashes(item.properties, hashes);
+            collectBlobHashes(metadata.extensions, hashes);
+          }
+          return { result, lines, ids, hashes, refs };
+        },
+        { signal },
       );
-      const versions = await historyBelow(storage, item, readsHistory, hashes);
-      for (const row of [item, ...versions]) {
-        const ref = fileBlobRef(row);
-        if (ref) refs.add(ref);
-      }
-      lines.push(
-        JSON.stringify({
-          item,
-          metadata,
-          versions,
-          writer: writers.get(item.id) ?? null,
-          restored_at: restoredAt.get(item.id) ?? null,
-          lending_blobs: lendingBlobs,
-          lending_extensions: lendingExtensions,
-        }),
-      );
-      ids.push(item.id);
-      collectBlobHashes(item.properties, hashes);
-      collectBlobHashes(metadata.extensions, hashes);
-    }
     await items.append(lines.map((line) => `${line}\n`).join(""));
     await itemIds.add(ids);
     await blobHashes.add(hashes);
@@ -515,19 +530,26 @@ async function collectSelection(input: {
   let edgeCursor: string | undefined;
   do {
     await turn();
-    const page = await storage.edges.list({ limit: PAGE, cursor: edgeCursor });
-    // The NDJSON path's twin, and the same two halves: the endpoint rule
-    // settles the source, and the edge map has to be asked for the kind of
-    // relationship.
-    const readable = page.data.filter((edge) => reader.edge(edge));
+    const { page, readable, lending } = await storage.runInReadSnapshot(
+      async () => {
+        const page = await storage.edges.list({
+          limit: PAGE,
+          cursor: edgeCursor,
+          source_filter: filter.source_filter,
+        });
+        const readable = await readableExportEdges(storage, reader, page.data);
+        const lending = await storage.blobs.lendingHashesOfEdges(
+          readable.map((edge) => edge.id),
+        );
+        return { page, readable, lending };
+      },
+      { signal },
+    );
     const exported = await itemIds.held(
       readable.flatMap((edge) => [edge.source_id, edge.target_id]),
     );
     const written = readable.filter(
       (edge) => exported.has(edge.source_id) && exported.has(edge.target_id),
-    );
-    const lending = await storage.blobs.lendingHashesOfEdges(
-      written.map((edge) => edge.id),
     );
     const lines: string[] = [];
     const hashes = new Set<string>();
@@ -674,8 +696,6 @@ async function historyBelow(
       cursor: historyCursor,
     });
     for (const snapshot of history.data) {
-      // A concurrent write may have snapshotted the row selected above.
-      // That snapshot belongs to the next current version, not this one.
       if (snapshot.version >= item.version) continue;
       versions.push(snapshot);
       collectBlobHashes(snapshot.properties, hashes);

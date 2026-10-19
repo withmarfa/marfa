@@ -204,13 +204,13 @@ When a series has `all_day: true`, the server MUST start each occurrence at loca
 
 ### `occurrences/moved-replaces`
 
-When an `active` event with an `original_starts_at` that the credential may read is joined to a series by a `parent-of` edge from the series, the server MUST show it in place of the series' occurrence at that instant.
+When an `active` event with an `original_starts_at` that the credential may read is joined to a series by a `parent-of` edge that the credential may read, the server MUST show it in place of the series' occurrence at that instant.
 
 **Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`, `› carries series_id and replaces on a moved occurrence in a window that holds both times`.
 
 ### `occurrences/moved-ids`
 
-When a moved occurrence is in a window, and its series is `active` and one the credential may read, the server MUST carry on it the `series_id` of its series and, in `replaces`, the start of the occurrence it replaces, whether or not the window holds that occurrence.
+When a moved occurrence is in a window, its series is `active` and one the credential may read, and the credential may read the `parent-of` edge joining them, the server MUST carry on it the `series_id` of its series and, in `replaces`, the start of the occurrence it replaces, whether or not the window holds that occurrence.
 
 **Reason:** the exception names its series and the slot it replaced, wherever it is shown.
 
@@ -218,11 +218,11 @@ When a moved occurrence is in a window, and its series is `active` and one the c
 
 ### `occurrences/moved-ids-hidden`
 
-When a moved occurrence is in a window and its series is not an `active` series with a `recurrence` that the credential may read, the server MUST answer it without `series_id` and without `replaces`.
+When a moved occurrence is in a window and either its series is not an `active` series with a `recurrence` that the credential may read or the credential may not read the `parent-of` edge joining them, the server MUST answer it without `series_id` and without `replaces`.
 
-**Reason:** the fields would name a row the credential may not read.
+**Reason:** the fields disclose both the series and its relationship to the exception, so both must be readable.
 
-**Tests:** `compliance/recurrence.test.ts › names no series a moved occurrence belongs to when the series is not readable`.
+**Tests:** `compliance/recurrence.test.ts › names no series a moved occurrence belongs to when the series is not readable`, `compliance/item-read-boundary.test.ts › authorizes occurrence parent relationships with their source state`, `› withholds occurrence fields derived from an unreadable relationship`.
 
 ### `occurrences/moved-own-times`
 

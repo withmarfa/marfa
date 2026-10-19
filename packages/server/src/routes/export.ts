@@ -11,8 +11,10 @@ import type { BlobLayer } from "../storage/blob-layer.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { handleArchiveExport } from "./export-archive.js";
+import { readableExportEdges } from "./export-read.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
 import {
@@ -249,28 +251,46 @@ export function exportRoutes(
       // does not hold.
       const exportedIds = new Set<string>();
       let cursor: string | undefined;
+      let pageLimit = 1;
       do {
-        const result = await withStatementFault("export-read", () =>
-          storage.items.list({
-            type,
-            state,
-            all_states: allStates,
-            exclude_states: EXPORT_EXCLUDED_STATES,
-            source,
-            occurred_after: occurredAfter,
-            occurred_before: occurredBefore,
-            allowed_types: allowedTypes,
-            excluded_types: excludedTypes,
-            source_filter: sourceFilter,
-            limit: 200,
-            cursor,
-          }),
+        const result = await storage.runInReadSnapshot(
+          async () => {
+            const page = await withStatementFault("export-read", () =>
+              storage.items.list({
+                type,
+                state,
+                all_states: allStates,
+                exclude_states: EXPORT_EXCLUDED_STATES,
+                source,
+                occurred_after: occurredAfter,
+                occurred_before: occurredBefore,
+                allowed_types: allowedTypes,
+                excluded_types: excludedTypes,
+                source_filter: sourceFilter,
+                limit: pageLimit,
+                cursor,
+              }),
+            );
+            if (faultsArmed()) await holdAt("read-hydration");
+            const data = [];
+            for (const item of await reader.cascade(storage, page.data)) {
+              const metadata = reader.metadata(
+                await storage.metadata.get(item.id),
+              );
+              data.push({
+                id: item.id,
+                line: JSON.stringify({ item, metadata }) + "\n",
+              });
+            }
+            return { data, next_cursor: page.next_cursor };
+          },
+          { signal: c.req.raw.signal },
         );
+        pageLimit = LINES_PER_TURN;
 
-        for (const item of await reader.cascade(storage, result.data)) {
-          const metadata = reader.metadata(await storage.metadata.get(item.id));
-          exportedIds.add(item.id);
-          yield JSON.stringify({ item, metadata }) + "\n";
+        for (const record of result.data) {
+          exportedIds.add(record.id);
+          yield record.line;
         }
 
         cursor = result.next_cursor ?? undefined;
@@ -282,23 +302,26 @@ export function exportRoutes(
         // carry nothing for this export, so a page that yields no line
         // must still give the event loop its turn.
         await yieldBulkWork();
-        const page = await storage.edges.list({
-          limit: 200,
-          cursor: edgeCursor,
-        });
+        const page = await storage.runInReadSnapshot(
+          async () => {
+            const result = await storage.edges.list({
+              limit: 200,
+              cursor: edgeCursor,
+              source_filter: sourceFilter,
+            });
+            return {
+              ...result,
+              data: await readableExportEdges(storage, reader, result.data),
+            };
+          },
+          { signal: c.req.raw.signal },
+        );
         for (const edge of page.data) {
-          // Both halves of the edge read gate, answered differently
-          // because this door has already answered one of them.
-          // `exportedIds` is the set of items this caller may read,
-          // so requiring both endpoints in it settles the source half
-          // more strictly than the gate asks. The edge type is the other
-          // half: the read context decides which kinds of
-          // relationship among those items the caller may read, as on
-          // `GET /edges`.
+          // Membership keeps the exported graph closed; the page snapshot
+          // separately checks its source's current readability.
           if (
             exportedIds.has(edge.source_id) &&
-            exportedIds.has(edge.target_id) &&
-            reader.edge(edge)
+            exportedIds.has(edge.target_id)
           ) {
             yield JSON.stringify({ edge }) + "\n";
           }

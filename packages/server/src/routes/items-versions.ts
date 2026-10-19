@@ -1,3 +1,5 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
+import { snapshotReadRoute } from "../middleware/read-snapshot.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -102,7 +104,7 @@ export function itemsVersionsRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   // GET /items/:id/versions
-  router.openapi(listVersionsRoute, async (c) => {
+  router.openapi(snapshotReadRoute(storage, listVersionsRoute), async (c) => {
     const { id } = c.req.valid("param");
     const { limit, cursor } = c.req.valid("query");
     if (!isValidId(id)) {
@@ -114,6 +116,7 @@ export function itemsVersionsRoutes(storage: Storage) {
       await storage.items.get(id),
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
     );
+    if (faultsArmed()) await holdAt("read-hydration");
     const page = await storage.versions.list(id, {
       reads: typeReader(c),
       limit,

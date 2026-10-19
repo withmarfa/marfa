@@ -1,3 +1,4 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
 /**
  * "What is on my calendar next Tuesday."
  *
@@ -30,11 +31,11 @@
  * An event's `properties` is the upstream record in full, attendees and
  * description and conference data included, so retaining the projection
  * rather than the row is the difference between a couple of hundred
- * bytes and several kilobytes each. Whole items are read exactly once,
- * for the occurrences actually being returned, after the occurrence
- * ceiling has already refused anything larger — so the number of items
- * held at once is bounded by `MAX_OCCURRENCES` rather than by how much is
- * stored.
+ * bytes and several kilobytes each. Parent sources are read in bounded
+ * batches to authorize relationships, then dropped before expansion.
+ * Whole items retained for the response are read only after the occurrence
+ * ceiling has refused anything larger, so their number is bounded by
+ * `MAX_OCCURRENCES` rather than by how much is stored.
  *
  * Five bounds do the rest of that work and none of them refuses a calendar
  * for being large:
@@ -100,12 +101,13 @@ import {
   resolveEnforcement,
   typeAnswersSubtreeFilter,
 } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
   getTypeFilter,
   readsSomeType,
+  mayReadRow,
 } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -119,6 +121,8 @@ import {
 } from "../events/expand-recurrence.js";
 import { instantColumnValues } from "../storage/instant-columns.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
+import { edgeKindReadable } from "./_edge-visibility.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -668,14 +672,7 @@ export async function gatherSeriesSeeds(
   );
 }
 
-/**
- * Items for the given ids, read in batches. See `ID_BATCH_SIZE`.
- *
- * Narrowed to `active` because that is what the scans selected on.
- * `getMany` excludes trashed rows and nothing else, so an item archived
- * between a scan and this read would otherwise be rendered inside a 200
- * carrying a state this route has never emitted.
- */
+/** Items for the returned occurrences, bounded by `ID_BATCH_SIZE`. */
 async function fetchItemsBatched(
   storage: Storage,
   ids: readonly string[],
@@ -714,6 +711,8 @@ async function fetchItemsBatched(
 async function groupExceptionsBySeries(
   storage: Storage,
   exceptions: readonly RecurrenceException[],
+  readable: (edge: Edge, source: Item) => boolean,
+  signal: AbortSignal,
 ): Promise<Map<string, RecurrenceException[]>> {
   const byId = new Map<string, RecurrenceException>();
   for (const exception of exceptions) byId.set(exception.id, exception);
@@ -722,33 +721,36 @@ async function groupExceptionsBySeries(
   const bySeries = new Map<string, RecurrenceException[]>();
   for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
     const slice = ids.slice(i, i + ID_BATCH_SIZE);
-    const chunk = await storage.edges.listToTargetsBatched(
-      slice,
-      // One parent is all a `parent-of` exception has; asking for a
-      // second would only widen what a malformed graph could return.
-      1,
+    // The scan proves earlier access, not permission to disclose a later
+    // relationship. Release this snapshot before expansion or the next batch.
+    await storage.runInReadSnapshot(
+      async () => {
+        const chunk = await storage.edges.listToTargetsBatched(slice, 1);
+        const parents = slice.flatMap((id) =>
+          (chunk.get(id) ?? []).filter(
+            (edge) => edge.edge_type === "parent-of",
+          ),
+        );
+        const sources = await storage.items.getMany([
+          ...new Set(parents.map((edge) => edge.source_id)),
+        ]);
+        for (const edge of parents) {
+          const source = sources.get(edge.source_id);
+          if (
+            source?.state !== "active" ||
+            !readable(edge, source) ||
+            projectSeries(source) === undefined
+          )
+            continue;
+          const exception = byId.get(edge.target_id);
+          if (exception === undefined) continue;
+          const list = bySeries.get(source.id) ?? [];
+          list.push(exception);
+          bySeries.set(source.id, list);
+        }
+      },
+      { signal },
     );
-    // Walked over the slice rather than over the map the store answered
-    // with, because that is what makes each chunk's edges unreachable
-    // once the next chunk is asked for — the retention property this
-    // function exists for, not a determinism one.
-    //
-    // Determinism is real here and comes from somewhere else: the scan
-    // hands these ids over in the store's keyset order, which is a total
-    // order. Iterating the returned map instead would preserve that too,
-    // since it is keyed by the same ids, so the slice walk is not what
-    // keeps the order.
-    for (const exceptionId of slice) {
-      const seriesId = chunk
-        .get(exceptionId)
-        ?.find((edge) => edge.edge_type === "parent-of")?.source_id;
-      if (seriesId === undefined) continue;
-      const exception = byId.get(exceptionId);
-      if (exception === undefined) continue;
-      const list = bySeries.get(seriesId) ?? [];
-      list.push(exception);
-      bySeries.set(seriesId, list);
-    }
   }
   return bySeries;
 }
@@ -1035,7 +1037,7 @@ export function occurrenceRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(occurrencesRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
     const query = c.req.valid("query");
 
     const from = readInstant(query.from, "from");
@@ -1129,9 +1131,16 @@ export function occurrenceRoutes(
     // and an exception is an ordinary shape — a calendar where several
     // hundred meetings have each been moved once is a busy calendar, not
     // a pathological one.
+    if (faultsArmed()) await holdAt("read-hydration");
     const exceptionsBySeries = await groupExceptionsBySeries(
       storage,
       exceptionSeeds,
+      (edge, source) =>
+        edgeKindReadable(key, edge) &&
+        mayReadRow(c, source) &&
+        typeAnswersSubtreeFilter(source.type, EVENT_TYPE) &&
+        sourceFilterIncludesItem(enforcement.source_filter, source),
+      c.req.raw.signal,
     );
 
     /** Iterations spent on expansions that returned no occurrence,
@@ -1347,8 +1356,8 @@ export function occurrenceRoutes(
     // A stored exception names its series and the slot it replaced whether
     // or not this window holds that slot, so an exception shown at its own
     // time carries both even where the expansion above never reached it.
-    // Only a series the scan read is named: an edge can point at a row this
-    // credential may not read.
+    // The scan establishes series membership; grouping separately authorizes
+    // each relationship against its source in the same read.
     const exceptionSlots = new Map<
       string,
       { series_id: string; replaces: string }
@@ -1396,9 +1405,8 @@ export function occurrenceRoutes(
       });
     }
 
-    // The only place a whole row is read, and it is reached only for the
-    // occurrences being returned. One row can answer many occurrences, so
-    // the ids are deduplicated on the way in.
+    // Only returned occurrences retain whole rows. One row can answer many
+    // occurrences, so the ids are deduplicated on the way in.
     const shownById = await fetchItemsBatched(
       storage,
       pending.map((occurrence) => occurrence.item_id),
@@ -1413,41 +1421,18 @@ export function occurrenceRoutes(
     }[] = [];
     for (const occurrence of pending) {
       const shown = shownById.get(occurrence.item_id);
-      // Deleted, trashed or moved out of `active` between the scan and
-      // this read. Dropping it is the right direction: a meeting removed
-      // or filed away a moment ago should not render.
-      if (shown === undefined) continue;
+      // Expansion can outlive a read snapshot. Authorize the hydrated row
+      // itself so a retype or source change cannot reuse the scan's access.
+      if (
+        shown === undefined ||
+        !mayReadRow(c, shown) ||
+        !typeAnswersSubtreeFilter(shown.type, query.type ?? EVENT_TYPE) ||
+        !sourceFilterIncludesItem(enforcement.source_filter, shown)
+      )
+        continue;
 
-      /**
-       * One rule decides what time a row is shown at: **the fetched
-       * item is the authority for its own times, and only a computed
-       * occurrence — which the item does not carry a time for — comes
-       * from the expansion.**
-       *
-       * One rule, because the yields above widen the gap between scan
-       * and fetch to the length of the whole request. A standalone row
-       * rendered from the scan-time projection, beside a replacement
-       * re-derived from the fetched item, would have two rows in one
-       * response follow opposite rules, and a meeting moved while the
-       * request was in flight would render its old slot beside the new
-       * `item.properties.starts_at`, in the same object, contradicting
-       * itself.
-       *
-       * A computed occurrence is exempt because there is nothing to
-       * re-derive: the item is the series, and its `starts_at` is the
-       * rule's anchor rather than this slot. That leaves one residual,
-       * which nothing cheap fixes — a series rescheduled mid-request
-       * shows slots computed from the anchor it had when it was read.
-       * Re-expanding at render time would mean holding every seed and
-       * repeating the walk this route is trying to bound.
-       *
-       * The window stays a filter over which rows appear, not a
-       * constraint on what time they are shown at. That is the rule
-       * `replaces` follows — a moved instance is shown at its
-       * own time, which may fall outside the window — and applying it to
-       * a standalone row that moved is the same answer to the same
-       * question.
-       */
+      // A series carries its anchor, not the time of each computed slot.
+      // Standalone events and replacements carry their own occurrence times.
       const itemIsAuthority =
         occurrence.series_id === undefined || occurrence.replaces !== undefined;
 

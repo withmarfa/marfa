@@ -329,8 +329,13 @@ function syntheticCalendar(
   // than measured: consuming each chunk before asking for the next passes,
   // holding every chunk to read after the last does not.
   let openChunk = 0;
-  const parentEdge = (seriesId: string, chunk: number): unknown => ({
+  const parentEdge = (
+    seriesId: string,
+    targetId: string,
+    chunk: number,
+  ): unknown => ({
     edge_type: "parent-of",
+    target_id: targetId,
     get source_id(): string {
       if (chunk !== openChunk) {
         throw new Error(
@@ -342,6 +347,7 @@ function syntheticCalendar(
   });
 
   const storage = {
+    runInReadSnapshot: <T>(read: () => Promise<T>) => read(),
     items: {
       list: (filters: ItemFilters) => {
         // Only the event type holds rows here.
@@ -390,7 +396,7 @@ function syntheticCalendar(
         for (const id of targetIds) {
           const seriesId = parents.get(id);
           if (seriesId !== undefined)
-            out.set(id, [parentEdge(seriesId, chunk)]);
+            out.set(id, [parentEdge(seriesId, id, chunk)]);
         }
         return Promise.resolve(out);
       },
