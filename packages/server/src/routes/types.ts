@@ -1013,9 +1013,6 @@ export function typeRoutes(storage: Storage) {
             { namespace: tier },
           );
         }
-        // Asked whether or not the id is held, so one key cannot take an id
-        // first and leave the key it was meant for unable to register it.
-        requireTypeSchemaWrite(c, "register", body.id);
       }
       // Validated in the transaction that writes the type: the schema is
       // judged against its parent's fields and its parent chain, and a
@@ -1025,6 +1022,11 @@ export function typeRoutes(storage: Storage) {
       const created = await runAuditedTransaction(
         storage,
         async () => {
+          // Asked whether or not the id is held, so one key cannot take an id
+          // first and leave the key it was meant for unable to register it.
+          // Asked here, of the key as it stands in the transaction.
+          if (typeof body.id === "string")
+            requireTypeSchemaWrite(c, "register", body.id);
           const result = validateTypeSchema(body);
           if (!result.success) {
             throw schemaRefusal(result.errors);
@@ -1084,6 +1086,7 @@ export function typeRoutes(storage: Storage) {
               `Type "${id}" not found`,
             );
           }
+          requireTypeSchemaWrite(c, "replace", id);
           const result = validateTypeSchema({ ...body, id });
           if (!result.success) {
             throw schemaRefusal(result.errors);

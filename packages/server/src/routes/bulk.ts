@@ -640,7 +640,9 @@ export function bulkRoutes(storage: Storage) {
 
   // POST /items/bulk — list-in
   router.openapi(bulkRoute, async (c) => {
-    const key = requireAuth(c);
+    // Only the id, which a change to the key's grants leaves alone. Every
+    // decision below reads the key inside the transaction that decides it.
+    const { id: keyId } = requireAuth(c);
 
     const body = c.req.valid("json");
     const items = body.items;
@@ -686,6 +688,7 @@ export function bulkRoutes(storage: Storage) {
       // would re-read the row over a refusal whose cause is a permission it
       // lacks (`items/bulk-atomic-gates-first`).
       if (atomic) {
+        const key = requireAuth(c);
         // The request's shape first, across the whole page, before anything
         // an entry names (`items/bulk-atomic-undeclared-first`).
         const first = undeclared.findIndex((refusal) => refusal !== null);
@@ -764,7 +767,7 @@ export function bulkRoutes(storage: Storage) {
       for (const [i, raw] of items.entries()) {
         const work = () =>
           processBulkItem(storage, raw, i, {
-            key,
+            key: requireAuth(c),
             mode,
             blobProof: requestBlobProof(c, storage),
             retype,
@@ -778,7 +781,7 @@ export function bulkRoutes(storage: Storage) {
                 result.outcome === "created" || result.outcome === "updated"
                   ? {
                       client_ip: c.get("clientIp") ?? null,
-                      key_id: key.id,
+                      key_id: keyId,
                       action: "items.bulk",
                       resource_type: "items.bulk",
                       resource_id: result.id,
@@ -826,7 +829,7 @@ export function bulkRoutes(storage: Storage) {
     const processed = atomic
       ? await runAuditedTransaction(storage, run, (processed) => ({
           client_ip: c.get("clientIp") ?? null,
-          key_id: key.id,
+          key_id: keyId,
           action: "items.bulk",
           resource_type: "items.bulk",
           details: {

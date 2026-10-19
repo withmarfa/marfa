@@ -376,7 +376,6 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const apiKey = c.get("apiKey");
     const body = c.req.valid("json");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
@@ -399,7 +398,7 @@ export function extensionRoutes(storage: Storage) {
           );
         }
 
-        checkExtensionPermission(apiKey, namespace, "write");
+        checkExtensionPermission(requireAuth(c), namespace, "write");
 
         const serialized = JSON.stringify(body);
         if (serialized.length > 102_400) {
@@ -443,7 +442,10 @@ export function extensionRoutes(storage: Storage) {
       },
     );
 
-    return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
+    return c.json(
+      { extensions: readableExtensions(extensions, requireAuth(c)) },
+      200,
+    );
   });
 
   router.openapi(deleteExtensionRoute, async (c) => {
@@ -453,7 +455,6 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const apiKey = c.get("apiKey");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
     const { extensions } = await runAuditedTransaction(
@@ -474,7 +475,7 @@ export function extensionRoutes(storage: Storage) {
             `Namespace "${namespace}" is reserved`,
           );
         }
-        checkExtensionPermission(apiKey, namespace, "write");
+        checkExtensionPermission(requireAuth(c), namespace, "write");
 
         const written = await storage.metadata.deleteExtension(id, namespace);
 
@@ -498,7 +499,10 @@ export function extensionRoutes(storage: Storage) {
       },
     );
 
-    return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
+    return c.json(
+      { extensions: readableExtensions(extensions, requireAuth(c)) },
+      200,
+    );
   });
 
   return router;

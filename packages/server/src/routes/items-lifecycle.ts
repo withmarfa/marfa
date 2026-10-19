@@ -191,21 +191,23 @@ export function itemsLifecycleRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const key = requireAuth(c);
-    // The move, its events and what the answer reads, in one transaction.
-    const { restored, metadata } = await runAuditedTransaction(
+    const { id: keyId } = requireAuth(c);
+    // The move, its events and what the answer reads, in one transaction,
+    // with the key as it stands there.
+    const { key, restored, metadata } = await runAuditedTransaction(
       storage,
       async () => {
+        const key = requireAuth(c);
         const { item: restored } = await writeItem(
           storage,
           { kind: "credential", key },
           { op: "restore", id },
         );
-        return { restored, metadata: await storage.metadata.get(id) };
+        return { key, restored, metadata: await storage.metadata.get(id) };
       },
       {
         client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
+        key_id: keyId,
         action: "item.restore",
         resource_type: "item",
         resource_id: id,
@@ -215,7 +217,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     return c.json(
       {
         item: restored,
-        metadata: readableMetadata(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, key),
       },
       200,
     );
@@ -234,7 +236,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // body.state is constrained to the lifecycle enum by the route Zod;
     // typeof / truthiness check would be unreachable.
 
-    const key = requireAuth(c);
+    requireAuth(c);
     // Read past the trash, so a transition out of it is judged by the type's
     // graph: `trashed` admits `active` alone. A move into the bin takes what
     // a delete takes and is held by what holds a delete.
@@ -249,19 +251,25 @@ export function itemsLifecycleRoutes(storage: Storage) {
         requireTypeAccess(c, row, "write");
         const conflict = exactItemVersion(row, version);
         if (conflict) return { conflict };
+        const key = requireAuth(c);
         const { item: updated, from } = await writeItem(
           storage,
           { kind: "credential", key },
           { op: "transition", id, state },
         );
-        return { updated, from, metadata: await storage.metadata.get(id) };
+        return {
+          key,
+          updated,
+          from,
+          metadata: await storage.metadata.get(id),
+        };
       },
       (result) =>
         "conflict" in result
           ? null
           : {
               client_ip: c.get("clientIp") ?? null,
-              key_id: c.get("apiKey")?.id,
+              key_id: result.key.id,
               action: "item.transition",
               resource_type: "item",
               resource_id: id,
@@ -276,7 +284,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     return c.json(
       {
         item: result.updated,
-        metadata: readableMetadata(result.metadata, c.get("apiKey")),
+        metadata: readableMetadata(result.metadata, result.key),
       },
       200,
     );

@@ -410,26 +410,27 @@ export function itemsLookupRoutes(storage: Storage) {
   });
 
   router.openapi(tombstonesRoute, async (c) => {
-    const apiKey = requireAuth(c);
+    requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, false);
     const settledAt = normalizeTimeBound(body.settled_at, "settled_at");
-    requireTypeAccess(c, type, "write");
-    if (selector.kind === "source") {
-      itemProvenanceSource(apiKey, selector.source);
-    }
-
     const tombstones = inOrder(
       selector.values,
       await runAuditedTransaction(
         storage,
-        () =>
-          storage.items.settleTombstones(
+        () => {
+          // Asked inside the transaction, of the key as it stands there.
+          requireTypeAccess(c, type, "write");
+          if (selector.kind === "source") {
+            itemProvenanceSource(requireAuth(c), selector.source);
+          }
+          return storage.items.settleTombstones(
             type,
             tombstoneSelector(selector),
             settledAt,
-          ),
+          );
+        },
         (tombstones) => ({
           client_ip: c.get("clientIp") ?? null,
           key_id: c.get("apiKey")?.id,
