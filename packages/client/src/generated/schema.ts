@@ -23405,7 +23405,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items, history, edges, type registrations and blobs you can read. If the export fails partway or your credential ends or narrows below it, the connection ends early and an archive won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
