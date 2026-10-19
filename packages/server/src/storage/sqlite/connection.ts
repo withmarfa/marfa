@@ -501,7 +501,6 @@ function transactionConnections(url: string): {
 } {
   const idle: Client[] = [];
   let shut = false;
-  let lastWriter: Promise<void> = Promise.resolve();
   const awaitTurn = async (turn: Promise<void>): Promise<void> => {
     const budgetMs = busyBudgetMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -527,29 +526,36 @@ function transactionConnections(url: string): {
     if (shut) throw new LibsqlError("The client is closed", "CLIENT_CLOSED");
   };
 
-  const admission = async (
-    wait: (turn: Promise<void>) => Promise<void>,
-  ): Promise<() => void> => {
-    const turn = lastWriter;
-    let left = false;
-    let resolve!: () => void;
-    lastWriter = new Promise<void>((done) => {
-      resolve = done;
-    });
-    const leave = () => {
-      if (left) return;
-      left = true;
-      void turn.then(resolve);
+  const admissionQueue = () => {
+    let tail = Promise.resolve();
+    return async (
+      wait: (turn: Promise<void>) => Promise<void>,
+    ): Promise<() => void> => {
+      const turn = tail;
+      let left = false;
+      let resolve!: () => void;
+      tail = new Promise<void>((done) => {
+        resolve = done;
+      });
+      const leave = () => {
+        if (left) return;
+        left = true;
+        void turn.then(resolve);
+      };
+      try {
+        await wait(turn);
+        refuseOnceShut();
+        return leave;
+      } catch (error) {
+        leave();
+        throw error;
+      }
     };
-    try {
-      await wait(turn);
-      refuseOnceShut();
-      return leave;
-    } catch (error) {
-      leave();
-      throw error;
-    }
   };
+  const writerAdmission = admissionQueue();
+  // A reader can use committed WAL state while a writer is open. Only its
+  // SQL/registry capture must exclude COMMIT and registry publication or recovery.
+  const publicationAdmission = admissionQueue();
   const begin = async (
     mode: TransactionMode,
     independent = false,
@@ -558,7 +564,7 @@ function transactionConnections(url: string): {
     if (mode === "write") assertRegistryReady();
     let leave: () => void = () => undefined;
     if (mode === "write") {
-      leave = await admission(awaitTurn);
+      leave = await writerAdmission(awaitTurn);
       try {
         assertRegistryReady();
       } catch (error) {
@@ -679,11 +685,13 @@ function transactionConnections(url: string): {
     let readTail: Promise<unknown> = Promise.resolve();
     const end = async (statement: "COMMIT" | "ROLLBACK") => {
       let attempted = false;
+      let leavePublication: (() => void) | undefined;
       open = false;
       try {
         if (mode === "read") await readTail.catch(() => undefined);
         if (statement === "COMMIT") {
           control.participant?.seal();
+          leavePublication = await publicationAdmission((turn) => turn);
           if (control.participant?.structuralChanged)
             await advanceStructuralGeneration(conn);
           control.participant?.prepare();
@@ -731,6 +739,8 @@ function transactionConnections(url: string): {
         }
         control.assertUsable();
         throw error;
+      } finally {
+        leavePublication?.();
       }
       finish(control.state === "usable");
     };
@@ -905,7 +915,7 @@ function transactionConnections(url: string): {
     readers.add(abandon);
     try {
       assertRegistryReady();
-      leave = await admission((turn) => lifetime.wait(turn));
+      leave = await publicationAdmission((turn) => lifetime.wait(turn));
       lifetime.assertAlive();
       assertRegistryReady();
       pending = begin("read", true).then((value) => {

@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { activeFaults, clearFaults, setFault } from "../control/faults.js";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -47,6 +48,82 @@ const reads = [
   },
   { name: "bulk get", path: () => "/items/bulk-get", method: "POST" },
 ];
+it.each(["commit", "rollback"])(
+  "reads committed items while an awaited writer will %s",
+  async (outcome) => {
+    const original = await itemWrites(ctx.storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: "committed" },
+    });
+    // A cold key first writes last_used_at, outside the read snapshot.
+    expect(
+      (await request(ctx.app, "GET", `/items/${original.id}`, { key: reader }))
+        .status,
+    ).toBe(200);
+    let enter!: (id: string) => void;
+    const entered = new Promise<string>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const rollback = new Error("rollback witness");
+    const writing = ctx.storage.runInTransaction(async () => {
+      await itemWrites(ctx.storage).update(original.id, {
+        writer: null,
+        type: "fixture.private",
+        properties: { body: "uncommitted" },
+      });
+      const added = await itemWrites(ctx.storage).create({
+        writer: null,
+        type: "core.note",
+        properties: { body: "new row" },
+      });
+      enter(added.id);
+      await released;
+      if (outcome === "rollback") throw rollback;
+    });
+    const settled = writing.catch((error: unknown) => error);
+    const addedId = await entered;
+    try {
+      const old = await request(ctx.app, "GET", `/items/${original.id}`, {
+        key: reader,
+      });
+      expect(old.status).toBe(200);
+      expect(await old.json()).toMatchObject({
+        item: { type: "core.note", properties: { body: "committed" } },
+      });
+      expect(
+        (await request(ctx.app, "GET", `/items/${addedId}`, { key: reader }))
+          .status,
+      ).toBe(404);
+    } finally {
+      release();
+      await settled;
+    }
+    expect(await settled).toBe(outcome === "rollback" ? rollback : undefined);
+    expect(
+      (await request(ctx.app, "GET", `/items/${original.id}`, { key: reader }))
+        .status,
+    ).toBe(outcome === "commit" ? 404 : 200);
+    expect(
+      (await request(ctx.app, "GET", `/items/${addedId}`, { key: reader }))
+        .status,
+    ).toBe(outcome === "commit" ? 200 : 404);
+    if (outcome === "commit") {
+      const witness = await request(ctx.app, "GET", `/items/${original.id}`, {
+        key: ctx.workingKey,
+      });
+      expect(witness.status).toBe(200);
+      expect(await witness.json()).toMatchObject({
+        item: { type: "fixture.private", properties: { body: "uncommitted" } },
+      });
+    }
+  },
+);
+
 it.each(reads)(
   "hydrates only authorized state for $name during a concurrent retype",
   async ({ path: pathOf, method, tier }) => {

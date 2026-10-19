@@ -26,8 +26,11 @@ import { STRUCTURAL_GENERATION_KEY } from "./structural-generation.js";
 
 const fault = vi.hoisted(() => ({
   gateSql: "",
+  gateAfter: false,
   entered: undefined as (() => void) | undefined,
   released: undefined as Promise<void> | undefined,
+  commitEntered: undefined as (() => void) | undefined,
+  commitReleased: undefined as Promise<void> | undefined,
   mode: "none",
   fired: false,
   reconstructionFails: false,
@@ -56,7 +59,8 @@ vi.mock("@libsql/client", async (importOriginal) => {
           fault.failSql = "";
           throw new Error("native reset witness");
         }
-        if (fault.gateSql && query.startsWith(fault.gateSql)) {
+        const gated = fault.gateSql && query.startsWith(fault.gateSql);
+        if (gated && !fault.gateAfter) {
           fault.entered?.();
           await fault.released;
         }
@@ -68,11 +72,19 @@ vi.mock("@libsql/client", async (importOriginal) => {
           throw new Error("reconstruction witness");
         const target =
           !read && query === "COMMIT" && fault.mode !== "none" && !fault.fired;
+        if (target) {
+          fault.commitEntered?.();
+          await fault.commitReleased;
+        }
         if (target && fault.mode === "before") {
           fault.fired = true;
           throw new Error("commit witness");
         }
         const result = await execute(statement, ...(rest as []));
+        if (gated && fault.gateAfter) {
+          fault.entered?.();
+          await fault.released;
+        }
         if (target && fault.mode === "after") {
           fault.fired = true;
           throw new Error("commit witness");
@@ -113,8 +125,11 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   fault.gateSql = "";
+  fault.gateAfter = false;
   fault.entered = undefined;
   fault.released = undefined;
+  fault.commitEntered = undefined;
+  fault.commitReleased = undefined;
   fault.mode = "none";
   fault.fired = false;
   fault.reconstructionFails = false;
@@ -354,11 +369,10 @@ it("retained system forEach passes a captured set to callbacks in another async 
   expect(() => retainedSet.has(platform.id)).toThrow("unavailable");
 });
 
-it("capture waits for an earlier writer and later writers cannot overtake its settings pin", async () => {
+it("capture reads committed SQL and registry while a writer is awaited", async () => {
   const entered = gate(),
-    release = gate(),
-    pinEntered = gate(),
-    pinRelease = gate();
+    release = gate();
+  const before = await generation();
   const writer = storage.runInTransaction(async () => {
     await storage.types.update(schema.id, {
       ...schema,
@@ -368,22 +382,58 @@ it("capture waits for an earlier writer and later writers cannot overtake its se
     await release.promise;
   });
   await entered.promise;
+  try {
+    await storage.runInReadSnapshot(async (pin) => {
+      expect(pin.structuralGeneration).toBe(before);
+      expect(getTypeSchema(schema.id)).toEqual(schema);
+      expect(
+        (await storage.types.loadAll()).find(
+          (row) => row.schema.id === schema.id,
+        )?.schema,
+      ).toEqual(schema);
+    });
+  } finally {
+    release.resolve();
+    await writer;
+  }
+  await storage.runInReadSnapshot(async (pin) => {
+    expect(pin.structuralGeneration).toBe((BigInt(before!) + 1n).toString());
+    expect(getTypeSchema(schema.id)).toMatchObject({ parent: destination.id });
+    expect(
+      (await storage.types.loadAll()).find((row) => row.schema.id === schema.id)
+        ?.schema,
+    ).toMatchObject({ parent: destination.id });
+  });
+});
+
+it("commit cannot split the SQL pin from the captured registry", async () => {
+  const pinEntered = gate(),
+    pinRelease = gate();
+  const before = await generation();
   fault.gateSql = "SELECT key, value FROM settings WHERE key IN";
+  fault.gateAfter = true;
   fault.entered = pinEntered.resolve;
   fault.released = pinRelease.promise;
-  const reader = storage.runInReadSnapshot(() => getTypeSchema(schema.id));
-  let later = false;
-  const laterWriter = storage.runInTransaction(() => {
-    later = true;
+  const reader = storage.runInReadSnapshot(async (pin) => {
+    expect(pin.structuralGeneration).toBe(before);
+    expect(getTypeSchema(schema.id)).toEqual(schema);
+    expect(
+      (await storage.types.loadAll()).find((row) => row.schema.id === schema.id)
+        ?.schema,
+    ).toEqual(schema);
   });
-  release.resolve();
-  await writer;
   await pinEntered.promise;
-  expect(later).toBe(false);
-  pinRelease.resolve();
-  expect(await reader).toMatchObject({ parent: destination.id });
-  await laterWriter;
-  expect(later).toBe(true);
+  const writer = storage.types.update(schema.id, {
+    ...schema,
+    parent: destination.id,
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  } finally {
+    pinRelease.resolve();
+    await Promise.all([reader, writer]);
+  }
+  expect(getTypeSchema(schema.id)).toMatchObject({ parent: destination.id });
 });
 
 it("read scopes reject mutations, writer nesting, retained queries, map methods and iterators", async () => {
@@ -549,14 +599,14 @@ it("a failed precommit bump rolls back SQL and releases admission for a healthy 
   expect(await storage.settings.get("healthy")).toBe("yes");
 });
 
-it("cancellation before admission prevents late capture and preserves FIFO for a healthy writer", async () => {
+it("cancellation before publication admission prevents late capture without blocking a healthy commit", async () => {
   const entered = gate(),
     release = gate(),
     cancelled = new AbortController();
-  const writer = storage.runInTransaction(async () => {
-    entered.resolve();
-    await release.promise;
-  });
+  fault.gateSql = "SELECT key, value FROM settings WHERE key IN";
+  fault.entered = entered.resolve;
+  fault.released = release.promise;
+  const first = storage.runInReadSnapshot(() => undefined);
   await entered.promise;
   const reads = fault.reads;
   let callback = false;
@@ -572,7 +622,7 @@ it("cancellation before admission prevents late capture and preserves FIFO for a
     storage.settings.set("healthy", "yes"),
   );
   release.resolve();
-  await writer;
+  await first;
   await healthy;
   expect(callback).toBe(false);
   expect(fault.reads).toBe(reads);
@@ -842,11 +892,13 @@ it.each(["before", "after"])(
   async (mode) => {
     const created = await item(),
       held = await generation();
-    const bodyEntered = gate(),
-      bodyRelease = gate(),
+    const commitEntered = gate(),
+      commitRelease = gate(),
       entered = gate(),
       release = gate();
     fault.mode = mode;
+    fault.commitEntered = commitEntered.resolve;
+    fault.commitReleased = commitRelease.promise;
     fault.gateSql = "SELECT id, schema, origin, family FROM types";
     fault.entered = entered.resolve;
     fault.released = release.promise;
@@ -856,11 +908,9 @@ it.each(["before", "after"])(
         type: destination.id,
         properties: { title: "move" },
       });
-      bodyEntered.resolve();
-      await bodyRelease.promise;
     });
     const rejected = expect(writer).rejects.toThrow("commit witness");
-    await bodyEntered.promise;
+    await commitEntered.promise;
     let captured = false;
     const reading = storage.runInReadSnapshot(async (pin) => {
       captured = true;
@@ -871,7 +921,7 @@ it.each(["before", "after"])(
         mode === "after" ? destination.id : schema.id,
       );
     });
-    bodyRelease.resolve();
+    commitRelease.resolve();
     await entered.promise;
     expect(captured).toBe(false);
     await expect(storage.runInReadSnapshot(() => "late")).rejects.toThrow(
