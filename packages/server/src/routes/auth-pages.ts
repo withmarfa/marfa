@@ -81,18 +81,14 @@ import { forwardHeaders } from "./forward-headers.js";
  * `writeItem` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
- * writes there are the standing grant plus this approval, never less: an
- * lowering a level on the device screen reaches the token this device is issued, which
- * the plugin mints for the code's own narrowed scope, rather than the record.
- * A revoked grant is not a standing one, so it contributes nothing and the
- * record comes back at the approval alone.
+ * writes there are the standing grant plus this approval, never less. A
+ * lower level chosen on the device page narrows only the token this device
+ * is issued, which the plugin mints for the code's narrowed scope, not the
+ * record. A revoked grant is not a standing one, so it contributes nothing
+ * and the record comes back at the approval alone.
  *
- * **`source` is the device literal, not a union of surfaces.** The merge
- * rule inside is specific to the device surface, and the authorize surface
- * has the deliberate opposite contract: a narrowing there is a decision the
- * user made and revokes the tokens carrying what was dropped. Advertising
- * this function as serving both would let an authorize caller pick it up
- * and silently disable that revoke.
+ * **`source` is the device literal.** The authorize surface writes its
+ * projection through `projectGrantOnConsent`, which stamps its own.
  */
 async function createUserAppGrant(
   storage: Storage,
@@ -124,7 +120,7 @@ async function createUserAppGrant(
 
   if (existingItemId) {
     // Re-consent: flip status back to "active" + clear revoked_at; same
-    // rationale as projectGrantOnConsent in auth-consent.ts.
+    // rationale as projectGrantOnConsent in auth/grant-lifecycle.ts.
     const existing = await storage.items.get(existingItemId);
     if (!existing) {
       // Race — findGrantItemId saw a row but a concurrent delete
@@ -161,8 +157,8 @@ async function createUserAppGrant(
       // all — the approval falls through to the fresh insert below and the
       // unreachable row is left where it is. That predicate lives in the
       // store rather than here because the code-flow twin
-      // (`projectGrantOnConsent` in `auth-consent.ts`) resolves through the
-      // same method and had the identical defect. This read stays because
+      // (`projectGrantOnConsent` in `auth/grant-lifecycle.ts`) resolves
+      // through the same method and had the identical defect. This read stays because
       // it guards the axis the lookup does not: a row the store admits can
       // still hold `status: "revoked"`, and merging against a withdrawn
       // scope set is what the clause below refuses.
