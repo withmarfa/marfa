@@ -2694,7 +2694,33 @@ If a certified page answers no `next_cursor` member, then a device MUST expire t
 
 When a device expires its copy for a proof it cannot accept, a device MUST end the operation `copy_expired` with the reason `read_view_invalid`.
 
+**Reason:** a proof is what the server certifies about the copy, and a hydration asked for again can mend a copy that fails it. An answer that is not valid JSON certifies nothing either way, and is not a failed proof (`device/undecodable-answer`).
+
 **Tests:** `device/catch-up.test.ts › hydrates again when another instance answers at the same address`, `device/hydration.test.ts › expires the copy when a listing hands back a cursor it already read`.
+
+### `device/undecodable-answer`
+
+If a read a device makes under its copy's read view answers a body that is not valid JSON, or a stream sends an event whose data is not valid JSON, then a device MUST end the operation `decoding`.
+
+**Reason:** a hydration asked for again would read the same answer and fail the same way, so `copy_expired` would send the caller to a repair that cannot work. An answer that is valid JSON and is not what a certified answer carries is a proof the device cannot accept (`device/proof-invalid-reason`).
+
+**Tests:** `device/hydration.test.ts › ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer`, `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
+
+### `device/undecodable-answer-keeps-copy`
+
+If a hydration, a catch-up or a follow ends `decoding` on an answer that is not valid JSON, then a device MUST NOT expire the copy.
+
+**Reason:** the answer says nothing against the copy's read view, and an expired copy refuses local reads and writes until a hydration the caller asks for completes. A hydration that ends `decoding` has not completed, so its copy still refuses them (`device/read-refused-in-progress`).
+
+**Tests:** `device/hydration.test.ts › ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer`, `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
+
+### `device/undecodable-event-keeps-cursor`
+
+If a catch-up or a held stream ends `decoding` on an event whose data is not valid JSON, then a device MUST keep the cursor it had.
+
+**Reason:** the cursor names the last event the device applied, and an event it could not read was not applied (`device/event-id-number`).
+
+**Tests:** `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
 ### `device/view-changed`
 
