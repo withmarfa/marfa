@@ -425,6 +425,57 @@ describe("renderConsentScreen: asking again", () => {
     ]);
   });
 
+  it.each([
+    [
+      "a type's write asked while its read is held",
+      ["core.note:write"],
+      ["core.note:read"],
+      "Notes",
+    ],
+    [
+      "a type's write asked beside a wildcard read the app holds",
+      ["core.*:read", "core.note:write"],
+      ["core.*:read"],
+      "Notes",
+    ],
+    [
+      "the profile's write asked while its read is held",
+      ["profile:write"],
+      ["profile:read"],
+      "Profile",
+    ],
+  ])(
+    "lets a person keep what the app holds, and decline the write: %s",
+    (_case, asked, held, label) => {
+      const html = render(asked, { priorScopes: held });
+      const select = selects(html).find((c) => c.label === label);
+      expect(select?.options.map((o) => [o.value, o.label])).toEqual([
+        ["", "Read only"],
+        [asked.find((l) => l.endsWith(":write")), "Read and edit"],
+      ]);
+      // The write stays what is asked, and keeping what is held posts nothing.
+      expect(select?.value).toBe(asked.find((l) => l.endsWith(":write")));
+      expect(select?.options.some((o) => o.label === "No access")).toBe(false);
+    },
+  );
+
+  it("starts on the held level when the level asked for starts off", () => {
+    const html = render(["core.note:write"], {
+      priorScopes: ["core.note:read"],
+      bundles: [
+        {
+          id: "manage",
+          label: "Manage your server",
+          description: "",
+          scopes: ["core.note:write"],
+          default_on: false,
+        },
+      ],
+    });
+    expect(selects(html)[0]?.value).toBe("");
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+  });
+
   it("carries what the app holds in full, with no control, so a token still has it", () => {
     const html = render(BASE, {
       priorScopes: ["core.note:read", "core.note:write"],

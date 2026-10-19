@@ -203,6 +203,45 @@ describe("renderDeviceConsentScreen", () => {
     expect(text).toContain("New");
   });
 
+  it.each([
+    [
+      "a type's write asked while its read is held",
+      ["core.note:write"],
+      ["core.note:read"],
+      "Notes",
+    ],
+    [
+      "a type's write asked beside a wildcard read the app holds",
+      ["core.*:read", "core.note:write"],
+      ["core.*:read"],
+      "Notes",
+    ],
+    [
+      "the profile's write asked while its read is held",
+      ["profile:write"],
+      ["profile:read"],
+      "Profile",
+    ],
+  ])(
+    "lets a person keep what the app holds, and decline the write: %s",
+    (_case, asked, held, label) => {
+      const html = renderDeviceConsentScreen({
+        ...PARAMS,
+        scopes: asked.map(scope),
+        priorScopes: held,
+      });
+      const select = readControls(html).find(
+        (c) => c.tag === "select" && c.label === label,
+      );
+      const write = asked.find((l) => l.endsWith(":write"));
+      expect(select?.options.map((o) => [o.value, o.label])).toEqual([
+        ["", "Read only"],
+        [write, "Read and edit"],
+      ]);
+      expect(select?.value).toBe(write);
+    },
+  );
+
   it("carries what the app holds in full without a control", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,

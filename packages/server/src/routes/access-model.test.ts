@@ -129,16 +129,78 @@ describe("buildAccess", () => {
     expect(model.data.map((r) => r.title)).toEqual(["Notes", "Tasks"]);
   });
 
-  it("forces the level up when only a level above what is held is offered", () => {
+  it("offers the held level as a choice that adds nothing when the request names only a level above it", () => {
     const model = buildAccess({
       scopes: [scope("core.note:write")],
       held: ["core.note:read"],
       bundles,
     });
-    expect(model.data[0]?.options.map((o) => o.value)).toEqual([
-      "core.note:write",
+    expect(model.data[0]?.options).toEqual([
+      { value: "", label: "Read only" },
+      { value: "core.note:write", label: "Read and edit" },
     ]);
     expect(model.data[0]?.selected).toBe("core.note:write");
+  });
+
+  it("offers the same held choice when a wider pattern holds the read and the request names a type's write", () => {
+    const model = buildAccess({
+      scopes: [scope("core.*:read"), scope("core.note:write")],
+      held: ["core.*:read"],
+      bundles,
+    });
+    expect(model.data.map((r) => r.title)).toEqual(["Notes"]);
+    expect(model.data[0]?.options).toEqual([
+      { value: "", label: "Read only" },
+      { value: "core.note:write", label: "Read and edit" },
+    ]);
+    expect(model.carried).toContain("core.*:read");
+  });
+
+  it("offers the held level of a profile row the same way", () => {
+    const model = buildAccess({
+      scopes: [scope("profile:write")],
+      held: ["profile:read"],
+      bundles,
+    });
+    const row = model.profile[0];
+    expect(row?.kind).toBe("level");
+    expect(row?.kind === "level" && row.options).toEqual([
+      { value: "", label: "Read only" },
+      { value: "profile:write", label: "Read and edit" },
+    ]);
+  });
+
+  it("selects the held level when the level asked for starts off", () => {
+    const model = buildAccess({
+      scopes: [scope("core.note:write")],
+      held: ["core.note:read"],
+      bundles: [
+        {
+          id: "manage",
+          label: "Manage",
+          description: "",
+          scopes: ["core.note:write"],
+          default_on: false,
+        },
+      ],
+    });
+    expect(model.data[0]?.selected).toBe("");
+    expect(model.data[0]?.options.map((o) => o.label)).toEqual([
+      "Read only",
+      "Read and edit",
+    ]);
+  });
+
+  it("offers the read the request names, not an empty choice, when the request names the held level", () => {
+    const model = buildAccess({
+      scopes: [scope("core.note:read"), scope("core.note:write")],
+      held: ["core.note:read"],
+      bundles,
+    });
+    expect(model.data[0]?.options).toEqual([
+      { value: "core.note:read", label: "Read only" },
+      { value: "core.note:write", label: "Read and edit" },
+    ]);
   });
 
   it("lists everything the app holds, including what this request does not ask for", () => {

@@ -221,16 +221,21 @@ export function buildAccess(input: AccessInput): AccessModel {
         if (literal !== undefined) carried.push(literal);
       return null;
     }
-    const choices: { level: Level; value: string }[] = [];
-    choices.push({ level: "none", value: "" });
+    // The floor is none or read here: an app that holds write holds all of
+    // any ask. The lowest choice adds nothing to the token. It is no access,
+    // or, where the app holds a read the request does not name a literal for,
+    // that held read, so a person can decline what is asked and keep what is
+    // held.
+    const options: { level: Level; value: string }[] = [];
+    if (floor === "none" || ask.read === undefined)
+      options.push({ level: floor, value: "" });
     if (ask.read !== undefined)
-      choices.push({ level: "read", value: ask.read });
+      options.push({ level: "read", value: ask.read });
     if (ask.write !== undefined)
-      choices.push({ level: "write", value: ask.write });
-    const options = choices.filter((c) => RANK[c.level] >= RANK[floor]);
+      options.push({ level: "write", value: ask.write });
     const wanted = [...options]
       .reverse()
-      .find((c) => c.level === "none" || startsOn(c.value));
+      .find((c) => c.value === "" || startsOn(c.value));
     const pick = wanted ?? options[0];
     const { title, description } = describe(ask.scope, input);
     const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}.`;

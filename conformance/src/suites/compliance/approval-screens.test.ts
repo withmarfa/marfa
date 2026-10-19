@@ -421,6 +421,78 @@ describe("what the approval pages show of what an app holds", () => {
   });
 });
 
+describe("what the approval pages offer an app that holds a read and asks for the write", () => {
+  const booted = bootFor("approval-keep");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  interface Case {
+    held: string;
+    asked: string;
+    label: string;
+    write: string;
+  }
+
+  /** An app holding `held` asks for `asked`: each page offers the held read beside the write. */
+  async function offersTheHeldRead(c: Case): Promise<void> {
+    const app = await register(`${c.held} ${c.asked}`);
+    const first = await consentScreen(app, c.held);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      first.consent,
+      true,
+      defaultSubmission(first.html, "scopes"),
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+    const browser = await consentScreen(app, c.asked);
+    const device = await deviceScreen(app, c.asked);
+    for (const [page, html] of [
+      ["the consent screen", browser.html],
+      ["the device approval page", device.html],
+    ] as const) {
+      const select = selectNamed(html, c.label);
+      expect(
+        select?.options.map((o) => [o.value, o.label]),
+        page,
+      ).toEqual([
+        ["", "Read only"],
+        [c.write, "Read and edit"],
+      ]);
+      // The write is what was asked, so it is what the page starts on.
+      expect(select?.value, page).toBe(c.write);
+    }
+  }
+
+  it("offers the held read beside the write, on both pages, for an item type's write asked while its read is held", async () => {
+    await offersTheHeldRead({
+      held: "core.note:read",
+      asked: "core.note:write",
+      label: "Notes",
+      write: "core.note:write",
+    });
+  });
+
+  it("offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds", async () => {
+    await offersTheHeldRead({
+      held: "core.*:read",
+      asked: "core.*:read core.note:write",
+      label: "Notes",
+      write: "core.note:write",
+    });
+  });
+
+  it("offers the held read beside the write, on both pages, for the profile's write asked while its read is held", async () => {
+    await offersTheHeldRead({
+      held: "profile:read",
+      asked: "profile:write",
+      label: "Profile",
+      write: "profile:write",
+    });
+  });
+});
+
 describe("what an approval posted to the approval pages grants", () => {
   const booted = bootFor("approval-posts");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
