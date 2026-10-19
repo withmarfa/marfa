@@ -109,7 +109,7 @@ on this server.
 
 Every address a part renders goes through `localHref` in `href.ts`, and a bad
 one throws at render, as a bad nonce does. An address is `/`, or `/` followed
-by a character that is not `/` or `\\`, with no control character anywhere.
+by a character that is not `/` or `\`, with no control character anywhere.
 The check exists because a URL parser drops tab, carriage return and line feed,
 so `/\t/evil.example` would otherwise read as a link to another host. `Button`,
 `Tabs` and `Pager` also take a same-page form: an empty string, or a query or
