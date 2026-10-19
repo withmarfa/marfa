@@ -645,7 +645,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.BLOB_STORE_UNAVAILABLE]: {
     status: 503,
     summary:
-      "A blob store failed, or did not answer in time, while Marfa checked a blob's copy. Nothing was written. Retry later.",
+      "A blob store failed, or did not answer in time, while Marfa checked or read a blob's copy. Nothing was written. Retry later.",
   },
   [ErrorCode.REQUEST_TIMEOUT]: {
     status: 408,
