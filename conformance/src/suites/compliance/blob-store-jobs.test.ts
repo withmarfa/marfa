@@ -1,5 +1,7 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import type { BulkActionInput } from "../../client/types.js";
+import { HOLD, queue } from "../../utils/bulk-jobs.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -73,6 +75,17 @@ function matchesNothing(): { tags: string[] } {
   return { tags: [`no-item-carries-this-${crypto.randomUUID()}`] };
 }
 
+/** The run after a report purges, so this answers what became of the
+ *  bytes once the job could no longer hold them. */
+async function reportedAfterEnd(hash: string, ended: string) {
+  expect(await reported(), ended).not.toContain(hash);
+  await runJob(operator, "blob-orphans");
+  expect(await reported(), ended).toContain(hash);
+  expect((await operator.downloadBlob(hash)).status, ended).toBe(200);
+  await runJob(operator, "blob-orphans");
+  expect((await operator.downloadBlob(hash)).status, ended).toBe(404);
+}
+
 describe("a property-update job and the orphan report", () => {
   it("lifts the report when an update_properties job naming the digest is enqueued", async () => {
     const hash = await upload("named by a job's patch");
@@ -100,17 +113,6 @@ describe("a property-update job and the orphan report", () => {
 });
 
 describe("a property-update job that has ended", () => {
-  /** The run after a report purges, so this answers what became of the
-   *  bytes once the job could no longer hold them. */
-  async function reportedAfterEnd(hash: string, ended: string) {
-    expect(await reported(), ended).not.toContain(hash);
-    await runJob(operator, "blob-orphans");
-    expect(await reported(), ended).toContain(hash);
-    expect((await operator.downloadBlob(hash)).status, ended).toBe(200);
-    await runJob(operator, "blob-orphans");
-    expect((await operator.downloadBlob(hash)).status, ended).toBe(404);
-  }
-
   it("reports a blob afresh once the job whose patch named it ends", async () => {
     const hash = await upload("named by a job that completes");
     await runJob(operator, "blob-orphans");
@@ -130,46 +132,25 @@ describe("a property-update job that has ended", () => {
     await reportedAfterEnd(hash, "completed");
   });
 
-  describe("queued behind a job that holds the worker", () => {
-    /**
-     * The bulk worker runs one job at a time, in chunks of a hundred items,
-     * so a job over this many items holds it for seconds, where a request
-     * takes milliseconds.
-     */
-    const HELD_ITEMS = 5000;
-    let tag: string;
+  describe("queued behind a job the worker has taken and not begun", () => {
+    afterEach(async () => {
+      await server!.clearFault();
+    });
 
-    beforeAll(async () => {
-      tag = `holds-the-worker-${crypto.randomUUID()}`;
-      for (let from = 0; from < HELD_ITEMS; from += 2500) {
-        const created = await working.bulkItems({
-          atomic: false,
-          items: Array.from({ length: 2500 }, (_, i) => ({
-            type: "core.note",
-            source: "blob-store-jobs",
-            properties: { body: `held ${String(from + i)}` },
-            tags: [tag],
-          })),
-        });
-        expect(created.status, JSON.stringify(created.error)).toBe(200);
-      }
-    }, 120_000);
-
-    /** Enqueues the job over every item the tag matches and waits until
-     *  the worker has taken it and not yet finished it. */
+    /** Enqueues a job over no item and waits until the worker has taken it.
+     *  The target holds the worker there until the fault is cleared, so a job
+     *  queued meanwhile stays queued. */
     async function holdTheWorker(): Promise<string> {
-      const queued = await working.bulkAction({
+      await server!.setFault(HOLD.claimed);
+      const id = await queue(working, {
         action: "update_properties",
-        patch: { note: "held by the long job" },
-        filter: { tags: [tag] },
+        patch: { note: "held by the first job" },
+        filter: matchesNothing(),
       });
-      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
-      const id = (queued.data as { id: string }).id;
-      await waitFor("the worker to take the long job", async () => {
-        const job = (await working.bulkActionStatus(id)).data;
-        expect(job.status, job.error ?? "").not.toBe("completed");
-        return job.status === "in_progress" ? job : undefined;
-      });
+      await server!.waitForHold(HOLD.claimed);
+      expect((await working.bulkActionStatus(id)).data.status).toBe(
+        "in_progress",
+      );
       return id;
     }
 
@@ -182,9 +163,9 @@ describe("a property-update job that has ended", () => {
     }
 
     async function release(id: string): Promise<void> {
-      expect((await working.bulkActionCancel(id)).status).toBe(200);
+      await server!.clearFault();
       expect((await operator.pollBulkActionToTerminal(id)).status).toBe(
-        "canceled",
+        "completed",
       );
     }
 
@@ -193,7 +174,7 @@ describe("a property-update job that has ended", () => {
       await runJob(operator, "blob-orphans");
       expect(await reported()).toContain(hash);
 
-      const long = await holdTheWorker();
+      const first = await holdTheWorker();
       const queued = await working.bulkAction({
         action: "update_properties",
         patch: { cover: hash },
@@ -202,16 +183,16 @@ describe("a property-update job that has ended", () => {
       expect(queued.status, JSON.stringify(queued.error)).toBe(202);
       const id = (queued.data as { id: string }).id;
       expect((await statusOf(id)).status).toBe("queued");
-      expect((await statusOf(long)).status).toBe("in_progress");
+      expect((await statusOf(first)).status).toBe("in_progress");
 
       const canceled = await working.bulkActionCancel(id);
       expect(canceled.status, JSON.stringify(canceled.error)).toBe(200);
       expect((await statusOf(id)).status).toBe("canceled");
-      // Still held up behind the long job: the cancel ended a job that had
+      // Still held up behind the first job: the cancel ended a job that had
       // not started.
-      expect((await statusOf(long)).status).toBe("in_progress");
+      expect((await statusOf(first)).status).toBe("in_progress");
 
-      await release(long);
+      await release(first);
       await reportedAfterEnd(hash, "canceled");
     }, 60_000);
 
@@ -241,7 +222,7 @@ describe("a property-update job that has ended", () => {
       });
       expect(note.status, JSON.stringify(note.error)).toBe(201);
 
-      const long = await holdTheWorker();
+      const first = await holdTheWorker();
       const queued = await queuer.bulkAction({
         action: "update_properties",
         patch: { cover: hash },
@@ -250,7 +231,7 @@ describe("a property-update job that has ended", () => {
       expect(queued.status, JSON.stringify(queued.error)).toBe(202);
       const id = (queued.data as { id: string }).id;
       expect((await statusOf(id)).status).toBe("queued");
-      expect((await statusOf(long)).status).toBe("in_progress");
+      expect((await statusOf(first)).status).toBe("in_progress");
 
       // The witness: a job whose key is gone but which has not yet run
       // still holds the blob, so it is the job's end that lifts the hold.
@@ -261,7 +242,7 @@ describe("a property-update job that has ended", () => {
 
       // Freeing the worker lets it reach the job, which it ends `failed`
       // without writing: the key that queued it no longer authenticates.
-      await release(long);
+      await release(first);
       const job = await operator.pollBulkActionToTerminal(id);
       expect(job.status).toBe("failed");
       expect(job.error).toMatch(/no longer authenticates/);
@@ -273,6 +254,205 @@ describe("a property-update job that has ended", () => {
     }, 60_000);
   });
 });
+
+/** Where a job that has not ended is. */
+type Stage = "queued" | "in progress";
+const STAGES: readonly Stage[] = ["queued", "in progress"];
+
+type PropertyUpdate = Extract<BulkActionInput, { action: "update_properties" }>;
+
+describe("a property-update job that has not ended", () => {
+  const queuedHere: string[] = [];
+
+  afterEach(async () => {
+    await server!.clearFault();
+    for (const id of queuedHere.splice(0)) {
+      await operator.pollBulkActionToTerminal(id);
+    }
+  });
+
+  /**
+   * Leaves a job holding `input` where `stage` says. The target holds the
+   * worker at the start of the first job it takes: that job is the one
+   * asked about when the stage is `in progress`, and one that matches
+   * nothing, with the asked-about job behind it, when it is `queued`.
+   */
+  async function holdJob(stage: Stage, input: PropertyUpdate): Promise<string> {
+    await server!.setFault(HOLD.claimed);
+    if (stage === "queued") {
+      queuedHere.push(
+        await queue(working, {
+          action: "update_properties",
+          patch: { note: "ahead of the job asked about" },
+          filter: matchesNothing(),
+        }),
+      );
+      await server!.waitForHold(HOLD.claimed);
+    }
+    const id = await queue(working, input);
+    queuedHere.push(id);
+    if (stage === "in progress") await server!.waitForHold(HOLD.claimed);
+    const read = (await working.bulkActionStatus(id)).data.status;
+    expect(read).toBe(stage === "queued" ? "queued" : "in_progress");
+    return id;
+  }
+
+  /** Lets the held jobs end. */
+  async function end(): Promise<void> {
+    await server!.clearFault();
+    for (const id of queuedHere) {
+      expect((await operator.pollBulkActionToTerminal(id)).status).toBe(
+        "completed",
+      );
+    }
+  }
+
+  /**
+   * One run reports a blob nothing references and the next purges it, so two
+   * runs are what a blob must outlast to be kept.
+   */
+  async function sweepsTwice(): Promise<void> {
+    await runJob(operator, "blob-orphans");
+    await runJob(operator, "blob-orphans");
+  }
+
+  const SHAPES: [string, (hash: string) => Record<string, unknown>][] = [
+    ["a string at the top of the patch", (hash) => ({ cover: hash })],
+    [
+      "a string in objects and arrays",
+      (hash) => ({ outer: { inner: [{ cover: hash }] } }),
+    ],
+    ["a string in an array", (hash) => ({ covers: [hash] })],
+    [
+      "a link inside a longer text",
+      (hash) => ({ body: `a note with ![a cover](${hash}) in it` }),
+    ],
+  ];
+
+  const FILTERS: [
+    string,
+    (hash: string) => Record<string, string | string[]>,
+  ][] = [
+    ["its filter's tags", (hash: string) => ({ tags: [hash] })],
+    ["its filter's source", (hash: string) => ({ source: hash })],
+  ];
+
+  describe.each(STAGES)("%s", (stage) => {
+    it.each(SHAPES)(
+      "keeps a blob the patch names as %s",
+      async (_shape, patch) => {
+        const hash = await upload(`named by a patch, ${stage}`);
+        await runJob(operator, "blob-orphans");
+        expect(await reported()).toContain(hash);
+
+        await holdJob(stage, {
+          action: "update_properties",
+          patch: patch(hash),
+          filter: matchesNothing(),
+        });
+        expect(await reported()).not.toContain(hash);
+        await sweepsTwice();
+        expect(await reported()).not.toContain(hash);
+        expect((await operator.downloadBlob(hash)).status).toBe(200);
+
+        // The witness: once the job ends its patch holds nothing, and the
+        // same two runs report the blob and purge it.
+        await end();
+        await reportedAfterEnd(hash, stage);
+      },
+      60_000,
+    );
+
+    it.each(FILTERS)(
+      "does not count a digest in %s as a reference",
+      async (_input, filter) => {
+        const hash = await upload(`named by a filter, ${stage}`);
+        await runJob(operator, "blob-orphans");
+        expect(await reported()).toContain(hash);
+
+        await holdJob(stage, {
+          action: "update_properties",
+          patch: { note: "no digest here" },
+          filter: filter(hash),
+        });
+        // The report stands through the job, and the next run purges.
+        expect(await reported()).toContain(hash);
+        await runJob(operator, "blob-orphans");
+        expect((await operator.downloadBlob(hash)).status).toBe(404);
+        await end();
+      },
+      60_000,
+    );
+
+    it("serves the blob its patch names to no key that did not already hold the bytes", async () => {
+      const hash = await upload(`retained and not lent, ${stage}`);
+      const reader = await working.createKey({
+        label: `blob-store-jobs-reader-${stage.replace(" ", "-")}`,
+        source: `blob-store-jobs-reader-${stage.replace(" ", "-")}`,
+        type_permissions: { "core.file": "read" },
+      });
+      expect(reader.status, JSON.stringify(reader.error)).toBe(201);
+      const other = new MarfaClient({
+        baseUrl: server!.apiUrl,
+        apiKey: reader.data.key,
+      });
+
+      await holdJob(stage, {
+        action: "update_properties",
+        patch: { cover: hash },
+        filter: matchesNothing(),
+      });
+      // The uploader included: the uploader holds the bytes already, and no
+      // row names them.
+      expect(await readingDoors(working, hash)).toEqual(UNKNOWN);
+      expect(await readingDoors(other, hash)).toEqual(UNKNOWN);
+
+      // The witness: a row naming the blob lends it through the same doors
+      // to the same two keys.
+      const file = await working.createItem({
+        type: "core.file",
+        source: "blob-store-jobs",
+        properties: { blob_ref: hash, mime_type: "text/plain", title: "lent" },
+      });
+      expect(file.status, JSON.stringify(file.error)).toBe(201);
+      expect(await readingDoors(working, hash)).toEqual(SERVED);
+      expect(await readingDoors(other, hash)).toEqual(SERVED);
+      await end();
+    }, 60_000);
+  });
+});
+
+/** Each reading door's status and error code for one credential. */
+async function readingDoors(
+  reader: MarfaClient,
+  hash: string,
+): Promise<Record<string, [number, string | undefined]>> {
+  const bytes = await reader.downloadBlob(hash);
+  const head = await reader.headBlob(hash);
+  const link = await reader.getBlobUrl(hash);
+  const locations = await reader.listBlobLocations(hash);
+  return {
+    bytes: [bytes.status, bytes.error?.error.code],
+    // A HEAD answer has no body to carry a code.
+    head: [head.status, undefined],
+    link: [link.status, link.error?.error.code],
+    locations: [locations.status, locations.error?.error.code],
+  };
+}
+
+const UNKNOWN = {
+  bytes: [404, "blob_not_found"],
+  head: [404, undefined],
+  link: [404, "blob_not_found"],
+  locations: [404, "blob_not_found"],
+};
+
+const SERVED = {
+  bytes: [200, undefined],
+  head: [200, undefined],
+  link: [200, undefined],
+  locations: [200, undefined],
+};
 
 describe("a property-update job whose patch names a digest no blob holds", () => {
   it("completes a job whose patch names a digest no blob holds", async () => {

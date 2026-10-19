@@ -628,7 +628,7 @@ While a queued or in-progress `update_properties` job's patch holds a blob's dig
 
 **Reason:** enqueueing such a job takes the blob off the report at once, and a run that was already walking the corpus cannot start or keep a report for it.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
 
 ### `stores/orphan-job-ended`
 
@@ -642,7 +642,7 @@ While a queued or in-progress `update_properties` job's patch names a blob's dig
 
 **Reason:** retention grants no read.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/blob-store-jobs.test.ts › serves the blob its patch names to no key that did not already hold the bytes`.
 
 ### `stores/job-patch-unknown-digest`
 
@@ -670,13 +670,13 @@ When a string holds a run of lowercase hexadecimal characters that is 63 charact
 
 When a queued or in-progress `update_properties` job's patch holds a string with a digest at any depth, the server MUST count it as a reference.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
 
 ### `stores/reference-job-inputs`
 
 When a digest sits in the filter, the tags or another input of a queued or in-progress `update_properties` job and not in its patch, the server MUST NOT count it as a reference.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/blob-store-jobs.test.ts › does not count a digest in %s as a reference`.
 
 ## Keeping a copy's bytes removed
 

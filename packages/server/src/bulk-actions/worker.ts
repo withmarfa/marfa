@@ -30,6 +30,7 @@ import {
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 import { runInBackground } from "../background-context.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -138,6 +139,7 @@ export class BulkActionWorker {
     const job = await this.jobs.claimNext(this.workerId, now);
     if (!job) return false;
     try {
+      if (faultsArmed()) await holdAt("bulk-job:claimed");
       await this.executeJob(job);
     } catch (err) {
       // executeJob handles its own errors; reaching here means something
@@ -346,6 +348,7 @@ export class BulkActionWorker {
                     credential,
                   })
                 : { succeeded: [], errors: [] };
+            if (faultsArmed()) await holdAt("bulk-job:in-chunk");
             return this.jobs.checkpointChunk(
               lease,
               offset,
@@ -450,7 +453,10 @@ export class BulkActionWorker {
       }
       if (!committed) return;
       offset = committed.next_offset;
-      if (offset < matchedIds.length) await yieldBulkWork();
+      if (offset < matchedIds.length) {
+        if (faultsArmed()) await holdAt("bulk-job:between-chunks");
+        await yieldBulkWork();
+      }
     }
   }
 

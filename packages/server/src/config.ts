@@ -342,7 +342,7 @@ export interface AppConfig {
   trustedProxyHeader?: string | null;
   /** Issuer URL the better-auth instance is reached at — protocol + host
    *  (and port). Drives cookie domains and the OAuth issuer field on the
-   *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
+   *  discovery doc. Defaults to a loopback origin with the assigned listening port if unset. */
   authBaseUrl: string;
   /** The implicit development origin follows the port assigned by the listener. */
   authBaseUrlFromPort?: boolean;
@@ -1186,7 +1186,7 @@ const settingsShape = {
     SECRET_MIN_LENGTH,
   ),
   MARFA_AUTH_BASE_URL: optionalUrl(
-    "The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL uses `http://localhost:<port>` with the actual listening port.",
+    "The public URL for OAuth, cookies, and links. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.",
     "None. Required in production.",
   ),
   CORS_ORIGINS: setting(

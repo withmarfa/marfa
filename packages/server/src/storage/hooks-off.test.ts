@@ -12,7 +12,6 @@ import {
 } from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
-import { WebhookScheduler } from "../webhooks/delivery.js";
 import {
   createTestContext,
   collectItemEvents,
@@ -23,6 +22,7 @@ import {
 } from "../test-utils.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
 import { expandSeries } from "../events/expand-recurrence.js";
+import { WebhookPoller, WebhookScheduler } from "../webhooks/delivery.js";
 
 const spies = vi.hoisted(() => ({
   audit: vi.fn(),
@@ -67,7 +67,7 @@ vi.mock("../control/faults.js", async (importOriginal) => {
       return actual.scriptedAnswer(...args);
     },
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
-      spies.hold();
+      spies.hold(...args);
       return actual.holdAt(...args);
     },
   };
@@ -547,3 +547,99 @@ it("does not enter the scripted resolver with hooks off, and does with a fault a
     );
   }
 });
+
+const HOLDS = [
+  "bulk-job:selected",
+  "bulk-job:claimed",
+  "bulk-job:in-chunk",
+  "bulk-job:between-chunks",
+];
+
+it("adds no webhook response hold until a fault is armed", async () => {
+  const subscription = await request(ctx.app, "POST", "/webhooks", {
+    key: ctx.workingKey,
+    body: { url: "https://example.com/hook", events: ["item.created"] },
+  });
+  expect(subscription.status).toBe(201);
+  const scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
+  const post = vi.fn(() =>
+    Promise.resolve({
+      kind: "answered" as const,
+      status: 200,
+      retryAfter: null,
+    }),
+  );
+  const poller = new WebhookPoller({ storage: ctx.storage, http: { post } });
+  const deliver = async () => {
+    expect(
+      (
+        await request(ctx.app, "POST", "/items", {
+          key: ctx.workingKey,
+          body: {
+            type: "core.note",
+            properties: { body: "webhook hold witness" },
+          },
+        })
+      ).status,
+    ).toBe(201);
+    await scheduler.runOnce();
+    await poller.runOnce();
+  };
+  await deliver();
+  expect(post).toHaveBeenCalledTimes(1);
+  expect(spies.hold).not.toHaveBeenCalled();
+  setFault("hold:webhook:response", null);
+  const held = deliver();
+  try {
+    await vi.waitFor(() => {
+      expect(spies.hold).toHaveBeenCalledWith("webhook:response");
+    });
+    expect(post).toHaveBeenCalledTimes(2);
+  } finally {
+    clearFaults();
+    await held;
+  }
+});
+
+/** A job over more rows than one chunk of 100 takes, so it has a place between chunks. */
+async function jobOverTwoChunks(tag: string) {
+  const made = await request(ctx.app, "POST", "/items/bulk", {
+    key: ctx.workingKey,
+    body: {
+      atomic: false,
+      items: Array.from({ length: 150 }, (_, index) => ({
+        type: "core.note",
+        properties: { body: `${tag} ${String(index)}` },
+        tags: [tag],
+      })),
+    },
+  });
+  expect(made.status).toBe(200);
+  return runBulkActionAsync(
+    ctx,
+    { action: "update_tags", add: ["held"], filter: { tags: [tag] } },
+    ctx.workingKey,
+  );
+}
+
+it("waits at no job hold point when no fault is set", async () => {
+  const ran = await jobOverTwoChunks("holds-off");
+  expect(ran.job?.status).toBe("completed");
+  expect(spies.hold).not.toHaveBeenCalled();
+});
+
+it.each(HOLDS)(
+  "reaches %s once a fault holds it, which is the witness for the absence above",
+  async (point) => {
+    setFault(`hold:${point}`, null);
+    const ran = jobOverTwoChunks(`holds-on-${point}`);
+    await vi.waitFor(() => {
+      expect(spies.hold).toHaveBeenCalledWith(point);
+    });
+    clearFaults();
+    expect((await ran).job?.status).toBe("completed");
+  },
+);

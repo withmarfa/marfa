@@ -626,7 +626,7 @@ When the server is stopped, the server MUST let the bulk action and the housekee
 
 **Reason:** a run cut off mid-write leaves its record unwritten.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/stop-waits-for-work.test.ts › lets the bulk action and the housekeeping run finish before the storage closes, and exits 0`, `compliance/stop-webhook.test.ts › records a webhook delivery released by shutdown before closing storage`.
 
 ### `instance/stop-exit-0`
 
@@ -658,7 +658,7 @@ If a bulk action or a housekeeping run outlives the stop's wait for it while the
 
 **Reason:** the run is resumed at the next start, so it does not make the stop a failure.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-long.test.ts › exits 0 when a run outlives the stop's wait, and the job is finished once, on the return`, `compliance/stop-webhook.test.ts › exits 0 when an unanswered webhook keeps housekeeping past the stop wait`.
 
 ## Long jobs
 
@@ -1248,7 +1248,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `TRUSTED_PROXY_HEADER`                      | None                          | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.                                                                                                                                 |
 | `API_KEY_SALT`                              | None. Required in production. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.                                                                                               |
 | `MARFA_AUTH_SECRET`                         | None. Required in production. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.                                    |
-| `MARFA_AUTH_BASE_URL`                       | None. Required in production. | Absolute `http` or `https` URL                                     | The public URL clients reach the server at. It is the OAuth issuer, the cookie domain and the origin of links the server mints. Outside production, an unset URL uses `http://localhost:<port>` with the actual listening port.                                   |
+| `MARFA_AUTH_BASE_URL`                       | None. Required in production. | Absolute `http` or `https` URL                                     | The public URL for OAuth, cookies, and links. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.                                                              |
 | `CORS_ORIGINS`                              | None                          | Comma-separated origins, each `scheme://host[:port]` with no path  | The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.                                                                   |
 | `MARFA_PERMISSION_BUNDLES`                  | None                          | JSON array of permission bundles                                   | The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.                                                                                                     |
 | `ENABLE_HSTS`                               | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the server sends the `Strict-Transport-Security` header.                                                                                                                                                                                                  |

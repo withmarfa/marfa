@@ -235,6 +235,8 @@ export async function deliverWebhookAttempt(
       timeoutMs: POLLER_TIMEOUT_MS,
     });
 
+    if (faultsArmed()) await holdAt("webhook:response");
+
     if (outcome.kind === "failed") {
       await scheduleDeliveryRetry(
         store,

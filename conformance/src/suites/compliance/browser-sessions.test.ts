@@ -2,7 +2,6 @@ import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
 import { request } from "node:http";
-import { createServer } from "node:net";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   bootFreshServer,
@@ -47,10 +46,8 @@ beforeAll(async () => {
   // A server restarted on the same address with the same secret is the same
   // instance: the provider's signing keys are sealed with the secret, and a
   // token's issuer is the address.
-  const port = await freePort();
   server = await bootFreshServer("browser-sessions", {
     MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
-    PORT: String(port),
   });
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -104,18 +101,6 @@ function navigate(
     );
     req.once("error", reject);
     req.end(body);
-  });
-}
-
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      probe.close(() => resolve(port));
-    });
   });
 }
 
@@ -432,7 +417,7 @@ describe("a browser session ending", () => {
 
   it("leaves every app connected across a restart of the server", async () => {
     await connectApps(live);
-    await server!.restart();
+    await server!.restart({ env: { PORT: new URL(server!.apiUrl).port } });
     await expectAppsConnected(live);
 
     expect((await post("/auth/sign-out", live)).status).toBe(200);

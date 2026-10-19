@@ -103,6 +103,7 @@ import {
 } from "./_unknown-body-keys.js";
 import { requestBlobProof } from "./_blob-reach.js";
 import * as clock from "../clock.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -1095,6 +1096,7 @@ export function bulkRoutes(storage: Storage) {
       }
     } while (cursor);
 
+    if (faultsArmed()) await holdAt("bulk-job:selected");
     await refreshAuthority();
     await authorizeSelection();
 

@@ -1468,7 +1468,7 @@ When a bulk action writes an item, the server MUST hold the write to the rules t
 
 If the credential's source filter changes, or hides a matched item, while the server selects a bulk action's items, then the server MUST answer `403 forbidden` without a count or ids.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › is answered 403 forbidden, without a count or ids, when the key's source filter %s while it selects`.
 
 ### `items/job-read`
 
@@ -1510,31 +1510,31 @@ When `POST /items/bulk-actions/jobs/{id}/cancel` names a job that has ended, the
 
 When `POST /items/bulk-actions/jobs/{id}/cancel` names a job that has not ended, the server MUST end it `canceled`.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › ends a job that is queued canceled, and the worker passes it by`, `› ends a job the worker has taken and not yet written canceled, and it stays so when the worker goes on`, `› ends a running job canceled, keeps what it wrote, and stays canceled whatever its next chunk would do`.
 
 ### `items/job-cancel-keeps`
 
 When the server cancels a job, the server MUST keep every item the job already wrote.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › ends a running job canceled, keeps what it wrote, and stays canceled whatever its next chunk would do`.
 
 ### `items/job-canceled-final`
 
 While a job is `canceled`, the server MUST answer it `canceled`, whatever the work it had in hand when canceled does.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › ends a job the worker has taken and not yet written canceled, and it stays so when the worker goes on`, `› ends a running job canceled, keeps what it wrote, and stays canceled whatever its next chunk would do`.
 
 ### `items/job-credential-lost`
 
 If the credential that queued a job stops authenticating, or a purge's credential loses `items.purge`, while the job runs, then the server MUST write nothing more and end the job `failed` with an `error` saying so.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › fails the job, writes nothing more and says the credential no longer authenticates, once the key is revoked`, `› fails a purge, writes nothing more and says the key no longer holds items.purge, once the permission is taken`.
 
 ### `items/job-failed-result`
 
 When the server ends a job `failed`, the server MUST answer the `result` the job had gathered, its `ids`, `errors` and counts.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › ends a failed job with the result it had gathered: the ids it changed, the errors it reported and its counts`.
 
 ### `items/job-token-expiry`
 
@@ -1542,19 +1542,19 @@ While the grant behind a signed-in app stands, the server MUST go on running the
 
 **Reason:** the app refreshes to a new token while the grant stands.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-token.test.ts › goes on running after the access token that queued it expires, while the grant stands`.
 
 ### `items/job-source-hidden`
 
 If the credential's source filter comes to hide a matched item while its job runs, then the server MUST report that item in the job's `errors` as `item_not_found`, naming no type.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › reports a hidden item as item_not_found, naming no type, and goes on (%s lever)`.
 
 ### `items/job-type-lost`
 
 If the credential that queued a job loses write on a matched item's type while the job runs, then the server MUST report that item in the job's `errors`, `type_not_permitted` where it may still read the type and `item_not_found` where it may not.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-holds.test.ts › reports an item of a type it may still read, and no longer write, as type_not_permitted, and goes on`, `› reports an item of a type it may no longer read as item_not_found, naming no type, and goes on`.
 
 ### `items/job-row-continues`
 
@@ -1578,7 +1578,7 @@ When a fault ends a job's write partway through a chunk of items, the server MUS
 
 If the server stops while a job runs, then the server MUST finish the job on its return without writing or announcing an item twice.
 
-**Tests:** waiting on #2069.
+**Tests:** `compliance/bulk-job-restart.test.ts › is finished on the server's return without writing or announcing an item twice, killed %s`.
 
 ## Tags, metadata and extensions
 

@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
- * The port is `--port`, else `PORT`, else one the kernel says is free. The
- * default is what matters: two boots on one machine, from two worktrees or
- * two agents, never collide. Each `--env K=V` is a setting for the boot
+ * The port is `--port`, else `PORT`, else zero for the server to bind an
+ * assigned port on IPv4 loopback. Readiness comes from this boot's log before
+ * any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
@@ -63,8 +63,8 @@ import {
   lstatSync,
   closeSync,
   writeFileSync,
+  statSync,
 } from "node:fs";
-import { createServer } from "node:net";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -166,8 +166,8 @@ function parseArgs(argv: string[]): Args {
       args.state = resolve(rest[++i] ?? "");
     } else if (arg === "--port") {
       args.port = Number(rest[++i]);
-      if (!Number.isInteger(args.port) || args.port <= 0) {
-        throw new Error("--port needs a positive integer");
+      if (!Number.isInteger(args.port) || args.port < 0 || args.port > 65_535) {
+        throw new Error("--port needs an integer from 0 to 65535");
       }
     } else if (arg === "--node-env") {
       args.nodeEnv = rest[++i] ?? "";
@@ -214,25 +214,12 @@ function paths(state: string) {
 function namedPort(raw: string | undefined): number | undefined {
   if (raw === undefined || raw.trim() === "") return undefined;
   const port = Number(raw);
-  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
     throw new Error(
       `PORT is set to ${raw}, which is not a port; unset it or give a number`,
     );
   }
   return port;
-}
-
-async function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    // No host, so the probe binds as the server does, on both families.
-    probe.listen(0, () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      probe.close(() => resolvePort(port));
-    });
-  });
 }
 
 function ensureBuilt(): void {
@@ -301,37 +288,70 @@ function describeExit(exitFile: string): string {
  * so a boot that was refused is reported as that and not after the budget.
  */
 async function waitForHealth(
-  url: string,
+  started: Started,
   p: ReturnType<typeof paths>,
-  ended: () => boolean,
-): Promise<void> {
+): Promise<string> {
+  let url: string | undefined;
+  let lastFailure = "no readiness record";
   const deadline = Date.now() + HEALTH_BUDGET_MS;
   while (Date.now() < deadline) {
-    if (ended()) {
+    if (started.ended()) {
       throw new Error(
-        `the server ended before it answered ${url}/health: ${describeExit(p.exit)}. Log tail:\n${logTail(p)}`,
+        `the server ended before readiness: ${describeExit(p.exit)}. Log tail:\n${logTail(p)}`,
       );
     }
-    try {
-      const response = await fetch(`${url}/health`, {
-        signal: AbortSignal.timeout(5_000),
-      });
-      if (response.ok) return;
-    } catch {
-      // Not listening yet.
+    if (!url && existsSync(p.log)) {
+      // A restart appends to the log. Only complete records from this boot
+      // can identify its listener; an old port may now belong to anyone.
+      const lines = readFileSync(p.log)
+        .subarray(started.logStart)
+        .toString("utf8")
+        .split("\n");
+      for (const line of lines.slice(0, -1)) {
+        let record: { message?: unknown };
+        try {
+          record = JSON.parse(line) as typeof record;
+        } catch {
+          continue;
+        }
+        if (typeof record?.message !== "string") continue;
+        const match = /^Marfa server listening on port ([0-9]+)$/.exec(
+          record.message,
+        );
+        if (match) {
+          const port = Number(match[1]);
+          if (port > 0 && port <= 65_535) url = `http://127.0.0.1:${port}`;
+        }
+      }
+    }
+    if (url) {
+      try {
+        const response = await fetch(`${url}/health`, {
+          signal: AbortSignal.timeout(5_000),
+          headers: { Connection: "close" },
+        });
+        await response.text();
+        if (response.ok && !started.ended()) return url;
+        lastFailure = `HTTP ${response.status}`;
+      } catch (error) {
+        lastFailure =
+          error instanceof Error
+            ? `${error.message}; cause: ${String(error.cause)}`
+            : String(error);
+      }
     }
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
   throw new Error(
-    `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${logTail(p)}`,
+    `server did not become ready within ${String(HEALTH_BUDGET_MS)}ms (${url ?? "no listener"}; ${lastFailure}). Log tail:\n${logTail(p)}`,
   );
 }
 
 /** A server started and not yet known to be up. */
 interface Started {
   child: ChildProcess;
-  url: string;
-  /** Where in the log this boot begins. */
+  /** Where in the log this boot begins, in bytes. */
+  logStart: number;
   /** Whether the supervisor has ended, which it does when the server does. */
   ended: () => boolean;
   controlSocket: string;
@@ -368,22 +388,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
   ensureBuilt();
 
-  // `--port`, then `--env PORT=`, then `PORT`, then one the kernel says is
-  // free. `--env PORT=` is a setting the server is started with, so the port
-  // this script waits on and reports has to be the one it names.
-  //
-  // `PORT` is read as well as written because the sibling boot path,
-  // `core/scripts/server-up.sh`, takes its port that way, and an instruction
-  // that works on one and silently does nothing on the other is worse than
-  // having no lever at all: a caller who exported it would believe they were
-  // pinned while nothing had changed. Both default to a free port, so nobody
-  // needs either lever to avoid a collision.
   const port =
-    args.port ??
-    namedPort(args.env?.PORT) ??
-    namedPort(process.env.PORT) ??
-    (await freePort());
-  const url = `http://127.0.0.1:${String(port)}`;
+    args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;
   const controlDir = realpathSync(
     mkdtempSync(resolve(tmpdir(), "marfa-control-")),
   );
@@ -402,6 +408,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PORT: String(port),
+    MARFA_LISTEN_HOST: "127.0.0.1",
     MARFA_CONTROL_SOCKET: controlSocket,
     ...(args.controlOnly !== undefined && {
       MARFA_CONTROL_ONLY: String(args.controlOnly),
@@ -409,8 +416,8 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_AUTH_SECRET: authSecret,
     SQLITE_PATH: p.db,
     BLOB_PATH: p.blobs,
-    // The origin the server is reached at, which a link it mints carries.
-    MARFA_AUTH_BASE_URL: url,
+    // The listener derives the development origin from its assigned port.
+    MARFA_AUTH_BASE_URL: undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about
@@ -460,6 +467,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // What the caller names wins over every default above.
   Object.assign(env, args.env);
+  // The command-line port wins over the environment, including --env PORT.
+  env.PORT = String(port);
   // A restart inherits the latest move, never the original boot setting.
   if (hooks && existsSync(p.clock)) {
     env.MARFA_TEST_CLOCK_OFFSET_MS = String(readClockOffset(p.clock));
@@ -469,6 +478,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // Stdout holds the server's JSON log lines and nothing else, which is what
   // `check:statuses` reads. Whatever else the process prints, a Node warning
   // or a trace, goes to its own file.
+  const logStart = existsSync(p.log) ? statSync(p.log).size : 0;
   const logFd = openSync(p.log, "a");
   const errFd = openSync(p.stderr, "a");
   // The supervisor leads the group and the server joins it, so the group's
@@ -505,9 +515,9 @@ async function startServer(args: BootOptions): Promise<Started> {
   writeFileSync(p.pid, `${String(child.pid)}\n`);
   child.unref();
   console.log(
-    `[marfa-server] started pid ${String(child.pid)} on ${url}; log at ${p.log}`,
+    `[marfa-server] started pid ${String(child.pid)} with requested port ${String(port)}; log at ${p.log}`,
   );
-  return { child, url, ended: () => ended, controlSocket, authSecret };
+  return { child, logStart, ended: () => ended, controlSocket, authSecret };
 }
 
 /** Starts the real server without claiming it, for claim-operation tests. */
@@ -515,8 +525,8 @@ export async function bootUnclaimedServer(
   args: BootOptions,
 ): Promise<{ url: string; controlSocket: string }> {
   const started = await startServer(args);
-  await waitForHealth(started.url, paths(args.state), started.ended);
-  return { url: started.url, controlSocket: started.controlSocket };
+  const url = await waitForHealth(started, paths(args.state));
+  return { url, controlSocket: started.controlSocket };
 }
 
 /** Starts only the private listener, without provisioning an owner. */
@@ -547,8 +557,9 @@ export async function bootControlServer(
 
 export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const { url, ended, controlSocket, authSecret } = await startServer(args);
-  await waitForHealth(url, p, ended);
+  const started = await startServer(args);
+  const { controlSocket, authSecret } = started;
+  const url = await waitForHealth(started, p);
   const status = await controlRequest(controlSocket, "/_control/setup/status");
   if (status.status !== 200)
     throw new Error(`Claim status answered ${status.status}`);

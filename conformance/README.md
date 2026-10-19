@@ -95,6 +95,11 @@ production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
+By default the server binds port 0 on `127.0.0.1`, keeping the assigned listener
+open. The adapter reads the assigned port from this boot's readiness log record
+before requesting `/health`; it does not probe and release a free port.
+A restart ignores earlier readiness records. An explicitly occupied IPv4 port
+fails the boot instead of accepting another listener's health response.
 
 `pnpm marfa:down` stops the server and removes its instance state, so every `up` is
 a fresh instance. A database that outlives the bucket it was pointed at
@@ -178,7 +183,8 @@ rule is refused as that chapter says. The adapter sets these itself, and a
 value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket,
-  `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL`.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_AUTH_BASE_URL`
+  is unset so the server derives it from its assigned loopback port.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.
@@ -276,11 +282,22 @@ not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
 
 A `hold` fault makes the target wait at the point until the fault is cleared.
+A stop on `SIGTERM` or `SIGINT` clears every fault first, which lets the held
+callers go, so a run held at a point is one the stop's wait for work in flight
+can end rather than one it waits on for good. A restart on `SIGKILL` leaves a
+hold where it stood, for the new process to start without. A hold inside a
+write, such as `hold:bulk-job:in-chunk`, keeps the write lock while it waits, so
+another write waits with it.
 
 | Name                           | What it does                                                                                                                                                                                                              |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hold:housekeeping:<job>`      | A run of the job waits at its start until the fault is cleared.                                                                                                                                                           |
 | `hold:version-thinning:item`   | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item.                                                                                                          |
+| `hold:webhook:response`        | A webhook delivery waits after its HTTP attempt returns and before recording its outcome. Shutdown releases this hold so the delivery can finish its record.                                                              |
+| `hold:bulk-job:selected`       | A `POST /items/bulk-actions` request waits, once it has gathered its matches and before the last check of its credential and the selection, until the fault is cleared.                                                   |
+| `hold:bulk-job:claimed`        | The worker waits, once it has taken a job and before it writes the job's first chunk, so a job queued behind stays queued.                                                                                                |
+| `hold:bulk-job:in-chunk`       | The worker waits, once a chunk's rows are written and before the chunk is committed with its checkpoint.                                                                                                                  |
+| `hold:bulk-job:between-chunks` | The worker waits, once a chunk is committed and the job has more, before it begins the next.                                                                                                                              |
 | `deadline:<job>=<ms>`          | Shortens the run deadline of the job.                                                                                                                                                                                     |
 | `hold:blob-orphans:purge`      | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                                                                                                                           |
 | `hold:restore:before-commit`   | A restore waits with every row written and the bytes placed, before it commits.                                                                                                                                           |
