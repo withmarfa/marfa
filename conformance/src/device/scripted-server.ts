@@ -49,7 +49,7 @@ export type Answer =
       kind: "json";
       status: number;
       body: unknown;
-      /** The body's text as it is, for one the server's own encoder never writes. */
+      /** Text sent in place of `body`, for a body the server's own encoder never writes. */
       raw?: string;
       headers?: Record<string, string>;
       /**
