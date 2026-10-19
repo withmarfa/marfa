@@ -1494,7 +1494,7 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 
 When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_reasons` under exactly one of these reasons: `already_present` when the instance already holds the edge, `endpoint_missing` when, once the archive's items are written, the instance holds no item under an endpoint's id, in the bin or out of it, `malformed` when the line does not give both endpoints and the edge type as strings, and otherwise the error code that `POST /edges` would answer for the edge.
 
-**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin` and `edges/properties-restore-kept` say otherwise, and skips an edge it refuses rather than refusing the archive.
+**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
 
 **Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
