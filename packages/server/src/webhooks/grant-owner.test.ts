@@ -18,6 +18,7 @@ import {
   createTestContext,
   request,
   seedOauthBearer,
+  narrowAppGrant,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
@@ -238,9 +239,10 @@ describe("a signed-in app's subscription", () => {
   it("narrows its deliveries when the grant is narrowed", async () => {
     const g = await grant();
     await register(g.first);
-    await seedOauthBearer(ctx, ["core.note:read", "webhooks.manage"], {
-      clientId: g.clientId,
-    });
+    await narrowAppGrant(ctx, g.clientId, [
+      "core.note:read",
+      "webhooks.manage",
+    ]);
     expect(
       await delivered([
         item("01HNARROWTASKNARROWTASK00", "core.task"),

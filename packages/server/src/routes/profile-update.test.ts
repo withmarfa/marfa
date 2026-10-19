@@ -4,6 +4,7 @@ import {
   createTestContext,
   request,
   seedOauthBearer,
+  narrowAppGrant,
   type TestContext,
 } from "../test-utils.js";
 let ctx: TestContext;
@@ -409,9 +410,7 @@ it("refuses an app narrowed while awaiting the profile writer", async () => {
   });
   try {
     await arrived;
-    await seedOauthBearer(ctx, ["openid", "profile.name:write"], {
-      clientId: oauth.clientId,
-    });
+    await narrowAppGrant(ctx, oauth.clientId, ["openid", "profile.name:write"]);
   } finally {
     release();
   }
@@ -444,8 +443,6 @@ it("keeps an old app token through an identical approval with explicit email rea
     clientId: app.clientId,
   });
   expect((await change()).status).toBe(200);
-  await seedOauthBearer(ctx, ["openid", "profile.name:write"], {
-    clientId: app.clientId,
-  });
+  await narrowAppGrant(ctx, app.clientId, ["openid", "profile.name:write"]);
   expect((await change()).status).toBe(401);
 });

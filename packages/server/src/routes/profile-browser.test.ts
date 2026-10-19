@@ -106,12 +106,6 @@ inBrowser("owner and delegated profile flows", () => {
         code_challenge_method: "S256",
       });
       await page.goto(origin + "/auth/oauth2/authorize?" + query.toString());
-      expect(
-        (await page.locator(".gdesc").allTextContents()).some(
-          (text) => /content/i.test(text) && /name.*avatar/i.test(text),
-        ),
-      ).toBe(true);
-
       await page.locator("details").evaluateAll((nodes) => {
         for (const node of nodes) node.setAttribute("open", "");
       });

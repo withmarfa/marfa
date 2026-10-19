@@ -198,7 +198,7 @@
     "boundary": "Audited consent approval and silent reuse contain provider consent, token and grant projection changes under the consent lock; credential-audit.test.ts and auth-consent-skip.test.ts. Operational exemption: the stamp that keeps a client from the registration reaper while an approval page offers it.",
     "calls": {
       "OauthProviderStore.markClientOffered": 1,
-      "OauthProviderStore.setConsentScopes": 1,
+      "OauthProviderStore.setConsentScopes": 2,
       "runAuditedTransaction": 2
     }
   },
