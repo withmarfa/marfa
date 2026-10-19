@@ -1872,7 +1872,7 @@ When `POST /restore` meets an edge whose edge type is not registered once the ar
 
 **Reason:** with no edge type there is no constraint, cardinality or property schema to hold the edge to, and every edge type with a cycle check is shipped, so these are the refusals that need no edge type. An edge whose edge type the archive registers, or that is shipped, is judged by it.
 
-**Tests:** `compliance/restore-edges-unregistered.test.ts › still holds an edge of a registered type to its constraints, and refuses an edge whose type is no identifier`, `compliance/restore-archive.test.ts › counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`.
+**Tests:** `compliance/restore-edges-unregistered.test.ts › judges an edge of an unregistered type by what needs no edge type, still holds a registered one to its constraints, and refuses an edge whose type is no identifier`.
 
 ### `search-and-filters/restore-edge-type`
 
@@ -1880,7 +1880,7 @@ If an archived edge's `edge_type` is a string that is not an edge-type identifie
 
 **Reason:** a forced delete leaves an edge under an identifier an edge type was registered with (`search-and-filters/restore-edges-unregistered`), so an identifier that none could have been is an archive that no instance wrote. A line that gives the edge type as no string is skipped as `malformed` (`search-and-filters/restore-edge-skips`).
 
-**Tests:** `compliance/restore-edges-unregistered.test.ts › still holds an edge of a registered type to its constraints, and refuses an edge whose type is no identifier`.
+**Tests:** `compliance/restore-edges-unregistered.test.ts › judges an edge of an unregistered type by what needs no edge type, still holds a registered one to its constraints, and refuses an edge whose type is no identifier`.
 
 ### `search-and-filters/restore-snapshot-held`
 

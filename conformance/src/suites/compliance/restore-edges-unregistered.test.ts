@@ -225,7 +225,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
     expect(await edgesOf(working(third))).toEqual(await edgesOf(reader));
   }, 180_000);
 
-  it("still holds an edge of a registered type to its constraints, and refuses an edge whose type is no identifier", async () => {
+  it("judges an edge of an unregistered type by what needs no edge type, still holds a registered one to its constraints, and refuses an edge whose type is no identifier", async () => {
     const source = working(origin);
     const type = "user.bound-link";
     expect(
@@ -271,18 +271,51 @@ describe("a restore of an edge whose type was force-deleted", () => {
       );
 
     // A second edge out of the same source breaks the one-to-one the archive
-    // itself registers, so it is skipped and the first stays.
+    // itself registers, so it is skipped and the first stays. Beside it, edges
+    // of an unregistered type are judged by what needs no edge type: the first
+    // `x -> z` is kept, and its second copy, a loop and an edge to an item the
+    // archive does not carry are skipped.
+    const gone = "user.gone-link";
+    const line = (source_id: string, target_id: string, edge_type: string) =>
+      `${JSON.stringify({
+        edge: { id: uuidv7(), source_id, target_id, edge_type, properties: {} },
+      })}\n`;
     const reader = working(destination);
     const crowded = await owner(destination).restoreArchive(
-      carrying(lineOf(type)),
+      carrying(
+        lineOf(type) +
+          line(x, x, gone) +
+          line(x, z, gone) +
+          line(x, z, gone) +
+          line(y, uuidv7(), gone),
+      ),
     );
     expect(crowded.status, JSON.stringify(crowded.error)).toBe(200);
     expect(crowded.data).toMatchObject({
-      edges_imported: 1,
-      edges_skipped: 1,
-      edges_skipped_reasons: { edge_constraint_violation: 1 },
+      edges_imported: 2,
+      edges_skipped: 4,
+      edges_skipped_reasons: {
+        edge_constraint_violation: 2,
+        edge_cycle: 1,
+        endpoint_missing: 1,
+      },
     });
-    expect(await edgesOf(reader)).toEqual(await edgesOf(source));
+    expect(crowded.data.edges_skipped_reasons).toEqual({
+      edge_constraint_violation: 2,
+      edge_cycle: 1,
+      endpoint_missing: 1,
+    });
+    const held = await edgesOf(reader);
+    expect(held.map((edge) => [edge.edge_type, edge.source_id])).toEqual(
+      expect.arrayContaining([
+        [type, x],
+        [gone, x],
+      ]),
+    );
+    expect(held).toHaveLength(2);
+    expect(held.find((edge) => edge.edge_type === gone)).toMatchObject({
+      target_id: z,
+    });
 
     // An edge whose type no instance could have registered is no archive an
     // instance wrote (`search-and-filters/restore-edge-type`).
