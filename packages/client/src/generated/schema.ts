@@ -12948,7 +12948,7 @@ export interface operations {
             /**
              * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.
              *     - `core_type_immutable`: Marfa ships this type.
-             *     - `type_not_permitted`: your type map lacks write on the type or a new or kept non-platform `parent` or `compatible_with` target (`details.grant` names it).
+             *     - `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` or `compatible_with` target (`details.grant` names it).
              */
             403: {
                 headers: {

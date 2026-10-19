@@ -28,8 +28,102 @@ async function send(key: string, method: string, path: string, body?: unknown) {
   };
 }
 
+it.each(["parent", "compatible_with"] as const)(
+  "permits connector label and optional-field updates retaining %s without target write permission",
+  async (kind) => {
+    const target = `other.base_${kind}`;
+    const fields = { title: { type: "string" } };
+    expect(
+      (
+        await send(server.workingKey, "POST", "/types", {
+          id: target,
+          fields,
+        })
+      ).status,
+    ).toBe(201);
+    for (const narrowed of [false, true]) {
+      const ownerHeaders = {
+        Cookie: server.ownerCookie,
+        Origin: server.apiUrl,
+        "Content-Type": "application/json",
+      };
+      const minted = await fetch(`${server.apiUrl}/keys`, {
+        method: "POST",
+        headers: ownerHeaders,
+        body: JSON.stringify({
+          label: "Connector",
+          source: `connector-${kind}-${String(narrowed)}`,
+          permissions: [],
+          metadata_permissions: { types: "write" },
+          type_permissions: {
+            "app.*": "write",
+            ...(narrowed ? { [target]: "write" } : {}),
+          },
+        }),
+      });
+      expect(minted.status, await minted.clone().text()).toBe(201);
+      const { key, id: keyId } = (await minted.json()) as {
+        key: string;
+        id: string;
+      };
+      const id = `app.cook.recipe_${kind}_${String(narrowed)}`;
+      const schema = {
+        label: "Recipe",
+        fields: kind === "parent" ? {} : fields,
+        ...(kind === "parent"
+          ? { parent: target }
+          : { compatible_with: [target] }),
+      };
+      expect(
+        (
+          await send(narrowed ? key : server.workingKey, "POST", "/types", {
+            id,
+            ...schema,
+          })
+        ).status,
+      ).toBe(201);
+      if (narrowed) {
+        const updated = await fetch(`${server.apiUrl}/keys/${keyId}`, {
+          method: "PATCH",
+          headers: ownerHeaders,
+          body: JSON.stringify({
+            type_permissions: { "app.*": "write", [target]: "read" },
+          }),
+        });
+        expect(updated.status, await updated.clone().text()).toBe(200);
+      }
+      const relabeled = { ...schema, label: "Updated recipe" };
+      expect((await send(key, "PUT", `/types/${id}`, relabeled)).status).toBe(
+        200,
+      );
+      const extended = {
+        ...relabeled,
+        fields: { ...schema.fields, extra: { type: "string" } },
+      };
+      expect((await send(key, "PUT", `/types/${id}`, extended)).status).toBe(
+        200,
+      );
+      expect((await send(key, "GET", `/types/${id}`)).body).toMatchObject(
+        extended,
+      );
+      const refused = await send(key, "POST", "/types", {
+        id: `${id}_new`,
+        ...schema,
+      });
+      expect(refused.status).toBe(403);
+      expect(refused.body).toMatchObject({
+        error: {
+          code: "type_not_permitted",
+          details: { grant: { name: target, level: "write" } },
+        },
+      });
+    }
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);
+
 it(
-  "requires the parent's write permission for new and kept compatibility and inherited-field dependencies",
+  "requires target write permission for new dependencies but permits retained dependencies",
   async () => {
     let sequence = 0;
     for (const grant of [undefined, "read", "none"] as const) {
@@ -131,6 +225,24 @@ it(
         expect(
           await send(server.workingKey, "GET", `/types/${reader}`),
         ).toEqual(before);
+        expect(
+          (
+            await send(server.workingKey, "PUT", `/types/${target}`, {
+              fields: { title: { type: "integer" } },
+            })
+          ).status,
+        ).toBe(200);
+        expect(
+          (await send(server.workingKey, "DELETE", `/types/${target}`)).status,
+        ).toBe(200);
+        expect(
+          (
+            await send(server.workingKey, "POST", "/types", {
+              id: target,
+              fields,
+            })
+          ).status,
+        ).toBe(201);
         if (kind !== "compatibility") {
           expect(
             (
@@ -140,24 +252,63 @@ it(
               })
             ).status,
           ).toBe(200);
-          expect(await send(key, "PUT", `/types/${reader}`, schema)).toEqual(
-            parent,
-          );
+          expect(
+            (await send(key, "PUT", `/types/${reader}`, schema)).status,
+          ).toBe(200);
         }
         expect(
           (await send(server.workingKey, "PUT", `/types/${reader}`, schema))
             .status,
         ).toBe(200);
-        const held = await send(server.workingKey, "GET", `/types/${reader}`);
         expect(
-          await send(key, "PUT", `/types/${reader}`, {
-            ...schema,
-            label: "Kept dependency",
-          }),
-        ).toEqual(parent);
+          (
+            await send(key, "PUT", `/types/${reader}`, {
+              ...schema,
+              label: "Kept dependency",
+            })
+          ).status,
+        ).toBe(200);
         expect(
-          await send(server.workingKey, "GET", `/types/${reader}`),
-        ).toEqual(held);
+          (await send(server.workingKey, "GET", `/types/${reader}`)).body,
+        ).toMatchObject({ label: "Kept dependency" });
+        if (kind === "compatibility") {
+          const added = `${target}_additional`;
+          expect(
+            (
+              await send(server.workingKey, "POST", "/types", {
+                id: added,
+                fields,
+              })
+            ).status,
+          ).toBe(201);
+          const mixed = { ...schema, compatible_with: [target, added] };
+          const beforeMixed = await send(
+            server.workingKey,
+            "GET",
+            `/types/${reader}`,
+          );
+          const refused = await send(key, "PUT", `/types/${reader}`, mixed);
+          expect(refused.status).toBe(403);
+          expect(refused.body).toMatchObject({
+            error: {
+              code: "type_not_permitted",
+              details: { grant: { name: added, level: "write" } },
+            },
+          });
+          expect(
+            await send(server.workingKey, "GET", `/types/${reader}`),
+          ).toEqual(beforeMixed);
+          expect(
+            (await send(server.workingKey, "PUT", `/types/${reader}`, mixed))
+              .status,
+          ).toBe(200);
+          expect(
+            (await send(key, "PUT", `/types/${reader}`, schema)).status,
+          ).toBe(200);
+          expect(
+            (await send(server.workingKey, "DELETE", `/types/${added}`)).status,
+          ).toBe(200);
+        }
         expect(
           (await send(key, "PUT", `/types/${reader}`, { fields })).status,
         ).toBe(200);

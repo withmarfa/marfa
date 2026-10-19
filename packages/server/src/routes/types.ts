@@ -49,12 +49,18 @@ import { MergePolicySchema, nullableRef, wholeListOf } from "./_schemas.js";
 // Constants & helpers
 // ---------------------------------------------------------------------------
 
-function requireDependencyReach(c: Context<AppEnv>, schema: TypeSchema): void {
-  // Retaining a parent can add constraints on its fields through display
-  // hints, links or merge policies, even when the parent itself is unchanged.
-  if (schema.parent) requireParentReach(c, schema.parent);
+function requireDependencyReach(
+  c: Context<AppEnv>,
+  schema: TypeSchema,
+  stored?: TypeSchema,
+): void {
+  if (schema.parent && schema.parent !== stored?.parent) {
+    requireParentReach(c, schema.parent);
+  }
   for (const target of schema.compatible_with ?? []) {
-    requireParentReach(c, target);
+    if (!stored?.compatible_with?.includes(target)) {
+      requireParentReach(c, target);
+    }
   }
 }
 
@@ -788,7 +794,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new or kept non-platform `parent` or `compatible_with` target (`details.grant` names it).",
+        "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` or `compatible_with` target (`details.grant` names it).",
     },
     404: {
       content: {
@@ -1085,7 +1091,7 @@ export function typeRoutes(storage: Storage) {
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );
-          requireDependencyReach(c, schema);
+          requireDependencyReach(c, schema, stored);
           if (schema.parent) {
             // Measured on the type as it stands, before the update lands, which
             // is the subtree that would move with it.

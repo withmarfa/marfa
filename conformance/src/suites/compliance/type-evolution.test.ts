@@ -786,7 +786,7 @@ describe("a parent is named only within the key's reach", () => {
     expect(refusal(unknown)?.code).toBe("validation_error");
   });
 
-  it("holds both new and kept parents to the key's reach", async () => {
+  it("holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
     const foreign = `${owner}.base`;
@@ -806,14 +806,13 @@ describe("a parent is named only within the key's reach", () => {
       fields: { size: { type: "integer" } },
     });
 
-    // Retaining the parent still needs write permission over it.
+    // Retaining the relationship needs no new authority over its target.
     const own = await connector(mine);
     const kept = await own.replaceType(id, {
       parent: foreign,
       fields: { size: { type: "integer" }, more: { type: "string" } },
     });
-    expect(kept.status).toBe(403);
-    expect(refusal(kept)?.code).toBe("type_not_permitted");
+    expect(kept.status).toBe(200);
 
     // A key holding schema.write whose map stops short of a new parent is
     // refused, naming it.

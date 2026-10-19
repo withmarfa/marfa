@@ -784,7 +784,7 @@ describe("a parent is named only within the key's reach", () => {
     }
   });
 
-  it("holds both new and kept parents to the key's reach", async () => {
+  it("holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
     const foreign = `${owner}.base`;
@@ -829,14 +829,13 @@ describe("a parent is named only within the key's reach", () => {
     expect((await replace(wide, id, body(foreign))).status).toBe(200);
     expect((await stored(id)).parent).toBe(foreign);
 
-    // Keeping the parent can constrain its fields, so it still needs reach.
+    // Retaining the relationship needs no new authority over its target.
     const kept = await replace(
       key,
       id,
       body(foreign, { more: { type: "string" } }),
     );
-    expect(kept.status).toBe(403);
-    expect((await refusal(kept)).code).toBe("type_not_permitted");
+    expect(kept.status).toBe(200);
     expect((await stored(id)).parent).toBe(foreign);
 
     // Moving it off the foreign parent needs no reach on the foreign parent,
@@ -845,7 +844,7 @@ describe("a parent is named only within the key's reach", () => {
     expect((await replace(key, id, body(undefined))).status).toBe(200);
   });
 
-  it("refuses a connector replacement retaining a parent outside its reach", async () => {
+  it("accepts a connector replacement retaining a parent outside its reach", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
     const foreign = `${owner}.base`;
@@ -858,7 +857,7 @@ describe("a parent is named only within the key's reach", () => {
       ).status,
     ).toBe(201);
     const id = `${mine}.child`;
-    // The owner can register the relationship before narrowing the key.
+    // A broader key establishes the relationship.
     expect(
       (
         await register(ctx.workingKey, {
@@ -873,7 +872,7 @@ describe("a parent is named only within the key's reach", () => {
       parent: foreign,
       fields: { size: { type: "integer" }, extra: { type: "string" } },
     });
-    expect(res.status).toBe(403);
-    expect((await refusal(res)).code).toBe("type_not_permitted");
+    expect(res.status).toBe(200);
+    expect((await stored(id)).fields).toHaveProperty("extra");
   });
 });

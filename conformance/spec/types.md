@@ -506,11 +506,11 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on and whose dependencies satisfy `types/parent-reach`, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`, including when its retained parent or compatibility targets are outside the key's write permissions.
 
 **Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
 
-**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`.
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/evolve-held-name`
 
@@ -546,11 +546,27 @@ When a key holding `schema.write` sends `PUT /types/{id}` for a type its map gra
 
 ### `types/parent-reach`
 
-If an otherwise valid `POST /types` or `PUT /types/{id}` adds or keeps a `parent` or `compatible_with` target, other than a platform type, that the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that target.
+If `POST /types`, or an otherwise permitted `PUT /types/{id}` that changes the stored `parent`, names a non-platform parent the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that parent, whether or not the parent is registered.
 
-**Reason:** a dependency can prevent replacement or deletion of its target, so declaring or retaining it requires write permission on that target; this includes inherited fields used by display hints, links and merge policies.
+**Reason:** adding a parent can prevent replacement or deletion of that parent, so establishing the relationship requires write permission on it.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds both new and kept parents to the key's reach`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`, `compliance/type-dependency-permissions.test.ts › requires the parent's write permission for new and kept compatibility and inherited-field dependencies`.
+**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`.
+
+### `types/compatible-with-reach`
+
+If an otherwise valid `POST /types` or an otherwise permitted `PUT /types/{id}` names a non-platform `compatible_with` target absent from the type's stored `compatible_with` and the key's type map does not grant write on that target, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that target.
+
+**Reason:** a new compatibility claim can prevent replacement or deletion of its target, so establishing the claim requires write permission on it.
+
+**Tests:** `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
+
+### `types/parent-kept`
+
+When a replacement retains its stored `parent` or a target in its stored `compatible_with`, the server MUST NOT require target write permission for retaining that relationship.
+
+**Reason:** existing relationships remain valid after a target grant is narrowed, so connectors can continue updating their own types.
+
+**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/parent-shipped`
 

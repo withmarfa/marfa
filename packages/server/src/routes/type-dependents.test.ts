@@ -34,7 +34,7 @@ describe("registration dependents", () => {
     { parent: target, link_field: "title" },
     { parent: target, merge_policy: { fields: { title: "last_writer_wins" } } },
   ])(
-    "requires target write permission to add or keep %j",
+    "requires target write permission to add but not retain %j",
     async (dependency) => {
       await register({ id: target, fields });
       const id = "foreign.reader";
@@ -62,7 +62,14 @@ describe("registration dependents", () => {
       await denied("PUT", `/types/${id}`, schema);
       expect(await (await write("GET", `/types/${id}`)).json()).toEqual(before);
       expect((await write("PUT", `/types/${id}`, schema)).status).toBe(200);
-      await denied("PUT", `/types/${id}`, { ...schema, label: "Kept claim" });
+      expect(
+        (
+          await request(ctx.app, "PUT", `/types/${id}`, {
+            key,
+            body: { ...schema, label: "Kept claim" },
+          })
+        ).status,
+      ).toBe(200);
       // Removing the dependency needs no authority over its former target.
       expect(
         (
