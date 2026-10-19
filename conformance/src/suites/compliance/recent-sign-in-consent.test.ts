@@ -300,7 +300,7 @@ describe("approving a device", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left unticked", async () => {
+  it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off", async () => {
     const { stale } = await staleAndFresh();
     const device = await deviceCode(
       "core.note:read edge.parent-of:read metadata:read profile.name:read openid keys.manage core.note:write",
@@ -541,7 +541,7 @@ describe("approving an app", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left unticked", async () => {
+  it("approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off", async () => {
     const { stale } = await staleAndFresh();
     const reads = [
       "core.note:read",

@@ -1437,19 +1437,19 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // **None of these sentences says that the grant reaches types nobody has
   // registered yet, and none of them may.** Both screens compose that from
-  // the grammar: both screens put `OPEN_ENDED_LINE` on the toggle row's
-  // second line, and `isOpenEnded` is the single answer both read. So an
+  // the grammar: both screens put `OPEN_ENDED_LINE` in the row's
+  // description, and `isOpenEnded` is the single answer both read. So an
   // entry here says what the grant reaches and stops.
   //
   // **The prohibition is not tidiness, it is the only way the two screens
   // can be made to agree.** A futurity clause inside one of these sentences
   // is tempting, because a description reads as the whole of what a row says
-  // about a grant. It cannot work: `scopeName` falls through to this map
-  // wherever nothing curated names the pattern, so a clause written into it
-  // arrives as a toggle label, directly above a line about to state the same
-  // thing. Reconciling that needs a check on the copy, and
-  // a check on the copy cannot tell a clause that means futurity from a word
-  // that merely spells it — futurity phrased in other words is stated twice,
+  // about a grant. It cannot work: `describe` in `access-model.ts` falls
+  // through to this map wherever nothing curated names the pattern, so a
+  // clause written into it arrives as a row's title, directly above a line
+  // about to state the same thing. Reconciling that needs a check on the
+  // copy, and a check on the copy cannot tell a clause that means futurity
+  // from a word that merely spells it — futurity phrased in other words is stated twice,
   // and a "later" carrying no futurity at all silences the line on a
   // wildcard that then says nothing about its reach. Composing removes the
   // collision rather than arbitrating it.
@@ -1561,21 +1561,21 @@ export async function resolveWildcardExpansions(
 function describeScope(scope: ParsedScope): string | undefined {
   switch (scope.kind) {
     case "oidc":
-      // Deliberately absent. `scopeName` in `consent.ts`, which both screens
-      // label a row through, resolves an OIDC literal through
+      // Deliberately absent. `describe` in `access-model.ts`, which both
+      // screens title a row through, names an OIDC literal through
       // `oidc-labels.ts` and returns before it looks at this map, so
       // anything written here for one would be computed and discarded.
       return undefined;
     case "permission":
-      // Deliberately absent, for the reason above. `scopeName` in
-      // `consent.ts` resolves a permission literal through
+      // Deliberately absent, for the reason above. `describe` in
+      // `access-model.ts` names a permission literal through
       // `permission-labels.ts` and returns before it looks at this map, so
       // anything written here for one would be computed and discarded.
       //
       // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on
       // both surfaces, by `PERMISSION_LABELS` and
-      // `PERMISSION_SHORT`. Whoever comes to put one in front of a
+      // `PERMISSION_NOTES`. Whoever comes to put one in front of a
       // person should extend those maps rather than this one: an entry here
       // is a third name for the same grant, in the one place neither renderer
       // reads.

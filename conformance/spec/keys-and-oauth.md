@@ -1143,7 +1143,7 @@ Where a request names a scope other than `openid` and `offline_access`, when a p
 
 When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds.
 
-**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what it left ticked, though its origin is allowed`.
+**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what the person chose, though its origin is allowed`.
 
 ### `keys-and-oauth/consent-standing`
 
@@ -1213,7 +1213,7 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 **Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every one of the twelve permissions is left out, and so is any scope this build cannot read.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left unticked`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off`.
 
 ### `keys-and-oauth/consent-recent-needed`
 
@@ -1817,7 +1817,7 @@ When a signed-in person approves a device code, the server MUST add to the clien
 
 When a browser session that signed in more than five minutes ago approves a device code with only scopes that `keys-and-oauth/consent-older-reads` lists, the server MUST approve the code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left unticked`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off`.
 
 ### `keys-and-oauth/device-recent-needed`
 

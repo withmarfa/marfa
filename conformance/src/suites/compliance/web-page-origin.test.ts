@@ -407,7 +407,7 @@ describe("a web page's address", () => {
     await expectAllowed(origin, access);
   });
 
-  it("issues a narrowed page only what it left ticked, though its origin is allowed", async () => {
+  it("issues a narrowed page only what the person chose, though its origin is allowed", async () => {
     const origin = "https://narrowed.web-page-origin.test";
     const { access, scope } = await approve(
       await registerPage([`${origin}/callback`]),
