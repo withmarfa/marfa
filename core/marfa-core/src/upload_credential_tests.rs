@@ -394,3 +394,45 @@ fn lets_go_the_bytes_of_a_file_update_refused_behind_a_withdrawn_create() {
         "a trim kept bytes for a refused update no release can send"
     );
 }
+
+#[test]
+fn writes_down_a_renewal_left_in_memory_when_a_drain_ends() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "first");
+    holding_a_catalog(&core);
+    let file = dir.path().join("photo.txt");
+    std::fs::write(&file, b"the bytes of a photo").unwrap();
+    let added = core
+        .add_file(&file, &crate::Attachment::default(), &[])
+        .unwrap();
+    let hash = added.upload.blob.clone().unwrap();
+    let file_id = added.item.item_id.clone().unwrap();
+    let r#type = core.get(&file_id).unwrap().unwrap().r#type;
+    let (receipt, read) = created(&file_id, &r#type);
+    server.on("/blobs", vec![taken(&hash, 20)]);
+    server.on("/items", vec![scripted::json(201, &receipt)]);
+    server.on(&format!("/items/{file_id}"), vec![read]);
+    assert_eq!(core.drain().unwrap().undelivered, 0);
+    let sent_as = || {
+        crate::store::meta_get(
+            &core.conn().unwrap(),
+            &format!("upload_sent_as/{}", added.upload.id),
+        )
+        .unwrap()
+    };
+    let first = crate::store::credential_digest("Bearer first");
+    assert_eq!(sent_as().as_deref(), Some(first.as_str()));
+
+    // A renewal whose callback found the connection held waits in memory,
+    // and this drain has nothing to send.
+    let fresh = crate::store::credential_digest("Bearer fresh");
+    core.renewals.lock().unwrap().push((first, fresh.clone()));
+    core.drain().unwrap();
+
+    assert_eq!(
+        sent_as().as_deref(),
+        Some(fresh.as_str()),
+        "the renewal was left in memory, for a process that exits to lose"
+    );
+}

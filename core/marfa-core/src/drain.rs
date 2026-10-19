@@ -629,6 +629,12 @@ pub(crate) fn would_send(core: &Core) -> Result<bool> {
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
+    // A renewal whose callback found the connection held waits in memory;
+    // written down here, it outlives a process that exits after the pass.
+    // Lost, it costs the next drain one upload sent again.
+    if let Ok(conn) = core.conn() {
+        let _ = core.write_down_renewals(&conn);
+    }
     if let Ok(report) = &result {
         core.owe_drain(report.undelivered > 0 || report.unavailable.is_some());
     }

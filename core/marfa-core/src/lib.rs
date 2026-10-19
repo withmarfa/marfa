@@ -387,7 +387,8 @@ impl Core {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .push((store::credential_digest(from), store::credential_digest(to)));
                 // Not waited for: a call can be renewed while its caller
-                // holds the connection, and the next drain writes it down.
+                // holds the connection, and every drain writes it down as
+                // it starts and as it ends.
                 if let Ok(conn) = db.try_lock() {
                     let _ = write_down_renewals(&conn, &pending);
                 }
