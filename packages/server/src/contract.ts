@@ -15,6 +15,26 @@
  */
 export const CONTRACT_VERSION = 0;
 
+let served: number = CONTRACT_VERSION;
+
+/**
+ * The contract version this process speaks: the build's, unless a server
+ * started with the test hooks was told to speak another, so a harness can
+ * show how the server behaves once its contract has changed.
+ */
+export function servedContractVersion(): number {
+  return served;
+}
+
+/**
+ * Sets the version this process speaks. Called once at boot, before the app
+ * is made, and only from a setting that is refused unless the test hooks are
+ * on. `undefined` leaves the build's version.
+ */
+export function setServedContractVersion(version: number | undefined): void {
+  served = version ?? CONTRACT_VERSION;
+}
+
 /**
  * The response header that carries the contract version. On every answer
  * the application gives, so a client checks the answer it is about to read

@@ -5,7 +5,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
+import { DAY_MS, MINUTE_MS, movedClock } from "../../utils/moved-clock.js";
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
@@ -277,13 +277,7 @@ describe("the owner device lookup lane", () => {
       );
       if (state === "forged")
         cookie = cookie.slice(0, -1) + (cookie.endsWith("A") ? "B" : "A");
-      else if (state === "expired")
-        withInstanceDatabase(server.sqlitePath, (db) => {
-          db.prepare("UPDATE auth_session SET expires_at = ? WHERE id = ?").run(
-            Math.floor(Date.now() / 1000) - 60,
-            id,
-          );
-        });
+      else if (state === "expired") await clock.advance(8 * DAY_MS);
       else {
         const ended = await fetch(`${server.apiUrl}/owner/sign-ins/${id}`, {
           method: "DELETE",

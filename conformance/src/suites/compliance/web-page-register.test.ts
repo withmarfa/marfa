@@ -4,7 +4,13 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  DAY_MS,
+  MINUTE_MS,
+  QUIET_SCHEDULE,
+  quiet,
+  runJob,
+} from "../../utils/moved-clock.js";
 import {
   authorize,
   authorizeQuery,
@@ -39,7 +45,10 @@ const DISCOVERY = [
 ];
 
 beforeAll(async () => {
-  server = await bootFreshServer("web-page-register");
+  // The clean-up job runs when the test asks: moving the clock makes it due,
+  // and the scheduler would then run it first.
+  server = await bootFreshServer("web-page-register", QUIET_SCHEDULE);
+  await quiet(server, ["dcr-client-cleanup"]);
   issuer = await issuerOrigin(server);
   cookie = await signIn(server, issuer);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -270,6 +279,10 @@ describe("registrations nobody approves", () => {
     const approved = "https://approved.web-page-register.test";
     const revoked = "https://revoked.web-page-register.test";
     const offered = "https://offered.web-page-register.test";
+    // What earlier cases registered and nobody approved is idle by now, and the
+    // sweep below is to remove the one registration this case leaves idle.
+    await server.advanceClock(2 * DAY_MS);
+    expect((await runJob(server, "dcr-client-cleanup")).outcome).toBe("ok");
     const idleId = await registeredClient(idle);
     const approvedId = await registeredClient(approved);
     const revokedId = await registeredClient(revoked);
@@ -289,18 +302,8 @@ describe("registrations nobody approves", () => {
     });
     expect(ended.status).toBe(204);
 
-    // The retention is days, so the registrations' age is written rather
-    // than waited for.
-    const aged = withInstanceDatabase(server.sqlitePath, (db) => {
-      const update = db.prepare(
-        "UPDATE auth_oauth_client SET created_at = 0, updated_at = 0 WHERE client_id = ?",
-      );
-      return [idleId, approvedId, revokedId, offeredId].reduce(
-        (total, id) => total + Number(update.run(id).changes),
-        0,
-      );
-    });
-    expect(aged).toBe(4);
+    // Past the retention, a day.
+    await server.advanceClock(2 * DAY_MS);
     // The owner opens the approval for one of them after it aged.
     const consent = await authorizeLandsAt(offeredId, offered);
     expect(consent?.pathname).toBe("/auth/authorize");
@@ -308,15 +311,7 @@ describe("registrations nobody approves", () => {
     await screen.body?.cancel();
     expect(screen.status).toBe(200);
 
-    const swept = await fetch(
-      `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${server.managementKey}` },
-      },
-    );
-    expect(swept.status).toBe(200);
-    expect(await swept.json()).toMatchObject({
+    expect(await runJob(server, "dcr-client-cleanup")).toMatchObject({
       outcome: "ok",
       result: { deleted: 1 },
     });
@@ -351,6 +346,9 @@ describe("registrations nobody approves", () => {
     const { client_id: clientId } = (await registered.json()) as {
       client_id: string;
     };
+    // The code lives ten minutes and the retention is a day, so the code is
+    // asked for just short of the day, and the day passes while it stands.
+    await server.advanceClock(DAY_MS - 5 * MINUTE_MS);
     const code = await fetch(`${server.apiUrl}/auth/device/code`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -360,28 +358,13 @@ describe("registrations nobody approves", () => {
     const { user_code: userCode } = (await code.json()) as {
       user_code: string;
     };
-    const aged = withInstanceDatabase(server.sqlitePath, (db) =>
-      db
-        .prepare(
-          "UPDATE auth_oauth_client SET created_at = 0, updated_at = 0 WHERE client_id = ?",
-        )
-        .run(clientId),
-    );
-    expect(Number(aged.changes)).toBe(1);
+    await server.advanceClock(6 * MINUTE_MS);
     const page = `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`;
     const offered = await fetch(page, { headers: { cookie } });
     await offered.body?.cancel();
     expect(offered.status).toBe(200);
 
-    const swept = await fetch(
-      `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
-      {
-        method: "POST",
-        headers: { authorization: `Bearer ${server.managementKey}` },
-      },
-    );
-    expect(swept.status).toBe(200);
-    expect(await swept.json()).toMatchObject({ outcome: "ok" });
+    expect((await runJob(server, "dcr-client-cleanup")).outcome).toBe("ok");
     const again = await fetch(page, { headers: { cookie } });
     await again.body?.cancel();
     expect(again.status).toBe(200);

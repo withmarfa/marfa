@@ -40,11 +40,15 @@ describe("the test hooks and what is released", () => {
     const runtime = dockerfile.slice(dockerfile.lastIndexOf("AS runtime"));
     expect(runtime).toMatch(/^ENV NODE_ENV=production$/m);
 
-    for (const name of ["MARFA_TEST_HOOKS", "MARFA_TEST_CLOCK_OFFSET_MS"]) {
+    for (const name of [
+      "MARFA_TEST_HOOKS",
+      "MARFA_TEST_CLOCK_OFFSET_MS",
+      "MARFA_TEST_CONTRACT_VERSION",
+    ]) {
       const naming = namingFiles(name);
       // The witness: the scan finds the harness that sets the hooks, so an
       // empty answer below would mean none does.
-      expect(naming).toContain("conformance/scripts/marfa-server.ts");
+      expect(naming.some((path) => path.startsWith("conformance/"))).toBe(true);
       for (const path of naming) {
         expect(
           path.startsWith("packages/server/src/") ||

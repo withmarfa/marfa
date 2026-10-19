@@ -90,6 +90,12 @@ export interface FreshServer {
    */
   advanceClock(ms: number): Promise<string>;
   /**
+   * The boot offset plus the steps `advanceClock` has taken: how far the target's clock
+   * is ahead of this machine's, give or take the milliseconds the two differ
+   * by. Clients use it for protocol timestamps and sign-in age.
+   */
+  clockOffsetMs: number;
+  /**
    * Arms a fault, through `fault set`: `hold:<point>` waits at a point until
    * cleared, `fail:<point>[=<arg>]` fails the target at a point once,
    * `deadline:<job>=<ms>` shortens a job's run deadline, and
@@ -474,6 +480,7 @@ export async function bootFreshServer(
       }
       return ended;
     },
+    clockOffsetMs: Number(extraEnv.MARFA_TEST_CLOCK_OFFSET_MS ?? 0),
     async advanceClock(ms) {
       const moved = await adapter("clock", "advance", String(ms));
       if (moved.status !== 0) {
@@ -481,6 +488,7 @@ export async function bootFreshServer(
           `the target did not move its clock by ${String(ms)} ms:\n${moved.output}`,
         );
       }
+      server.clockOffsetMs += ms;
       return moved.output;
     },
     async setFault(spec) {

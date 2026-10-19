@@ -2,6 +2,7 @@ import type { Edge, Item } from "@withmarfa/shared";
 import { createHmac } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { hashApiKey } from "../middleware/auth.js";
+import * as clock from "../clock.js";
 import {
   __resetEventLogForTests,
   initEventLog,
@@ -72,6 +73,18 @@ describe("parseRetryAfter", () => {
   it("returns null for HTTP-date in the past", () => {
     const past = new Date(Date.now() - 60_000).toUTCString();
     expect(parseRetryAfter(past)).toBeNull();
+  });
+
+  it("reads the receiver's HTTP date on the stated clock after it moves", () => {
+    try {
+      clock.installDateShim();
+      clock.advanceClock(86_400_000);
+      const future = new Date(clock.nowMs() + 45_000).toUTCString();
+      expect(parseRetryAfter(future)).toBeGreaterThan(40_000);
+      expect(parseRetryAfter(future)).toBeLessThanOrEqual(45_000);
+    } finally {
+      clock.resetClockForTests();
+    }
   });
 
   it("returns null for completely unparseable garbage", () => {
@@ -242,6 +255,37 @@ function sentBodies(http: Recorder): Record<string, unknown>[] {
 // ---------------------------------------------------------------------------
 
 describe("the body a delivery sends", () => {
+  it("signs and timestamps the body on the stated clock", async () => {
+    const { id } = await owner();
+    const webhook = await subscription(id, ["item.created"]);
+    try {
+      clock.installDateShim();
+      clock.advanceClock(86_400_000);
+      await pending(
+        webhook,
+        { type: "created", item: item("01HREALTIMEREALTIMEREAL000") },
+        "item.created",
+      );
+      const http = recorder();
+      const before = Math.floor(clock.nowMs() / 1000);
+      await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+      const after = Math.floor(clock.nowMs() / 1000);
+      expect(http.posts).toHaveLength(1);
+      const post = http.posts[0]!;
+      const signature = post.headers["X-Marfa-Signature"]!;
+      const timestamp = /^t=(\d+),/.exec(signature)![1]!;
+      expect(Number(timestamp)).toBeGreaterThanOrEqual(before);
+      expect(Number(timestamp)).toBeLessThanOrEqual(after);
+      expect(signature).toBe(
+        buildSignatureHeader(timestamp, post.body, SECRET),
+      );
+      const body = JSON.parse(post.body) as { delivered_at: string };
+      expect(Date.parse(body.delivered_at)).toBeGreaterThan(before * 1000 - 1);
+    } finally {
+      clock.resetClockForTests();
+    }
+  });
+
   it("names the event once, as event_type, beside the frame's own fields", async () => {
     const { id } = await owner();
     const webhook = await subscription(id, ["item.created"]);

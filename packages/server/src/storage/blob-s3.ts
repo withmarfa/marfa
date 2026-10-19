@@ -13,6 +13,7 @@ import {
 import { Upload } from "@aws-sdk/lib-storage";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { generateId } from "@withmarfa/shared";
+import { withRealTime } from "../clock.js";
 import {
   boundBlobRead,
   DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
@@ -55,6 +56,8 @@ const MARKER = ".marfa-store";
  * beside a marker object naming the store. The client's own SigV4 signing
  * is what makes the link a store-signed one: a client fetches from the
  * bucket, and the instance is not in the path.
+ * The SDK's asynchronous work keeps real time because the bucket does not
+ * share the target's test clock, including signing and credential refresh.
  */
 export class S3BlobStore implements BlobStore {
   readonly kind = "s3" as const;
@@ -75,32 +78,35 @@ export class S3BlobStore implements BlobStore {
     this.bucket = config.bucket;
     this.prefix = config.prefix ?? "blobs";
     this.locator = `s3://${this.bucket}/${this.prefix}`;
-    this.client = new S3Client({
-      region: config.region,
-      // The store's own checksums are the hash in every object's name: a
-      // stream is hashed before it is uploaded and hashed again by whoever
-      // reads it back. The SDK's CRC checksums are left to a caller that
-      // asks for them, because a multipart object read back from an
-      // S3-compatible store can carry a checksum header the SDK's default
-      // validation does not expect, and a read of every large blob fails
-      // on a check that proves nothing the hash does not.
-      requestChecksumCalculation: "WHEN_REQUIRED",
-      responseChecksumValidation: "WHEN_REQUIRED",
-      ...(config.endpoint
-        ? {
-            endpoint: config.endpoint,
-            forcePathStyle: config.forcePathStyle ?? true,
-          }
-        : {}),
-      ...(config.accessKeyId && config.secretAccessKey
-        ? {
-            credentials: {
-              accessKeyId: config.accessKeyId,
-              secretAccessKey: config.secretAccessKey,
-            },
-          }
-        : {}),
-    });
+    this.client = withRealTime(
+      () =>
+        new S3Client({
+          region: config.region,
+          // The store's own checksums are the hash in every object's name: a
+          // stream is hashed before it is uploaded and hashed again by whoever
+          // reads it back. The SDK's CRC checksums are left to a caller that
+          // asks for them, because a multipart object read back from an
+          // S3-compatible store can carry a checksum header the SDK's default
+          // validation does not expect, and a read of every large blob fails
+          // on a check that proves nothing the hash does not.
+          requestChecksumCalculation: "WHEN_REQUIRED",
+          responseChecksumValidation: "WHEN_REQUIRED",
+          ...(config.endpoint
+            ? {
+                endpoint: config.endpoint,
+                forcePathStyle: config.forcePathStyle ?? true,
+              }
+            : {}),
+          ...(config.accessKeyId && config.secretAccessKey
+            ? {
+                credentials: {
+                  accessKeyId: config.accessKeyId,
+                  secretAccessKey: config.secretAccessKey,
+                },
+              }
+            : {}),
+        }),
+    );
   }
 
   get id(): string {
@@ -117,8 +123,10 @@ export class S3BlobStore implements BlobStore {
   async attach(): Promise<void> {
     const markerKey = `${this.prefix}/${MARKER}`;
     try {
-      const response = await this.client.send(
-        new GetObjectCommand({ Bucket: this.bucket, Key: markerKey }),
+      const response = await withRealTime(() =>
+        this.client.send(
+          new GetObjectCommand({ Bucket: this.bucket, Key: markerKey }),
+        ),
       );
       const parsed = JSON.parse(
         (await response.Body?.transformToString()) ?? "",
@@ -132,13 +140,15 @@ export class S3BlobStore implements BlobStore {
       if (!isNoSuchKey(err)) throw err;
     }
     const id = generateId();
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: markerKey,
-        Body: JSON.stringify({ id }) + "\n",
-        ContentType: "application/json",
-      }),
+    await withRealTime(() =>
+      this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: markerKey,
+          Body: JSON.stringify({ id }) + "\n",
+          ContentType: "application/json",
+        }),
+      ),
     );
     this.storeId = id;
   }
@@ -167,16 +177,18 @@ export class S3BlobStore implements BlobStore {
   }
 
   private async upload(hash: string, path: string): Promise<void> {
-    const upload = new Upload({
-      client: this.client,
-      params: {
-        Bucket: this.bucket,
-        Key: this.key(hash),
-        Body: createReadStream(path),
-        CacheControl: "public, max-age=31536000, immutable",
-      },
+    await withRealTime(async () => {
+      const upload = new Upload({
+        client: this.client,
+        params: {
+          Bucket: this.bucket,
+          Key: this.key(hash),
+          Body: createReadStream(path),
+          CacheControl: "public, max-age=31536000, immutable",
+        },
+      });
+      await upload.done();
     });
-    await upload.done();
   }
 
   async get(
@@ -185,15 +197,17 @@ export class S3BlobStore implements BlobStore {
     signal?: AbortSignal,
   ): Promise<BlobRead | null> {
     try {
-      const response = await this.client.send(
-        new GetObjectCommand({
-          Bucket: this.bucket,
-          Key: this.key(hash),
-          ...(range
-            ? { Range: `bytes=${String(range.start)}-${String(range.end)}` }
-            : {}),
-        }),
-        { abortSignal: signal },
+      const response = await withRealTime(() =>
+        this.client.send(
+          new GetObjectCommand({
+            Bucket: this.bucket,
+            Key: this.key(hash),
+            ...(range
+              ? { Range: `bytes=${String(range.start)}-${String(range.end)}` }
+              : {}),
+          }),
+          { abortSignal: signal },
+        ),
       );
       if (!response.Body) return null;
       const size = range
@@ -223,9 +237,11 @@ export class S3BlobStore implements BlobStore {
     signal?: AbortSignal,
   ): Promise<{ size_bytes: number } | null> {
     try {
-      const response = await this.client.send(
-        new HeadObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
-        { abortSignal: signal },
+      const response = await withRealTime(() =>
+        this.client.send(
+          new HeadObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+          { abortSignal: signal },
+        ),
       );
       return { size_bytes: response.ContentLength ?? 0 };
     } catch (err) {
@@ -235,8 +251,10 @@ export class S3BlobStore implements BlobStore {
   }
 
   async delete(hash: string): Promise<void> {
-    await this.client.send(
-      new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+    await withRealTime(() =>
+      this.client.send(
+        new DeleteObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+      ),
     );
   }
 
@@ -248,15 +266,17 @@ export class S3BlobStore implements BlobStore {
     // Signed into the link rather than stored on the object, so the bucket
     // answers the registry's type and disposition whenever the object was
     // copied and whatever it was copied with.
-    return getSignedUrl(
-      this.client,
-      new GetObjectCommand({
-        Bucket: this.bucket,
-        Key: this.key(hash),
-        ResponseContentType: mimeType,
-        ResponseContentDisposition: blobDisposition(hash),
-      }),
-      { expiresIn: ttlSeconds },
+    return withRealTime(() =>
+      getSignedUrl(
+        this.client,
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: this.key(hash),
+          ResponseContentType: mimeType,
+          ResponseContentDisposition: blobDisposition(hash),
+        }),
+        { expiresIn: ttlSeconds },
+      ),
     );
   }
 }

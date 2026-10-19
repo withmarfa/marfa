@@ -195,15 +195,71 @@ The offset may not exceed 3153600000000 ms (100 years), the largest
 `MARFA_TEST_CLOCK_OFFSET_MS`, so a restart can always take the offset back. A
 move past it is refused and the clock stays where it was.
 
+The target's stored times and expiry checks follow the clock, including the
+times a component it builds on sets for itself. The sign-in library's sessions,
+opaque access and refresh tokens, authorization links and registrations are stamped and judged by the
+target's clock, so a fixture that moves the clock ages them too and writes none
+of those times. The server does this by making the process's `Date` follow the
+offset when the hooks are on, before it creates the sign-in library; a second
+implementation provides the same by whatever means its components allow.
+
 Timers and elapsed-time measures stay on real time: a job's deadline, a busy
 wait, a stream's heartbeat and the server's uptime do not follow the clock. A
 fixture moves the clock and then runs the job it tests with
 `POST /housekeeping/{name}/run`.
 
-After a clock move, no fixture may rely on an OAuth token, an owner session's
-step-up, or the `Retry-After` date of a webhook receiver. Each compares a time
-that the sign-in library or a peer sets in real time with the target's clock,
-which the move has put out of step with it.
+The model is "time passed": the target and every party the harness controls
+use the stated clock. A fixture's process keeps its real clock, so clients
+apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
+when creating or checking protocol timestamps. `MarfaClient` and `DpopClient`
+accept `serverClockOffsetMs` as a number or a callback; use the callback when
+a client outlives a clock advance. DPoP proofs and other client assertions,
+explicit HTTP `Date` headers and signed timestamps must use that stated time.
+The server's DPoP proof-age checks remain unchanged: a real-time proof is stale
+after the stated time advances beyond its validity window.
+
+Webhook receivers and OAuth relying parties in the harness also use the
+stated clock. Webhook signature timestamps, event-body timestamps, absolute
+`Retry-After` dates and retry scheduling follow it. OAuth ID-token `iat`,
+`exp`, `nbf` (when present) and `auth_time` claims follow it, just as opaque
+tokens and sessions do.
+
+Packed-attestation certificate validity follows the stated clock. A fixture
+that moves the clock must issue any certificates it presents on that clock,
+with validity dates covering the intended presentation time. Existing passkey
+fixtures use `none` attestation and present no certificate.
+
+Only peers the harness cannot move stay on real time:
+
+- S3 requests and store-signed blob links use the object store's real clock.
+  Their stated lifetime elapses in real seconds, including when the target
+  starts ahead or advances again. The adapter runs the SDK, its credential
+  providers, retries, uploads and presigner in an isolated real-time context.
+  The installed SDK's `systemClockOffset` affects request signing but not
+  presigning; a constructor offset alone would also miss later clock moves.
+  Links served by the target itself still expire on the target's clock.
+- OTLP export retries and PostHog transport use real time because a deployed
+  telemetry collector is outside the harness's clock control. A fixture
+  standing in for that external collector uses real time for transport
+  responses, including `Retry-After`. Marfa log records keep their stated-clock
+  event timestamps; those timestamps are observations, not credential
+  lifetimes. Traces use the runtime's monotonic time base.
+
+Node's automatic HTTP `Date` headers and native TLS certificate checks use
+the runtime's real clock, unaffected by the JavaScript `Date` replacement.
+Fixtures that send a protocol timestamp explicitly must set it from the
+stated clock rather than use an automatic header as the clock's witness.
+Production does not install the shim.
+
+### The contract version
+
+The target reports a contract version in the root's `contract`, in
+`X-Marfa-Contract` and as the document's `info.version`. `up` and `restart`
+take `--env MARFA_TEST_CONTRACT_VERSION=<n>`, a whole number, to boot the
+target onto another version for that boot alone: the boot after it is back on
+the target's own. The setting is refused unless the hooks are on. A fixture
+uses it to show what a change of contract does to what the target kept, such as
+the answer stored for a repeated request.
 
 ### Faults
 
@@ -230,6 +286,7 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:stream-drain`          | A stream waits after its replay, or at once where it has none, before it delivers the frames it held while it opened and announces `stream_live`.                                                                         |
 | `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
 | `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
+| `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms.                   |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component

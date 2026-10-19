@@ -60,6 +60,38 @@ async function serverNow(): Promise<number> {
 }
 
 describe("the clock", () => {
+  it(
+    "keeps an advanced boot offset across clean and forced restarts",
+    async () => {
+      const day = 24 * HOUR_MS;
+      const own = await bootFreshServer("clock-boot-restart", {
+        MARFA_TEST_CLOCK_OFFSET_MS: String(day),
+      });
+      try {
+        await own.advanceClock(HOUR_MS);
+        for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+          await own.restart({ signal });
+          const run = await fetch(
+            `${own.apiUrl}/housekeeping/rate-limit-cleanup/run`,
+            {
+              method: "POST",
+              headers: { Authorization: `Bearer ${own.managementKey}` },
+            },
+          );
+          expect(run.status).toBe(200);
+          const started = Date.parse(
+            ((await run.json()) as { started_at: string }).started_at,
+          );
+          expect(started - Date.now()).toBeGreaterThan(day + HOUR_MS - 10_000);
+          expect(started - Date.now()).toBeLessThan(day + HOUR_MS + 10_000);
+        }
+      } finally {
+        await own.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
   it("moves forward, refuses a step back, and survives a restart", async () => {
     // The witness: the server reads the system clock until it is moved.
     expect(Math.abs((await serverNow()) - Date.now())).toBeLessThan(10_000);

@@ -34,7 +34,8 @@ import {
 import { shutdownInOrder } from "./shutdown.js";
 import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
-import { setClockOffset } from "./clock.js";
+import { installDateShim, setClockOffset } from "./clock.js";
+import { setServedContractVersion } from "./contract.js";
 import { clearFaults } from "./control/faults.js";
 
 async function main() {
@@ -48,7 +49,11 @@ async function main() {
     // Before anything reads the time, so a restart keeps the clock the harness
     // moved. The setting is refused unless the hooks are on.
     setClockOffset(config.testClockOffsetMs ?? 0);
+    setServedContractVersion(config.testContractVersion);
     if (config.testHooks) {
+      // Direct starts without the telemetry preload still install before
+      // storage or the sign-in library can schedule work.
+      installDateShim();
       log(
         "warn",
         "Test hooks are on: the private control socket can move this server's clock and hold its jobs",

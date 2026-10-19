@@ -1929,7 +1929,7 @@ If the consent screen receives an authorization whose signature the instance did
 
 If the consent screen receives an authorization the instance signed whose window has closed, then the server MUST answer the page saying the request has expired.
 
-**Tests:** waiting on #2075.
+**Tests:** `compliance/sign-in-surface.test.ts › tells a link whose window has closed that the request has expired`.
 
 ### `keys-and-oauth/end-session-page`
 

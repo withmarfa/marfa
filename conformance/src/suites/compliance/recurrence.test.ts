@@ -10,6 +10,10 @@ import {
   getOwnerClient,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -1305,6 +1309,80 @@ describe("a rule too costly to unfold", () => {
       await client.deleteItem(costly);
     }
   });
+});
+
+describe("a series that takes too long to unfold", () => {
+  // The bound is 1,000 ms, which a rule within the candidate bound does not
+  // reach on a machine that runs the server. The target is told to allow one
+  // millisecond instead, with a rule that walks some forty-six thousand
+  // candidates to reach its window, a month of minutes, which takes tens.
+  it(
+    "is left out of data and named when it passes the time bound, and answers whole under it",
+    async () => {
+      const server = await bootFreshServer("recurrence-time-bound");
+      try {
+        const owned = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const created = await owned.createItem({
+          type: "core.event",
+          properties: {
+            title: "walks tens of thousands of minutes",
+            starts_at: "2041-08-01T21:30:00.000Z",
+            recurrence: ["RRULE:FREQ=MINUTELY"],
+          },
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+        const id = created.data.item.id;
+        const meeting = await owned.createItem({
+          type: "core.event",
+          properties: {
+            title: "an ordinary event in the window",
+            starts_at: "2041-09-01T22:00:30.000Z",
+          },
+        });
+        expect(meeting.status, JSON.stringify(meeting.error)).toBe(201);
+        const read = async () => {
+          const r = await owned.listOccurrences({
+            from: "2041-09-01T22:00:00Z",
+            to: "2041-09-01T22:01:00Z",
+          });
+          expect(r.status, JSON.stringify(r.error)).toBe(200);
+          return r.data as unknown as {
+            data: { series_id?: string; item: { id: string } }[];
+            series_errors?: { item_id: string }[];
+            expansion_incomplete?: boolean;
+          };
+        };
+
+        // The witness: under the time bound the series unfolds, and it is the
+        // same rule and window that the shortened bound leaves out.
+        const whole = await read();
+        expect(whole.data.filter((o) => o.series_id === id)).toHaveLength(1);
+        expect(whole.series_errors ?? []).toEqual([]);
+
+        await server.setFault("unfold-deadline=1");
+        const cut = await read();
+        expect(cut.data.some((o) => o.item.id === meeting.data.item.id)).toBe(
+          true,
+        );
+        expect(cut.data.some((o) => o.series_id === id)).toBe(false);
+        expect(
+          (cut.series_errors ?? []).filter((e) => e.item_id === id),
+        ).toHaveLength(1);
+        expect(cut.expansion_incomplete).toBe(true);
+
+        await server.clearFault("unfold-deadline");
+        expect(
+          (await read()).data.filter((o) => o.series_id === id),
+        ).toHaveLength(1);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("a moved occurrence whose series the credential may not read", () => {

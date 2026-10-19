@@ -594,7 +594,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // requires it (id_tokens are always JWT) unless
       // `disableJwtPlugin: true` is set — which forces id_tokens to
       // HS256 with the client_secret, breaking public PKCE clients that
-      // have no secret. Auto-generates an RSA key pair on first use,
+      // have no secret. Auto-generates an EdDSA key pair on first use,
       // stored in `auth_jwks`. Those keys sign ID tokens only: no browser
       // session answer carries a token signed with them.
       jwt({ disableSettingJwtHeader: true }),

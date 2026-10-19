@@ -8,15 +8,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { movedClock } from "../../utils/moved-clock.js";
 
 /**
- * The two refusals an `Idempotency-Key` meets that `idempotency_key_reused`
- * does not cover: a repeat of a request still being served, and a repeat of
- * one whose answer was too large to keep.
- *
- * **A server of its own, for both.** The first needs a record of the
- * instance's own database arranged and the server's clock moved, so it cannot
- * share the run's server. The second needs a body the shared server's request
- * cap would refuse, because a stored answer is the request's own size and a
- * little more.
+ * These cases need their own server: an in-flight claim needs stored state
+ * arranged and the clock moved; an oversized answer needs a request cap above
+ * the shared server's; a changed contract needs a restart onto another version.
  */
 let server: FreshServer | undefined;
 let clock: ReturnType<typeof movedClock>;
@@ -205,4 +199,78 @@ describe("an Idempotency-Key repeated while its first request is still being ser
     expect(taken.status).toBe(201);
     expect(taken.headers.get("Idempotency-Replayed")).toBeNull();
   });
+});
+
+describe("an Idempotency-Key repeated after the server's contract version changed", () => {
+  const SECOND_CONTRACT = "1";
+
+  async function contractOf(): Promise<{
+    header: string | null;
+    root: number;
+  }> {
+    const root = await fetch(`${server!.apiUrl}/`, {
+      headers: { Accept: "application/json" },
+    });
+    const body = (await root.json()) as { contract: number };
+    return {
+      header: root.headers.get("X-Marfa-Contract"),
+      root: body.contract,
+    };
+  }
+
+  it(
+    "answers 422 idempotency_key_reused and writes nothing again",
+    async () => {
+      const key = "contract-change";
+      const request = { type: "core.note", properties: { body: "contract" } };
+      const before = await liveItems();
+      const first = await send("POST", "/items", request, {
+        "Idempotency-Key": key,
+      });
+      expect(first.status).toBe(201);
+      const original = (await first.json()) as { item: { id: string } };
+      // The witness: under the contract it was made under, the repeat replays.
+      const replayed = await send("POST", "/items", request, {
+        "Idempotency-Key": key,
+      });
+      expect(replayed.status).toBe(201);
+      expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+      const first_contract = await contractOf();
+
+      try {
+        await server!.restart({
+          env: { MARFA_TEST_CONTRACT_VERSION: SECOND_CONTRACT },
+        });
+        const moved = await contractOf();
+        expect(moved).toEqual({ header: SECOND_CONTRACT, root: 1 });
+        expect(moved.root).not.toBe(first_contract.root);
+
+        const repeat = await send("POST", "/items", request, {
+          "Idempotency-Key": key,
+        });
+        expect(repeat.status).toBe(422);
+        expect(repeat.headers.get("X-Error-Code")).toBe(
+          "idempotency_key_reused",
+        );
+        expect(repeat.headers.get("Idempotency-Replayed")).toBeNull();
+        expect(await liveItems()).toBe(before + 1);
+      } finally {
+        // The boot after this one is back on the first contract.
+        await server!.restart();
+      }
+
+      // The witness: back on the first contract, the same key replays, so the
+      // refusal belonged to the contract and not to a record the restart lost.
+      expect(await contractOf()).toEqual(first_contract);
+      const again = await send("POST", "/items", request, {
+        "Idempotency-Key": key,
+      });
+      expect(again.status).toBe(201);
+      expect(again.headers.get("Idempotency-Replayed")).toBe("true");
+      expect(((await again.json()) as { item: { id: string } }).item.id).toBe(
+        original.item.id,
+      );
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

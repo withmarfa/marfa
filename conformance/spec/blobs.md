@@ -394,7 +394,7 @@ If a link is fetched after its lifetime has run out, then the server MUST answer
 
 **Reason:** a link as minted fetched the bytes while it lived. The status is the signer's own, so a caller reading the status alone learns which signer refused it, not which fault the link had.
 
-**Tests:** `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered`.
+**Tests:** `correctness/blob-correctness.test.ts › refuses a link that has expired or was altered`, `compliance/blob-s3-clock.test.ts › expires store-signed links on real time with a boot offset and later clock moves`.
 
 ### `blobs/link-altered`
 

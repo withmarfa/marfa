@@ -57,6 +57,13 @@ export interface MarfaClientOptions {
   ownerCookie?: string;
   ownerSessionFile?: string;
   ownerCredentials?: { email: string; password: string };
+  /**
+   * How far the server's clock is ahead of this machine's, in milliseconds.
+   * Clients issue protocol timestamps and judge sign-in age on this clock, so
+   * a fixture that has moved the server's clock names it here, as a number
+   * or as a function for a client that outlives a move.
+   */
+  serverClockOffsetMs?: number | (() => number);
 }
 
 export interface CreateItemInput {
@@ -145,6 +152,7 @@ export class MarfaClient {
   private ownerCookie: string | undefined;
   private ownerCredentials: MarfaClientOptions["ownerCredentials"];
   private ownerSessionFile: string | undefined;
+  private serverClockOffsetMs: () => number;
   private ownerAuthenticatedAt = 0;
   private ownerAuthentication: Promise<void> | undefined;
 
@@ -154,6 +162,9 @@ export class MarfaClient {
     this.ownerCookie = options.ownerCookie;
     this.ownerSessionFile = options.ownerSessionFile;
     this.ownerCredentials = options.ownerCredentials;
+    const offset = options.serverClockOffsetMs ?? 0;
+    this.serverClockOffsetMs =
+      typeof offset === "number" ? () => offset : offset;
   }
 
   /** Long-running fixtures reauthenticate through the real sign-in operation. */
@@ -162,7 +173,8 @@ export class MarfaClient {
     if (
       !credentials ||
       !this.ownerCookie ||
-      Date.now() - this.ownerAuthenticatedAt < 240_000
+      Date.now() + this.serverClockOffsetMs() - this.ownerAuthenticatedAt <
+        240_000
     )
       return;
     if (this.ownerAuthentication) return this.ownerAuthentication;
@@ -171,6 +183,7 @@ export class MarfaClient {
         this.baseUrl,
         this.ownerCookie,
         credentials,
+        () => Date.now() + this.serverClockOffsetMs(),
       );
       this.ownerCookie = session.cookie;
       this.ownerAuthenticatedAt = session.authenticatedAt;

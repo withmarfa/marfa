@@ -75,6 +75,7 @@ function appThatFails(): Hono<AppEnv> {
  */
 async function bootInstrumentation(
   env: Record<string, string>,
+  onPostHogConstruct?: () => void,
 ): Promise<{ loadedPostHog: () => boolean }> {
   const hermetic: Record<string, string> = {
     OTEL_EXPORTER_OTLP_ENDPOINT: "",
@@ -82,6 +83,7 @@ async function bootInstrumentation(
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "",
     MARFA_POSTHOG_HOST: "",
     MARFA_POSTHOG_PROJECT_TOKEN: "",
+    MARFA_TEST_HOOKS: "false",
   };
   for (const [name, value] of Object.entries({ ...hermetic, ...env })) {
     vi.stubEnv(name, value);
@@ -89,7 +91,16 @@ async function bootInstrumentation(
   let loaded = false;
   vi.doMock("posthog-node", async (importOriginal) => {
     loaded = true;
-    return importOriginal();
+    const original = await importOriginal<typeof import("posthog-node")>();
+    return {
+      ...original,
+      PostHog: new Proxy(original.PostHog, {
+        construct(target, args, newTarget) {
+          onPostHogConstruct?.();
+          return Reflect.construct(target, args, newTarget) as object;
+        },
+      }),
+    };
   });
   vi.resetModules();
   await import("./instrumentation.js");
@@ -106,6 +117,8 @@ describe("unhandled errors reach PostHog's error tracking", () => {
 
   afterEach(async () => {
     await globalThis.__marfaOtelShutdown?.();
+    const clock = await import("./clock.js");
+    clock.resetClockForTests();
     globalThis.__marfaOtelShutdown = undefined;
     globalThis.__marfaReportException = undefined;
     // The first provider registered wins, so the next case's would be ignored.
@@ -115,6 +128,48 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     await collector.close();
+  });
+
+  it.each([false, true])(
+    "isolates work scheduled by telemetry construction with test hooks: %s",
+    async (testHooks) => {
+      const systemDate = Date;
+      let release!: () => void;
+      const wait = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let external!: Promise<number>;
+      await bootInstrumentation(
+        {
+          MARFA_TEST_HOOKS: String(testHooks),
+          OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+          MARFA_POSTHOG_HOST: collector.url,
+          MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+        },
+        () => {
+          external = wait.then(() => Date.now() - systemDate.now());
+        },
+      );
+      const clock = await import("./clock.js");
+      try {
+        clock.advanceClock(86_400_000);
+        expect(Date.now() - systemDate.now()).toBeGreaterThanOrEqual(
+          testHooks ? 86_399_900 : -100,
+        );
+        if (!testHooks) expect(Date).toBe(systemDate);
+      } finally {
+        release();
+      }
+      expect(Math.abs(await external)).toBeLessThan(100);
+    },
+  );
+
+  it("installs the test clock even when telemetry is disabled", async () => {
+    const systemDate = Date;
+    await bootInstrumentation({ MARFA_TEST_HOOKS: "true" });
+    const clock = await import("./clock.js");
+    clock.advanceClock(86_400_000);
+    expect(Date.now() - systemDate.now()).toBeGreaterThan(86_399_900);
   });
 
   it("reports a thrown error as an exception with its stack and environment", async () => {

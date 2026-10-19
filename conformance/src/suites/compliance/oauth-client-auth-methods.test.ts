@@ -43,7 +43,7 @@ function register(metadata: Record<string, unknown>) {
 function assertion(clientId: string, audience: string) {
   const encode = (value: unknown) =>
     Buffer.from(JSON.stringify(value)).toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
+  const now = Math.floor((Date.now() + server!.clockOffsetMs) / 1000);
   const input = `${encode({ alg: "ES256", kid: "client-key" })}.${encode({
     iss: clientId,
     sub: clientId,

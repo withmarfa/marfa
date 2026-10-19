@@ -6,7 +6,13 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  DAY_MS,
+  MINUTE_MS,
+  QUIET_SCHEDULE,
+  quiet,
+  runJob,
+} from "../../utils/moved-clock.js";
 
 /**
  * Two refusals of the doors that serve signed-in apps and are not in the
@@ -23,7 +29,7 @@ const FORM = { "content-type": "application/x-www-form-urlencoded" };
 
 beforeAll(async () => {
   grants = await bootFreshServer("oauth-refusals-grants");
-  clients = await bootFreshServer("oauth-refusals-clients");
+  clients = await bootFreshServer("oauth-refusals-clients", QUIET_SCHEDULE);
 }, 4 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -96,7 +102,7 @@ describe("GET /auth/device/consent", () => {
 
   it("answers 400 invalid_client for a pending code whose client is no longer registered", async () => {
     const server = clients!;
-    const management = { Authorization: `Bearer ${server.managementKey}` };
+    await quiet(server, ["dcr-client-cleanup"]);
     const discovery = (await (
       await fetch(
         `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -105,71 +111,71 @@ describe("GET /auth/device/consent", () => {
       registration_endpoint: string;
       device_authorization_endpoint: string;
     };
-    const registered = (await (
-      await fetch(discovery.registration_endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          client_name: "conformance",
-          application_type: "native",
-          grant_types: [
-            "urn:ietf:params:oauth:grant-type:device_code",
-            "refresh_token",
-          ],
-          response_types: [],
-          token_endpoint_auth_method: "none",
-        }),
-      })
-    ).json()) as { client_id: string };
-    const code = (await (
-      await fetch(discovery.device_authorization_endpoint, {
-        method: "POST",
-        headers: FORM,
-        body: new URLSearchParams({
-          client_id: registered.client_id,
-          scope: "openid",
-        }),
-      })
-    ).json()) as { user_code: string; verification_uri_complete: string };
+    const register = async (): Promise<string> =>
+      (
+        (await (
+          await fetch(discovery.registration_endpoint, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              client_name: "conformance",
+              application_type: "native",
+              grant_types: [
+                "urn:ietf:params:oauth:grant-type:device_code",
+                "refresh_token",
+              ],
+              response_types: [],
+              token_endpoint_auth_method: "none",
+            }),
+          })
+        ).json()) as { client_id: string }
+      ).client_id;
+    const codeFor = async (
+      clientId: string,
+    ): Promise<{ user_code: string; verification_uri_complete: string }> =>
+      (await (
+        await fetch(discovery.device_authorization_endpoint, {
+          method: "POST",
+          headers: FORM,
+          body: new URLSearchParams({ client_id: clientId, scope: "openid" }),
+        })
+      ).json()) as { user_code: string; verification_uri_complete: string };
+
+    // A registration nobody authorized is removed once it has been idle past
+    // the retention window, a day, however recently a code was asked for it.
+    // The code lives ten minutes, so it is asked for just short of the day,
+    // and the day passes while the code stands.
+    const registered = await register();
+    await server.advanceClock(DAY_MS - 5 * MINUTE_MS);
+    const code = await codeFor(registered);
     const { origin, cookie } = await signedInOrigin(
       server,
       code.verification_uri_complete,
     );
-    const consentUrl = `${origin}/auth/device/consent?user_code=${encodeURIComponent(code.user_code)}`;
+    await server.advanceClock(6 * MINUTE_MS);
+    const consentUrl = (user: string) =>
+      `${origin}/auth/device/consent?user_code=${encodeURIComponent(user)}`;
 
-    // The control: while the client is registered the owner is shown the
-    // consent screen for the code.
-    const shown = await fetch(consentUrl, { headers: { cookie } });
-    expect(shown.status).toBe(200);
-    expect(shown.headers.get("Content-Type")).toContain("text/html");
-
-    // A registration nobody authorized is removed once it has been idle past
-    // the retention window, however recently a code was asked for it. The
-    // window is days, so the client's registration and offer times are
-    // written rather than waited for.
-    const aged = withInstanceDatabase(server.sqlitePath, (db) =>
-      db
-        .prepare(
-          "UPDATE auth_oauth_client SET created_at = 0, updated_at = 0 WHERE client_id = ?",
-        )
-        .run(registered.client_id),
-    );
-    expect(Number(aged.changes)).toBe(1);
-    const swept = await fetch(
-      `${server.apiUrl}/housekeeping/dcr-client-cleanup/run`,
-      { method: "POST", headers: management },
-    );
-    expect(swept.status).toBe(200);
-    expect(await swept.json()).toMatchObject({
+    expect(await runJob(server, "dcr-client-cleanup")).toMatchObject({
       outcome: "ok",
       result: { deleted: 1 },
     });
-
-    const refused = await fetch(consentUrl, { headers: { cookie } });
+    const refused = await fetch(consentUrl(code.user_code), {
+      headers: { cookie },
+    });
     expect(refused.status).toBe(400);
     expect(refused.headers.get("X-Error-Code")).toBe("invalid_client");
     expect(
       ((await refused.json()) as { error: { code: string } }).error.code,
     ).toBe("invalid_client");
+
+    // The witness: the same owner and door show the consent screen for a code
+    // whose client is registered.
+    const kept = await codeFor(await register());
+    const shown = await fetch(consentUrl(kept.user_code), {
+      headers: { cookie },
+    });
+    expect(shown.status).toBe(200);
+    expect(shown.headers.get("Content-Type")).toContain("text/html");
   });
 });

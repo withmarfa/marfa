@@ -2,7 +2,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { activeFaults, clearFaults, setFault } from "../control/faults.js";
+import {
+  activeFaults,
+  clearFaults,
+  setFault,
+  unfoldDeadlineFault,
+} from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import {
   createTestContext,
@@ -13,6 +18,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
+import { expandSeries } from "../events/expand-recurrence.js";
 
 const spies = vi.hoisted(() => ({
   audit: vi.fn(),
@@ -50,6 +56,7 @@ vi.mock("../control/faults.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../control/faults.js")>();
   return {
     ...actual,
+    unfoldDeadlineFault: vi.fn(actual.unfoldDeadlineFault),
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
       spies.hold();
       return actual.holdAt(...args);
@@ -97,6 +104,25 @@ afterEach(async () => {
 });
 
 const entry = { action: "test.hooks", resource_type: "settings" };
+it("does not look up an unfold deadline until a fault is armed", () => {
+  const expand = () =>
+    expandSeries(
+      {
+        id: "series",
+        starts_at: "2026-01-01T12:00:00Z",
+        timezone: "UTC",
+        recurrence: ["RRULE:FREQ=DAILY"],
+      },
+      new Date("2026-01-01T00:00:00Z"),
+      new Date("2026-01-02T00:00:00Z"),
+    );
+  vi.mocked(unfoldDeadlineFault).mockClear();
+  expect(expand()).toHaveLength(1);
+  expect(unfoldDeadlineFault).not.toHaveBeenCalled();
+  setFault("unfold-deadline", "1000");
+  expect(expand()).toHaveLength(1);
+  expect(unfoldDeadlineFault).toHaveBeenCalledTimes(1);
+});
 const write = () =>
   runAuditedTransaction(
     ctx.storage,
