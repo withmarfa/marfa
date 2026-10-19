@@ -1,9 +1,16 @@
 import { createServer, type RequestListener } from "node:http";
 import { getRequestListener } from "@hono/node-server";
 import type { AppConfig } from "./config.js";
+import {
+  enforceRequestDeadline,
+  PUBLIC_REQUEST_DEADLINE_MS,
+} from "./request-deadline.js";
 
 /** Reserve the actual listener before auth derives its origin from the port. */
-export async function reservePublicListener(config: AppConfig) {
+export async function reservePublicListener(
+  config: AppConfig,
+  requestDeadlineMs = PUBLIC_REQUEST_DEADLINE_MS,
+) {
   let handler: RequestListener | undefined;
   const server = createServer((request, response) => {
     if (handler) handler(request, response);
@@ -12,6 +19,7 @@ export async function reservePublicListener(config: AppConfig) {
       response.end("Server is starting");
     }
   });
+  enforceRequestDeadline(server, requestDeadlineMs);
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(config.port, config.listenHost, () => {

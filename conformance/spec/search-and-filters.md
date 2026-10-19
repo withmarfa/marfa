@@ -1880,6 +1880,58 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 
 **Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`, `compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large`.
 
+### `search-and-filters/restore-duration`
+
+While a part of the body of `POST /restore` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+
+**Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
+
+**Tests:** `compliance/upload-timing.test.ts › restores an archive whose body takes 66 seconds to arrive, a part at a time`.
+
+### `search-and-filters/restore-idle`
+
+If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-idle-unwritten`
+
+When the server answers `POST /restore` with `408 request_timeout`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-sign-in-age`
+
+If the owner's browser session signed in more than five minutes before a `POST /restore` started, then the server MUST answer `403 forbidden` without waiting for the body to finish arriving.
+
+**Reason:** restoring can write server-managed records (`search-and-filters/restore-operator`), so it needs a recent sign-in. Judging it when the request starts refuses a stale session before the owner has sent the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › refuses with 403 forbidden an owner who signed in six minutes before the request started, as soon as the request starts`.
+
+### `search-and-filters/restore-sign-in-start`
+
+If the owner's browser session signed in within five minutes before a `POST /restore` started, then the server MUST NOT refuse the request because more than five minutes have passed since the sign-in when the body finishes arriving.
+
+**Reason:** the sign-in is judged once, when the request starts, and again at the same moment when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › restores an archive from an owner who signed in four minutes before the request started and whose body finished arriving two minutes later`.
+
+### `search-and-filters/restore-session-ended`
+
+If the owner's browser session ends before the body of a `POST /restore` finishes arriving, then the server MUST answer `401 unauthorized`.
+
+**Reason:** judging the sign-in at the start does not extend the session. A sign-out, or a session that has expired, stops the restore however recent the sign-in was.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › answers 401 unauthorized, though the sign-in was recent when the request started`.
+
+### `search-and-filters/restore-session-unwritten`
+
+When the server answers `POST /restore` with `401 unauthorized` because the owner's browser session ended during the upload, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › writes nothing of the archive`.
+
 ### `search-and-filters/restore-blob-bytes`
 
 When `POST /restore` takes a blob that the archive carries, the server MUST answer its bytes on `GET /blobs/{hash}` byte for byte, under the type that the manifest names.

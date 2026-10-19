@@ -4291,6 +4291,41 @@
         ],
         "description": "A tag, and how many items carry it."
       },
+      "RequestTimeoutRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "request_timeout"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "BlobOrphanPage": {
         "type": "object",
         "properties": {
@@ -26930,6 +26965,36 @@
               }
             }
           },
+          "408": {
+            "description": "- `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "409": {
             "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
@@ -41696,7 +41761,7 @@
           "Export and restore"
         ],
         "summary": "Restore from an archive",
-        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
+        "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
         "security": [
           {
             "ownerSession": []
@@ -41868,11 +41933,41 @@
             }
           },
           "403": {
-            "description": "Requires direct owner or local authority and recent owner authentication.",
+            "description": "Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "408": {
+            "description": "- `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
                 }
               }
             },

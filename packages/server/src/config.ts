@@ -5,6 +5,7 @@ import { z } from "zod";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
+import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS } from "./upload-body.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
 import {
@@ -219,6 +220,11 @@ export interface AppConfig {
   blobMinCopies?: number;
   /** Idle lifetime of a blob read before its file or socket is closed. */
   blobReadIdleTimeoutMs?: number;
+  /** How long a restore or blob upload may receive no bytes before it is
+   *  ended `408 request_timeout`. Optional on the type so a test context's
+   *  `AppConfig` literal takes `DEFAULT_UPLOAD_IDLE_TIMEOUT_MS`; env
+   *  override `MARFA_UPLOAD_IDLE_TIMEOUT_MS`. */
+  uploadIdleTimeoutMs?: number;
   /** The free bytes uploads, restores, and archive exports must leave on
    *  the disk store's volume. A non-negative integer; default 134_217_728 (128 MiB); env
    *  override `MARFA_DISK_RESERVE_BYTES`. */
@@ -1030,6 +1036,11 @@ const settingsShape = {
     128 * 1024 * 1024,
     "The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
     { min: 0, unit: "bytes" },
+  ),
+  MARFA_UPLOAD_IDLE_TIMEOUT_MS: count(
+    DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
+    "How long a restore or a blob upload may receive no bytes before the server ends it `408 request_timeout`. An upload has no other time limit while bytes keep arriving.",
+    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
   ),
   MARFA_MAX_REQUEST_BYTES: count(
     1_048_576,
@@ -1881,6 +1892,7 @@ export function loadConfig(
     blobCleanupGraceMs: s.MARFA_BLOB_CLEANUP_GRACE_MS,
     blobMinCopies: s.MARFA_BLOB_MIN_COPIES,
     blobReadIdleTimeoutMs: s.MARFA_BLOB_READ_IDLE_TIMEOUT_MS,
+    uploadIdleTimeoutMs: s.MARFA_UPLOAD_IDLE_TIMEOUT_MS,
     diskReserveBytes: s.MARFA_DISK_RESERVE_BYTES,
     blobReplicateIntervalMs: s.MARFA_BLOB_REPLICATE_INTERVAL_MS,
     blobReplicateBatch: s.MARFA_BLOB_REPLICATE_BATCH,

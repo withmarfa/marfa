@@ -6,6 +6,7 @@ import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
+import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS, uploadBody } from "../upload-body.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { standingPermission, authorityId } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
@@ -363,6 +364,15 @@ const uploadBlobRoute = createRoute({
     },
     ...unauthorized,
     403: UPLOAD_REFUSED_RESPONSE,
+    408: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["request_timeout"]),
+        },
+      },
+      description:
+        "- `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
+    },
   },
 });
 
@@ -652,7 +662,11 @@ export function blobRoutes(
   housekeeping: Pick<Housekeeping, "wake">,
   config: Pick<
     AppConfig,
-    "authBaseUrl" | "authSecret" | "blobMinCopies" | "diskReserveBytes"
+    | "authBaseUrl"
+    | "authSecret"
+    | "blobMinCopies"
+    | "diskReserveBytes"
+    | "uploadIdleTimeoutMs"
   >,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
@@ -790,9 +804,12 @@ export function blobRoutes(
     const spool = disk.spoolPath();
     const hashing = new HashingTransform();
     try {
-      const body = c.req.raw.body;
+      const body = uploadBody(
+        c,
+        config.uploadIdleTimeoutMs ?? DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
+      );
       if (body) {
-        await pipeline(Readable.fromWeb(body), hashing, place.writer(spool));
+        await pipeline(body, hashing, place.writer(spool));
       }
     } catch (err) {
       await rm(spool, { force: true });

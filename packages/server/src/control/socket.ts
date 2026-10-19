@@ -10,6 +10,10 @@ import { createConnection } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createClient, LibsqlError } from "@libsql/client";
 import { getRequestListener } from "@hono/node-server";
+import {
+  CONTROL_REQUEST_DEADLINE_MS,
+  enforceRequestDeadline,
+} from "../request-deadline.js";
 
 const execute = promisify(execFile);
 let startupTurn = Promise.resolve();
@@ -210,6 +214,7 @@ export async function verifyControlDirectory(
 export async function startControlSocket(
   socketPath: string,
   fetch: (request: Request) => Response | Promise<Response>,
+  requestDeadlineMs = CONTROL_REQUEST_DEADLINE_MS,
 ) {
   await verifyControlDirectory(socketPath);
   // Closing any descriptor for a lock file can release this process's POSIX
@@ -225,7 +230,7 @@ export async function startControlSocket(
   try {
     lock = await acquireStartupLock(socketPath);
     await removeStaleSocket(socketPath);
-    server = await publishControlSocket(socketPath, fetch);
+    server = await publishControlSocket(socketPath, fetch, requestDeadlineMs);
     const ownership = lock;
     server.once("close", () => {
       ownership.close();
@@ -254,6 +259,7 @@ export async function startControlSocket(
 async function publishControlSocket(
   socketPath: string,
   fetch: (request: Request) => Response | Promise<Response>,
+  requestDeadlineMs: number,
 ) {
   // libuv unlinks its bound name unconditionally on close. Publish a second
   // link only after verification, and remove that link only while it is ours.
@@ -267,7 +273,7 @@ async function publishControlSocket(
   const server = createServer((request, response) => {
     void listener(request, response);
   });
-  server.requestTimeout = 30_000;
+  enforceRequestDeadline(server, requestDeadlineMs);
   server.headersTimeout = 10_000;
   await new Promise<void>((resolvePromise, reject) => {
     server.once("error", reject);
