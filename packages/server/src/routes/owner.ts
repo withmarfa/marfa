@@ -110,8 +110,8 @@ const createOwnerRoute = createRoute({
         "application/json": {
           schema: z.strictObject({
             email: z
-              .email()
-              .max(254)
+              .email({ error: "Enter a valid email address." })
+              .max(254, { error: "Enter a valid email address." })
               .describe("Email address the owner uses to sign in."),
             password: z.string().describe("Password for the new owner."),
             name: z
