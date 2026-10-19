@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -141,6 +142,34 @@ describe("an archive that lacks a blob it names", () => {
     expect(tar).toContain(lost);
   });
 
+  it("keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken", async () => {
+    const heldDir = mkdtempSync(join(dir, "held-"));
+    const path = join(heldDir, "nightly.tar.gz");
+    writeFileSync(path, "an earlier backup");
+    mkdirSync(`${path}.incomplete`);
+    const refused = await cli.refused([
+      "export",
+      "--format",
+      "archive",
+      "--output",
+      path,
+    ]);
+    expect(refused.code).toBe(1);
+    expect(refused.envelope.error.code).toBe("blobs_missing");
+    expect(refused.envelope.error.message).toContain(lost);
+    expect(refused.envelope.error.message).toContain("could not be moved");
+    expect(readFileSync(path, "utf8")).toBe("an earlier backup");
+    const hidden = readdirSync(heldDir).filter((name) =>
+      name.startsWith(".nightly.tar.gz.partial-"),
+    );
+    expect(hidden).toHaveLength(1);
+    const partial = join(heldDir, hidden[0]!);
+    expect(refused.envelope.error.message).toContain(partial);
+    expect(gunzipSync(readFileSync(partial)).toString("latin1")).toContain(
+      lost,
+    );
+  });
+
   it("prints the answer of a restore of it and exits 1 with blobs_missing", async () => {
     const path = join(dir, "lacking.tar.gz.incomplete");
     const outcome = await cli
@@ -183,6 +212,9 @@ describe("an archive that lacks a blob it names", () => {
     ]);
     expect(cut.code).toBe(3);
     expect(cut.envelope.error.message).toContain("nothing was written");
+    expect(cut.envelope.error.message).toContain(
+      "the partial file was removed",
+    );
     expect(readFileSync(path, "utf8")).toBe("an earlier backup");
     expect(readdirSync(cutDir)).toEqual(["backup.tar.gz"]);
 

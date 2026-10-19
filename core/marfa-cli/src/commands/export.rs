@@ -139,21 +139,21 @@ fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, 
             Ok(written)
         }
         Err(CliError::ArchiveLacksBlobs(missing)) => {
-            let kept = path.with_file_name(format!("{}.incomplete", name.to_string_lossy()));
+            let incomplete = path.with_file_name(format!("{}.incomplete", name.to_string_lossy()));
             let target_held = std::fs::symlink_metadata(path).is_ok();
-            std::fs::rename(&partial, &kept).map_err(|error| {
-                CliError::Invalid(format!(
-                    "cannot keep the incomplete archive at {}: {error}; it is left at {}, and {} was not written",
-                    kept.display(),
-                    partial.display(),
-                    path.display()
-                ))
-            })?;
+            // A move that is refused (a directory at the name, say) keeps the
+            // bytes where they are, and the answer still names the blobs.
+            let (kept, refused) = match std::fs::rename(&partial, &incomplete) {
+                Ok(()) => (incomplete.clone(), None),
+                Err(error) => (partial, Some(error.to_string())),
+            };
             Err(CliError::ArchiveKeptApart {
                 missing,
                 target: path.to_path_buf(),
+                incomplete,
                 kept,
                 target_held,
+                refused,
             })
         }
         Err(error) => Err(CliError::Invalid(format!(
@@ -412,11 +412,14 @@ mod tests {
             CliError::ArchiveKeptApart {
                 missing,
                 target,
+                incomplete: wanted,
                 kept,
                 target_held,
+                refused,
             } => {
                 assert_eq!(missing, &hashes);
-                assert_eq!((target, kept), (&path, &incomplete));
+                assert_eq!((target, wanted, kept), (&path, &incomplete, &incomplete));
+                assert!(refused.is_none());
                 assert!(target_held);
             }
             other => panic!("expected the archive kept apart, got {other:?}"),
@@ -474,6 +477,44 @@ mod tests {
             lacking
         );
         assert_eq!(names_in(&dir), ["first.tar.gz.incomplete"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reports_the_blobs_and_keeps_the_bytes_when_the_incomplete_name_cannot_be_taken() {
+        let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
+        let whole = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
+        let dir = scratch();
+        let path = dir.join("nightly.tar.gz");
+        let incomplete = dir.join("nightly.tar.gz.incomplete");
+        std::fs::write(&path, &whole).unwrap();
+        std::fs::create_dir(&incomplete).unwrap();
+        let error = written(&path, &lacking).unwrap_err();
+        let CliError::ArchiveKeptApart {
+            missing,
+            kept,
+            refused,
+            ..
+        } = &error
+        else {
+            panic!("expected the archive kept apart, got {error:?}");
+        };
+        assert_eq!(missing, &["sha256:aa"]);
+        assert!(refused.is_some(), "{error:?}");
+        assert_eq!(error.exit(), crate::error::Exit::Refused);
+        assert_eq!(error.code(), "blobs_missing");
+        let message = error.to_string();
+        assert!(message.contains("sha256:aa"), "{message}");
+        assert!(message.contains("could not be moved"), "{message}");
+        assert!(
+            message.contains(&incomplete.display().to_string()),
+            "{message}"
+        );
+        // The bytes are where the message says, the path and the directory
+        // are as they were.
+        assert_eq!(std::fs::read(kept).unwrap(), lacking);
+        assert_eq!(std::fs::read(&path).unwrap(), whole);
+        assert!(incomplete.is_dir());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

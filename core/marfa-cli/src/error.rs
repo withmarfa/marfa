@@ -83,22 +83,18 @@ pub enum CliError {
     ArchiveLacksBlobs(Vec<String>),
     /// An export to a file, written whole but for blobs no store could read,
     /// and kept beside the path it was meant for instead of at it.
-    #[error(
-        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names, so it is kept at {}, {}",
-        .missing.len(),
-        hash_list(.missing),
-        .kept.display(),
-        if *.target_held {
-            format!("and {} still holds the file that was there before", .target.display())
-        } else {
-            format!("and nothing was written to {}, so nothing there lacks files", .target.display())
-        }
-    )]
+    #[error("{}", archive_kept_apart(.missing, .target, .incomplete, .kept, *.target_held, .refused.as_deref()))]
     ArchiveKeptApart {
         missing: Vec<String>,
         target: std::path::PathBuf,
+        /// Where the archive belongs: `<target>.incomplete`.
+        incomplete: std::path::PathBuf,
+        /// Where the archive is: `incomplete`, or the partial file when the
+        /// move to `incomplete` was refused.
         kept: std::path::PathBuf,
         target_held: bool,
+        /// Why the move to `incomplete` was refused, when it was.
+        refused: Option<String>,
     },
     /// A restore that wrote what the archive carries, of an archive that
     /// lacks blobs it names.
@@ -503,6 +499,40 @@ fn contract_said(served: Option<&str>, status: Option<u16>) -> String {
 
 /// The first few hashes, and how many more: a message names what is
 /// missing without growing with an instance that lost every file.
+fn archive_kept_apart(
+    missing: &[String],
+    target: &std::path::Path,
+    incomplete: &std::path::Path,
+    kept: &std::path::Path,
+    target_held: bool,
+    refused: Option<&str>,
+) -> String {
+    let place = match refused {
+        None => format!("it is kept at {}", kept.display()),
+        Some(reason) => format!(
+            "it could not be moved to {}: {reason}; it is kept at {}",
+            incomplete.display(),
+            kept.display()
+        ),
+    };
+    let path = if target_held {
+        format!(
+            "{} still holds the file that was there before",
+            target.display()
+        )
+    } else {
+        format!(
+            "nothing was written to {}, so nothing there lacks files",
+            target.display()
+        )
+    };
+    format!(
+        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names, so {place}, and {path}",
+        missing.len(),
+        hash_list(missing)
+    )
+}
+
 fn hash_list(hashes: &[String]) -> String {
     const SHOWN: usize = 10;
     let shown = hashes[..hashes.len().min(SHOWN)].join(", ");
@@ -927,8 +957,10 @@ mod tests {
             CliError::ArchiveKeptApart {
                 missing: vec![],
                 target: std::path::PathBuf::new(),
+                incomplete: std::path::PathBuf::new(),
                 kept: std::path::PathBuf::new(),
                 target_held: false,
+                refused: None,
             }
             .exit(),
             Exit::Refused

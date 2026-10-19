@@ -1502,11 +1502,19 @@ When `marfa export --format archive` has received an archive whose manifest name
 
 ### `search-and-filters/cli-export-lacking-kept`
 
-When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST keep the whole archive at `<path>.incomplete`, replacing only an earlier file of that name.
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` can be replaced, then the CLI MUST keep the whole archive at `<path>.incomplete`, replacing only an earlier file of that name.
 
 **Reason:** the archive holds everything else, and may hold the only copy of a file the server has since lost, so it is kept where the person can get it back and is named as incomplete.
 
 **Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-refused`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` cannot be replaced, then the CLI MUST keep the whole archive in a hidden partial file beside `<path>` and name that file and the reason in its message.
+
+**Reason:** the bytes are kept where the person can get them back, and the exit, the `blobs_missing` code and the hashes of `search-and-filters/cli-export-lacking` still reach the person.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
 
 ### `search-and-filters/cli-export-lacking-path`
 
@@ -1526,9 +1534,17 @@ When `marfa export --format archive --output <path>` has received an archive who
 
 ### `search-and-filters/cli-export-whole`
 
-When `marfa export --output <path>` receives an export that ends whole and, for an archive, names no blobs in `missing_blobs`, the CLI MUST replace `<path>` with it and leave no other file beside it.
+When `marfa export --output <path>` receives an export that ends whole and, for an archive, names no blobs in `missing_blobs`, the CLI MUST replace `<path>` with it.
 
-**Reason:** the earlier backup is replaced only by one that is at least as complete, and no file is left behind for a later run to mistake for a backup.
+**Reason:** the earlier backup is replaced only by one that is at least as complete.
+
+**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
+
+### `search-and-filters/cli-export-whole-clean`
+
+When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no partial file beside it.
+
+**Reason:** a file left behind would be mistaken by a later run, or a person, for a backup. An older `<path>.incomplete` is not a partial file of this run, and is left as it was.
 
 **Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
 
