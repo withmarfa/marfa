@@ -27,6 +27,7 @@ import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROUTES_DIR = fileURLToPath(new URL(".", import.meta.url));
+const PAGES_DIR = fileURLToPath(new URL("../pages/", import.meta.url));
 const SRC_DIR = fileURLToPath(new URL("..", import.meta.url));
 
 /**
@@ -41,6 +42,12 @@ const ALLOWED: { file: string; because: string }[] = [
       "and the stylesheet link are written.",
   },
   {
+    file: "pages/render.ts",
+    because:
+      "The page system's one place for the doctype: every page built from its " +
+      "parts is rendered through it, and its shell writes the rest of the envelope.",
+  },
+  {
     file: "routes/auth-static/auth-css.ts",
     because:
       "The stylesheet, served as a static asset from a public route. It is " +
@@ -48,7 +55,7 @@ const ALLOWED: { file: string; because: string }[] = [
   },
 ];
 
-/** Every `.ts` under a directory, tests and generated files excluded. */
+/** Every `.ts` and `.tsx` under a directory, tests and generated files excluded. */
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
@@ -56,8 +63,8 @@ function walk(dir: string): string[] {
     if (statSync(abs).isDirectory()) {
       out.push(...walk(abs));
     } else if (
-      entry.endsWith(".ts") &&
-      !entry.endsWith(".test.ts") &&
+      /\.tsx?$/.test(entry) &&
+      !/\.test\.tsx?$/.test(entry) &&
       !entry.includes(".generated.")
     ) {
       out.push(abs);
@@ -84,7 +91,7 @@ function withoutComments(source: string): string {
 }
 
 describe("every server-rendered page uses the one shared layout", () => {
-  const files = walk(ROUTES_DIR).map((abs) => ({
+  const files = [...walk(ROUTES_DIR), ...walk(PAGES_DIR)].map((abs) => ({
     rel: relFromSrc(abs),
     source: withoutComments(readFileSync(abs, "utf8")),
   }));
@@ -95,6 +102,7 @@ describe("every server-rendered page uses the one shared layout", () => {
     // most prone to.
     expect(files.length).toBeGreaterThan(15);
     expect(files.map((f) => f.rel)).toContain("routes/auth-layout.ts");
+    expect(files.map((f) => f.rel)).toContain("pages/parts/shell.tsx");
   });
 
   it("no route module builds its own document envelope", () => {

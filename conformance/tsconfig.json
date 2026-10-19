@@ -6,6 +6,8 @@
     "types": ["node"],
     "strict": true,
     "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -13,8 +15,9 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  // The server's settings schema is imported by path, and its error handler reads a
-  // global that only instrumentation.ts declares.
+  // The server's settings schema is imported by path, its error handler reads a
+  // global that only instrumentation.ts declares, and the pages it renders are
+  // Hono JSX.
   "include": [
     "src/**/*.ts",
     "scripts/**/*.ts",

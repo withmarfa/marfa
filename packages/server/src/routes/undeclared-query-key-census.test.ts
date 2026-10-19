@@ -89,6 +89,8 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
   "GET /auth/oauth2/end-session":
     "the logout page, reached with the OAuth request",
   "GET /auth/static/auth.css": "a stylesheet those pages load",
+  "GET /auth/static/pages.css": "a stylesheet those pages load",
+  "GET /auth/static/pages.js": "a script those pages load",
   "GET /auth/static/passkeys.js": "a script those pages load",
   "GET /auth/static/password-toggle.js": "a script those pages load",
   "GET /auth/static/submit-state.js": "a script those pages load",

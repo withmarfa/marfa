@@ -8,11 +8,13 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "assets:build": "tsx scripts/build-page-assets.ts",
+    "assets:watch": "tsx scripts/build-page-assets.ts --watch",
+    "build": "pnpm run assets:build && tsup",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/pages/client && tsc --noEmit -p src/pages/browser",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev": "tsx watch --import ./src/instrumentation.ts src/index.ts",
+    "dev": "pnpm run assets:build && tsx watch --import ./src/instrumentation.ts src/index.ts",
     "schema-sql:generate": "tsx scripts/generate-schema-sql.ts",
     "generate:openapi": "tsx scripts/generate-openapi.ts"
   },
@@ -56,6 +58,7 @@
     "@types/node": "^26.6.4",
     "@types/tar-stream": "^3.1.5",
     "drizzle-kit": "^0.31.11",
+    "esbuild": "0.28.2",
     "playwright-core": "^1.63.0",
     "tsup": "^8.5.1",
     "tsx": "^4.23.15",

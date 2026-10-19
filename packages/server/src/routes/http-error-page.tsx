@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * The page a browser gets when a navigation fails.
  *
@@ -18,8 +20,10 @@
  * class is what makes it safe to render at all, which is the same reasoning
  * the authorize-expired page carries.
  */
-import { renderAuthLayout } from "./auth-layout.js";
-import { confirmIcon } from "./auth-html.js";
+import { renderDocument } from "../pages/render.js";
+import { Button } from "../pages/parts/controls.js";
+import { MomentCard } from "../pages/parts/layout.js";
+import { PageShell } from "../pages/parts/shell.js";
 
 /** Does this request want a page rather than a payload? */
 export function prefersHtml(accept: string | undefined): boolean {
@@ -36,11 +40,9 @@ export function prefersHtml(accept: string | undefined): boolean {
   return lowered.indexOf("text/html") < jsonIndex;
 }
 
-interface ErrorPageCopy {
+interface ProblemCopy {
   title: string;
-  heading: string;
-  body: string;
-  icon: "alert" | "check" | "mail";
+  lede: string;
 }
 
 /**
@@ -48,49 +50,75 @@ interface ErrorPageCopy {
  * which of forty codes fired; they need to know whether the thing they asked
  * for exists, whether they are allowed it, and whether trying again helps.
  */
-function copyFor(status: number): ErrorPageCopy {
+function copyFor(status: number): ProblemCopy {
   if (status === 404) {
     return {
-      title: "Page not found",
-      heading: "That page isn't here",
-      body: "The address may be wrong, or the page may have moved.",
-      icon: "alert",
+      title: "That page isn't here",
+      lede: "It may have been removed, or the address is wrong.",
     };
   }
   if (status === 401 || status === 403) {
     return {
-      title: "Not available",
-      heading: "You can't reach this page",
-      body: "You may need to sign in, or this may belong to someone else.",
-      icon: "alert",
+      title: "You can't open this page",
+      lede: "You may need to sign in, or this page may not be open to you.",
     };
   }
   if (status === 429) {
     return {
-      title: "Too many requests",
-      heading: "Too many attempts",
-      body: "Wait a minute, then try again. The limit clears on its own.",
-      icon: "alert",
+      title: "Too many attempts",
+      lede: "Wait a few minutes, then try again.",
+    };
+  }
+  if (status >= 500) {
+    return {
+      title: "Something went wrong",
+      lede: "Marfa logged what happened. Try again.",
     };
   }
   return {
-    title: "Something went wrong",
-    heading: "Something went wrong at our end",
-    body: "This one is ours, not yours. We have a record of it.",
-    icon: "alert",
+    title: "That didn't work",
+    lede: "The request could not be completed. Check the address, then try again.",
   };
 }
 
-export function renderHttpErrorPage(status: number, nonce: string): string {
+export interface ErrorPageOptions {
+  /**
+   * Offer "Try again" on a server fault. Only for a request that is safe to
+   * make again by following the same address, which is a GET.
+   */
+  retry?: boolean;
+}
+
+export function renderHttpErrorPage(
+  status: number,
+  nonce: string,
+  options: ErrorPageOptions = {},
+): string {
   const copy = copyFor(status);
-  return renderAuthLayout({
-    title: copy.title,
-    centered: true,
-    nonce,
-    bodyHtml: `
-      ${confirmIcon(copy.icon)}
-      <h1 class="title">${copy.heading}</h1>
-      <p class="sub" role="alert">${copy.body}</p>
-    `,
-  });
+  const home = (
+    <Button kind="primary" wide={!(status >= 500 && options.retry)} href="/">
+      Go to Home
+    </Button>
+  );
+  return renderDocument(
+    <PageShell title={copy.title} nonce={nonce} needsScript={false}>
+      <MomentCard
+        title={copy.title}
+        lede={copy.lede}
+        ledeRole="alert"
+        foot={`Error ${String(status)}`}
+      >
+        {status >= 500 && options.retry ? (
+          <div class="pair">
+            <Button kind="outline" href="">
+              Try again
+            </Button>
+            {home}
+          </div>
+        ) : (
+          home
+        )}
+      </MomentCard>
+    </PageShell>,
+  );
 }

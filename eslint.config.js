@@ -49,7 +49,7 @@ export default [
   },
   {
     // Route handlers parse untyped JSON from HTTP requests
-    files: ["**/routes/*.ts"],
+    files: ["**/routes/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-unsafe-assignment": "off",
       "@typescript-eslint/no-unsafe-member-access": "off",
@@ -63,8 +63,8 @@ export default [
     // A read of the system clock anywhere else is a read the harness cannot
     // move. The selectors cover `Date`, and `globalThis.Date`, called, built
     // with no argument, asked for `now` or destructured for `now`.
-    files: ["packages/server/src/**/*.ts"],
-    ignores: ["**/*.test.ts", "packages/server/src/clock.ts"],
+    files: ["packages/server/src/**/*.{ts,tsx}"],
+    ignores: ["**/*.test.{ts,tsx}", "packages/server/src/clock.ts"],
     rules: {
       "no-restricted-syntax": [
         "error",
@@ -118,6 +118,8 @@ export default [
       "**/dist/",
       // The generated client, whose shape is openapi-typescript's.
       "packages/client/src/generated/",
+      // The page system's built stylesheet and script, written by a script.
+      "packages/server/src/pages/assets.generated.ts",
       "**/coverage/",
       "**/node_modules/",
       // Nested worktrees are separate checkouts that run their own lint;

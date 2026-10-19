@@ -169,6 +169,8 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/grants": [200, 401, 403],
   "DELETE /auth/grants/{id}": [204, 401, 403, 404, 500],
   "GET /auth/static/auth.css": [200],
+  "GET /auth/static/pages.css": [200],
+  "GET /auth/static/pages.js": [200],
   "GET /auth/static/password-toggle.js": [200],
   "GET /auth/static/passkeys.js": [200],
   "GET /auth/static/submit-state.js": [200],

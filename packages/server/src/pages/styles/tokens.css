@@ -1,0 +1,114 @@
+/* Design tokens for Marfa's pages. This is the only stylesheet that may hold a color. */
+:root {
+  color-scheme: light;
+
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --control: #ffffff;
+  --fg: #0a0a0a;
+  --fg2: #6b6b6b;
+  --icon: #a3a3a3;
+  --line: #e8e8e8;
+  --divider: #f0f0f0;
+  --fill: #f4f4f4;
+  --fill-hover: #ececec;
+  --primary: #171717;
+  --primary-hover: #2e2e2e;
+  --on-primary: #ffffff;
+  --danger: #c0281b;
+  --danger-fill: #fdeeec;
+  --danger-hover: #fbe0dc;
+  --on-danger: #ffffff;
+  --switch-off: #e5e5e5;
+  --knob: #ffffff;
+  --knob-shadow: rgba(0, 0, 0, 0.2);
+  --scrim: rgba(10, 10, 10, 0.32);
+  --scrim-clear: rgba(0, 0, 0, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.08);
+
+  /* One neutral focus ring: a grey line and a soft halo, never a color. */
+  --focus-line: #a3a3a3;
+  --focus-halo: rgba(163, 163, 163, 0.35);
+  --focus-width: 2px;
+  --focus-offset: 2px;
+  --focus-halo-width: 3px;
+
+  --font:
+    -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, Inter,
+    sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-size: 13px;
+  --text-line: 20px;
+  --small-size: 12px;
+  --small-line: 16px;
+  --card-title-size: 16px;
+  --card-title-line: 24px;
+  --section-size: 14px;
+  --section-line: 20px;
+  --title-size: 24px;
+  --title-line: 32px;
+  --title-tracking: -0.012em;
+  --weight-medium: 500;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  --radius-control: 10px;
+  --radius-container: 14px;
+  --radius-small: 6px;
+  --radius-pill: 999px;
+
+  --col: 720px;
+  --card: 384px;
+  --select: 144px;
+  --input: 240px;
+  --value: 144px;
+  --control-height: 32px;
+  --row-height: 52px;
+  --row-height-detail: 60px;
+  --bar-height: 48px;
+  --menu-width: 240px;
+  --palette-width: 560px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #131313;
+    --surface: #1b1b1b;
+    --control: #232323;
+    --fg: #f2f2f2;
+    --fg2: #a1a1a1;
+    --icon: #6e6e6e;
+    --line: #2b2b2b;
+    --divider: #262626;
+    --fill: #292929;
+    --fill-hover: #333333;
+    --primary: #f2f2f2;
+    --primary-hover: #d9d9d9;
+    --on-primary: #131313;
+    --danger: #f26b5f;
+    --danger-fill: #3a1714;
+    --danger-hover: #4a1d19;
+    --on-danger: #131313;
+    --switch-off: #3a3a3a;
+    --knob: #f2f2f2;
+    --knob-shadow: rgba(0, 0, 0, 0.2);
+    --scrim: rgba(0, 0, 0, 0.6);
+    --scrim-clear: rgba(0, 0, 0, 0.12);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    --focus-line: #737373;
+    --focus-halo: rgba(115, 115, 115, 0.4);
+  }
+}
