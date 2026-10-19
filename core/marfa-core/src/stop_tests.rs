@@ -22,11 +22,15 @@ pub(crate) fn copy_keyed(server: &Scripted, key: &str) -> Arc<Core> {
 
 /// On disk, where a blob's bytes can be held.
 fn copy_in(server: &Scripted, dir: &std::path::Path) -> Arc<Core> {
+    copy_in_keyed(server, dir, "k")
+}
+
+pub(crate) fn copy_in_keyed(server: &Scripted, dir: &std::path::Path, key: &str) -> Arc<Core> {
     let core = Core::open(
         dir.join("core.sqlite"),
         Some(Server {
             url: server.url(),
-            key: "k".into(),
+            key: key.into(),
         }),
     )
     .unwrap();
@@ -230,7 +234,7 @@ fn a_stopped_catch_up_reports_canceled_after_a_failed_read() {
 
 /// The receipt a create of `id` as `type` is answered with, and the
 /// certified read of the row after it.
-fn created(id: &str, r#type: &str) -> (String, Answer) {
+pub(crate) fn created(id: &str, r#type: &str) -> (String, Answer) {
     let item = serde_json::from_str::<serde_json::Value>(&scripted::item_payload(
         "item.created",
         id,

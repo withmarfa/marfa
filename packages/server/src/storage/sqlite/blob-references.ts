@@ -1,7 +1,9 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { ErrorCode, MarfaError, isValidBlobHash } from "@withmarfa/shared";
 import { collectBlobHashes } from "../blob-utils.js";
 import type { BlobProof } from "../interface.js";
 import type { DrizzleDb } from "./connection.js";
+import { isFileType } from "./file-size.js";
 import type { SqliteTxContext } from "./request-context.js";
 import {
   blobOrphans,
@@ -25,6 +27,11 @@ type Executor = DrizzleDb | SqliteTxContext;
  * afresh. `carried` names the digests the write sent, or every one the row
  * names when it is absent; a digest entering the row without being sent was
  * copied from elsewhere, and `inherited` says whether it lent there.
+ *
+ * `bytes` names the digest that is the row's own content, a file's
+ * `blob_ref`: sent without the proof, it refuses the write rather than enter
+ * lending nothing, since a file nobody may download is a lost file to its
+ * owner (`blobs/proof-file-refused`).
  */
 async function decideReferences(
   held: ReadonlyMap<string, boolean>,
@@ -37,11 +44,18 @@ async function decideReferences(
   for (const hash of named) {
     if (held.has(hash)) continue;
     const sent = options.carried === undefined || options.carried.has(hash);
-    entering.set(
-      hash,
-      options.inherited?.get(hash) ??
-        (sent && proof !== null && (await proof(hash))),
-    );
+    const inherited = options.inherited?.get(hash);
+    const lends = inherited ?? (sent && proof !== null && (await proof(hash)));
+    if (
+      !lends &&
+      hash === options.bytes &&
+      inherited === undefined &&
+      sent &&
+      proof !== null
+    ) {
+      throw unprovenBytes();
+    }
+    entering.set(hash, lends);
   }
   return { gone, entering };
 }
@@ -49,6 +63,33 @@ async function decideReferences(
 interface ReferenceOptions {
   carried?: ReadonlySet<string>;
   inherited?: ReadonlyMap<string, boolean>;
+  bytes?: string;
+}
+
+/**
+ * The refusal of a file whose bytes its writer never proved. One answer
+ * whether or not the instance holds them, as an unknown hash gets on the
+ * blob doors, so the refusal says nothing of what the instance holds.
+ */
+function unprovenBytes(): MarfaError {
+  return new MarfaError(
+    ErrorCode.BLOB_NOT_FOUND,
+    "blob_ref names bytes this credential has not uploaded and may not read. Upload them with this credential, then write the item again.",
+  );
+}
+
+/**
+ * The digest a row of `type` holds as its own content, for
+ * `ReferenceOptions.bytes`: a file's `blob_ref` written as a whole hash.
+ */
+export function fileBytes(
+  type: string,
+  properties: Record<string, unknown>,
+): string | undefined {
+  const ref = properties.blob_ref;
+  return isFileType(type) && typeof ref === "string" && isValidBlobHash(ref)
+    ? ref
+    : undefined;
 }
 
 /**

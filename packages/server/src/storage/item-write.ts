@@ -834,6 +834,7 @@ async function changeRow(
         ...(change.blob_proof !== undefined && {
           blob_proof: change.blob_proof ?? undefined,
         }),
+        refuse_unproven_file: writer.kind === "credential",
       });
       if ("error" in updated) {
         return { outcome: "conflict", id: row.id, conflict: updated };
@@ -1032,6 +1033,7 @@ async function put(
     ...(write.blob_proof !== undefined && {
       blob_proof: write.blob_proof ?? undefined,
     }),
+    refuse_unproven_file: writer.kind === "credential",
     ...(write.id !== undefined && { id: write.id }),
     ...(write.state !== undefined && { state: write.state }),
     ...(createTier(writer, write) !== undefined && {

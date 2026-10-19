@@ -791,6 +791,7 @@ describe("a claim the store did not grant", () => {
       id: "cred-1",
       source: "fixture",
     },
+    routeBody: Record<string, unknown> = { ok: true },
   ) {
     const calls = {
       claim: 0,
@@ -865,7 +866,7 @@ describe("a claim the store did not grant", () => {
       calls.route += 1;
       // `as 201` only to satisfy Hono's literal-status typing; the value
       // is whatever the case asked for.
-      return c.json({ ok: true }, routeStatus as 201);
+      return c.json(routeBody, routeStatus as 201);
     });
 
     const send = () =>
@@ -987,6 +988,25 @@ describe("a claim the store did not grant", () => {
       expect(calls.released, `status ${String(status)}`).toBe(1);
       expect(calls.completed, `status ${String(status)}`).toBe(0);
     }
+  });
+
+  it("gives the key back on a file refused for bytes its writer never proved, and keeps every other 404", async () => {
+    // The refusal asks the writer to upload the bytes and write again, and a
+    // kept answer would refuse that retry. A row that is not there is the
+    // contrast, recorded so a hidden row is not told from a missing one.
+    const refused = (code: string) =>
+      doorWith([{ claimed: true }], 404, undefined, {
+        error: { code, message: "scripted" },
+      });
+    const unproven = refused("blob_not_found");
+    expect((await unproven.send()).status).toBe(404);
+    expect(unproven.calls.released).toBe(1);
+    expect(unproven.calls.completed).toBe(0);
+
+    const missing = refused("item_not_found");
+    expect((await missing.send()).status).toBe(404);
+    expect(missing.calls.completed).toBe(1);
+    expect(missing.calls.released).toBe(0);
   });
 
   it("records a conflict, which is the case the key exists for", async () => {

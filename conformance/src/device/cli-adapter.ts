@@ -1350,7 +1350,12 @@ export class CliFolder {
 
   /** Cancels a paused large removal. */
   async restore(): Promise<
-    Outcome<{ put_back: number; restored: number; pull: PullReport }>
+    Outcome<{
+      put_back: number;
+      not_written_back: FlaggedFile[];
+      restored: number;
+      pull: PullReport;
+    }>
   > {
     return this.run(["folders", "restore", this.dir, ...this.server()]);
   }

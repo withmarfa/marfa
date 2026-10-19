@@ -361,7 +361,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.BLOB_NOT_FOUND]: {
     status: 404,
     summary:
-      "No blob the caller may read has this hash, or no attached store holds its bytes.",
+      "No blob the caller may read has this hash, or no attached store holds its bytes. On a write of a file item, no blob the caller uploaded or may read has the hash its `blob_ref` names.",
   },
   [ErrorCode.VALIDATION_ERROR]: {
     status: 400,

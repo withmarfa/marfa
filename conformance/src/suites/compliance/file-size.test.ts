@@ -448,35 +448,74 @@ describe("a stale write to a file item and its size", () => {
   });
 });
 
+/**
+ * A file whose `blob_ref` does not lend. A file write naming bytes its writer
+ * cannot prove is refused (`blobs/proof-file-refused`), so the digest enters
+ * on a bookmark, where it lends nothing, and a retype into the file type keeps
+ * it as it stood (`blobs/proof-retype-as-stood`).
+ */
+async function planted(
+  properties: Record<string, unknown>,
+  as = client,
+  source = ctx.source,
+): Promise<MarfaItem> {
+  const bookmark = await as.createItem({
+    type: "core.bookmark",
+    source,
+    properties: {
+      url: "https://example.com/planted",
+      mime_type: "image/png",
+      title: "sized",
+      ...properties,
+    },
+  });
+  expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+  trackItem(ctx, bookmark.data.item.id);
+  const retyped = await as.rawRequest<{ item: MarfaItem }>(
+    `/items/${bookmark.data.item.id}`,
+    {
+      method: "PATCH",
+      body: {
+        type: "core.file",
+        retype: true,
+        properties: {},
+        version: bookmark.data.item.version,
+      },
+    },
+  );
+  expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
+  return retyped.data.item;
+}
+
+async function planterKey(label: string): Promise<MarfaClient> {
+  const minted = await client.createKey({
+    label: `${ctx.source}-${label}`,
+    source: `${ctx.source}-${label}`,
+    type_permissions: { "core.file": "write", "core.bookmark": "write" },
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  trackKey(ctx, minted.data.id);
+  return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+}
+
 describe("a file item names no size its writer could not read", () => {
   it("carries none for bytes its writer never sent, where the writer that sent them is told", async () => {
-    const minted = await client.createKey({
-      label: `${ctx.source}-planter`,
-      source: `${ctx.source}-planter`,
-      type_permissions: { "core.file": "write" },
-    });
-    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
-    trackKey(ctx, minted.data.id);
-    const planter = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: minted.data.key,
-    });
+    const planter = await planterKey("planter");
     const blob = await upload(64);
-    const planted = await file(
+    const named = await planted(
       { blob_ref: blob.hash, size_bytes: blob.size },
-      "core.file",
       planter,
       `${ctx.source}-planter`,
     );
-    expect(planted.properties.size_bytes).toBeUndefined();
-    expect(await sizeOf(planted.id)).toBeUndefined();
+    expect(named.properties.size_bytes).toBeUndefined();
+    expect(await sizeOf(named.id)).toBeUndefined();
     const proved = await file({ blob_ref: blob.hash });
     expect(proved.properties.size_bytes).toBe(blob.size);
   });
 
   it("carries none for bytes not yet uploaded, and has it once the digest is written again with them", async () => {
     const bytes = bytesOf(40);
-    const early = await file({
+    const early = await planted({
       blob_ref: sha256(bytes),
       size_bytes: bytes.length,
     });
@@ -496,7 +535,12 @@ describe("a file item names no size its writer could not read", () => {
     const bare = blob.hash.slice("sha256:".length);
     const unheld = `sha256:${"0".repeat(63)}1`;
     for (const naming of [bare, unheld, "a name, not a digest"]) {
-      const created = await file({ blob_ref: naming, size_bytes: blob.size });
+      // A whole hash nothing holds is a file write's refusal, so it is
+      // planted; the others are no hash, and a file write takes them.
+      const created =
+        naming === unheld
+          ? await planted({ blob_ref: naming, size_bytes: blob.size })
+          : await file({ blob_ref: naming, size_bytes: blob.size });
       expect(created.properties.size_bytes, naming).toBeUndefined();
       const updated = await update(created, {
         title: "retitled",
@@ -512,32 +556,27 @@ describe("a file item names no size its writer could not read", () => {
   });
 
   it("carries none for bytes its writer never sent, whatever an update of the file says", async () => {
-    const minted = await client.createKey({
-      label: `${ctx.source}-updater`,
-      source: `${ctx.source}-updater`,
-      type_permissions: { "core.file": "write" },
-    });
-    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
-    trackKey(ctx, minted.data.id);
-    const planter = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: minted.data.key,
-    });
+    const planter = await planterKey("updater");
     const blob = await upload(65);
     const other = await upload(2);
-    const planted = await file(
+    const named = await planted(
       { blob_ref: other.hash },
-      "core.file",
       planter,
       `${ctx.source}-updater`,
     );
-    expect(planted.properties.size_bytes).toBeUndefined();
-    const named = await planter.updateItem(planted.id, {
-      version: planted.version,
+    expect(named.properties.size_bytes).toBeUndefined();
+    const sized = await planter.updateItem(named.id, {
+      version: named.version,
+      properties: { size_bytes: other.size },
+    });
+    expect(sized.ok, JSON.stringify(sized.error)).toBe(true);
+    expect(sized.data.item.properties.size_bytes).toBeUndefined();
+    const renamed = await planter.updateItem(named.id, {
+      version: sized.data.item.version,
       properties: { blob_ref: blob.hash, size_bytes: blob.size },
     });
-    expect(named.ok, JSON.stringify(named.error)).toBe(true);
-    expect(named.data.item.properties.size_bytes).toBeUndefined();
-    expect(await sizeOf(planted.id)).toBeUndefined();
+    expect(renamed.status).toBe(404);
+    expect(renamed.error?.error.code).toBe("blob_not_found");
+    expect(await sizeOf(named.id)).toBeUndefined();
   });
 });
