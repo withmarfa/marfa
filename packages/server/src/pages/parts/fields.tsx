@@ -1,0 +1,178 @@
+import type { Child } from "hono/jsx";
+import { Icon } from "../icons.js";
+
+export interface TextFieldProps {
+  id: string;
+  name: string;
+  label: string;
+  type?: "text" | "email" | "url" | "number" | "tel";
+  value?: string;
+  placeholder?: string;
+  hint?: Child;
+  /** Shown instead of the hint, and marks the field invalid. */
+  error?: Child;
+  autocomplete?: string;
+  required?: boolean;
+  readonly?: boolean;
+  /** Fill the width of its container instead of 240 pixels. */
+  full?: boolean;
+  maxlength?: number;
+  /** A message the form module shows for a pattern mismatch. */
+  validateMessage?: string;
+  /** Sits on the label's line, at the right: a "Forgot?" link. */
+  labelEnd?: Child;
+}
+
+interface FieldFrameProps {
+  id: string;
+  label: string;
+  hint?: Child;
+  error?: Child;
+  labelEnd?: Child;
+  children?: Child;
+}
+
+function describedBy(props: { id: string; hint?: Child; error?: Child }) {
+  if (props.error !== undefined) return `${props.id}-err`;
+  if (props.hint !== undefined) return `${props.id}-hint`;
+  return undefined;
+}
+
+function FieldFrame(props: FieldFrameProps) {
+  const label = (
+    <label class="label" for={props.id}>
+      {props.label}
+    </label>
+  );
+  return (
+    <div class="field">
+      {props.labelEnd !== undefined ? (
+        <div class="label-line">
+          {label}
+          {props.labelEnd}
+        </div>
+      ) : (
+        label
+      )}
+      {props.children}
+      {props.error !== undefined ? (
+        <p class="err" id={`${props.id}-err`}>
+          {props.error}
+        </p>
+      ) : (
+        props.hint !== undefined && (
+          <p class="hint" id={`${props.id}-hint`}>
+            {props.hint}
+          </p>
+        )
+      )}
+    </div>
+  );
+}
+
+export function TextField(props: TextFieldProps) {
+  return (
+    <FieldFrame {...props}>
+      <input
+        class={props.full ? "input full" : "input"}
+        id={props.id}
+        name={props.name}
+        type={props.type ?? "text"}
+        value={props.value}
+        placeholder={props.placeholder}
+        autocomplete={props.autocomplete}
+        required={props.required}
+        readonly={props.readonly}
+        maxlength={props.maxlength}
+        aria-invalid={props.error !== undefined ? "true" : undefined}
+        aria-describedby={describedBy(props)}
+        data-validate-msg={props.validateMessage}
+      />
+    </FieldFrame>
+  );
+}
+
+export type PasswordFieldProps = Omit<
+  TextFieldProps,
+  "type" | "value" | "placeholder" | "readonly" | "maxlength"
+>;
+
+/** A password never comes back to the page, so it takes no value. */
+export function PasswordField(props: PasswordFieldProps) {
+  return (
+    <FieldFrame {...props}>
+      <div class="pw-wrap" data-password>
+        <input
+          class={props.full ? "input full" : "input"}
+          id={props.id}
+          name={props.name}
+          type="password"
+          autocomplete={props.autocomplete}
+          required={props.required}
+          aria-invalid={props.error !== undefined ? "true" : undefined}
+          aria-describedby={describedBy(props)}
+          data-validate-msg={props.validateMessage}
+        />
+        <button
+          type="button"
+          class="pw-toggle"
+          data-password-toggle
+          aria-label="Show password"
+          aria-pressed="false"
+          title="Show password"
+          hidden
+        >
+          <span data-icon-show>
+            <Icon name="eye" />
+          </span>
+          <span data-icon-hide hidden>
+            <Icon name="eyeOff" />
+          </span>
+        </button>
+      </div>
+    </FieldFrame>
+  );
+}
+
+export interface SearchFieldProps {
+  name?: string;
+  value?: string;
+  placeholder: string;
+  full?: boolean;
+  /** Shows the shortcut that opens the command search, once a script knows the platform. */
+  shortcutHint?: boolean;
+}
+
+export function SearchField(props: SearchFieldProps) {
+  return (
+    <label class={props.full ? "search full" : "search"}>
+      <Icon name="search" />
+      <input
+        type="search"
+        name={props.name ?? "q"}
+        value={props.value}
+        placeholder={props.placeholder}
+        aria-label={props.placeholder}
+        autocomplete="off"
+      />
+      {props.shortcutHint && <kbd data-shortcut-hint hidden></kbd>}
+    </label>
+  );
+}
+
+export interface FormFootProps {
+  /** A line on the left of the buttons. */
+  note?: Child;
+  /** The buttons, the main one last. */
+  children?: Child;
+}
+
+/** The end of a form: its buttons on the right. */
+export function FormFoot(props: FormFootProps) {
+  return (
+    <div class="formfoot">
+      {props.note !== undefined && <span class="note">{props.note}</span>}
+      {props.children}
+    </div>
+  );
+}

@@ -1,0 +1,141 @@
+import type { Child } from "hono/jsx";
+import { Icon } from "../icons.js";
+
+export type ButtonKind =
+  "primary" | "quiet" | "outline" | "danger" | "danger-quiet" | "icon-only";
+
+export interface ButtonProps {
+  kind?: ButtonKind;
+  /** A link that looks like a button. Without it, a button. */
+  href?: string;
+  type?: "button" | "submit";
+  wide?: boolean;
+  disabled?: boolean;
+  /** The accessible name, for a button that holds only an icon. */
+  label?: string;
+  /** Opens the dialog with this id. */
+  opens?: string;
+  /** Closes the dialog it sits in. */
+  closes?: boolean;
+  /** What a submit button says while its form is sending. */
+  loadingLabel?: string;
+  form?: string;
+  name?: string;
+  value?: string;
+  children?: Child;
+}
+
+export function Button(props: ButtonProps) {
+  const kind = props.kind ?? "quiet";
+  const className = `btn ${kind}${props.wide ? " wide" : ""}`;
+  if (props.href !== undefined) {
+    return (
+      <a
+        class={className}
+        href={props.href}
+        aria-label={props.label}
+        title={props.kind === "icon-only" ? props.label : undefined}
+      >
+        {props.children}
+      </a>
+    );
+  }
+  return (
+    <button
+      class={className}
+      type={props.type ?? "button"}
+      disabled={props.disabled}
+      aria-label={props.label}
+      title={kind === "icon-only" ? props.label : undefined}
+      data-dialog-open={props.opens}
+      data-dialog-close={props.closes ? "" : undefined}
+      data-loading-label={props.loadingLabel}
+      form={props.form}
+      name={props.name}
+      value={props.value}
+    >
+      {props.children}
+    </button>
+  );
+}
+
+export interface SelectOption {
+  value: string;
+  label: string;
+}
+
+export interface SelectGroup {
+  label: string;
+  options: readonly SelectOption[];
+}
+
+export interface SelectProps {
+  id?: string;
+  name?: string;
+  /** The accessible name, when no visible label points at the select. */
+  label?: string;
+  value?: string;
+  options: readonly (SelectOption | SelectGroup)[];
+  disabled?: boolean;
+  /** Shrink to the width of the longest option. */
+  auto?: boolean;
+  /** Send the form it is in when the choice changes. */
+  autosubmit?: boolean;
+}
+
+function renderOption(option: SelectOption, value: string | undefined) {
+  return (
+    <option value={option.value} selected={option.value === value}>
+      {option.label}
+    </option>
+  );
+}
+
+export function Select(props: SelectProps) {
+  return (
+    <span class={props.auto ? "sel auto" : "sel"}>
+      <select
+        id={props.id}
+        name={props.name}
+        aria-label={props.label}
+        disabled={props.disabled}
+        data-autosubmit={props.autosubmit ? "" : undefined}
+      >
+        {props.options.map((entry) =>
+          "options" in entry ? (
+            <optgroup label={entry.label}>
+              {entry.options.map((option) => renderOption(option, props.value))}
+            </optgroup>
+          ) : (
+            renderOption(entry, props.value)
+          ),
+        )}
+      </select>
+      <Icon name="down" />
+    </span>
+  );
+}
+
+export interface SwitchProps {
+  id: string;
+  name?: string;
+  checked?: boolean;
+  disabled?: boolean;
+  /** The accessible name, when no visible label points at the switch. */
+  label?: string;
+}
+
+export function Switch(props: SwitchProps) {
+  return (
+    <input
+      class="switch"
+      type="checkbox"
+      role="switch"
+      id={props.id}
+      name={props.name}
+      checked={props.checked}
+      disabled={props.disabled}
+      aria-label={props.label}
+    />
+  );
+}
