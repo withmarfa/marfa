@@ -45,7 +45,12 @@ impl<R: BufRead> Frames<R> {
                 ));
             }
             let line = self.line.trim_end_matches(['\n', '\r']);
-            if read == 0 || line.is_empty() {
+            if read == 0 {
+                // A stream that ends part way through a frame, as a proxy's
+                // close can end it, has not sent that frame.
+                return Ok(None);
+            }
+            if line.is_empty() {
                 // A frame with no data is no event, whatever else it names.
                 if !data.is_empty() {
                     return Ok(Some(Frame::Event {
@@ -56,9 +61,6 @@ impl<R: BufRead> Frames<R> {
                 }
                 if let Some(text) = comment.take() {
                     return Ok(Some(Frame::Comment(text)));
-                }
-                if read == 0 {
-                    return Ok(None);
                 }
                 // Nor does what it named reach the frame after it.
                 id = None;
@@ -144,24 +146,20 @@ mod tests {
     }
 
     #[test]
-    fn terminal_frames_and_crlf_and_a_missing_final_blank_line() {
+    fn terminal_frames_and_crlf_and_a_final_frame_without_its_blank_line() {
         let text = "event: catchup_too_old\r\ndata: {\"event_type\":\"catchup_too_old\"}\r\n\r\n\
                     event: stream_incomplete\ndata: {\"reason\":\"replay_failed\"}";
         assert_eq!(
             frames(text),
-            vec![
-                Frame::Event {
-                    id: None,
-                    name: Some("catchup_too_old".into()),
-                    data: "{\"event_type\":\"catchup_too_old\"}".into(),
-                },
-                Frame::Event {
-                    id: None,
-                    name: Some("stream_incomplete".into()),
-                    data: "{\"reason\":\"replay_failed\"}".into(),
-                },
-            ]
+            vec![Frame::Event {
+                id: None,
+                name: Some("catchup_too_old".into()),
+                data: "{\"event_type\":\"catchup_too_old\"}".into(),
+            }],
+            "a frame the stream ended in was taken as sent"
         );
+        // The witness: the same frame with its blank line is taken.
+        assert_eq!(frames(&format!("{text}\n\n")).len(), 2);
     }
 
     #[test]

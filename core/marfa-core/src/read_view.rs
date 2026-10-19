@@ -34,22 +34,17 @@ pub(crate) fn event_payload(
     id: Option<&str>,
     data: &str,
 ) -> Result<crate::wire::EventPayload> {
-    // Data that is not JSON says nothing against the copy's read view, and
-    // reading it again fails the same way; JSON that is not an event is a
-    // frame the copy cannot accept.
-    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|error| {
-        use serde_json::error::Category::{Eof, Syntax};
-        if matches!(error.classify(), Syntax | Eof) {
-            crate::error::unreadable("an event the stream sent", &error)
-        } else {
-            invalid()
-        }
-    })?;
+    // Data that does not parse as JSON says nothing against the copy's read
+    // view, and reading it again fails the same way. JSON that is not an
+    // event is a frame the copy cannot accept, whatever field fails first.
+    let value: serde_json::Value = serde_json::from_str(data)
+        .map_err(|error| crate::error::unreadable("an event the stream sent", &error))?;
+    let payload: crate::wire::EventPayload =
+        serde_json::from_value(value.clone()).map_err(|_| invalid())?;
     if matches!(name, Some("stream_cursor" | "stream_live"))
         || matches!(payload.event_type.as_str(), "stream_cursor" | "stream_live")
     {
-        let fields: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(data).map_err(|_| invalid())?;
+        let fields = value.as_object().ok_or_else(invalid)?;
         if id.is_some()
             || name != Some(payload.event_type.as_str())
             || fields.len() != 4
@@ -239,6 +234,33 @@ pub(crate) fn forget_listed(conn: &Connection, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_event_is_decoding_where_its_data_stops_whatever_field_failed_first() {
+        let message = |data: &str| match event_payload(Some("item.created"), Some("11"), data) {
+            Err(CoreError::Decoding(message)) => message,
+            other => panic!("{data}: {other:?}"),
+        };
+        // A field of the wrong type stands before the place the data stops.
+        let cut = message(r#"{"listed":"yes","event_type":"item.created","item":{"id""#);
+        assert!(cut.starts_with("an event the stream sent"), "{cut}");
+        assert!(!cut.contains("yes"), "{cut}");
+        message(r#"{"event_type":"item.created","item":{"id""#);
+
+        // The witness: the same field of the wrong type, with the data whole,
+        // is a frame the copy cannot accept.
+        for data in [
+            r#"{"listed":"yes","event_type":"item.created"}"#,
+            r#"{"listed":1,"event_type":"item.created"}"#,
+            r#"[]"#,
+        ] {
+            assert_eq!(
+                event_payload(Some("item.created"), Some("11"), data).unwrap_err(),
+                invalid(),
+                "{data}"
+            );
+        }
+    }
+
     #[test]
     fn proof_grammar_is_canonical_and_bounded() {
         assert!(valid_fence(&"a".repeat(64)));

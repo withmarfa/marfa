@@ -285,7 +285,7 @@ impl Core {
             ));
         }
         let answered: WireItemWithMetadata = serde_json::from_str(&answer.body)
-            .map_err(|error| CoreError::Decoding(format!("the folder door's answer: {error}")))?;
+            .map_err(|error| crate::error::unreadable("the folder door's answer", &error))?;
         self.hold_answered(&answered.item.id);
         FolderRow::of_wire(&answered.item)
     }

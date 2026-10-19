@@ -1480,8 +1480,8 @@ impl Http {
         if !certified {
             return Err(crate::read_view::invalid());
         }
-        // A body that is not JSON says nothing against the copy's read view,
-        // and reading it again fails the same way. A body that parses and
+        // A body that does not parse as JSON says nothing against the copy's
+        // read view, and reading it again fails the same way. A body that parses and
         // does not fit what a certified answer carries is a proof the copy
         // cannot accept.
         if conditional.is_none() {
