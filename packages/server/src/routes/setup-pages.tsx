@@ -137,9 +137,9 @@ export function renderCodePage(nonce: string, state: CodePageState = {}) {
             <p class="strong">If Marfa runs on your Mac</p>
             <p class="small muted">
               In Terminal, as the user account that runs Marfa, run this.
-              Replace <code>PATH</code> with the private socket, which is{" "}
-              <code>control/marfa.sock</code> in the folder that holds Marfa's
-              database.
+              Replace <code>PATH</code> with the full path of the private
+              socket, <code>control/marfa.sock</code> in the folder that holds
+              Marfa's database.
             </p>
             <CommandBlock command={COMPUTER_CODE_COMMAND} />
             <p class="strong">If Marfa runs on Railway</p>
@@ -437,7 +437,7 @@ export function renderBackupsPage(nonce: string, state: { bucket: boolean }) {
       title="Backing up"
       lede={
         state.bucket
-          ? "Marfa keeps a second copy of your data in the storage bucket it is set up with."
+          ? "Marfa keeps its data in one folder on the machine that runs it, and copies every file you add to the storage bucket it is set up with."
           : "Marfa keeps all its data in one folder on the machine that runs it. Back that folder up with your usual backup."
       }
       current={6}
@@ -445,9 +445,9 @@ export function renderBackupsPage(nonce: string, state: { bucket: boolean }) {
       <div class="stack">
         {state.bucket && (
           <p class="small muted">
-            Every file you add is copied to the bucket. When Marfa runs from its
-            container image, the database is streamed there too, so the bucket
-            alone can rebuild this Marfa.
+            When Marfa runs from its container image, the database is streamed
+            to the bucket too, so the bucket alone can rebuild this Marfa.
+            Otherwise, back up the folder with your usual backup.
           </p>
         )}
         <p class="small muted">
