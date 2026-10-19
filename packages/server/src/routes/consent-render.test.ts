@@ -533,10 +533,11 @@ describe("renderConsentScreen: asking again", () => {
     expect(defaultSubmission(html, "scopes").sort()).toEqual([...BASE].sort());
   });
 
-  it("tells a person where to lower what the app holds", () => {
-    expect(
-      visibleText(render(BASE, { priorScopes: ["core.note:read"] })),
-    ).toContain("To lower it, use Connected apps");
+  it("says approving never lowers what the app holds, and where to end its access", () => {
+    const text = visibleText(render(BASE, { priorScopes: ["core.note:read"] }));
+    expect(text).toContain("Approving never lowers this.");
+    expect(text).toContain("To end its access, use Connected apps.");
+    expect(text).not.toContain("To lower it");
   });
 
   it("keeps a power the app holds on, without offering it again", () => {

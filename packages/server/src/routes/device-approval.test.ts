@@ -244,6 +244,18 @@ describe("renderDeviceConsentScreen", () => {
     },
   );
 
+  it("says approving never lowers what the app holds, and where to end its access", () => {
+    const text = visibleText(
+      renderDeviceConsentScreen({
+        ...PARAMS,
+        scopes: [scope("core.note:read"), scope("core.task:read")],
+        priorScopes: ["core.note:read"],
+      }),
+    );
+    expect(text).toContain("Approving never lowers this.");
+    expect(text).toContain("To end its access, use Connected apps.");
+  });
+
   it("carries what the app holds in full without a control", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,

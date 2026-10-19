@@ -88,7 +88,7 @@ export function AccessChoices(props: AccessChoicesProps) {
         <RowGroup>
           <Disclosure
             title="Already allowed"
-            description="It keeps this. To lower it, use Connected apps."
+            description="Approving never lowers this. To end its access, use Connected apps."
           >
             {model.held.map((row) => (
               <Row title={row.title} value={row.value} />
