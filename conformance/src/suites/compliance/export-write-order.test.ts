@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { MarfaItem } from "../../client/types.js";
@@ -7,7 +9,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { DISK_ONLY } from "../../utils/own-blob-server.js";
+import { blobFolder, DISK_ONLY } from "../../utils/own-blob-server.js";
 
 let source: FreshServer;
 let target: FreshServer;
@@ -198,4 +200,107 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
     await source.clearFault();
     await pending;
   }
+});
+
+async function incompatibleSelection(repair: boolean) {
+  const client = new MarfaClient({
+    baseUrl: source.apiUrl,
+    apiKey: source.workingKey,
+  });
+  const type = "snapshot.changing";
+  expect(
+    (
+      await client.registerType({
+        id: type,
+        fields: { value: { type: "string" } },
+      })
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await client.bulkItems(
+        Array.from({ length: 59 }, () => ({ type, properties: {} })),
+      )
+    ).status,
+  ).toBe(200);
+  const made = await client.createItem({
+    type,
+    properties: { value: "before page" },
+  });
+  expect(made.status).toBe(201);
+  const before = await client.listItems({ type, limit: 100 });
+  expect(before.data.data).toHaveLength(60);
+  expect(before.data.data[0]!.id).toBe(made.data.item.id);
+  // A valid archive witnesses the selection and spool before the incompatible replacement.
+  const witness = await client.exportArchive();
+  expect(witness.status).toBe(200);
+  expect(
+    listTarGzEntries(witness.data).some(
+      (entry) => entry.name === "items.ndjson",
+    ),
+  ).toBe(true);
+  await source.setFault("hold:export-page=1");
+  const pending = client.exportArchive();
+  try {
+    await source.waitForHold("hold:export-page");
+    expect(readdirSync(join(blobFolder(source), "tmp")).length).toBeGreaterThan(
+      0,
+    );
+    const replaced = await client.replaceType(type, {
+      fields: { value: { type: "number" } },
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    if (repair) {
+      const repaired = await client.updateItem(made.data.item.id, {
+        version: made.data.item.version,
+        properties: { value: 7 },
+      });
+      expect(repaired.status, JSON.stringify(repaired.error)).toBe(200);
+    }
+    await source.clearFault();
+    return {
+      exported: await pending,
+      item: made.data.item,
+      ids: before.data.data.map((item) => item.id).sort(),
+    };
+  } finally {
+    await source.clearFault();
+    await pending;
+  }
+}
+
+it("retries an incompatible selection from the beginning and restores every item after repair", async () => {
+  const { exported, item, ids } = await incompatibleSelection(true);
+  expect(exported.status).toBe(200);
+  const owner = new MarfaClient({
+    baseUrl: target.apiUrl,
+    ownerCookie: target.ownerCookie,
+  });
+  const restored = await owner.restoreArchive(exported.data);
+  expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+  expect(restored.data).toMatchObject({
+    imported: 60,
+    duplicates: 0,
+    edges_imported: 0,
+    edges_skipped: 0,
+  });
+  const reader = new MarfaClient({
+    baseUrl: target.apiUrl,
+    apiKey: target.workingKey,
+  });
+  const listed = await reader.listItems({ limit: 100 });
+  expect(listed.data.data.map((row) => row.id).sort()).toEqual(ids);
+  expect((await reader.getItem(item.id)).data.item.properties).toEqual({
+    value: 7,
+  });
+});
+
+it("refuses two incompatible selections with export_unrestorable and an empty spool", async () => {
+  const { exported } = await incompatibleSelection(false);
+  expect(exported.status).toBe(503);
+  expect(exported.headers.get("content-type")).toContain("application/json");
+  expect(JSON.parse(Buffer.from(exported.data).toString())).toMatchObject({
+    error: { code: "export_unrestorable" },
+  });
+  expect(readdirSync(join(blobFolder(source), "tmp"))).toEqual([]);
 });

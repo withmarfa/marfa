@@ -1398,7 +1398,7 @@ If an archive selection fails restore validation, then the server MUST restart `
 
 **Reason:** a write between pages can make their combined state invalid even when each page was valid when read.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › retries an incompatible selection from the beginning and restores every item after repair`.
 
 ### `search-and-filters/archive-validation-refused`
 
@@ -1428,7 +1428,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 If selection, validation or streaming fails during `GET /export?format=archive`, then the server MUST leave nothing of the export on disk.
 
-**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`.
+**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`, `compliance/export-write-order.test.ts › refuses two incompatible selections with export_unrestorable and an empty spool`.
 
 ### `search-and-filters/archive-spool-start`
 
