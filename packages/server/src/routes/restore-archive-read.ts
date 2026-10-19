@@ -15,7 +15,12 @@ import { pipeline } from "node:stream/promises";
 import { createGunzip } from "node:zlib";
 import { z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
-import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  findLoneSurrogate,
+  isValidBlobHash,
+} from "@withmarfa/shared";
 import { HashingTransform } from "../storage/blob-store.js";
 import type { DiskReserve } from "../storage/disk-space.js";
 import { constantTimeEqual } from "../utils/crypto.js";
@@ -131,6 +136,13 @@ export function parseManifest(text: string): ArchiveManifest {
   if (typeof version === "number" && version !== 0) {
     throw invalid(
       `Unsupported archive version ${String(version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
+    );
+  }
+  const at = findLoneSurrogate(parsed);
+  if (at !== null) {
+    throw invalid(
+      `Invalid manifest.json: ${at} is not well-formed UTF-16 (a lone surrogate)`,
+      { field: at },
     );
   }
   const checked = archiveManifestSchema.safeParse(parsed);

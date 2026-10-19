@@ -302,11 +302,12 @@ export function itemRefusal(
 
 /** The refusals that need nothing from the database, asked of one edge line. */
 export function edgeRefusal(
-  edge: Record<string, unknown>,
+  line: ArchivedEdgeLine,
   index: number,
   maxRowBytes: number,
 ): MarfaError | null {
-  const text = wellFormedRefusal("edges", edge.id, { edge }, index);
+  const { edge } = line;
+  const text = wellFormedRefusal("edges", edge.id, line, index);
   if (text) return text;
   archiveDates("edge", edge, index);
   return (
@@ -380,7 +381,7 @@ export async function prepareArchive(
   for await (const { value: line, bytes } of edgeLines(paths["edges.ndjson"])) {
     if (pace) await pace(bytes);
     if (line === null) continue;
-    const refusal = edgeRefusal(line.edge, totalEdges, maxRowBytes);
+    const refusal = edgeRefusal(line, totalEdges, maxRowBytes);
     if (refusal) throw refusal;
     totalEdges++;
   }

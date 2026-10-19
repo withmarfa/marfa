@@ -4,12 +4,17 @@
  * surrogate, which is refused naming where it sits, and with a surrogate
  * pair, which is the witness that the door takes the same body otherwise.
  */
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { itemsArchive, readTarGzEntry, tarGz } from "../../utils/archive.js";
+import {
+  blobHash,
+  itemsArchive,
+  readTarGzEntry,
+  tarGz,
+} from "../../utils/archive.js";
 import {
   cleanup,
   createTestContext,
@@ -56,11 +61,12 @@ async function send(
   path: string,
   body: string,
   credential = true,
+  contentType = "application/json",
 ): Promise<Answer> {
   const res = await fetch(`${apiUrl}${path}`, {
     method,
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": contentType,
       ...(credential ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
     body,
@@ -498,6 +504,18 @@ describe("text that is not well-formed UTF-16", () => {
     expect(refused.errors?.[0]?.path).toBe("/a~1b/c~0d");
   });
 
+  it("writes U+FFFD in the pointer for each lone surrogate in a key", async () => {
+    const refused = await send(
+      "PUT",
+      `/items/${(await note()).id}/extensions/wellformed`,
+      JSON.stringify({ outer: { [`x${LONE}y\ude00`]: 1 } }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.errors?.[0]?.path).toBe(
+      `/outer/x${REPLACEMENT}y${REPLACEMENT}`,
+    );
+  });
+
   it("answers it before a missing credential, as it answers a body nested too deep", async () => {
     const body = JSON.stringify({
       type: "core.note",
@@ -602,14 +620,33 @@ describe("a restore", () => {
       metadata = { tags: [], extensions: { wellformed: { label: text } } };
     if (where === "edge property") edge.properties = { label: text };
     if (where === "type") type.label = `Label ${text}`;
+    const edgeLine: Record<string, unknown> = { edge };
+    if (where === "edge lending list")
+      edgeLine.lending_blobs = [`sha256:${text}`];
+    const blob = new Uint8Array(randomBytes(16));
+    const hash = blobHash(blob);
     const base = itemsArchive([first, second], [], [type]);
     const manifest = readTarGzEntry(base, "manifest.json");
     if (manifest === null) throw new Error("the archive has no manifest");
     return tarGz([
       {
         name: "manifest.json",
-        body: JSON.stringify({ ...JSON.parse(manifest), edge_count: 1 }),
+        body: JSON.stringify({
+          ...JSON.parse(manifest),
+          edge_count: 1,
+          ...(where === "manifest"
+            ? {
+                blobs: {
+                  [hash]: {
+                    mime_type: `text/${text}`,
+                    size_bytes: blob.length,
+                  },
+                },
+              }
+            : {}),
+        }),
       },
+      ...(where === "manifest" ? [{ name: `blobs/${hash}`, body: blob }] : []),
       { name: "types.ndjson", body: `${JSON.stringify({ type })}\n` },
       {
         name: "items.ndjson",
@@ -624,7 +661,7 @@ describe("a restore", () => {
             )
             .join("\n") + "\n",
       },
-      { name: "edges.ndjson", body: `${JSON.stringify({ edge })}\n` },
+      { name: "edges.ndjson", body: `${JSON.stringify(edgeLine)}\n` },
     ]);
   }
 
@@ -641,7 +678,9 @@ describe("a restore", () => {
     ["tag", "/metadata/tags/0", "first"],
     ["extension", "/metadata/extensions/wellformed/label", "first"],
     ["edge property", "/edge/properties/label", "edge"],
+    ["edge lending list", "/lending_blobs/0", "edge"],
     ["type", "/type/label", "type"],
+    ["manifest", "/blobs/", "manifest.json"],
   ] as const)(
     "refuses a %s that is not well-formed UTF-16, naming the row and where, and takes a pair there",
     async (where, pointer, row) => {
@@ -661,7 +700,8 @@ describe("a restore", () => {
       const refused = await owner.restoreArchive(archive(where, LONE, ids));
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
-      const named = row === "first" ? ids.first : ids[row];
+      const named =
+        row === "first" ? ids.first : row === "manifest.json" ? row : ids[row];
       expect(refused.error?.error.message).toContain(named);
       expect(refused.error?.error.message).toContain(pointer);
       expect(JSON.stringify(refused.error)).not.toMatch(/\\ud[89a-f]/i);
@@ -679,4 +719,67 @@ describe("a restore", () => {
       });
     },
   );
+});
+
+describe("a body whatever its content type states", () => {
+  const types = [
+    "application/jsonx",
+    "application/json5",
+    "application/vnd.api+json",
+    "application/x-www-form-urlencoded",
+    "text/plain",
+    "application/json; x=application/jsonx",
+  ];
+  const doors = [
+    { path: "/items", credential: true },
+    { path: "/auth/oauth2/register", credential: false },
+    { path: "/setup/claim", credential: false },
+  ];
+
+  it("is refused for text that is not well-formed UTF-16, before any credential", async () => {
+    for (const contentType of types) {
+      for (const door of doors) {
+        const where = `${door.path} as ${contentType}`;
+        const refused = await send(
+          "POST",
+          door.path,
+          JSON.stringify({ k: LONE }),
+          door.credential,
+          contentType,
+        );
+        expect(refused.status, where).toBe(400);
+        expect(refused.errors?.[0]?.path, where).toBe("/k");
+
+        // The witness: the same body with a pair meets the door itself.
+        const witness = await send(
+          "POST",
+          door.path,
+          JSON.stringify({ k: PAIR }),
+          door.credential,
+          contentType,
+        );
+        expect(
+          witness.errors?.some((e) => /surrogate/.test(e.message)),
+          where,
+        ).toBeFalsy();
+      }
+    }
+  });
+
+  it("is refused when it nests too deep, before any credential", async () => {
+    const deep = '{"a":'.repeat(70) + "1" + "}".repeat(70);
+    for (const contentType of types) {
+      for (const door of doors) {
+        const refused = await send(
+          "POST",
+          door.path,
+          deep,
+          door.credential,
+          contentType,
+        );
+        expect(refused.status, `${door.path} as ${contentType}`).toBe(400);
+        expect(JSON.stringify(refused.data)).toMatch(/nests deeper/);
+      }
+    }
+  });
 });

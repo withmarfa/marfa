@@ -570,13 +570,14 @@ class EdgeCheck {
     if (page.length === 0) return;
     const proposals: (EdgeProposal & { at: RowAt; id: string | undefined })[] =
       [];
-    for (const { edge } of page) {
+    for (const line of page) {
+      const { edge } = line;
       const id = typeof edge.id === "string" ? edge.id : undefined;
       const edgeType =
         typeof edge.edge_type === "string" ? edge.edge_type : null;
       const at: RowAt = { kind: "edge", id: id ?? null, type: edgeType };
       this.judging(at);
-      const refusal = edgeRefusal(edge, this.index++, this.maxRowBytes);
+      const refusal = edgeRefusal(line, this.index++, this.maxRowBytes);
       if (refusal) throw refusal;
       const { source_id: sourceId, target_id: targetId } = edge;
       if (
