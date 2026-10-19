@@ -81,6 +81,21 @@ pub enum CliError {
         hash_list(.0)
     )]
     ArchiveLacksBlobs(Vec<String>),
+    /// An export to a file, written whole but for blobs no store could read,
+    /// and kept beside the path it was meant for instead of at it.
+    #[error("{}", archive_kept_apart(.missing, .target, .incomplete, .kept, *.target_held, .refused.as_deref()))]
+    ArchiveKeptApart {
+        missing: Vec<String>,
+        target: std::path::PathBuf,
+        /// Where the archive belongs: `<target>.incomplete`.
+        incomplete: std::path::PathBuf,
+        /// Where the archive is: `incomplete`, or the partial file when the
+        /// move to `incomplete` was refused.
+        kept: std::path::PathBuf,
+        target_held: bool,
+        /// Why the move to `incomplete` was refused, when it was.
+        refused: Option<String>,
+    },
     /// A restore that wrote what the archive carries, of an archive that
     /// lacks blobs it names.
     #[error(
@@ -279,7 +294,9 @@ own_codes! {
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
     CliError::Invalid(_) => "invalid",
-    CliError::ArchiveLacksBlobs(_) | CliError::RestoreLacksBlobs(_) => "blobs_missing",
+    CliError::ArchiveLacksBlobs(_)
+    | CliError::ArchiveKeptApart { .. }
+    | CliError::RestoreLacksBlobs(_) => "blobs_missing",
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
@@ -371,6 +388,7 @@ impl CliError {
             CliError::NotHeld(_)
             | CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
+            | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
             | CliError::DocsPageNotFound { .. }
             | CliError::ContractMismatch { .. }
@@ -477,6 +495,42 @@ fn contract_said(served: Option<&str>, status: Option<u16>) -> String {
             |status| format!("answered {status} naming no contract"),
         ),
     }
+}
+
+/// The message of an archive kept beside its path: what it lacks, where it
+/// is, and whether the path was left alone.
+fn archive_kept_apart(
+    missing: &[String],
+    target: &std::path::Path,
+    incomplete: &std::path::Path,
+    kept: &std::path::Path,
+    target_held: bool,
+    refused: Option<&str>,
+) -> String {
+    let place = match refused {
+        None => format!("it is kept at {}", kept.display()),
+        Some(reason) => format!(
+            "it could not be moved to {}: {reason}; it is kept at {}",
+            incomplete.display(),
+            kept.display()
+        ),
+    };
+    let path = if target_held {
+        format!(
+            "{} still holds the file that was there before",
+            target.display()
+        )
+    } else {
+        format!(
+            "nothing was written to {}, so nothing there lacks files",
+            target.display()
+        )
+    };
+    format!(
+        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names, so {place}, and {path}",
+        missing.len(),
+        hash_list(missing)
+    )
 }
 
 /// The first few hashes, and how many more: a message names what is
@@ -901,6 +955,18 @@ mod tests {
         );
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
         assert_eq!(CliError::ArchiveLacksBlobs(vec![]).exit(), Exit::Refused);
+        assert_eq!(
+            CliError::ArchiveKeptApart {
+                missing: vec![],
+                target: std::path::PathBuf::new(),
+                incomplete: std::path::PathBuf::new(),
+                kept: std::path::PathBuf::new(),
+                target_held: false,
+                refused: None,
+            }
+            .exit(),
+            Exit::Refused
+        );
         assert_eq!(CliError::RestoreLacksBlobs(vec![]).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {
