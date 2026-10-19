@@ -89,7 +89,8 @@ function documentedWrites(): Set<string> {
  */
 const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /setup/exchange":
-    "JSON, closed: refused here by the handler (tested below)",
+    "JSON is closed: refused here by the handler (tested below); a form submission is read by field name and is not a JSON body",
+  "POST /setup/name": "a same-origin form post, not a JSON body",
   "POST /setup/claim":
     "JSON is closed: refused here by the handler (tested below); a form submission is read by field name and is not a JSON body",
   "POST /auth/owner/password": "a same-origin form post, not a JSON body",

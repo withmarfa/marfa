@@ -17,7 +17,11 @@ import { pageSecurityPolicy } from "../routes/content-security-policy.js";
 import { createErrorHandler } from "../middleware/error-handler.js";
 import { loggerMiddleware } from "../middleware/logger.js";
 
-export async function createClaimTestApp(baseURL = "http://localhost:8600") {
+/** `settings` are environment settings the app loads its configuration from, beside its own address. */
+export async function createClaimTestApp(
+  baseURL = "http://localhost:8600",
+  settings: Record<string, string> = {},
+) {
   const directory = await mkdtemp(join(tmpdir(), "marfa-claim-routes-"));
   const storage = await createSqliteStorage(join(directory, "db.sqlite"));
   const auth = createMarfaAuth({
@@ -30,7 +34,7 @@ export async function createClaimTestApp(baseURL = "http://localhost:8600") {
   await auth.ready;
   const app = new Hono<AppEnv>();
   app.use("*", async (c, next) => {
-    c.set("config", loadConfig({ MARFA_AUTH_BASE_URL: baseURL }));
+    c.set("config", loadConfig({ MARFA_AUTH_BASE_URL: baseURL, ...settings }));
     await next();
   });
   app.use("*", pageSecurityPolicy);

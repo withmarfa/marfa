@@ -21,8 +21,14 @@ export interface TextFieldProps {
   maxlength?: number;
   /** A message the form module shows for a pattern mismatch. */
   validateMessage?: string;
+  /** What the form module says when a required field is empty. */
+  requiredMessage?: string;
   /** Sits on the label's line, at the right: a "Forgot?" link. */
   labelEnd?: Child;
+  /** A value copied by hand, such as a setup code: monospace, shown in upper case. */
+  code?: boolean;
+  /** Takes focus when the page loads, for a field the server marked invalid. */
+  autofocus?: boolean;
 }
 
 interface FieldFrameProps {
@@ -38,6 +44,12 @@ function describedBy(props: { id: string; hint?: Child; error?: Child }) {
   if (props.error !== undefined) return `${props.id}-err`;
   if (props.hint !== undefined) return `${props.id}-hint`;
   return undefined;
+}
+
+function inputClass(props: { full?: boolean; code?: boolean }): string {
+  return ["input", props.full ? "full" : "", props.code ? "code" : ""]
+    .filter((name) => name !== "")
+    .join(" ");
 }
 
 function FieldFrame(props: FieldFrameProps) {
@@ -76,7 +88,7 @@ export function TextField(props: TextFieldProps) {
   return (
     <FieldFrame {...props}>
       <input
-        class={props.full ? "input full" : "input"}
+        class={inputClass(props)}
         id={props.id}
         name={props.name}
         type={props.type ?? "text"}
@@ -86,9 +98,11 @@ export function TextField(props: TextFieldProps) {
         required={props.required}
         readonly={props.readonly}
         maxlength={props.maxlength}
+        autofocus={props.autofocus}
         aria-invalid={props.error !== undefined ? "true" : undefined}
         aria-describedby={describedBy(props)}
         data-validate-msg={props.validateMessage}
+        data-required-msg={props.requiredMessage}
       />
     </FieldFrame>
   );
@@ -97,7 +111,10 @@ export function TextField(props: TextFieldProps) {
 export type PasswordFieldProps = Omit<
   TextFieldProps,
   "type" | "value" | "placeholder" | "readonly" | "maxlength"
->;
+> & {
+  /** Fewest characters; the form module says so when a typed value falls short. */
+  minlength?: number;
+};
 
 /** A password never comes back to the page, so it takes no value. */
 export function PasswordField(props: PasswordFieldProps) {
@@ -105,15 +122,18 @@ export function PasswordField(props: PasswordFieldProps) {
     <FieldFrame {...props}>
       <div class="pw-wrap" data-password>
         <input
-          class={props.full ? "input full" : "input"}
+          class={inputClass(props)}
           id={props.id}
           name={props.name}
           type="password"
           autocomplete={props.autocomplete}
           required={props.required}
+          minlength={props.minlength}
+          autofocus={props.autofocus}
           aria-invalid={props.error !== undefined ? "true" : undefined}
           aria-describedby={describedBy(props)}
           data-validate-msg={props.validateMessage}
+          data-required-msg={props.requiredMessage}
         />
         <button
           type="button"

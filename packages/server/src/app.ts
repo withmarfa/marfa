@@ -125,6 +125,13 @@ import {
   refuseUndeclaredKeysOf,
   refuseUndeclaredQueryKeys,
 } from "./middleware/undeclared-query-keys.js";
+
+/** The two doors that take a setup code or a handoff and count guesses themselves. */
+const GUESS_LIMITED_SETUP_PATHS: ReadonlySet<string> = new Set([
+  "/setup/exchange",
+  "/setup/claim",
+]);
+
 export function createApp(
   storage: Storage,
   blobs: BlobLayer,
@@ -641,10 +648,12 @@ export function createApp(
     app.use(
       "*",
       createMiddleware<AppEnv>((c, next) => {
-        // Setup has its own durable guessing limit. A valid handoff is not a guess.
+        // The doors that take a setup code or handoff, and `POST /owner`,
+        // have their own durable guessing limit, and a valid handoff is not
+        // a guess. The setup page and the owner's steps under `/setup/` have
+        // none, so this limiter keeps them.
         if (
-          c.req.path === "/setup" ||
-          c.req.path.startsWith("/setup/") ||
+          GUESS_LIMITED_SETUP_PATHS.has(c.req.path) ||
           (c.req.path === "/owner" && c.req.method === "POST")
         )
           return next();

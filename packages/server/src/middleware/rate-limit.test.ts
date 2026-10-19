@@ -382,3 +382,71 @@ describe("rate-limit batched windows", () => {
     expect((await hit("/types")).status).toBe(429);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The setup doors
+// ---------------------------------------------------------------------------
+
+describe("rate limit on the setup doors", () => {
+  const attempts = 12;
+  const statuses = async (
+    ctx: Ctx,
+    path: string,
+    init: RequestInit = {},
+  ): Promise<number[]> => {
+    const seen: number[] = [];
+    for (let i = 0; i < attempts; i++)
+      seen.push((await ctx.app.request(path, init)).status);
+    return seen;
+  };
+  const form = (body: string): RequestInit => ({
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body,
+    redirect: "manual",
+  });
+
+  it("leaves the doors that count guesses to their own limit", async () => {
+    const limited = await buildCtx();
+    try {
+      expect(
+        await statuses(limited, "/setup/exchange", form("code=WRONG")),
+      ).not.toContain(429);
+      expect(
+        await statuses(limited, "/setup/claim", form("email=a%40b.example")),
+      ).not.toContain(429);
+      expect(
+        await statuses(limited, "/owner", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      ).not.toContain(429);
+    } finally {
+      await limited.cleanup();
+    }
+  });
+
+  it("limits the setup page and the owner's steps, which have no limit of their own", async () => {
+    const page = await buildCtx();
+    try {
+      expect(await statuses(page, "/setup")).toContain(429);
+    } finally {
+      await page.cleanup();
+    }
+    const limited = await buildCtx();
+    try {
+      expect(await statuses(limited, "/setup/passkey")).toContain(429);
+    } finally {
+      await limited.cleanup();
+    }
+    const posting = await buildCtx();
+    try {
+      expect(
+        await statuses(posting, "/setup/name", form("name=Library")),
+      ).toContain(429);
+    } finally {
+      await posting.cleanup();
+    }
+  });
+});

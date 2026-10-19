@@ -63,7 +63,7 @@ Without `S3_BUCKET` the container runs the server alone and says so in its log: 
 
 ## Claiming the instance
 
-Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password, then sign in at `/auth/sign-in`. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
+Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password. The claim signs you in and goes on to add a passkey, name the instance and connect something. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
 
 The image includes the CLI. To create a single-use browser setup link from the running container:
 

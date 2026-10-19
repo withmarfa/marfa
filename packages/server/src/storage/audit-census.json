@@ -509,5 +509,12 @@
     "calls": {
       "KeyStore.updateLastUsed": 1
     }
+  },
+  "routes/setup.ts": {
+    "boundary": "Audited instance name write by the owner's setup step: the whole configuration is read and written in one audited transaction; setup.test.ts.",
+    "calls": {
+      "runAuditedTransaction": 1,
+      "writeInstanceConfig": 1
+    }
   }
 }

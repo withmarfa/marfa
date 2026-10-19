@@ -134,6 +134,10 @@ const OPEN_DOORS: Record<string, string> = {
   "POST /setup/exchange":
     "exchanges machine-issued proof for a setup-only cookie",
   "POST /setup/claim": "claims using setup proof or a setup-only cookie",
+  "GET /setup/:step":
+    "the owner's setup steps, authenticated by the owner session cookie, which send a browser without one to sign in",
+  "POST /setup/name":
+    "saves the instance name, authenticated by the owner session cookie and origin",
   "GET /auth/owner/manage":
     "management page authenticated by direct owner session",
   "GET /auth/owner/restore":

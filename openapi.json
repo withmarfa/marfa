@@ -43492,7 +43492,7 @@
           "Access"
         ],
         "summary": "Claim the instance",
-        "description": "Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.",
+        "description": "Creates the one owner using a machine-issued setup code or setup-only browser session. A claimed instance never reopens setup. A claim from the instance's own origin, which the setup page sends, also signs the owner in with a session cookie.",
         "requestBody": {
           "required": true,
           "content": {
@@ -43531,7 +43531,7 @@
         },
         "responses": {
           "201": {
-            "description": "The new owner can sign in.",
+            "description": "The new owner can sign in. A claim from the instance's own origin also sets the owner session cookie, unless the sign-in that follows the claim fails. A claim with no `Origin` header, such as a script's, sets none.",
             "content": {
               "application/json": {
                 "schema": {
