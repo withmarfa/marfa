@@ -525,16 +525,80 @@ describe("the doors beside the item writes are judged by the key as it stands", 
     });
   });
 
-  for (const [door, path, body] of [
-    ["POST /connectors/{id}/hold", "hold", { process: "p" }],
-    ["POST /connectors/{id}/heartbeat", "heartbeat", undefined],
-  ] as const) {
+  /** Each door sets up what it acts on, then answers the request to race. */
+  const revokedDoors: [
+    string,
+    (key: Minted, id: string) => Promise<() => Promise<Response>>,
+    ((id: string) => Promise<void>) | undefined,
+  ][] = [
+    [
+      "POST /connectors/{id}/hold",
+      (key, id) =>
+        Promise.resolve(() =>
+          send(key, "POST", `/connectors/${id}/hold`, { process: "p" }),
+        ),
+      undefined,
+    ],
+    [
+      "DELETE /connectors/{id}/hold",
+      async (key, id) => {
+        await ctx.storage.connectors.takeHold(id, "p", 60_000);
+        return () => send(key, "DELETE", `/connectors/${id}/hold?process=p`);
+      },
+      async (id) => {
+        const taken = await ctx.storage.connectors.takeHold(id, "q", 60_000);
+        expect(taken?.taken, "the refused release freed the hold").toBe(false);
+      },
+    ],
+    [
+      "POST /connectors/{id}/heartbeat",
+      (key, id) =>
+        Promise.resolve(() => send(key, "POST", `/connectors/${id}/heartbeat`)),
+      undefined,
+    ],
+    [
+      "POST /connectors/{id}/runs",
+      (key, id) =>
+        Promise.resolve(() =>
+          send(key, "POST", `/connectors/${id}/runs`, {
+            outcome: "succeeded",
+            started_at: "2026-01-01T00:00:00Z",
+            finished_at: "2026-01-01T00:01:00Z",
+          }),
+        ),
+      async (id) => {
+        const runs = await ctx.storage.connectors.listRuns(id, { limit: 10 });
+        expect(runs.data, "only the witness run was written").toHaveLength(1);
+      },
+    ],
+    [
+      "POST /connectors/{id}/deliveries/handled",
+      async (key, id) => {
+        const made = await send(key, "POST", `/connectors/${id}/endpoints`, {});
+        const { path } = (await made.json()) as { path: string };
+        const posted = await ctx.app.request(path, {
+          method: "POST",
+          body: "payload",
+        });
+        const { id: delivery } = (await posted.json()) as { id: string };
+        return () =>
+          send(key, "POST", `/connectors/${id}/deliveries/handled`, {
+            ids: [delivery],
+            outcome: "processed",
+          });
+      },
+      undefined,
+    ],
+  ];
+  for (const [door, prepare, after] of revokedDoors) {
     it(`${door} after the connector's key is revoked`, async () => {
       const { key, id } = await connectorKey();
-      const call = () => send(key, "POST", `/connectors/${id}/${path}`, body);
-      expect((await call()).status).toBeLessThan(300);
-      const res = await raced(revokeKey(key), call);
+      const witness = await prepare(key, id);
+      expect((await witness()).status).toBeLessThan(300);
+      const go = await prepare(key, id);
+      const res = await raced(revokeKey(key), go);
       expect(res.status).toBe(401);
+      await after?.(id);
     });
   }
 });
