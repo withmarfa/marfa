@@ -28,6 +28,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
+import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
 import * as clock from "../clock.js";
 
@@ -281,11 +282,13 @@ async function collectSelection(input: {
   let cursor: string | undefined;
   do {
     await turn();
-    const result = await storage.items.list({
-      ...filter,
-      limit: ITEMS_PER_PAGE,
-      cursor,
-    });
+    const result = await withStatementFault("export-read", () =>
+      storage.items.list({
+        ...filter,
+        limit: ITEMS_PER_PAGE,
+        cursor,
+      }),
+    );
     const lines: string[] = [];
     const ids: string[] = [];
     const hashes = new Set<string>();

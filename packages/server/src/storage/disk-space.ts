@@ -1,6 +1,7 @@
 import { statfs } from "node:fs/promises";
 import { Transform } from "node:stream";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { freeFault } from "../control/faults.js";
 import { TransactionFailure } from "./sqlite/transaction-control.js";
 
 /** The bytes a writer may add to the volume that holds `path`. */
@@ -62,6 +63,14 @@ export class DiskReserve {
     private readonly available: AvailableBytes = availableBytesOn,
   ) {}
 
+  /** The room on the volume now: what a harness set, else what the volume reports. */
+  private free(): Promise<number> {
+    const set = freeFault("blobs");
+    return set === undefined
+      ? this.available(this.volume)
+      : Promise.resolve(set);
+  }
+
   private get lookEvery(): number {
     return Math.max(
       LEAST_LOOK_EVERY_BYTES,
@@ -82,7 +91,7 @@ export class DiskReserve {
     // two reading together would each find the same room.
     const turn = this.line.then(async () => {
       if (this.bytes > 0) {
-        const free = await this.available(this.volume);
+        const free = await this.free();
         if (free - this.room(declared, 1) < this.bytes) {
           throw this.refusal(free);
         }
@@ -121,7 +130,7 @@ export class DiskReserve {
   /** @internal */
   async look(): Promise<void> {
     if (this.bytes === 0) return;
-    const free = await this.available(this.volume);
+    const free = await this.free();
     // What the volume shows already includes what has been written, so only
     // what is still owed, and the slack of every body in flight, comes off.
     if (free - this.room(0, 0) < this.bytes) throw this.refusal(free);

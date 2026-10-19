@@ -5,6 +5,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 
 // A type alias rather than an interface: an interface carries no index
 // signature, so it cannot satisfy the `HousekeepingReport` the scheduler
@@ -77,6 +78,7 @@ export class BlobOrphanReporter {
     // One blob's failure, a busy database or a failing store, is logged
     // and left for the next run rather than ending this one.
     for (const hash of due) {
+      if (faultsArmed()) await holdAt("blob-orphans:purge");
       try {
         if (
           await purgeBlob(this.storage, this.stores, hash, {
