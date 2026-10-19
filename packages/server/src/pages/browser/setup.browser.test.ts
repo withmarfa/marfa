@@ -208,7 +208,9 @@ describe("the whole sequence", () => {
           await page.fill("#instance-name", "Library");
           await page.getByRole("button", { name: "Continue" }).click();
           await page.waitForURL(`${origin}/setup/connect`);
-          await page.getByText("marfa login", { exact: true }).waitFor();
+          await page
+            .getByText(`marfa --url ${origin} login`, { exact: true })
+            .waitFor();
           await page.getByRole("link", { name: "Continue" }).click();
           await page.waitForURL(`${origin}/setup/backups`);
           // The management page after it calls routes this test app does not mount.

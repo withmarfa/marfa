@@ -89,6 +89,12 @@ export interface CodePageState {
   notice?: string;
 }
 
+/** On a computer, `PATH` is the control socket beside the database. */
+const COMPUTER_CODE_COMMAND = "marfa --socket PATH setup code";
+
+/** On Railway, the service's environment already names the socket. */
+const HOSTED_CODE_COMMAND = 'marfa --socket "$MARFA_CONTROL_SOCKET" setup code';
+
 /** Step 1: the setup code. */
 export function renderCodePage(nonce: string, state: CodePageState = {}) {
   return renderDocument(
@@ -124,12 +130,27 @@ export function renderCodePage(nonce: string, state: CodePageState = {}) {
           <div class="stack-8">
             <p class="small muted">
               Marfa prints it in its log when it starts without an owner. Or
-              make a new one on the machine that runs Marfa:
+              make a new one on the machine that runs Marfa.
             </p>
-            <CommandBlock command="marfa setup code" />
+            <p class="strong">If Marfa runs on your Mac</p>
             <p class="small muted">
-              To skip typing it, run <code>marfa setup open</code> there
-              instead. It opens a link that works once, for 5 minutes.
+              In Terminal, as the user account that runs Marfa, run this.
+              Replace <code>PATH</code> with the private socket, which is{" "}
+              <code>control/marfa.sock</code> in the folder that holds Marfa's
+              database.
+            </p>
+            <CommandBlock command={COMPUTER_CODE_COMMAND} />
+            <p class="strong">If Marfa runs on Railway</p>
+            <p class="small muted">
+              Connect to the Marfa service with Railway SSH, then run this
+              inside it.
+            </p>
+            <CommandBlock command={HOSTED_CODE_COMMAND} />
+            <p class="small muted">
+              To skip typing the code, run <code>setup open</code> in place of{" "}
+              <code>setup code</code>. It opens a link that works once, for 5
+              minutes. On Railway, add <code>--no-browser</code> and open the
+              link it prints.
             </p>
           </div>
         </Disclosure>
@@ -368,8 +389,11 @@ export function renderNamePage(
   );
 }
 
-/** Step 5: how something connects. */
-export function renderConnectPage(nonce: string) {
+/**
+ * Step 5: how something connects. A computer that has never signed in has no
+ * server saved, so the command names this one by its address.
+ */
+export function renderConnectPage(nonce: string, instanceUrl: string) {
   return renderDocument(
     <Step
       nonce={nonce}
@@ -384,7 +408,7 @@ export function renderConnectPage(nonce: string) {
             Run this on your computer. Marfa asks you to approve it on a page
             like this one.
           </p>
-          <CommandBlock command="marfa login" />
+          <CommandBlock command={`marfa --url ${instanceUrl} login`} />
         </div>
         <div class="stack-8">
           <p class="strong">An app</p>

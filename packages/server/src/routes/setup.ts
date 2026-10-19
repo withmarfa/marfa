@@ -305,7 +305,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
           }),
         );
       case "connect":
-        return page(c, renderConnectPage(nonce));
+        return page(c, renderConnectPage(nonce, new URL(auth.baseURL).origin));
       case "backups":
         return page(c, renderBackupsPage(nonce));
     }

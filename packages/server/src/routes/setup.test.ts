@@ -186,6 +186,13 @@ describe("the claim and setup pages", () => {
     expect(code).toContain('id="code-form"');
     expect(code).toContain('aria-label="Step 1 of 6"');
     expect(code).not.toContain('id="owner-form"');
+    // Both commands name the private socket, because the command refuses to run without one.
+    expect(code).toContain("marfa --socket PATH setup code");
+    expect(code).toContain("control/marfa.sock");
+    expect(code).toMatch(
+      /marfa --socket (?:"|&quot;)\$MARFA_CONTROL_SOCKET(?:"|&quot;) setup code/,
+    );
+    expect(code).toContain("setup open");
     const cookie = await setupSession(ctx);
     for (let refresh = 0; refresh < 2; refresh++) {
       const page = await ctx.app.request("/setup", { headers: { cookie } });
@@ -390,6 +397,11 @@ describe("the owner's steps", () => {
       expect(html, step).toContain(title);
       expect(html, step).toContain(`aria-label="Step ${String(number)} of 6"`);
     }
+    // A new computer has no server saved, so the command names this one.
+    const connect = await ctx.app.request("/setup/connect", {
+      headers: { cookie },
+    });
+    expect(await connect.text()).toContain(`marfa --url ${origin} login`);
   });
 
   it("keep the instance's other settings when they save its name", async () => {

@@ -12,7 +12,7 @@ export const SETUP_WORDS = {
   noCode: "Enter the setup code.",
   wrongCode: "That setup code isn't right. Check it and try again.",
   linkSpent:
-    "That setup link has expired or was already used. Enter the setup code instead, or run marfa setup open for a new link.",
+    "That setup link has expired or was already used. Enter the setup code, or run setup open again for a new link. The steps are under Where's my setup code?",
   sessionEnded:
     "Your setup session ended. Enter the setup code again to continue.",
   network: "Marfa didn't answer. Check your connection and try again.",
