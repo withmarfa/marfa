@@ -107,7 +107,11 @@ describe("GET /auth/oauth2/end-session", () => {
     expect(html).toContain("You&#39;re signed out");
     expect(html).toContain("Your session on this device has ended");
     expect(html).toContain("Sign in again from the app you were using");
-    expect(html).toContain(">Sign in to Marfa</a>");
+    // The page's one action is the primary button.
+    expect(html).toMatch(
+      /<a\b[^>]*class="btn primary[ "][^>]*>Sign in to Marfa<\/a>/,
+    );
+    expect(html).toMatch(/<a\b[^>]*href="\/auth\/sign-in"/);
     expect(html).not.toContain("noscript");
     expect(html).not.toContain("—");
   });

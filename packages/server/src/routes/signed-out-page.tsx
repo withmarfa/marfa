@@ -32,7 +32,7 @@ export function renderSignedOutPage(nonce: string): string {
         lede="Your session on this device has ended. Sign in again from the app you were using."
         ledeRole="status"
       >
-        <Button kind="outline" wide href="/auth/sign-in">
+        <Button kind="primary" wide href="/auth/sign-in">
           Sign in to Marfa
         </Button>
       </MomentCard>
