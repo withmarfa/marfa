@@ -35,6 +35,7 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/restore-faults.test.ts": 60,
   "src/suites/compliance/search-depth.test.ts": 35,
   "src/suites/compliance/stop-waits-for-work.test.ts": 25,
+  "src/suites/compliance/stop-webhook.test.ts": 20,
   "src/suites/compliance/stream-credential.test.ts": 115,
   "src/suites/compliance/stream-hold-edges.test.ts": 25,
   "src/suites/compliance/stream-opening-faults.test.ts": 60,

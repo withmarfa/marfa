@@ -1,3 +1,4 @@
+import { faultsArmed, holdAt } from "../control/faults.js";
 import { createHmac } from "node:crypto";
 import { hasPermission } from "@withmarfa/shared";
 import type {
@@ -234,6 +235,8 @@ export async function deliverWebhookAttempt(
       body: prepared.body,
       timeoutMs: POLLER_TIMEOUT_MS,
     });
+
+    if (faultsArmed()) await holdAt("webhook:response");
 
     if (outcome.kind === "failed") {
       await scheduleDeliveryRetry(

@@ -348,7 +348,6 @@ export class BulkActionWorker {
                     credential,
                   })
                 : { succeeded: [], errors: [] };
-            // The rows are written and the chunk is not yet checkpointed.
             if (faultsArmed()) await holdAt("bulk-job:in-chunk");
             return this.jobs.checkpointChunk(
               lease,

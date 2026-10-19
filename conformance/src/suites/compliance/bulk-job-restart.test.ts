@@ -167,3 +167,29 @@ describe("a bulk-action job the server was killed on", () => {
     5 * 60_000,
   );
 });
+
+it("clears a held job when a fixture times out and stops without hanging", async () => {
+  const held = await bootFreshServer("bulk-job-timeout");
+  try {
+    const client = new MarfaClient({
+      baseUrl: held.apiUrl,
+      apiKey: held.workingKey,
+    });
+    await seed(client, "timeout", 1);
+    await held.setFault(HOLD.inChunk);
+    await queue(client, {
+      action: "update_tags",
+      add: ["done"],
+      filter: { tags: ["timeout"] },
+    });
+    await held.waitForHold(HOLD.inChunk);
+    await expect(held.waitForHold(HOLD.inChunk, 2, 1)).rejects.toThrow(
+      "1 of 2 callers waited",
+    );
+    const started = performance.now();
+    await held.stop();
+    expect(performance.now() - started).toBeLessThan(8_000);
+  } finally {
+    await held.stop();
+  }
+}, 180_000);

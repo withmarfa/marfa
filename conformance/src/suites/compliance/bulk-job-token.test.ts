@@ -10,6 +10,7 @@ import {
 } from "../../utils/bulk-jobs.js";
 import {
   approvedApp,
+  refreshedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
@@ -45,7 +46,10 @@ describe("the job of a signed-in app", () => {
   it("goes on running after the access token that queued it expires, while the grant stands", async () => {
     const tag = "token-expiry";
     await seed(working, tag, learned.rows);
-    const app = await approvedApp(server);
+    const app = await approvedApp(server, [
+      "core.note:write",
+      "offline_access",
+    ]);
     const client = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: app.token,
@@ -68,14 +72,15 @@ describe("the job of a signed-in app", () => {
     await server.advanceClock(PAST_EXPIRY_MS);
     expect((await client.listItems({ limit: 1 })).status).toBe(401);
 
-    await server.clearFault();
-    // The refreshed token is stamped by the sign-in library in real time, so
-    // it too is past its expiry on the moved clock: the operator reads the job.
-    const operator = new MarfaClient({
+    expect(app.refreshToken).toBeDefined();
+    const refreshed = new MarfaClient({
       baseUrl: server.apiUrl,
-      apiKey: server.managementKey,
+      apiKey: await refreshedAppToken(server, app.clientId, app.refreshToken!),
     });
-    const ended = await operator.pollBulkActionToTerminal(id, {
+    expect((await refreshed.listItems({ limit: 1 })).status).toBe(200);
+    expect((await jobOf(refreshed, id)).status).toBe("in_progress");
+    await server.clearFault();
+    const ended = await refreshed.pollBulkActionToTerminal(id, {
       timeoutMs: 60_000,
     });
     expect(ended).toMatchObject({

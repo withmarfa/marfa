@@ -62,6 +62,7 @@ export const POINTS: {
   fail: readonly Point[];
 } = {
   hold: [
+    { name: "webhook:response", arg: "none" },
     { name: "bulk-job:selected", arg: "none" },
     { name: "bulk-job:claimed", arg: "none" },
     { name: "bulk-job:in-chunk", arg: "none" },
