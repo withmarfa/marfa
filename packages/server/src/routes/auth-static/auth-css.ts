@@ -5,10 +5,11 @@
  * file) so tsup bundles it into `dist/` without a separate static-asset
  * copy step. Treat the body as plain CSS.
  *
- * Single source of truth for the `/auth/*` pages not built on the page system
- * (OAuth consent, the device flow, the owner and setup pages, the auth error
- * page). Page renderers
- * reference these classes by name and never inline styles.
+ * Single source of truth for every page built on `renderAuthLayout` rather
+ * than the page system: OAuth consent, the device flow, the owner, setup and
+ * management pages, the expired authorization page, the root page and the
+ * auth error page. Page renderers reference these classes by name and never
+ * inline styles.
  *
  * The design is a calm, monochrome "Luma" shadcn surface: a white card on
  * a soft gray canvas, soft-filled pill inputs, near-black primary buttons,
