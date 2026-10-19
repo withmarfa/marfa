@@ -189,6 +189,7 @@ export function createApp(
   const errorHandler = createErrorHandler({
     errorWebhookUrl: config.errorWebhookUrl,
     errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
+    deploymentEnvironment: config.deploymentEnvironment,
     authBaseUrl: config.authBaseUrl,
   });
   app.onError(errorHandler);
@@ -449,9 +450,9 @@ export function createApp(
     "connectors",
     "inbound_webhooks",
   ];
-  // The deployed `version` comes from `version.json`, read with the
-  // settings at boot; `contract` is the
-  // contract version, which does not move on a deploy.
+  // The deployed `version` and the `release` come from `version.json`,
+  // read with the settings at boot; `contract` is the contract version,
+  // which does not move on a deploy.
   const deployedVersion = config.versionSha ?? "dev";
   // `instance_id` names the deployment, and the root is where a caller that
   // holds no credential can read it: the id is what distinguishes two
@@ -480,6 +481,9 @@ export function createApp(
     const description: z.infer<typeof InstanceDescriptionSchema> = {
       name: instanceName,
       version: deployedVersion,
+      ...(config.releaseVersion !== undefined && {
+        release: config.releaseVersion,
+      }),
       instance_id: instanceId,
       contract: CONTRACT_VERSION,
       features,

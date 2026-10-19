@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
+import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
@@ -312,6 +313,11 @@ export interface AppConfig {
    *  network. Optional on the type so test contexts constructing
    *  `AppConfig` literals keep the default, off. */
   webhookAllowPrivateAddresses?: boolean;
+  /** The environment exported telemetry and an error notification name:
+   *  `deployment.environment.name` or `deployment.environment` of
+   *  `OTEL_RESOURCE_ATTRIBUTES`, else `production`. Optional on the type so
+   *  a test context's `AppConfig` literal takes the default. */
+  deploymentEnvironment?: string;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -383,6 +389,10 @@ export interface AppConfig {
    *  report `"dev"`. It is not the contract version, which `GET /` answers
    *  as `contract`. */
   versionSha?: string;
+  /** The release the image was built as, `major.minor.patch`: the `release`
+   *  in `version.json`, surfaced on `GET /` as `release`. Unset for a build
+   *  that is not a release, which says nothing rather than a placeholder. */
+  releaseVersion?: string;
   /** The whole of `version.json`, which `/health` reports. */
   versionFile?: Record<string, unknown>;
   /** Where this deployment says it runs, reported on `/health`; unset when
@@ -428,6 +438,9 @@ export interface Placement {
  */
 export interface OtelSettings {
   serviceName: string;
+  /** `OTEL_RESOURCE_ATTRIBUTES`, which replace the server's own of the same
+   *  name. `service.name` is not among them: it is `serviceName`. */
+  resourceAttributes: Record<string, string>;
   /** Each signal's resolved URL. */
   tracesEndpoint: string;
   logsEndpoint: string;
@@ -796,6 +809,7 @@ const origins: Parser<string[]> = {
 /**
  * `key=value` pairs separated by commas, values percent-decoded, as the OTLP
  * exporters read the `OTEL_EXPORTER_OTLP_*_HEADERS` variables themselves.
+ * Every pair has a value, as a header does.
  */
 const otlpHeaders: Parser<Record<string, string>> = {
   rule: { kind: "headers" },
@@ -813,6 +827,35 @@ const otlpHeaders: Parser<Record<string, string>> = {
         decoded = undefined;
       }
       if (!key || !raw || decoded === undefined) {
+        throw new Error(
+          "must be comma-separated key=value pairs with percent-encoded values",
+        );
+      }
+      out[key] = decoded;
+    }
+    return out;
+  },
+};
+
+/**
+ * `OTEL_RESOURCE_ATTRIBUTES`: the same pairs, in the W3C Baggage format the
+ * OpenTelemetry specification names, in which a value may be empty.
+ */
+const resourceAttributes: Parser<Record<string, string>> = {
+  rule: { kind: "headers" },
+  parse: (value) => {
+    const out: Record<string, string> = {};
+    for (const pair of value.split(",")) {
+      if (pair.trim() === "") continue;
+      const eq = pair.indexOf("=");
+      const key = eq > 0 ? pair.slice(0, eq).trim() : "";
+      let decoded: string | undefined;
+      try {
+        decoded = decodeURIComponent(pair.slice(eq + 1).trim());
+      } catch {
+        decoded = undefined;
+      }
+      if (eq < 0 || !key || decoded === undefined) {
         throw new Error(
           "must be comma-separated key=value pairs with percent-encoded values",
         );
@@ -1386,10 +1429,14 @@ const settingsShape = {
     () => 0.05,
     "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
   ),
-  OTEL_SERVICE_NAME: setting(
-    text,
-    () => "marfa-server",
-    "The service name on exported telemetry.",
+  OTEL_SERVICE_NAME: optionalText(
+    "The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.",
+    "`marfa-server`",
+  ),
+  OTEL_RESOURCE_ATTRIBUTES: setting<Record<string, string>>(
+    resourceAttributes,
+    () => ({}),
+    "Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.",
   ),
   OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
     "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
@@ -1515,7 +1562,7 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
   if (s.MARFA_TEST_HOOKS && s.NODE_ENV === "production") {
     refuse(
       "MARFA_TEST_HOOKS",
-      "must not be true in production: the test hooks move the server's clock and hold its jobs",
+      "must not be true in production: the test hooks can move the server's clock, pause work, and inject failures",
     );
   }
   if (s.MARFA_TEST_CLOCK_OFFSET_MS > 0 && !s.MARFA_TEST_HOOKS) {
@@ -1630,6 +1677,32 @@ function otlpSignalUrl(
   return `${general.endsWith("/") ? general : `${general}/`}${path}`;
 }
 
+/** The first value that says something: not unset and not empty. */
+function firstNamed(...values: (string | undefined)[]): string | undefined {
+  return values.find((value) => value !== undefined && value !== "");
+}
+
+/**
+ * What `OTEL_RESOURCE_ATTRIBUTES` names, less `service.name`, which is the
+ * service name, and less an empty value for the environment, which names
+ * none and leaves the default standing.
+ */
+function namedAttributes(
+  attributes: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(attributes).filter(
+      ([name, value]) =>
+        name !== "service.name" &&
+        !(
+          value === "" &&
+          (name === "deployment.environment" ||
+            name === "deployment.environment.name")
+        ),
+    ),
+  );
+}
+
 /** Telemetry is on exactly when the general endpoint is set. */
 function otelSettings(
   s: z.output<typeof settingsSchema>,
@@ -1637,7 +1710,12 @@ function otelSettings(
   const general = s.OTEL_EXPORTER_OTLP_ENDPOINT;
   if (general === undefined) return undefined;
   return {
-    serviceName: s.OTEL_SERVICE_NAME,
+    serviceName:
+      firstNamed(
+        s.OTEL_SERVICE_NAME,
+        s.OTEL_RESOURCE_ATTRIBUTES["service.name"],
+      ) ?? "marfa-server",
+    resourceAttributes: namedAttributes(s.OTEL_RESOURCE_ATTRIBUTES),
     tracesEndpoint: otlpSignalUrl(
       s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
       general,
@@ -1687,6 +1765,27 @@ function readVersionFile(): Record<string, unknown> | undefined {
 }
 
 /**
+ * The release `version.json` names, if it names one. A value that is not
+ * `major.minor.patch` stops the boot rather than being reported, because the
+ * root document would otherwise tell a client a release that no tag carries.
+ */
+function releaseOf(
+  file: Record<string, unknown> | undefined,
+): string | undefined {
+  if (file === undefined || !("release" in file)) return undefined;
+  const release = file.release;
+  if (
+    typeof release !== "string" ||
+    !/^(0|[1-9]\d*)(\.(0|[1-9]\d*)){2}$/.test(release)
+  ) {
+    throw new SettingsError([
+      "version.json release must be a version of the form major.minor.patch",
+    ]);
+  }
+  return release;
+}
+
+/**
  * Read every setting from `env` through the schema. Throws a
  * {@link SettingsError} naming each setting whose value breaks its rule.
  */
@@ -1710,6 +1809,7 @@ export function loadConfig(
   const warnings = misspelledSettings(env);
   const versionFile = readVersionFile();
   const sha = versionFile?.sha;
+  const release = releaseOf(versionFile);
   const placement = {
     ...(s.MARFA_PLACEMENT_REGION && { region: s.MARFA_PLACEMENT_REGION }),
     ...(s.MARFA_PLACEMENT_LOCATION && { location: s.MARFA_PLACEMENT_LOCATION }),
@@ -1790,6 +1890,11 @@ export function loadConfig(
     bulkActionPollBackoffMultiplier:
       s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
     webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
+    deploymentEnvironment:
+      firstNamed(
+        s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"],
+        s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"],
+      ) ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
     errorWebhookUrl: s.ERROR_WEBHOOK_URL,
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
     trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,
@@ -1820,6 +1925,7 @@ export function loadConfig(
     },
     connectorHoldMs: s.MARFA_CONNECTOR_HOLD_MS,
     versionSha: typeof sha === "string" && sha !== "" ? sha : undefined,
+    releaseVersion: release,
     versionFile,
     placement: Object.keys(placement).length > 0 ? placement : undefined,
     otel: otelSettings(s),

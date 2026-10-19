@@ -22,6 +22,18 @@
  * loaded: they are dynamically imported only past that check. A request's
  * trace and its log lines share the request id and the trace id.
  *
+ * Every export names the instance it came from, so that several instances
+ * sending to one project can be told apart: `service.instance.id` is the
+ * instance's own id, the `instance_id` that `GET /` answers. The id lives in
+ * the database, which opens after this preload, so the attribute is a
+ * promise the server settles once it has read the id (`index.ts`), and the
+ * exporters hold each batch until it has. A shutdown that runs first settles
+ * it empty, so what was queued still leaves, unnamed; the server's own
+ * shutdown comes only after the id is read, and a boot that fails exits
+ * without a flush. The instance's configured name is not an attribute: it can
+ * change while the server runs, which a resource, fixed at start, cannot
+ * follow, and it can be personal.
+ *
  * Exceptions are a third, separate pipeline, gated on `MARFA_POSTHOG_HOST`
  * and `MARFA_POSTHOG_PROJECT_TOKEN`, and on the endpoint being set. PostHog's
  * error tracking groups `$exception` events, and its documentation describes
@@ -31,7 +43,7 @@
  */
 import { bootConfig, SettingsError } from "./config.js";
 import type { AppConfig } from "./config.js";
-import { DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
+import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { reportableError } from "./error-text.js";
 import * as clock from "./clock.js";
 
@@ -53,6 +65,11 @@ declare global {
   var __marfaReportException:
     | ((err: unknown, properties: Record<string, string | undefined>) => void)
     | undefined;
+  /**
+   * Tell telemetry which instance this server is, once its database has
+   * said. Set here only when telemetry is on, and undefined otherwise.
+   */
+  var __marfaTelemetryInstanceId: ((instanceId: string) => void) | undefined;
 }
 
 function bootLog(
@@ -85,6 +102,7 @@ async function start(): Promise<void> {
     logsEndpoint,
     sampleRatio,
     serviceName,
+    resourceAttributes: chosenAttributes,
     posthogHost,
     posthogToken,
   } = otel;
@@ -97,14 +115,40 @@ async function start(): Promise<void> {
   // mismatched package version. The wire key is stable; pin it directly.
 
   const { resourceFromAttributes } = await import("@opentelemetry/resources");
-  const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } =
+  const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION, ATTR_SERVICE_INSTANCE_ID } =
     await import("@opentelemetry/semantic-conventions");
-  const resourceAttributes = {
-    [ATTR_SERVICE_NAME]: serviceName,
+  // What `OTEL_RESOURCE_ATTRIBUTES` names replaces the server's own of the
+  // same name. The environment has two names in the convention, so naming
+  // either leaves the other unsent rather than contradicting it.
+  const environmentChosen =
+    "deployment.environment.name" in chosenAttributes ||
+    "deployment.environment" in chosenAttributes;
+  const staticAttributes: Record<string, string> = {
     [ATTR_SERVICE_VERSION]: config.versionSha ?? "dev",
-    "deployment.environment": DEPLOYMENT_ENVIRONMENT,
+    ...(environmentChosen
+      ? {}
+      : { "deployment.environment": DEFAULT_DEPLOYMENT_ENVIRONMENT }),
+    ...chosenAttributes,
+    [ATTR_SERVICE_NAME]: serviceName,
   };
-  const resource = resourceFromAttributes(resourceAttributes);
+  const instanceChosen = ATTR_SERVICE_INSTANCE_ID in chosenAttributes;
+  // The convention asks that a stable id taken from the service's own data
+  // pass through a UUID v5 first. This one does not: it is already a UUID,
+  // it reveals nothing the instance's root does not, and an operator needs
+  // to find the instance an export came from by the id it answers.
+  let instanceId: string | undefined;
+  let settleInstanceId!: (id: string | undefined) => void;
+  const instanceKnown = new Promise<string | undefined>((resolve) => {
+    settleInstanceId = resolve;
+  });
+  const resource = resourceFromAttributes({
+    ...staticAttributes,
+    ...(instanceChosen ? {} : { [ATTR_SERVICE_INSTANCE_ID]: instanceKnown }),
+  });
+  globalThis.__marfaTelemetryInstanceId = (id) => {
+    instanceId = id;
+    settleInstanceId(id);
+  };
 
   interface Shutdownable {
     shutdown: () => Promise<void>;
@@ -201,13 +245,17 @@ async function start(): Promise<void> {
       // No distinct id: the event is the instance's, and the client then
       // sends it without creating a person.
       client.captureException(reportableError(err), undefined, {
-        ...resourceAttributes,
+        ...staticAttributes,
+        ...(instanceId === undefined || instanceChosen
+          ? {}
+          : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
         ...properties,
       });
     };
   }
 
   globalThis.__marfaOtelShutdown = async () => {
+    settleInstanceId(undefined);
     await Promise.allSettled([
       tracerProvider.shutdown(),
       loggerProvider.shutdown(),

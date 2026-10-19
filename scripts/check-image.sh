@@ -1,22 +1,28 @@
 #!/usr/bin/env bash
 # Boots a built server image through its entrypoint and holds it to what the
-# deploy guide says it does. Usage: scripts/check-image.sh <image> <sha>.
+# deploy guide says it does. Usage: scripts/check-image.sh <image> <sha> [release].
 #
 # The image is built from `deploy/Dockerfile` with `VERSION_SHA=<sha>` by the
-# caller. Three runs, none with a bucket, so none needs an object store:
+# caller, and with `VERSION_RELEASE=<release>` when it is a release. Three
+# runs, none with a bucket, so none needs an object store:
 #
 # 1. a fresh volume: the container becomes healthy, the root document reports
-#    the commit the image was built from, and `docker stop` ends it with
-#    status 0 inside the grace a runtime gives it;
-# 2. a volume holding a database another build wrote: the container stays up
+#    the commit the image was built from and, for a release, the release,
+#    the packaged `marfa` reports that release, and `docker stop` ends it
+#    with status 0 inside the grace a runtime gives it;
+# 2. the same volume with only the private control listener, which recovers
+#    the owner with no public listener, after which the public server starts
+#    again on the new password;
+# 3. a volume holding a database another build wrote: the container stays up
 #    and unhealthy with the server's message in its log, rather than ending
 #    and being started again, and `docker stop` still ends it with status 0.
 set -euo pipefail
 # Under pipefail, `producer | grep -q` fails when grep matches and exits before
 # the producer has written everything, so a match is read from a here-string.
 
-image=${1:?usage: check-image.sh <image> <sha>}
-sha=${2:?usage: check-image.sh <image> <sha>}
+image=${1:?usage: check-image.sh <image> <sha> [release]}
+sha=${2:?usage: check-image.sh <image> <sha> [release]}
+release=${3:-}
 work=$(mktemp -d)
 containers=()
 volume=marfa-check-data-$(openssl rand -hex 8)
@@ -82,9 +88,16 @@ healthy() { curl -fsS "http://127.0.0.1:$port/health" >/dev/null 2>&1; }
 until_true "the container answering /health" 90 healthy
 body=$(curl -fsS "http://127.0.0.1:$port/")
 grep -q "\"version\":\"$sha\"" <<<"$body" || fail "the root document does not report $sha: $body"
+if [ -n "$release" ]; then
+  grep -q "\"release\":\"$release\"" <<<"$body" || fail "the root document does not report release $release: $body"
+  reported=$(docker exec "$fresh" marfa --version)
+  [ "$reported" = "marfa $release" ] || fail "the packaged binary reports '$reported', not 'marfa $release'"
+else
+  ! grep -q '"release"' <<<"$body" || fail "the root document names a release for a build that is not one: $body"
+fi
 until_true "the image's own health check passing" 60 \
   bash -c "[ \"\$(docker inspect --format '{{.State.Health.Status}}' $fresh)\" = healthy ]"
-echo "booted, reports $sha, healthy"
+echo "booted, reports $sha${release:+ as release $release}, healthy"
 # Exercise the actual packaged command and the production claim/recovery services.
 docker exec -i "$fresh" node --input-type=module <<'JS'
 import assert from 'node:assert/strict';

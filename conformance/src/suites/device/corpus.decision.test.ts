@@ -217,11 +217,15 @@ describe("every device statement is asserted by something", () => {
 
   it("cites every fixture of the device's behavior from some statement", () => {
     // The suite's own controls are not the device's behavior: fidelity holds
-    // the scripting to the real server and the scripted server's own tests
-    // hold the harness. Everything else asserts a rule, and a fixture no
+    // the scripting to the real server and the scripted server's and the
+    // binding host's own tests hold the harness. Everything else asserts a rule, and a fixture no
     // statement cites is a rule written nowhere, whose citation could be
     // dropped with nothing failing.
-    const CONTROLS = ["fidelity.test.ts", "scripted-server.test.ts"];
+    const CONTROLS = [
+      "fidelity.test.ts",
+      "scripted-server.test.ts",
+      "binding-host.test.ts",
+    ];
     const cited = new Set(
       allStatements.flatMap((statement) =>
         citationsIn(statement.text).map(

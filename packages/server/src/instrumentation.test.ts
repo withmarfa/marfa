@@ -185,6 +185,136 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     expect(exception?.properties["deployment.environment"]).toBe("production");
   });
 
+  describe("OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME", () => {
+    const sent = (suffix: string) =>
+      collector.requests.filter((r) => r.path.endsWith(suffix));
+    const attribute = (key: string, value: string) =>
+      `"${key}","value":{"stringValue":"${value}"}`;
+
+    it("replace the environment and the service name the server states, on traces, logs and exceptions", async () => {
+      await bootInstrumentation({
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+        OTEL_SERVICE_NAME: "marfa-rehearsal",
+        OTEL_RESOURCE_ATTRIBUTES:
+          "deployment.environment=rehearsal,service.instance.id=rehearsal-1,team=a%20b",
+      });
+      globalThis.__marfaTelemetryInstanceId?.(
+        "0198f3a2-7c1e-7b52-9d4a-3e5f6a7b8c9d",
+      );
+      await trace.getTracer("test").startActiveSpan("request", async (span) => {
+        await appThatFails().request("/explode");
+        span.end();
+      });
+      logs.getLogger("test").emit({ body: "a line", attributes: {} });
+      await globalThis.__marfaOtelShutdown?.();
+
+      expect(sent("/v1/traces").length).toBeGreaterThan(0);
+      expect(sent("/v1/logs").length).toBeGreaterThan(0);
+      for (const request of [...sent("/v1/traces"), ...sent("/v1/logs")]) {
+        expect(request.text).toContain(
+          attribute("deployment.environment", "rehearsal"),
+        );
+        expect(request.text).toContain(
+          attribute("service.name", "marfa-rehearsal"),
+        );
+        expect(request.text).toContain(attribute("team", "a b"));
+        // The operator's id stands, and the instance's own is not sent
+        // beside it.
+        expect(request.text).toContain(
+          attribute("service.instance.id", "rehearsal-1"),
+        );
+        expect(request.text).not.toContain("0198f3a2");
+        expect(request.text).not.toContain('"stringValue":"production"');
+      }
+      const [exception] = collector.events.filter(
+        (e) => e.event === "$exception",
+      );
+      expect(exception?.properties["deployment.environment"]).toBe("rehearsal");
+      expect(exception?.properties["service.name"]).toBe("marfa-rehearsal");
+      expect(exception?.properties["service.instance.id"]).toBe("rehearsal-1");
+    });
+
+    it("send deployment.environment.name alone when that is the name the operator uses", async () => {
+      await bootInstrumentation({
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+        OTEL_RESOURCE_ATTRIBUTES: "deployment.environment.name=rehearsal",
+      });
+      logs.getLogger("test").emit({ body: "a line", attributes: {} });
+      await globalThis.__marfaOtelShutdown?.();
+
+      expect(sent("/v1/logs").length).toBeGreaterThan(0);
+      for (const request of sent("/v1/logs")) {
+        expect(request.text).toContain(
+          attribute("deployment.environment.name", "rehearsal"),
+        );
+        expect(request.text).not.toContain('"deployment.environment"');
+      }
+    });
+  });
+
+  describe("naming the instance", () => {
+    const INSTANCE_ID = "0198f3a2-7c1e-7b52-9d4a-3e5f6a7b8c9d";
+    const named = (id: string) =>
+      new RegExp(
+        `"service\\.instance\\.id","value":\\{"stringValue":"${id}"\\}`,
+      );
+    const sent = (suffix: string) =>
+      collector.requests.filter((r) => r.path.endsWith(suffix));
+
+    async function emitEverything(): Promise<void> {
+      await trace.getTracer("test").startActiveSpan("request", async (span) => {
+        await appThatFails().request("/explode");
+        span.end();
+      });
+      logs.getLogger("test").emit({ body: "a line", attributes: {} });
+    }
+
+    it("puts the instance's id on every log record, span and exception once the server has read it", async () => {
+      await bootInstrumentation({
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      });
+      globalThis.__marfaTelemetryInstanceId?.(INSTANCE_ID);
+      await emitEverything();
+      await globalThis.__marfaOtelShutdown?.();
+
+      expect(sent("/v1/traces").length).toBeGreaterThan(0);
+      expect(sent("/v1/logs").length).toBeGreaterThan(0);
+      for (const request of [...sent("/v1/traces"), ...sent("/v1/logs")]) {
+        expect(request.text).toMatch(named(INSTANCE_ID));
+      }
+      const [exception] = collector.events.filter(
+        (e) => e.event === "$exception",
+      );
+      expect(exception?.properties["service.instance.id"]).toBe(INSTANCE_ID);
+    });
+
+    it("still sends what it holds, unnamed, when the server stops before it knows its id", async () => {
+      // The witness for the case above: the same export, with the id told.
+      await bootInstrumentation({
+        OTEL_EXPORTER_OTLP_ENDPOINT: collector.url,
+        MARFA_POSTHOG_HOST: collector.url,
+        MARFA_POSTHOG_PROJECT_TOKEN: "phc_test_token",
+      });
+      await emitEverything();
+      await globalThis.__marfaOtelShutdown?.();
+
+      expect(sent("/v1/traces").length).toBeGreaterThan(0);
+      expect(sent("/v1/logs").length).toBeGreaterThan(0);
+      for (const request of [...sent("/v1/traces"), ...sent("/v1/logs")]) {
+        expect(request.text).not.toContain("service.instance.id");
+      }
+      const [exception] = collector.events.filter(
+        (e) => e.event === "$exception",
+      );
+      expect(exception).toBeDefined();
+      expect(exception?.properties).not.toHaveProperty("service.instance.id");
+    });
+  });
+
   it("loads and sends nothing with no endpoint set", async () => {
     const boot = await bootInstrumentation({});
 

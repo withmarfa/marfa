@@ -10,13 +10,14 @@ reaches the server over HTTP alone: nothing under `src/suites/` imports a
 workspace package.
 
 **The device's half** is `src/suites/device/`, and it gates the `marfa` binary
-rather than the server. A device holds a working copy and a queue, and the
-verdicts it has to reach include failures the real server cannot be asked for:
-a dropped connection, a server at rest, a spent credential, a refusal
-repeated until a ceiling. So those fixtures drive a server the fixture scripts
-(`src/device/scripted-server.ts`), and `device/fidelity.test.ts` holds every
-scripted answer against the real server's for the cases the real server can
-produce. `spec/device.md` lists the cases it cannot, with a reason for each.
+and the Node module rather than the server. A device holds a working copy and
+a queue, and the verdicts it has to reach include failures the real server
+cannot be asked for: a dropped connection, a server at rest, a spent
+credential, a refusal repeated until a ceiling. So those fixtures drive a
+server the fixture scripts (`src/device/scripted-server.ts`), and
+`device/fidelity.test.ts` holds every scripted answer against the real
+server's for the cases the real server can produce. `spec/device.md` lists the
+cases it cannot, with a reason for each.
 
 **The scenario suite** is `src/suites/cli/`, and it gates the `marfa` binary
 as the reference client of an instance: every scenario is a person or an agent
@@ -51,6 +52,12 @@ pnpm marfa:up
 # after any change under `core/`.
 (cd ../core && cargo build -p marfa-cli)
 export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
+
+# Build the Node module the binding fixtures drive, a debug build: they hold
+# the engine at a point and move the clock it waits by, which a release build
+# leaves out. The device fixtures refuse a module older than its source too.
+(cd ../core/bindings/node && pnpm --ignore-workspace install && pnpm --ignore-workspace run build:debug)
+export MARFA_DEVICE_MODULE="$(ls "$PWD"/../core/bindings/node/*.node)"
 
 # Correctness, compliance, the server's write contract and the device's half
 set -a; . .marfa-state/env; set +a
@@ -124,9 +131,10 @@ corrupts a copy under it.
 | `MARFA_OWNER_COOKIE`        | The owner's production sign-in session, used for direct-owner fixtures.                                        |
 | `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket.                                                          |
 | `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures and scenario suite drive.                                         |
+| `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                        |
 | `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                         |
 
-`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary you built before running `pnpm test:conformance`. Required fixture credentials and the binary fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
+`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary and `MARFA_DEVICE_MODULE` to the module you built before running `pnpm test:conformance`. Required fixture credentials, the binary and the module fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
 
 `MARFA_API_KEY` delegates content access and the seven permissions `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read` and `grants.manage`. Each test file mints its own key with a unique `source`. The server stamps each row with that source, or with one the key explicitly claims when the write names it, so each file can identify its own rows. Teardown uses the management key to revoke the file's keys. Fixtures that need direct authority use the owner session or the private socket; neither ordinary fixture key supplies it.
 
@@ -143,15 +151,15 @@ the same commands and output.
 Every command takes `--state <dir>`, the directory that holds the instance's
 data, log and env file. The default is `.marfa-state` in the working directory.
 
-| Command                                                          | What it does                                                                                                                                                                                        |
-| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                        |
-| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                  |
-| `down`                                                           | Stops the target and removes its data.                                                                                                                                                              |
-| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                             |
-| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory. |
-| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                |
-| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..}]}`, where `waiting` counts the callers held at a `hold` fault.                                            |
+| Command                                                          | What it does                                                                                                                                                                                                       |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                       |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                 |
+| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                             |
+| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                            |
+| `refused [--node-env <name>] [--env K=V ...]`                    | Boots with settings the target must refuse, as the `NODE_ENV` named when `--node-env` is given, and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                |
+| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                               |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted. |
 
 ### The env file
 
@@ -201,16 +209,81 @@ which the move has put out of step with it.
 
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
+A name is `hold:<point>`, `fail:<point>`, `deadline:<job>` or `free:<volume>`, and the points
+are the ones below: the target refuses any other name, an argument a point does
+not take, and a job it has not registered. A refused fault is never armed, so a
+typo cannot pass for one. A fault set again under the same name starts again.
+
+A `hold` fault makes the target wait at the point until the fault is cleared.
 
 | Name                         | What it does                                                                                                     |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `hold:housekeeping:<job>`    | A run of the job waits at its start until the fault is cleared.                                                  |
 | `hold:version-thinning:item` | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item. |
 | `deadline:<job>=<ms>`        | Shortens the run deadline of the job.                                                                            |
+| `hold:blob-orphans:purge`    | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                  |
+| `hold:restore:before-commit` | A restore waits with every row written and the bytes placed, before it commits.                                  |
+| `free:<volume>=<bytes>`      | The target reads that many bytes of free space on the volume, `database` or `blobs`, until the fault is cleared. |
 
-A fault that names a housekeeping job the target has not registered is refused,
-as is a name that answers to no point. A refused fault is never armed, so a
-typo cannot pass for one.
+A `free` fault makes the target read the free space it says on one volume, for
+the reserve an upload and a restore keep (`blobs`) and for the `disk` component
+of `GET /health` (both volumes). Setting it again while a body streams in
+changes what the next look at the volume finds, which is how a fixture fills a
+volume as the bytes arrive. The check interval is half the reserve, bounded
+to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
+A reserve of zero disables these checks. `<bytes>` is a decimal integer from
+0 through 9007199254740991.
+
+A `fail` fault makes the target fail at the point, once. It acts on the nth
+time the point is reached after the fault was set, the first unless the
+argument says another: `fail:lock=3` acts on the third write. It then stays
+listed with the number of times it acted (`fired`), so a fixture can tell that
+it acted, and a fault that never acted is not mistaken for a pass. A fault
+that has acted does not act again until it is set again. The statement points (`audit`, `inbound-receipt`, `inbound-cleanup`, `export-read`, `housekeeping:<job>` and `job-row`) count only a statement that failed: a run that reaches the point and runs no statement, such as a job with nothing to do, leaves `fired` at 0 and the fault waiting for a reach that can fail.
+
+`<n>` is a decimal integer from 1 through 1000000, without leading zeros.
+`<ms>` is a whole number from 1 through 2147483647. An action argument
+starts with a lowercase ASCII letter and contains only lowercase ASCII
+letters, digits, underscores, periods, or hyphens. The target validates this
+syntax; an action that no write records never fires.
+
+A _write_ is one change made for a caller: a request that changes stored
+state, or one entry of a page sent with `atomic: false`. An atomic page is one
+write. A write that records an audit entry names it by the entry's `action`
+([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
+argument as `<action>`, for the first such write, or `<action>@<n>`, so a
+request that makes other writes first does not shift the count: a
+`POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,
+and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
+without an action counts every write.
+
+| Name                            | Reached                                                                                          | What it does                                                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fail:lock[=<n>]`               | At the start of each write, before it does any work.                                             | The write meets the write lock held by something else for longer than the target waits for it, and is refused as `write_contention`. Nothing of the write is done.                                                                                              |
+| `fail:audit[=<write>]`          | When a write records its audit entry.                                                            | The statement that stores the entry fails with `SQLITE_IOERR`, as a database fails a statement, so the write and its events roll back. The failure carries the statement and the values it was bound to, as a real one does.                                    |
+| `fail:commit[=<write>]`         | When a write that recorded its audit entry commits.                                              | The database refuses the commit with `SQLITE_IOERR` and has ended the transaction, so the target cannot prove whether the commit landed. Nothing did land. The write's outcome is unknown, and the audit entry, which the target reads to settle it, is absent. |
+| `fail:commit-full[=<write>]`    | The same.                                                                                        | As `fail:commit`, refused with `SQLITE_FULL`, the volume having no room.                                                                                                                                                                                        |
+| `fail:commit-ack[=<write>]`     | The same.                                                                                        | The commit lands and the database reports an error for it with `SQLITE_IOERR`, as when its answer is lost. The write's audit entry is stored, which the target reads to settle the outcome as committed.                                                        |
+| `fail:inbound-receipt[=<n>]`    | Before each of the two statements that store an inbound receipt, its metadata and then its body. | The statement fails with `SQLITE_IOERR`, carrying its values as `fail:audit` does, and the receipt is not stored.                                                                                                                                               |
+| `fail:inbound-cleanup[=<n>]`    | After a run of `inbound-delivery-cleanup` has removed the deliveries it chose.                   | The run's next statement fails with `SQLITE_IOERR`, so its removal rolls back.                                                                                                                                                                                  |
+| `fail:export-read[=<n>]`        | Before each page of items that `GET /export` reads.                                              | The page's read fails with `SQLITE_IOERR`. For an NDJSON export the response has begun by then; an archive export reads every page before it sends a byte, so it answers an error.                                                                              |
+| `fail:housekeeping:<job>[=<n>]` | At the start of each run of the job, scheduled or asked for.                                     | The run's first statement fails with `SQLITE_IOERR`. A job that runs no database statement (`heartbeat`) is refused.                                                                                                                                            |
+| `fail:job-row[=<n>]`            | Before each row a bulk-action job writes.                                                        | The row's first statement fails with `SQLITE_IOERR` and the database ends the chunk's transaction, so the rows of the chunk written before it are lost with it.                                                                                                 |
+| `fail:blob-read[=<n>]`          | Before each read of a blob's bytes from a store.                                                 | The read fails with `EIO` before it opens the bytes.                                                                                                                                                                                                            |
+| `fail:blob-write[=<n>]`         | Before each placing of a blob's bytes in a store.                                                | The write fails with `ENOSPC`, as a volume with no room fails it, and the store keeps no bytes.                                                                                                                                                                 |
+| `fail:blob-delete[=<n>]`        | Before each deletion of a blob's bytes from a store.                                             | The deletion fails with `EIO` and the store keeps the bytes.                                                                                                                                                                                                    |
+
+`<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
+cannot fail a point as described says so by refusing its name, and the fixtures
+that need it fail rather than skip.
+
+The blob points count a reach by any store and by any caller, including the
+target's own background work. With two stores attached, replication reads a
+blob from one store and writes it to the other, so it can take a `fail:blob-*`
+fault before the request under test reaches the point. A fixture that arms a
+blob fault boots a server with the disk store alone (`DISK_ONLY` in
+`src/utils/own-blob-server.ts`), or waits until replication has nothing left
+to copy, as `blob-cleanup-faults.test.ts` does.
 
 A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
 the target does not fake them.
@@ -223,6 +296,64 @@ exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
 the setting under `NODE_ENV=production`, which the released image sets. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
 these rules.
+
+### The device's binding
+
+The device fixtures reach the device two ways. The `marfa` binary
+(`MARFA_DEVICE_BIN`) runs one call at a time on a working copy it holds for
+that call alone. The binding (`MARFA_DEVICE_MODULE`, the Node module `napi
+build` writes) is for the rules a command cannot reach: a call that starts
+while another waits on the same working copy, a follow told what its caller
+was last told, a call held at a point, a wait read without being spent. A
+second implementation is judged by the binding fixtures when it supplies what
+follows.
+
+- **The module.** Each fixture loads it in a new process,
+  `src/device/binding-host.mjs`, which the fixture talks to over IPC. A
+  call that blocks its thread, as the engine's synchronous ones do while they
+  read from the server, would otherwise stop the scripted server in the
+  fixture's process answering it. Each request carries an `id` and is answered
+  with the same `id` in whatever order the calls end, so two calls on one
+  working copy can be in flight at once. The module exports the working
+  copy's calls as `MarfaCore`, `Stop` and the changes a follow tells, told
+  apart by `kind` (`applied`, `catalogChanged`, `serverUnreachable`,
+  `serverReachable`, `queueDrained`, `queueNotDrained`, `saved`,
+  `watchFailed`). A call that waits on the server, `withdraw` and `discard`
+  among them, answers a promise. The adapter in
+  [`src/device/binding-adapter.ts`](src/device/binding-adapter.ts) defines the
+  calls and result shapes the fixtures use; the host translates them to the
+  module's methods.
+- **`toldUnreachable`.** `follow` and `watch` take it as an optional last
+  argument. It says the caller was last told `serverUnreachable` by an earlier
+  one, so the first stream is told `serverReachable` and `serverUnreachable`
+  is not told again before.
+- **Holds.** The engine reaches named points, and a fixture arms one so that
+  the engine waits there until the fixture releases it. `testHooks.hold(point)`
+  arms a point, `testHooks.release(point)` lets go of what waits at it and
+  disarms it, `testHooks.reached(point)` counts the times the engine has
+  reached it, armed or not, and `testHooks.waiting(point)` counts the calls
+  held at it now. A point is reached by a call on the engine's own thread, so
+  a fixture waits for `waiting` before it acts on a held call.
+  - `hydration-replacing`: after a hydration has begun to replace the copy,
+    before it reads the first row.
+  - `recovery-drain-asked`, `recovery-drain-found-none`: a held stream's drain,
+    when it asks to drain and when it finds no work left.
+  - `follow-waiting`: a follow that waits for a first hydration.
+  - `answer-dropped`: an answer reached a request that nobody waited for.
+- **The clock.** `testClock.manual()` sets the clock the engine waits by to
+  one that moves only where `testClock.advance(ms)` moves it, and
+  `testClock.waits()` lists the waits the engine has asked of it and the clock
+  has not reached, each as the milliseconds asked and the milliseconds left.
+  Set it before the calls whose waits are read. A wait asked of the system
+  clock is not moved to the manual one. `testClock.manual(false)` goes back.
+  Of the engine's waits, only the one between held streams and the two
+  measures of a stream's age, how long it has been held and how long it has
+  been silent, are read from it; the rest stay on the system clock.
+
+A release build has no `testHooks` and no `testClock`: a fixture that uses
+them fails on a module built `--release`, naming that. The module's build
+needs the `napi` command its `pnpm-lock.yaml` pins, and the fixtures refuse a
+module older than the binding's or the engine's source.
 
 ### The request log
 
@@ -306,7 +437,7 @@ or when the classifier skipped them all.
   than by Vitest's own split by path, which can leave one shard with far more
   of the slow files than another. A file not in the weights is still run, by
   exactly one shard. Only the device shards build or restore the `marfa`
-  binary.
+  binary and the Node module.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 - **Statuses.** Each shard holds the statuses its server answered to their

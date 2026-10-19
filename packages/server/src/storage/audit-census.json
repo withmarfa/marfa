@@ -72,11 +72,11 @@
     }
   },
   "bulk-actions/runner.ts": {
-    "boundary": "Contained subwrites: worker audited chunk owns item/tag writes, checkpoint, events and audit together; bulk-audit.test.ts.",
+    "boundary": "Contained subwrites: worker audited chunk owns item/tag writes, checkpoint, events and audit together; bulk-audit.test.ts. Each row write appears twice, once on the path with no fault set and once inside the fault scope (hooks-off.test.ts).",
     "calls": {
       "MetadataStore.addTags": 1,
       "MetadataStore.removeTag": 1,
-      "writeItem": 3
+      "writeItem": 6
     }
   },
   "bulk-actions/worker.ts": {
@@ -159,7 +159,7 @@
     "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
       "KeyStore.updateLastUsed": 1,
-      "OauthProviderStore.updateLastUsedAt": 2
+      "OauthProviderStore.updateLastUsedAt": 1
     }
   },
   "middleware/idempotency.ts": {
@@ -479,7 +479,7 @@
     "calls": {
       "WebhookDeliveryStore.getPending": 1,
       "WebhookDeliveryStore.markCanceled": 1,
-      "WebhookDeliveryStore.markFailed": 4,
+      "WebhookDeliveryStore.markFailed": 5,
       "WebhookDeliveryStore.markSuccess": 1,
       "WebhookDeliveryStore.schedule": 1,
       "WebhookStore.acknowledge": 1

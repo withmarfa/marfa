@@ -147,8 +147,9 @@ pub fn pages_on_issuer(discovery: &Discovery, code: &DeviceCode) -> Result<(), C
     Ok(())
 }
 
-/// Asks for everything the server supports: the consent screen narrows it,
-/// and asking for less here would hide a toggle the person may want.
+/// Asks for every scope an owner signs in with (`OWNER_SCOPES`): the consent
+/// screen narrows it, and asking for less here would hide a toggle the person
+/// may want.
 pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     let scopes: Vec<&str> = OWNER_SCOPES
         .iter()

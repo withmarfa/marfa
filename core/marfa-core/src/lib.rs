@@ -3,6 +3,8 @@ mod body;
 mod builtin;
 mod catalog;
 mod catch_up;
+/// Public so a debug build's binding can move the clock it waits by.
+pub mod clock;
 pub mod contract;
 mod directory;
 #[cfg(unix)]
@@ -760,7 +762,12 @@ impl Core {
                     Err(Mover::Hydration | Mover::CatchUp) if waited => {}
                     Err(_) => return Err(one_at_a_time()),
                 },
-                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => waited = true,
+                Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => {
+                    if !waited {
+                        fault::hold("follow-waiting");
+                    }
+                    waited = true;
+                }
                 Err(error) => return Err(error),
             }
             if stop.load(Ordering::Relaxed) {
@@ -1141,6 +1148,7 @@ impl Core {
     /// a drain: whatever held the queue meanwhile may have done it. `None`
     /// where none is left.
     pub(crate) fn drain_what_remains(&self, stop: &AtomicBool) -> Option<Result<DrainReport>> {
+        fault::hold("recovery-drain-asked");
         let _one = match self.wait_to_drain(stop) {
             Ok(one) => one,
             Err(error) => return Some(Err(error)),
@@ -1148,6 +1156,7 @@ impl Core {
         match drain::would_send(self) {
             Ok(false) => {
                 self.owe_drain(false);
+                fault::hold("recovery-drain-found-none");
                 None
             }
             Ok(true) => Some(drain::drain(self, stop)),

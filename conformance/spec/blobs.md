@@ -120,7 +120,7 @@ Where an instance keeps a reserve of free space, if a `POST /blobs` body that de
 
 **Reason:** a chunked body declares no length, so only the room it takes as it arrives can refuse it.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and leaves nothing when the volume falls inside the reserve as the bytes arrive`, `› is stored while the room holds, which is the witness for the refusal below`.
 
 ### `blobs/upload-reserve-nothing-kept`
 
@@ -750,7 +750,7 @@ Where an instance keeps a reserve of free space, if an entry of the archive in a
 
 **Reason:** a compressed archive says nothing of the size it expands to, so a body that fits can still inflate past the volume.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage and writes no row and no blob when an entry would take the volume inside the reserve`, `› is taken once the volume has the room, which is the witness for the refusal above`.
 
 ### `blobs/restore-reserve-nothing-written`
 

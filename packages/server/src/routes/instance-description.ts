@@ -7,6 +7,12 @@ export const InstanceDescriptionSchema = z
       .string()
       .describe("The instance's display name. Defaults to `Marfa`."),
     version: z.string().describe("The build the instance runs."),
+    release: z
+      .string()
+      .optional()
+      .describe(
+        "The release the build was made as, such as `0.0.14`. Absent for a build that is not a release.",
+      ),
     instance_id: z
       .string()
       .describe(
@@ -35,7 +41,7 @@ export const instanceDescriptionRoute = createRoute({
   tags: ["Instance"],
   summary: "Describe the instance",
   description:
-    "Describes the instance: its display name, `instance_id`, the build it runs, the contract version it speaks and the features it serves. Needs no credential.",
+    "Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
   responses: {
     200: {
       description:

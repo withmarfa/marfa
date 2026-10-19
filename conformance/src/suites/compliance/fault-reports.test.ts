@@ -1,6 +1,4 @@
-import { createServer, type Server } from "node:http";
 import { dirname } from "node:path";
-import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -8,6 +6,14 @@ import {
   type FreshServer,
   serverOutput,
 } from "../../utils/fresh-server.js";
+import {
+  COLLECTOR_BUDGET_MS,
+  COLLECTOR_TEST_TIMEOUT_MS,
+  expectFixedFailure as expectFixed,
+  startFaultSinks,
+  until,
+  type FaultSinks,
+} from "../../utils/fault-sinks.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
@@ -27,190 +33,40 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
  * also the collector for all three: the OTLP endpoint takes the log records
  * and spans, and the PostHog host takes the exception sent to error tracking.
  *
- * **What a fixture cannot reach.** A fault met by a background job or after
- * a response began has no arrangement that does not depend on timing. The
- * server's own suite holds those.
+ * **Faults the target makes.** A fault met after a response began, or by
+ * work no request waits on, has no arrangement in the stored file that does
+ * not depend on timing, so those are set through the target's `fail` faults
+ * and held in `fault-reports-detached.test.ts`.
  */
 let server: FreshServer | undefined;
-let receiver: Server | undefined;
-
-/** What the receiver has been sent, parsed. */
-const notifications: Record<string, unknown>[] = [];
-/** What it has been sent as OTLP traces, as OTLP log records and as error tracking's events. */
-const traces: Record<string, unknown>[] = [];
-const logRecords: Record<string, unknown>[] = [];
-const trackedErrors: Record<string, unknown>[] = [];
+let sinks: FaultSinks | undefined;
 
 beforeAll(async () => {
-  receiver = createServer((request, response) => {
-    const chunks: Buffer[] = [];
-    request.on("data", (chunk: Buffer) => chunks.push(chunk));
-    request.on("end", () => {
-      try {
-        let raw = Buffer.concat(chunks);
-        if (request.headers["content-encoding"] === "gzip")
-          raw = gunzipSync(raw);
-        const parsed = JSON.parse(raw.toString("utf8")) as Record<
-          string,
-          unknown
-        >;
-        const path = request.url ?? "";
-        if (path.startsWith("/v1/traces")) traces.push(parsed);
-        else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
-        else if (path.startsWith("/batch")) trackedErrors.push(parsed);
-        else notifications.push(parsed);
-      } finally {
-        response
-          .writeHead(200, { "Content-Type": "application/json" })
-          .end("{}");
-      }
-    });
-  });
-  await new Promise<void>((resolve) =>
-    receiver!.listen(0, "127.0.0.1", resolve),
-  );
-  const address = receiver.address();
-  if (typeof address !== "object" || address === null) {
-    throw new Error("the receiver did not bind to a port");
-  }
-  server = await bootFreshServer("fault-reports", {
-    ERROR_WEBHOOK_URL: `http://127.0.0.1:${String(address.port)}/errors`,
-    OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${String(address.port)}`,
-    MARFA_POSTHOG_HOST: `http://127.0.0.1:${String(address.port)}`,
-    MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
-  });
+  sinks = await startFaultSinks();
+  server = await bootFreshServer("fault-reports", sinks.env());
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server?.stop();
-  await new Promise<void>((resolve) => {
-    if (receiver === undefined) resolve();
-    else receiver.close(() => resolve());
-    receiver?.closeAllConnections();
-  });
+  await sinks?.close();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-/**
- * How long a batching exporter may take to send: spans leave on a few
- * seconds' delay and exceptions on a longer one.
- */
-const COLLECTOR_BUDGET_MS = 60_000;
 /** A stream re-reads its credential every 30 seconds. */
 const HEARTBEAT_BUDGET_MS = 45_000;
-const COLLECTOR_TEST_TIMEOUT_MS = COLLECTOR_BUDGET_MS + 15_000;
 
 /** What the renamed table makes the statement and the driver say. */
 const STATEMENT = "INSERT INTO event_log";
 const DRIVER_MESSAGE = "no such table";
-const FIXED = "Database operation failed";
 const CODE = "SQLITE_ERROR";
 
 /** Holds a report to the rule: the fixed failure and its code, and nothing of the statement. */
 function expectFixedFailure(reported: string): void {
-  expect(reported).toContain(FIXED);
-  expect(reported).toContain(CODE);
-  expect(reported).not.toContain("event_log");
-  expect(reported).not.toContain("VALUES (?");
-  expect(reported).not.toContain(DRIVER_MESSAGE);
+  expectFixed(reported, CODE, ["event_log", "VALUES (?", DRIVER_MESSAGE]);
 }
 
 /** Everything the server logged, which its state directory holds. */
 function serverLog(): string {
   return serverOutput(dirname(server!.sqlitePath));
-}
-
-async function until<T>(
-  what: string,
-  read: () => T | undefined,
-  budgetMs = 15_000,
-): Promise<T> {
-  const deadline = Date.now() + budgetMs;
-  for (;;) {
-    const found = read();
-    if (found !== undefined) return found;
-    if (Date.now() > deadline) throw new Error(`${what} never arrived`);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
-type OtlpValue = {
-  stringValue?: string;
-  intValue?: number | string;
-  doubleValue?: number;
-  boolValue?: boolean;
-  kvlistValue?: { values: OtlpAttribute[] };
-  arrayValue?: { values: OtlpValue[] };
-};
-type OtlpAttribute = { key: string; value: OtlpValue };
-
-/** An OTLP value as the plain value it stands for. */
-function plain(value: OtlpValue): unknown {
-  if (value.kvlistValue !== undefined)
-    return attributesOf(value.kvlistValue.values);
-  if (value.arrayValue !== undefined) return value.arrayValue.values.map(plain);
-  return (
-    value.stringValue ?? value.intValue ?? value.doubleValue ?? value.boolValue
-  );
-}
-
-function attributesOf(
-  list: OtlpAttribute[] | undefined,
-): Record<string, unknown> {
-  return Object.fromEntries((list ?? []).map((a) => [a.key, plain(a.value)]));
-}
-
-/** Every log record the collector has been sent, as its body and attributes. */
-function sentLogRecords(): {
-  body: unknown;
-  attributes: Record<string, unknown>;
-}[] {
-  type Batch = {
-    resourceLogs: {
-      scopeLogs: {
-        logRecords: { body: OtlpValue; attributes?: OtlpAttribute[] }[];
-      }[];
-    }[];
-  };
-  return (logRecords as unknown as Batch[]).flatMap((batch) =>
-    batch.resourceLogs.flatMap((resource) =>
-      resource.scopeLogs.flatMap((scope) =>
-        scope.logRecords.map((record) => ({
-          body: plain(record.body),
-          attributes: attributesOf(record.attributes),
-        })),
-      ),
-    ),
-  );
-}
-
-/** Every span the collector has been sent, with its attributes and the attributes of each event. */
-function sentSpans(): {
-  attributes: Record<string, unknown>;
-  events: { name: string; attributes: Record<string, unknown> }[];
-}[] {
-  type Batch = {
-    resourceSpans: {
-      scopeSpans: {
-        spans: {
-          attributes?: OtlpAttribute[];
-          events?: { name: string; attributes?: OtlpAttribute[] }[];
-        }[];
-      }[];
-    }[];
-  };
-  return (traces as unknown as Batch[]).flatMap((batch) =>
-    batch.resourceSpans.flatMap((resource) =>
-      resource.scopeSpans.flatMap((scope) =>
-        scope.spans.map((span) => ({
-          attributes: attributesOf(span.attributes),
-          events: (span.events ?? []).map((event) => ({
-            name: event.name,
-            attributes: attributesOf(event.attributes),
-          })),
-        })),
-      ),
-    ),
-  );
 }
 
 function postNote(marker: string, requestId: string): Promise<Response> {
@@ -302,17 +158,17 @@ describe("an unhandled fault in which a statement failed", () => {
   it("is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
     const { marker, requestId } = await faulted();
     const sent = await until("the error webhook's notification", () =>
-      notifications.find((entry) => entry.request_id === requestId),
+      sinks!.notifications.find((entry) => entry.request_id === requestId),
     );
 
     expect(sent.method).toBe("POST");
     expect(sent.path).toBe("/items");
     expectFixedFailure(String(sent.error));
     expectFixedFailure(JSON.stringify(sent));
-    expect(JSON.stringify(notifications)).not.toContain(marker);
+    expect(JSON.stringify(sinks!.notifications)).not.toContain(marker);
     // One notification for the one fault.
     expect(
-      notifications.filter((entry) => entry.request_id === requestId),
+      sinks!.notifications.filter((entry) => entry.request_id === requestId),
     ).toHaveLength(1);
   });
 
@@ -323,20 +179,22 @@ describe("an unhandled fault in which a statement failed", () => {
       const record = await until(
         "the fault's log record",
         () =>
-          sentLogRecords().find(
-            (entry) =>
-              entry.body === "Unhandled error" &&
-              entry.attributes.request_id === requestId,
-          ),
+          sinks!
+            .sentLogRecords()
+            .find(
+              (entry) =>
+                entry.body === "Unhandled error" &&
+                entry.attributes.request_id === requestId,
+            ),
         COLLECTOR_BUDGET_MS,
       );
 
       expectFixedFailure(String(record.attributes.error));
       expectFixedFailure(JSON.stringify(record));
       // Whichever attribute of whichever record carries it.
-      expect(JSON.stringify(logRecords)).not.toContain(marker);
-      expect(JSON.stringify(logRecords)).not.toContain(STATEMENT);
-      expect(JSON.stringify(logRecords)).not.toContain(DRIVER_MESSAGE);
+      expect(JSON.stringify(sinks!.logRecords)).not.toContain(marker);
+      expect(JSON.stringify(sinks!.logRecords)).not.toContain(STATEMENT);
+      expect(JSON.stringify(sinks!.logRecords)).not.toContain(DRIVER_MESSAGE);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
@@ -348,9 +206,11 @@ describe("an unhandled fault in which a statement failed", () => {
       const span = await until(
         "the faulted request's span",
         () =>
-          sentSpans().find(
-            (entry) => entry.attributes["marfa.request_id"] === requestId,
-          ),
+          sinks!
+            .sentSpans()
+            .find(
+              (entry) => entry.attributes["marfa.request_id"] === requestId,
+            ),
         COLLECTOR_BUDGET_MS,
       );
 
@@ -361,9 +221,9 @@ describe("an unhandled fault in which a statement failed", () => {
       const exception = events[0]!.attributes;
       expectFixedFailure(String(exception["exception.message"]));
       expectFixedFailure(JSON.stringify(exception));
-      expect(JSON.stringify(traces)).not.toContain(marker);
-      expect(JSON.stringify(traces)).not.toContain(STATEMENT);
-      expect(JSON.stringify(traces)).not.toContain(DRIVER_MESSAGE);
+      expect(JSON.stringify(sinks!.traces)).not.toContain(marker);
+      expect(JSON.stringify(sinks!.traces)).not.toContain(STATEMENT);
+      expect(JSON.stringify(sinks!.traces)).not.toContain(DRIVER_MESSAGE);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
@@ -384,7 +244,7 @@ describe("an unhandled fault in which a statement failed", () => {
       const sent = await until(
         "the exception sent to error tracking",
         () =>
-          (trackedErrors as unknown as { batch: Event[] }[])
+          (sinks!.trackedErrors as unknown as { batch: Event[] }[])
             .flatMap((batch) => batch.batch)
             .find(
               (entry) =>
@@ -405,8 +265,10 @@ describe("an unhandled fault in which a statement failed", () => {
       ).toEqual(["DatabaseFailure"]);
       // Error tracking also carries the server's own source lines around each
       // frame, which hold its statements' text with no value in them.
-      expect(JSON.stringify(trackedErrors)).not.toContain(marker);
-      expect(JSON.stringify(trackedErrors)).not.toContain(DRIVER_MESSAGE);
+      expect(JSON.stringify(sinks!.trackedErrors)).not.toContain(marker);
+      expect(JSON.stringify(sinks!.trackedErrors)).not.toContain(
+        DRIVER_MESSAGE,
+      );
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );

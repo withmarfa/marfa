@@ -28,7 +28,7 @@ pub struct EventsArgs {
     /// Resume from this cursor, replaying what the log holds after it.
     #[arg(long, value_name = "CURSOR")]
     pub from: Option<String>,
-    /// Stop after this many seconds. Unset, it reads until interrupted.
+    /// Stop after this many seconds. Unset, it reads until you interrupt it or the stream ends.
     #[arg(long, value_name = "SECONDS")]
     pub r#for: Option<u64>,
 }
@@ -130,7 +130,12 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             None => INTERRUPT_POLL,
         };
         match frames.recv_timeout(wait) {
-            Ok(Ok(frame)) => print_frame(&frame, out)?,
+            Ok(Ok(frame)) => {
+                print_frame(&frame, out)?;
+                if let Some(refusal) = terminal_refusal(&frame) {
+                    return Err(refusal);
+                }
+            }
             Ok(Err(error)) => {
                 return Err(CliError::Core(marfa_core::CoreError::Network(format!(
                     "the stream broke: {error}"
@@ -139,6 +144,32 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
+    }
+}
+
+/// The server answers `200` and says in the last frame that it will not
+/// stream from the cursor (`events/cursor-ahead`, `events/catchup-too-old`) or
+/// can no longer deliver (`events/incomplete-closes`), so the status says
+/// nothing of the refusal and a script reads it here. The frame's name alone
+/// decides, whatever its data holds.
+fn terminal_refusal(frame: &Frame) -> Option<CliError> {
+    let data: Value = serde_json::from_str(&frame.data).unwrap_or(Value::Null);
+    let text = |name: &str| data.get(name).and_then(Value::as_str).unwrap_or("unknown");
+    match frame.event.as_deref()? {
+        "cursor_ahead" => Some(CliError::Invalid(format!(
+            "the cursor {} is past the end of the server's event log, which ends at {}, as after a restore from an earlier point: read the state again, then follow from a cursor the log holds",
+            text("requested"),
+            text("head")
+        ))),
+        "catchup_too_old" => Some(CliError::Invalid(format!(
+            "the event log no longer holds the events after the cursor {}; the oldest it keeps is {}: read the state again, then follow from a cursor the log holds",
+            text("requested"),
+            text("min_retained_id")
+        ))),
+        "stream_incomplete" => Some(CliError::from(marfa_core::CoreError::StreamIncomplete {
+            reason: text("reason").to_string(),
+        })),
+        _ => None,
     }
 }
 

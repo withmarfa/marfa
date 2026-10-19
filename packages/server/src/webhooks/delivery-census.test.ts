@@ -265,6 +265,7 @@ describe("a delivery driven end to end", () => {
       { limit: 5 },
     );
     expect(log.data[0]).toMatchObject({
+      status: "dead_letter",
       succeeded: false,
       error: DELIVERY_FAILURE.notPublic,
     });

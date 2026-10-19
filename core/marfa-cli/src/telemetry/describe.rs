@@ -31,6 +31,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::NoCredential { .. } => "no credential was available for the server",
         CliError::NoKeychain(_) => "the system's credential storage is unavailable",
         CliError::SignedOut { .. } => "the sign-in has ended",
+        CliError::CredentialEnded => "the credential that held the stream has ended",
         CliError::Invalid(_) => "a value was not accepted",
         CliError::ContractMismatch { .. } => {
             "the server speaks a different contract than this build"

@@ -9,6 +9,7 @@ import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 import { atPoint, deadlineFault } from "../control/faults.js";
+import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 
 /**
  * What one run reports: a flat object of scalars, named by the job.
@@ -383,7 +384,7 @@ export class Housekeeping {
       const run = atPoint(`housekeeping:${job.name}`, (held) =>
         held && this.stopped
           ? Promise.reject(new StoppedBeforeRun(job.name))
-          : job.run(),
+          : withStatementFault(`housekeeping:${job.name}`, () => job.run()),
       );
       const noteLate = () => {
         if (expired) {

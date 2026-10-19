@@ -291,7 +291,7 @@ test("reads a refusal into its parts, and keeps the refused body until it is dis
     /** @type {{ properties: unknown }} */ (kept[0]?.body).properties,
     { title: "the words a person wrote" },
   );
-  assert.equal(core.discard(created.id), true);
+  assert.equal(await core.discard(created.id), true);
   assert.deepEqual(core.queue(), []);
 });
 

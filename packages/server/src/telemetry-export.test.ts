@@ -232,7 +232,25 @@ describe("the server process with the OTLP endpoint set", () => {
         },
       });
       expect(response.status, server.output()).toBe(200);
+      const instanceId = (
+        (await (
+          await fetch(`${server.url}/`, {
+            headers: { Accept: "application/json" },
+          })
+        ).json()) as {
+          instance_id: string;
+        }
+      ).instance_id;
       await server.stop();
+
+      // The instance names itself on everything it sends, by the id its
+      // root answers, so instances sharing a collector can be told apart.
+      const named = `"service.instance.id","value":{"stringValue":"${instanceId}"}`;
+      for (const suffix of ["/v1/traces", "/v1/logs"]) {
+        const posts = collector.posts.filter((p) => p.path.endsWith(suffix));
+        expect(posts.length, suffix).toBeGreaterThan(0);
+        for (const post of posts) expect(post.text, suffix).toContain(named);
+      }
 
       const spans = collector.spans();
       const http = spans.find(

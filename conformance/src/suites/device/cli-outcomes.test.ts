@@ -3,13 +3,26 @@ import { chmodSync, existsSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { Cli } from "../cli/harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
-import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
+import {
+  answers,
+  copyHeadRead,
+  copyIncompleteReplay,
+  edgeTypeCatalog,
+  itemsPage,
+  refusal,
+  typeCatalog,
+  wireItem,
+} from "../../device/marfa-answers.js";
+import type { SseFrame } from "../../device/scripted-server.js";
 import { newStore } from "../../device/cli-adapter.js";
 import {
   hydratedHarness,
   KEY,
   requireBinary,
+  scriptHydration,
+  scriptKey,
   scriptWrites,
+  startHarness,
   type Harness,
 } from "./harness.js";
 
@@ -95,6 +108,78 @@ describe("CLI outcomes preserve the result", () => {
       expect(
         after.ok && before.ok && after.value[0]?.id === before.value[0]?.id,
       ).toBe(true);
+    },
+  );
+
+  const endedCredentialReaders = [
+    { command: "events" },
+    { command: "catch-up" },
+    { command: "hydrate" },
+  ];
+  it.each(endedCredentialReaders)(
+    "ends $command on a stream_incomplete frame for credential_ended with exit 5",
+    async ({ command }) => {
+      const ended: SseFrame = {
+        event: "stream_incomplete",
+        data: {
+          event_type: "stream_incomplete",
+          reason: "credential_ended",
+          cursor: null,
+        },
+      };
+      harness = await startHarness("credential-ended");
+      const { server, device } = harness;
+      const cli = new Cli(requireBinary(), server.url, KEY);
+      if (command === "hydrate") {
+        server.copyAnswer(
+          "GET",
+          "/events",
+          copyHeadRead("10"),
+          copyIncompleteReplay("10", [ended]),
+        );
+        server.copyAnswer("GET", "/types", typeCatalog());
+        server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
+        scriptKey(server);
+        server.copyAnswer(
+          "GET",
+          "/items",
+          itemsPage([{ item: wireItem({ id: "n1" }) }]),
+        );
+      } else if (command === "catch-up") {
+        scriptHydration(server, { head: "10" });
+        server.copyAnswer(
+          "GET",
+          "/events",
+          copyIncompleteReplay("20", [ended]),
+        );
+        expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+      } else {
+        server.copyAnswer("GET", "/events", { kind: "sse", frames: [ended] });
+      }
+      const args =
+        command === "events"
+          ? ["--json", "events", "--for", "5"]
+          : command === "catch-up"
+            ? ["--json", "device", "--db", device.store, "catch-up"]
+            : [
+                "--json",
+                "device",
+                "--db",
+                device.store,
+                "hydrate",
+                "--types",
+                "core.note",
+                "--tier",
+                "library",
+              ];
+      const result = await cli.run(args);
+      expect(result.code, result.stdout + result.stderr).toBe(5);
+      const envelope = JSON.parse(result.stderr) as {
+        error: { code: string };
+        exit: number;
+      };
+      expect(envelope.error.code).toBe("unauthorized");
+      expect(envelope.exit).toBe(5);
     },
   );
 

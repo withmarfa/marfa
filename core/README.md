@@ -152,7 +152,8 @@ The binary enables the feature and installs a subscriber that exports over OTLP,
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers as `key=value` pairs separated by commas, values percent-encoded. The traces variable wins for a header both name.                |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | Milliseconds one send may take. The default is 2000. The binary waits no longer than this at exit.                                        |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                  | `always_on` (the default), `always_off` or `traceidratio` with a ratio from 0 to 1. A `parentbased_` form acts as the sampler it wraps.   |
-| `OTEL_SERVICE_NAME`                                               | The service name on the trace. The default is `marfa-cli`.                                                                                |
+| `OTEL_SERVICE_NAME`                                               | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.      |
+| `OTEL_RESOURCE_ATTRIBUTES`                                        | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
 | `OTEL_SDK_DISABLED`                                               | `true` turns telemetry off.                                                                                                               |
 | `MARFA_POSTHOG_HOST`                                              | The PostHog host that receives a failed run's exception, `https` or, to this machine, `http`. It needs the next variable and an endpoint. |
 | `MARFA_POSTHOG_PROJECT_TOKEN`                                     | The PostHog project token for those exceptions. It needs the previous variable and an endpoint.                                           |
@@ -201,6 +202,8 @@ pnpm --ignore-workspace run build
 pnpm --ignore-workspace run check
 pnpm --ignore-workspace run test
 ```
+
+The Node binding's `withdraw(id)` and `discard(id)` return `Promise<boolean>`: await them to read the result or catch a refusal. `withdraw` reads rows from the server, and `discard` can wait for a running drain. Both run off the JavaScript thread.
 
 Every surface names a core error by `CoreError::code`: the `code` in the binary's `--json` envelope, and `code` on an error the Node module throws or rejects with. The Node error is an `Error` whose message starts `code: `, with the properties the Swift error carries as fields: `serverCode`, `status`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it. `onEnd` of a `follow` receives that same error, or one coded `listener_threw` where an `onChange` threw. The Swift error answers `code()` with the same word, held by a test that crosses every `CoreError`. A catch-up keeps the catalog it took whatever ends it, so a failed one says whether it changed: `catalogChanged` on the Node error, `CatchUpError.Failed(error:catalogChanged:)` in Swift, and `catalog_changed` in the binary's `--json` envelope.
 

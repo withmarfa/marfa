@@ -546,13 +546,13 @@ While a run of `blob-orphans` is under way, if a write that names a blob the run
 
 **Reason:** the run decides each purge again at the moment it purges, so a reference written after the run's walk still counts. A write that commits after the purge names bytes that are gone.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/blob-purge-faults.test.ts › keeps the blob when a write that names it commits after the run chose it and before the run purges it`, `› purges a blob that nothing names by the time the run reaches it, which is the witness for the case below`.
 
 ### `stores/orphan-purge-cut-short`
 
 If a purge is cut short after the blob left the registry and before its bytes are gone from every store, then the server MUST finish removing the bytes on the next run of `blob-orphans`.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/blob-purge-faults.test.ts › finishes removing the bytes on the next run, and answers the run that was cut short ok`, `› does not take the bytes of a blob an upload has stored again since`.
 
 ### `stores/orphan-purge-no-dangling`
 
@@ -560,7 +560,7 @@ If a purge is cut short, then the server MUST NOT leave a blob that is listed or
 
 **Reason:** the server removes what lists or links the bytes before the bytes, so a purge cut short leaves nothing that names bytes that are gone.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/blob-purge-faults.test.ts › leaves no blob listed or linked with its bytes gone, whether it is cut before the registry lets go or after`.
 
 ### `stores/orphan-restore-keeps`
 
@@ -686,7 +686,7 @@ If a store cannot delete the bytes of a copy the server dropped, struck or purge
 
 **Reason:** the copy left the location log when it was dropped, struck or purged, so only the retry removes bytes that nothing names.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/blob-cleanup-faults.test.ts › are deleted on a later run once the store can, when it could not delete them at the drop`.
 
 ### `stores/cleanup-isolated`
 
@@ -694,4 +694,4 @@ If a store keeps failing to delete the bytes of one copy, then the server MUST g
 
 **Reason:** a run deletes a bounded number of copies, so a copy that always fails would otherwise fill every run and leave the bytes of every copy behind it in place.
 
-**Tests:** waiting on #2071.
+**Tests:** `compliance/blob-cleanup-faults.test.ts › are deleted by the runs that follow, each run taking one copy, including after a restart`.

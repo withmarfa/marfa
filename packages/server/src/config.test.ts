@@ -398,6 +398,91 @@ describe("test hooks", () => {
 describe("OpenTelemetry settings", () => {
   const exporting = (extra: Record<string, string>) => loadConfig(extra).otel;
 
+  describe("the resource", () => {
+    const withEndpoint = {
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
+    };
+
+    it("names the service marfa-server and the environment production unless told otherwise", () => {
+      const config = loadConfig(withEndpoint);
+      expect(config.otel?.serviceName).toBe("marfa-server");
+      expect(config.otel?.resourceAttributes).toEqual({});
+      expect(config.deploymentEnvironment).toBe("production");
+    });
+
+    it("reads OTEL_RESOURCE_ATTRIBUTES as key=value pairs with percent-encoded values", () => {
+      const config = loadConfig({
+        ...withEndpoint,
+        OTEL_RESOURCE_ATTRIBUTES:
+          "deployment.environment=staging, team=a%20b%2Cc,service.instance.id=rehearsal",
+      });
+      expect(config.otel?.resourceAttributes).toEqual({
+        "deployment.environment": "staging",
+        team: "a b,c",
+        "service.instance.id": "rehearsal",
+      });
+      expect(config.deploymentEnvironment).toBe("staging");
+    });
+
+    it("takes the environment from deployment.environment.name before deployment.environment", () => {
+      expect(
+        loadConfig({
+          OTEL_RESOURCE_ATTRIBUTES:
+            "deployment.environment=old,deployment.environment.name=rehearsal",
+        }).deploymentEnvironment,
+      ).toBe("rehearsal");
+    });
+
+    it("names the environment for the error notification with no endpoint set", () => {
+      const config = loadConfig({
+        OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=staging",
+      });
+      expect(config.otel).toBeUndefined();
+      expect(config.deploymentEnvironment).toBe("staging");
+    });
+
+    it("takes the service name from OTEL_SERVICE_NAME, then service.name, then marfa-server", () => {
+      const named = (extra: Record<string, string>) =>
+        loadConfig({ ...withEndpoint, ...extra }).otel;
+      expect(
+        named({
+          OTEL_SERVICE_NAME: "from-name",
+          OTEL_RESOURCE_ATTRIBUTES: "service.name=from-attributes",
+        })?.serviceName,
+      ).toBe("from-name");
+      const attributesOnly = named({
+        OTEL_RESOURCE_ATTRIBUTES: "service.name=from-attributes,a=b",
+      });
+      expect(attributesOnly?.serviceName).toBe("from-attributes");
+      // `service.name` is the service name, not a second copy of it.
+      expect(attributesOnly?.resourceAttributes).toEqual({ a: "b" });
+      expect(named({ OTEL_SERVICE_NAME: "   " })?.serviceName).toBe(
+        "marfa-server",
+      );
+    });
+
+    it("takes a pair with an empty value, with telemetry on or off, and leaves the defaults standing for an empty environment or service name", () => {
+      const named = {
+        OTEL_RESOURCE_ATTRIBUTES:
+          "team=,deployment.environment=,deployment.environment.name=,service.name=",
+      };
+      expect(refusal(named)).toBe("");
+      const config = loadConfig({ ...withEndpoint, ...named });
+      expect(config.otel?.resourceAttributes).toEqual({ team: "" });
+      expect(config.otel?.serviceName).toBe("marfa-server");
+      expect(config.deploymentEnvironment).toBe("production");
+    });
+
+    it("refuses a pair with no key, no equals sign or a broken percent sign, naming the setting", () => {
+      for (const bad of ["=x", "novalue", "a=%zz", "a=b,c"]) {
+        expect(
+          refusal({ ...withEndpoint, OTEL_RESOURCE_ATTRIBUTES: bad }),
+          bad,
+        ).toContain("OTEL_RESOURCE_ATTRIBUTES");
+      }
+    });
+  });
+
   it("is off with no endpoint, and has no second switch", () => {
     expect(exporting({})).toBeUndefined();
     expect(
@@ -536,6 +621,29 @@ describe("version.json", () => {
       expect(config.versionSha).toBe("abc123");
       expect(config.versionFile?.deployed_at).toBe("2026-01-01");
     });
+  });
+
+  it("names the release the image was built as", () => {
+    inDirectoryHolding('{"sha":"abc123","release":"0.0.14"}', () => {
+      expect(loadConfig({}).releaseVersion).toBe("0.0.14");
+    });
+  });
+
+  it("names no release when the file holds none", () => {
+    inDirectoryHolding('{"sha":"abc123"}', () => {
+      expect(loadConfig({}).releaseVersion).toBeUndefined();
+    });
+    expect(loadConfig({}).releaseVersion).toBeUndefined();
+  });
+
+  it("stops boot naming the file when its release is not a version", () => {
+    for (const release of ["", "latest", "v0.0.14", "0.0", 14, null]) {
+      inDirectoryHolding(JSON.stringify({ sha: "abc123", release }), () => {
+        expect(refusal({}), String(release)).toMatch(
+          /^ {2}version\.json release /m,
+        );
+      });
+    }
   });
 
   it("stops boot naming the file when it is not a JSON object", () => {

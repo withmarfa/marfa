@@ -334,7 +334,7 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 If an answer to a request made under a copy arrives after a hydration has begun replacing that copy, then a device MUST NOT let the answer expire or change the new copy.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-late-answer.test.ts › lets a late answer neither expire nor change a copy a hydration has begun to replace since the request was made`.
 
 ### `device/proof-lost`
 
@@ -1654,6 +1654,78 @@ When `keys forget` runs, the CLI MUST forget the credential kept for the server 
 
 **Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
 
+### `device/command-keys-keep-checks-current-key`
+
+When `keys keep` is given a key, the CLI MUST check the key with `GET /keys/current` and no other request before it keeps the key.
+
+**Reason:** every key may read itself, whatever permissions and types it holds (`keys-and-oauth/current-key`). A check through an item route would refuse a key that holds only permissions, which works from `MARFA_API_KEY` all the same (`keys-and-oauth/permissions-no-content`).
+
+**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
+
+### `device/command-keys-keep-keeps-key-without-type`
+
+When the server answers `GET /keys/current` to a key that reaches no type, the CLI MUST keep the key for the server.
+
+**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
+
+### `device/command-keys-keep-refuses-spent-key`
+
+If the server answers the check of `keys keep` `401 unauthorized`, as it does for a key that is revoked, expired or unknown, then the CLI MUST keep nothing and exit 5.
+
+**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
+
+### `device/command-keys-keep-refuses-access-token`
+
+If the server answers the check of `keys keep` `403 forbidden`, as it does for an app's access token (`keys-and-oauth/current-key-app`), then the CLI MUST keep nothing and refuse it `invalid` with exit 1, saying the credential is not a key.
+
+**Reason:** an access token ends within the hour, and `login` keeps a sign-in that renews it.
+
+**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
+
+### `device/command-keys-keep-refuses-wrong-server`
+
+If the answer to the check of `keys keep` names another contract than the CLI was built for or none, then the CLI MUST keep nothing and refuse it as it refuses any such answer (`device/command-contract-mismatch`, `device/command-unnamed-refusal`).
+
+**Tests:** `device/credential-locks.test.ts › keeps no key for $name, refusing it with exit $exit`.
+
+### `device/command-events-refuses-cursor`
+
+If the stream that `events` reads sends a `cursor_ahead` or `catchup_too_old` frame (`events/cursor-ahead`, `events/catchup-too-old`), then the CLI MUST end the command `invalid` with exit 1, saying the cursor is not one the server's log holds.
+
+**Reason:** the server answers `200` and ends the stream with the frame, so the status of the answer says nothing of the refusal, and a script that reads only the exit status would take a refused cursor for a stream that ended well.
+
+**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`.
+
+### `device/command-events-prints-refusing-frame`
+
+When the CLI ends `events` for a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame, the CLI MUST print the frame it read on standard output before it ends.
+
+**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`, `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-events-refuses-incomplete`
+
+If the stream that `events` reads sends a `stream_incomplete` frame whose `reason` is not `credential_ended` (`events/incomplete-closes`), then the CLI MUST end the command `stream_incomplete` with exit 3.
+
+**Reason:** the stream can no longer deliver what it opened with, and the answer's status says nothing of it. A script that reads only the exit status would take a stream that stopped early for one that ended well. Exit 3 tells it to follow again from the frame's `cursor`.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
+
+### `device/command-stream-credential-ended`
+
+If the stream that a command reads sends a `stream_incomplete` frame whose `reason` is `credential_ended` (`events/credential-revoked`), then the CLI MUST end the command `unauthorized` with exit 5, whichever command reads the stream.
+
+**Reason:** the key or token that held the stream has ended, so reading again with it will not work. Exit 5 says to get a new credential, where exit 3 would send a script to retry. One place decides it, so `events`, `hydrate` and `catch-up` agree.
+
+**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`, `device/cli-outcomes.test.ts › ends $command on a stream_incomplete frame for credential_ended with exit 5`.
+
+### `device/command-events-frame-name-decides`
+
+If a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame that `events` reads carries no data, or data that is not JSON, then the CLI MUST end the command as it does for the frame with its data, with the details the data would have named reported as unknown.
+
+**Reason:** the frame's name alone says the stream is over, so a frame the CLI cannot read must not read as a stream that ended well.
+
+**Tests:** `device/contract.test.ts › ends the command on a $event frame whose data is $data as it does for the frame with its data`.
+
 ### `device/command-cleartext-warning`
 
 If the CLI is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends the credential.
@@ -1896,7 +1968,7 @@ If every held stream ends at once, then a device MUST ask for the next after a w
 
 While a device waits to ask for a held stream again, a device MUST NOT wait more than thirty seconds unless the server names a longer wait.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › doubles the wait before it asks for a held stream again up to thirty seconds, and waits no longer unless the server names a longer wait`.
 
 ### `device/follow-server-failing`
 
@@ -1976,13 +2048,13 @@ When a held stream is had at once, and its caller says it was last told `server.
 
 **Reason:** a caller restarts its follow around a catch-up, a hydration or a new key, and a new follow that said nothing would leave it believing the server still gone.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › tells its caller the server is reachable when its first stream is had at once, where the caller was last told it was not`.
 
 ### `device/follow-told-not-again`
 
 If a held stream cannot be had for a reason that clears on its own, and its caller says it was last told `server.unreachable` by an earlier held stream, then a device MUST NOT tell the caller `server.unreachable` again.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › does not tell its caller the server is unreachable again where it was last told so, and tells it the server is reachable when a stream is had`.
 
 ### `device/follow-change-kinds`
 
@@ -1990,7 +2062,7 @@ Where an app follows through a binding, a device MUST tell it `catalog.changed`,
 
 **Reason:** an app that told them from events by name would take an event of that name for one of them, and would miss one renamed.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › tells that the catalog changed, that the server was lost and is back, and what a drain did or failed to do, each as a change of its own kind apart from the events the stream applied`.
 
 ### `device/follow-drains-reachable`
 
@@ -2044,7 +2116,7 @@ If a drain the caller started is under way when a device tells its caller `serve
 
 **Reason:** the drain under way may already send what the held stream's would have, or end before it, and a write sent once is not sent again.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › starts the held stream's drain only after the drain its caller started has ended, and drains nothing where that drain left no work`, `› drains what the caller's drain left once it has ended, each write sent once`.
 
 ### `device/follow-waits-hydration`
 
@@ -2068,13 +2140,13 @@ When the copy a follow waits on comes to report its hydration `expired` (`device
 
 **Reason:** the hydration the follow waited for ended in a state only another hydration, which its caller asks for, can mend (`device/follow-expired-refused`).
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › ends a follow copy_expired at once, sending nothing, when the hydration it waits for expires the copy`.
 
 ### `device/follow-after-hydration`
 
 When a hydration completes while a follow waits for it, a device MUST open the follow's stream from the cursor the hydration stored.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-follow.test.ts › opens the stream of a follow that waited for a hydration from the cursor the hydration stored, sending nothing before`.
 
 ### `device/event-id-number`
 
@@ -2832,7 +2904,7 @@ When the answer to a write a stopped drain left in flight arrives after the drai
 
 **Reason:** the drain has ended, and the next drain sends the write again and records the server's answer from its record of the key.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-late-answer.test.ts › records no answer to a write a stopped drain left in flight when it arrives after the drain has ended, and records the server's answer once the next drain sends the write again under its key`.
 
 ### `device/stop-drain-no-send`
 

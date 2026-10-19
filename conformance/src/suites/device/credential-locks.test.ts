@@ -13,7 +13,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ScriptedServer, type Answer } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  ScriptedServer,
+  type Answer,
+} from "../../device/scripted-server.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import {
   folderItem,
@@ -174,10 +178,10 @@ it("refuses to keep a key under an unsafe credential lock, keeping nothing and s
   const server = await ScriptedServer.start();
   const prefix = `/credential-${randomUUID()}`;
   const origin = `${server.url}${prefix}`;
-  server.copyAnswer("GET", `${prefix}/items/stats`, {
+  server.copyAnswer("GET", `${prefix}/keys/current`, {
     kind: "json",
     status: 200,
-    body: { total: 0, by_type: {}, by_state: {}, by_tier: {} },
+    body: {},
   });
   try {
     const refused = await withUnsafeLock(origin, [
@@ -733,10 +737,10 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
   it("keeps a key only once another process has finished changing the kept credential", async () => {
     const prefix = `/credential-${randomUUID()}`;
     const origin = `${server.url}${prefix}`;
-    server.answer("GET", `${prefix}/items/stats`, {
+    server.answer("GET", `${prefix}/keys/current`, {
       kind: "json",
       status: 200,
-      body: { total: 0, by_type: {}, by_state: {}, by_tier: {} },
+      body: {},
     });
     const before = keychainFile();
     const lock = await holdCredentialLock(keychain.path, origin);
@@ -761,6 +765,174 @@ describe.runIf(process.platform === "darwin")("a kept credential", () => {
     expect(keychainFile()).not.toBe(before);
     expect(await keptFor(origin)).toMatchObject({ from: "keychain" });
   });
+
+  /** A key holding permissions and no type, as `GET /keys/current` answers it. */
+  const keyReachingNoType = (): Answer => ({
+    kind: "json",
+    status: 200,
+    body: {
+      id: "01a00000-0000-7000-8000-0000000000aa",
+      label: "permissions only",
+      source: "fixture",
+      sources: [],
+      permissions: ["keys.mint", "instance.read", "audit.read"],
+      default_tier: "library",
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      created_at: "2026-01-01T00:00:00.000Z",
+      expires_at: null,
+      last_used_at: null,
+    },
+  });
+  /** What a key reaching no type is told by every item route. */
+  const itemsRefused = (): Answer => ({
+    kind: "json",
+    status: 403,
+    body: {
+      error: {
+        code: "type_not_permitted",
+        message: "The credential reaches no type",
+      },
+    },
+  });
+
+  it("keeps a key that reaches no type, checking it with the key's own read and nothing else", async () => {
+    const prefix = `/credential-${randomUUID()}`;
+    const origin = `${server.url}${prefix}`;
+    server.answer("GET", `${prefix}/keys/current`, keyReachingNoType());
+    // The witness: the route `keep` once checked a key with refuses this
+    // key, so a check that still used it would refuse the keep.
+    server.answer("GET", `${prefix}/items/stats`, itemsRefused());
+    const before = keychainFile();
+    const kept = await marfaAt(keychain.path, origin, [
+      "--key",
+      "marfa_k1_permissions_only",
+      "keys",
+      "keep",
+    ]).done;
+    expect(kept.code, kept.stderr).toBe(0);
+    expect(JSON.parse(kept.stdout)).toEqual({ origin, kept: "key" });
+    expect(sentTo(prefix)).toEqual(["/keys/current"]);
+    expect(server.requests[0]!.headers.authorization).toBe(
+      "Bearer marfa_k1_permissions_only",
+    );
+    expect(keychainFile()).not.toBe(before);
+    expect(await keptFor(origin)).toMatchObject({
+      kind: "key",
+      from: "keychain",
+    });
+  });
+
+  it.each([
+    {
+      name: "a revoked key",
+      answer: {
+        kind: "json",
+        status: 401,
+        body: { error: { code: "unauthorized", message: "Key revoked" } },
+      } satisfies Answer,
+      exit: 5,
+      code: "unauthorized",
+    },
+    {
+      name: "an expired key",
+      answer: {
+        kind: "json",
+        status: 401,
+        body: { error: { code: "unauthorized", message: "Key expired" } },
+      } satisfies Answer,
+      exit: 5,
+      code: "unauthorized",
+    },
+    {
+      name: "an app's access token",
+      answer: {
+        kind: "json",
+        status: 403,
+        body: {
+          error: {
+            code: "forbidden",
+            message: "An access token is not a key",
+          },
+        },
+      } satisfies Answer,
+      exit: 1,
+      code: "invalid",
+      says: "not a key",
+    },
+  ])(
+    "keeps nothing of $name, refusing it with exit $exit",
+    async ({ answer, exit, code, says }) => {
+      const prefix = `/credential-${randomUUID()}`;
+      const origin = `${server.url}${prefix}`;
+      server.answer("GET", `${prefix}/keys/current`, answer);
+      const before = keychainFile();
+      const refused = await marfaAt(keychain.path, origin, [
+        "--key",
+        "marfa_k1_refused",
+        "keys",
+        "keep",
+      ]).done;
+      expect(refused.code, refused.stderr).toBe(exit);
+      expect(refused.stdout).toBe("");
+      const { error } = JSON.parse(refused.stderr) as {
+        error: { code: string; message: string };
+      };
+      expect(error.code).toBe(code);
+      if (says !== undefined) expect(error.message).toContain(says);
+      expect(sentTo(prefix)).toEqual(["/keys/current"]);
+      expect(keychainFile()).toBe(before);
+      expect(await keptFor(origin)).toBeNull();
+    },
+  );
+
+  const wrongServers = [
+    {
+      name: "a server on another contract",
+      answer: {
+        kind: "json",
+        status: 200,
+        body: {},
+        contract: String(Number(BUILT_FOR) + 1),
+      } satisfies Answer,
+      exit: 1,
+      code: "contract_mismatch",
+    },
+    {
+      name: "an address that is not a Marfa server",
+      answer: {
+        kind: "json",
+        status: 404,
+        body: { message: "not here" },
+        contract: null,
+      } satisfies Answer,
+      exit: 3,
+      code: "unnamed_answer",
+    },
+  ];
+  it.each(wrongServers)(
+    "keeps no key for $name, refusing it with exit $exit",
+    async ({ answer, exit, code }) => {
+      const prefix = `/credential-${randomUUID()}`;
+      const origin = `${server.url}${prefix}`;
+      server.answer("GET", `${prefix}/keys/current`, answer);
+      const before = keychainFile();
+      const refused = await marfaAt(keychain.path, origin, [
+        "--key",
+        "marfa_k1_elsewhere",
+        "keys",
+        "keep",
+      ]).done;
+      expect(refused.code, refused.stderr).toBe(exit);
+      expect(
+        (JSON.parse(refused.stderr) as { error: { code: string } }).error.code,
+      ).toBe(code);
+      expect(keychainFile()).toBe(before);
+      expect(await keptFor(origin)).toBeNull();
+    },
+  );
 
   it("keeps a sign-in's token only once another process has finished changing the kept credential", async () => {
     const prefix = `/credential-${randomUUID()}`;

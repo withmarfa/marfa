@@ -212,9 +212,17 @@ When the server stores a delivery, the server MUST store the query string as the
 
 ### `inbound-webhooks/receipt-headers`
 
-When the server stores a delivery, the server MUST store every header the request carried, in the order and the case it arrived with, repeats kept.
+When the server stores a delivery, the server MUST store every header the request carried, except one `inbound-webhooks/receipt-no-tailscale` names, in the order and the case it arrived with, repeats kept.
 
-**Tests:** `compliance/inbound-webhooks.test.ts › stores the body byte for byte, the headers as they arrived and the query as sent`.
+**Tests:** `compliance/inbound-webhooks.test.ts › stores the body byte for byte, the headers as they arrived and the query as sent`, `› leaves out the identity headers a Tailscale proxy adds, and stores every other header`.
+
+### `inbound-webhooks/receipt-no-tailscale`
+
+When the server stores a delivery, the server MUST NOT store a header whose name begins with `Tailscale-`, in any case.
+
+**Reason:** an instance served through Tailscale receives the identity of whoever on the tailnet sent the request, in `Tailscale-User-Login`, `Tailscale-User-Name`, `Tailscale-User-Profile-Pic` and `Tailscale-App-Capabilities`. A sender outside the tailnet carries none, so what a stored header would hold is the owner's own login and name, which the connector's key can read.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › leaves out the identity headers a Tailscale proxy adds, and stores every other header`.
 
 ### `inbound-webhooks/receipt-body`
 
@@ -884,7 +892,7 @@ When the oldest delivery past its retention alone charges more than 33554432 byt
 
 If a run of `inbound-delivery-cleanup` fails while it removes deliveries, then the server MUST keep every delivery it was removing, with its body.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/inbound-faults.test.ts › keeps every delivery it was removing, with its body, and removes them on the run after`.
 
 ### `inbound-webhooks/cleanup-interval`
 
@@ -920,7 +928,7 @@ If storing a receipt fails on a database fault, then the server MUST NOT carry t
 
 **Reason:** `errors/report-log-values` keeps the values a failed statement was bound to out of a report, and a receipt's address and content are among them.
 
-**Tests:** waiting on #2070.
+**Tests:** `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its metadata fails`, `compliance/inbound-faults.test.ts › keeps the address, headers, query and body out of every report when the statement storing its body fails`.
 
 ### `inbound-webhooks/contention`
 

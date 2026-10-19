@@ -22,9 +22,25 @@ import * as clock from "../clock.js";
 /** Long enough for a backlog to drain or a burst to pass. */
 const RETRY_AFTER_SECONDS = 60;
 
-/** The headers as they arrived: the order, the case and every repeat, where
- *  the Fetch `Headers` the router hands over folds all three. */
+/**
+ * What a Tailscale proxy adds to a request it forwards: the identity of the
+ * person on the tailnet who sent it, and their capabilities. A sender
+ * outside the tailnet carries none of it, and the proxy removes any a sender
+ * wrote, so what arrives is the owner's own, and a connector's key reads
+ * every header it stores.
+ */
+const PROXY_IDENTITY_HEADER = /^tailscale-/i;
+
+/** The headers as they arrived, less the proxy's: the order, the case and
+ *  every repeat, where the Fetch `Headers` the router hands over folds all
+ *  three. */
 function receivedHeaders(c: Context<AppEnv>): [string, string][] {
+  return arrivedHeaders(c).filter(
+    ([name]) => !PROXY_IDENTITY_HEADER.test(name),
+  );
+}
+
+function arrivedHeaders(c: Context<AppEnv>): [string, string][] {
   const raw = (c.env as { incoming?: Partial<IncomingMessage> } | undefined)
     ?.incoming?.rawHeaders;
   if (raw !== undefined) {

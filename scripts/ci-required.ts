@@ -341,9 +341,17 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/bindings\/swift\//, ["core-checks", "core", "swift-package"]],
   // The Node module's JavaScript side is built and tested only by the live job.
   [/^core\/bindings\/node\/(test|scripts)\//, ["core"]],
+  // The device fixtures drive a debug build of the module, which `napi build`
+  // makes from the manifest and the lockfile that pins the command, and from
+  // the crate.
   [
-    /^core\/bindings\/node\/(index\.js|index\.d\.ts|package\.json|pnpm-lock\.yaml|tsconfig\.json)$/,
-    ["core"],
+    /^core\/bindings\/node\/(package\.json|pnpm-lock\.yaml)$/,
+    ["core", "conformance-device"],
+  ],
+  [/^core\/bindings\/node\/(index\.js|index\.d\.ts|tsconfig\.json)$/, ["core"]],
+  [
+    /^core\/bindings\/node\/(src\/|Cargo\.toml$|build\.rs$)/,
+    ["core-checks", "core-checks-linux", "core", "conformance-device"],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // A crate's tests are not in the binary.

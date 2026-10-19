@@ -186,3 +186,26 @@ test(
     assert.match(unreachable[0]?.kind === "serverUnreachable" ? unreachable[0].reason : "", /network/);
   },
 );
+
+test(
+  "a listener told it was last told the server is unreachable is told it is reachable when the stream is had",
+  { timeout: 20_000 },
+  async (t) => {
+    const { core } = await hydrated(t, [held]);
+    /** @type {Change[]} */
+    const told = [];
+    const subscription = core.watch(
+      (change) => told.push(change),
+      () => {},
+      true,
+    );
+    t.after(() => subscription.stop());
+    await until("the listener was not told the server was reachable", () =>
+      told.some((change) => change.kind === "serverReachable"),
+    );
+    assert.deepEqual(
+      told.map((change) => change.kind),
+      ["serverReachable"],
+    );
+  },
+);

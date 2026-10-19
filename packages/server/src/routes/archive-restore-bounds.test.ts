@@ -3,7 +3,7 @@ import {
   getEdgeTypeSchema,
   getTypeSchema,
 } from "@withmarfa/shared";
-import { fork, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdirSync } from "node:fs";
 import { Readable } from "node:stream";
@@ -21,6 +21,7 @@ import {
   subscribeAll,
 } from "../pubsub.js";
 import { setBusyBudgetMs } from "../storage/sqlite/connection.js";
+import { forkFixture, nextMessage } from "../test-child.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, readSse, request } from "../test-utils.js";
 import { MAX_ARCHIVE_TEXT_BYTES } from "./restore-archive-read.js";
@@ -932,45 +933,18 @@ describe("POST /restore all or nothing", () => {
   });
 });
 
-interface Message {
-  kind: string;
-  url?: string;
-  written?: number;
-}
-
-function next(child: ChildProcess, kind: string): Promise<Message> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      child.off("message", receive);
-      reject(new Error(`child did not report ${kind}`));
-    }, 20_000);
-    const receive = (message: Message) => {
-      if (message.kind !== kind) return;
-      clearTimeout(timer);
-      child.off("message", receive);
-      resolve(message);
-    };
-    child.on("message", receive);
-  });
-}
-
 describe("POST /restore killed partway", () => {
   it("leaves no type, row, event or audit record behind, and its blob bytes to the copy cleanup", async () => {
     const children: ChildProcess[] = [];
     const boot = async (stopAfter?: number) => {
-      const child = fork(
+      const child = forkFixture(
         new URL(
           "../../scripts/test-fixtures/restore-crash.ts",
           import.meta.url,
         ),
-        [],
-        {
-          execArgv: ["--import", "tsx"],
-          stdio: ["ignore", "inherit", "inherit", "ipc"],
-        },
       );
       children.push(child);
-      const ready = next(child, "ready");
+      const ready = nextMessage(child, "ready");
       child.send({ dir: ctx.tmpDir, config: ctx.config, stopAfter });
       const { url } = await ready;
       if (!url) throw new Error("child has no URL");
@@ -987,7 +961,7 @@ describe("POST /restore killed partway", () => {
         ...blobEntries(blobs),
       ]);
       const first = await boot(150);
-      const stopped = next(first.child, "stopped");
+      const stopped = nextMessage(first.child, "stopped");
       const answer = fetch(`${first.url}/restore`, {
         method: "POST",
         headers: {
@@ -1063,5 +1037,6 @@ describe("POST /restore killed partway", () => {
     } finally {
       for (const child of children) child.kill("SIGKILL");
     }
-  });
+    // Two cold forks may each take the whole ready budget.
+  }, 150_000);
 });
