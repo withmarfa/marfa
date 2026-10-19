@@ -19,9 +19,9 @@
  * items. Edges restore in a second pass, only where both endpoints
  * resolve in the target database. A row comes back at the version
  * it was archived at, with its original dates and readable item history.
- * An item that is not of a `core` or `system` type that this build ships keeps the properties the
- * archive holds, whatever shape its type has now and whether or not the type
- * is registered.
+ * An item that is not of a `core` or `system` type that this build ships
+ * keeps the properties the archive holds, whatever shape its type has now and
+ * whether or not the type is registered.
  *
  * Paired with GET /export?format=archive.
  */

@@ -28,7 +28,7 @@ import {
   isValidId,
   getResolvedFields,
   getTypeSchema,
-  isPlatformTypeFamily,
+  ALL_TYPE_IDS,
   isValidTypeIdentifier,
   scheduleIssues,
   validateProperties,
@@ -697,26 +697,25 @@ function creatableItem(
 }
 
 /**
- * Whether a restore holds a row of `type` to the shape the type has: a `core`
- * or `system` type this build ships is fixed by the build and read by the
- * server's own code, and cannot be deleted or replaced. A row of such a family
- * whose type this build no longer ships is an orphan like any other.
+ * Whether a restore holds a row of `type` to the shape the type has: only a
+ * `core` or `system` type this build ships, which the server's own code reads
+ * and nothing can delete or replace. A platform type the build no longer ships
+ * is not held, though the instance may still carry its row in the registry:
+ * its items are taken as archived like any other.
  */
 function restoreHoldsShape(type: string): boolean {
-  return (
-    isPlatformTypeFamily(type.split(".")[0]) &&
-    getTypeSchema(type) !== undefined
-  );
+  return (ALL_TYPE_IDS as readonly string[]).includes(type);
 }
 
 /**
  * What a restore refuses of an item line before it reads the database: a type
  * that is no identifier and properties that are no object. A row of a `core`
- * or `system` type this build ships is then judged as a create is. Any other row is refused
- * only a malformed id or `occurred_at` and a schedule no calendar read can
- * unfold; its properties come back as the archive holds them, whatever shape
- * its type has now and whether or not the type is registered, because a type
- * may gain a required field or be force-deleted while its rows stand
+ * or `system` type this build ships is then judged as a create is. Any other
+ * row is refused only a malformed id or `occurred_at` and a schedule no
+ * calendar read can unfold. Its properties come back as the archive holds
+ * them, whatever shape its type has now and whether or not the type is
+ * registered, even as a platform row the build retired, because a type may
+ * gain a required field or be force-deleted while its rows stand
  * (`search-and-filters/restore-rows-shape-free`).
  */
 export function restoredItem(

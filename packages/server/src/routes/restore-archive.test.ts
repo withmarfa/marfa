@@ -1872,6 +1872,28 @@ describe("POST /restore of rows their type no longer shapes", () => {
     expect(await ctx.storage.items.getIncludingTrashed(shipped)).toBeNull();
   });
 
+  it("takes an item of a retired platform type the registry still carries as archived, though the row requires a field it lacks", async () => {
+    const id = generateId();
+    const type = `core.retired_${id.slice(-8)}`;
+    // What boot leaves of a platform type the build dropped: its row stays in
+    // the registry so that its items load.
+    await ctx.storage.types.create(
+      {
+        id: type,
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      },
+      { origin: "platform" },
+    );
+    expect(getTypeSchema(type)).toBeDefined();
+    const res = await restoreLines([row({ id, type, properties: {} })]);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await ctx.storage.items.getIncludingTrashed(id)).toMatchObject({
+      type,
+      properties: {},
+    });
+  });
+
   it("refuses a row of an event type whose rule no calendar read can unfold, though it takes the rest of the type's shape as it is", async () => {
     const series = `user.series_${generateId().slice(-8)}`;
     const registration = JSON.stringify({
