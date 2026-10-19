@@ -361,6 +361,20 @@ When `DELETE /keys/{id}` names a key that is already revoked, the server MUST an
 
 **Tests:** `compliance/key-reach.test.ts › answers a second revoke as an unknown key, and tells keys.manage the key was already revoked`.
 
+### `keys-and-oauth/revoke-recent`
+
+If the browser session asking `DELETE /keys/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A browser left signed in, or a copied cookie, cannot end the keys the owner relies on without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the key working, and a fresh session revokes it`.
+
+### `keys-and-oauth/revoke-credential-recent`
+
+When a key holding `keys.manage` sends `DELETE /keys/{id}`, the server MUST revoke the key whatever the age of the owner's browser sessions.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › revokes for a key holding keys.manage whatever the age of the owner's sessions`.
+
 ### `keys-and-oauth/last-used-new`
 
 When a key is minted, the server MUST answer its `last_used_at` as `null`.
@@ -1131,7 +1145,7 @@ When a signed-in person's authorization request names only scopes their standing
 
 ### `keys-and-oauth/consent-wider`
 
-When an authorization request names a scope the person's standing consent to the app does not cover, the server MUST show the consent screen again.
+When an authorization request names a scope the person's standing consent to the app does not cover, the server MUST show the consent screen again, unless `keys-and-oauth/consent-page-recent` sends the browser to sign in first.
 
 **Tests:** `compliance/oauth-authorize.test.ts › asks again for a request reaching past the standing consent`.
 
@@ -1184,6 +1198,36 @@ If a signed-in person's authorization request naming `prompt=none` names a scope
 When a signed-in person's authorization request naming `prompt=none` names only scopes a standing consent covers, the server MUST send the browser to the redirect URI with a code.
 
 **Tests:** `compliance/oauth-authorize.test.ts › answers a request a standing consent covers with a code`.
+
+### `keys-and-oauth/consent-older-reads`
+
+When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read`, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read`, `openid`, `profile`, `email` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
+
+**Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every one of the twelve permissions is left out, and so is any scope this build cannot read.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left unticked`.
+
+### `keys-and-oauth/consent-recent-needed`
+
+If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden`.
+
+**Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`.
+
+### `keys-and-oauth/consent-recent-held`
+
+When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes the app's standing consent covers, the server MUST send the browser to the redirect URI with a code.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before, and refuses a second one`.
+
+### `keys-and-oauth/consent-page-recent`
+
+If a browser session that signed in more than five minutes ago opens `/auth/authorize` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and the request's address as `return_to`.
+
+**Reason:** The person is asked for the password before the screen, so they are never shown an approval the server would refuse.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a session that signed in more than five minutes ago to sign in again before it shows a request for a permission or a write`, `› lands the person back on the screen after they sign in again, where they approve`, `› shows a session that signed in more than five minutes ago a request that only reads`, `› answers a request a standing consent covers with a code, whatever the age of the session`.
 
 ## A client's registration
 
@@ -1439,7 +1483,7 @@ If a request with no credential sends `GET /auth/grants`, then the server MUST a
 
 ### `keys-and-oauth/grant-revoke-answer`
 
-When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`.
+When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`, unless `keys-and-oauth/grant-revoke-recent` refuses it.
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
 
@@ -1470,6 +1514,20 @@ When a grant is revoked with `revoke_keys=1`, the server MUST also revoke every 
 If `DELETE /auth/grants/{id}` names an id that is no app's grant, then the server MUST answer `404 oauth_grant_not_found`.
 
 **Tests:** `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
+
+### `keys-and-oauth/grant-revoke-recent`
+
+If the browser session asking `DELETE /auth/grants/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+
+**Reason:** A browser left signed in, or a copied cookie, cannot end an app's access without the password.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 and leaves the app working, and a fresh session revokes it`.
+
+### `keys-and-oauth/grant-revoke-credential`
+
+When a credential holding `grants.manage` sends `DELETE /auth/grants/{id}`, the server MUST revoke the grant whatever the age of the owner's browser sessions.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › revokes for a key holding grants.manage whatever the age of the owner's sessions`.
 
 ### `keys-and-oauth/app-rate-window`
 
@@ -1645,6 +1703,32 @@ When a signed-in person approves a device code, the server MUST add to the clien
 
 **Tests:** `compliance/signed-in-apps.test.ts › is registered only for what the person approved, which a narrower approval leaves out`, `› is registered for the published scope once the person approves it, and the token carries it`.
 
+### `keys-and-oauth/device-older-reads`
+
+When a browser session that signed in more than five minutes ago approves a device code with only scopes that `keys-and-oauth/consent-older-reads` lists, the server MUST approve the code.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left unticked`.
+
+### `keys-and-oauth/device-recent-needed`
+
+If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden`.
+
+**Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`.
+
+### `keys-and-oauth/device-recent-held`
+
+When a browser session that signed in more than five minutes ago approves a device code with only scopes the app's standing consent covers, the server MUST approve the code.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before`.
+
+### `keys-and-oauth/device-page-recent`
+
+If a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and the screen's address as `return_to`.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a session that signed in more than five minutes ago to sign in again before it shows a request for a permission or a write`, `› lands the person back on the screen after they sign in again, where they approve`.
+
 ### `keys-and-oauth/device-client-gone`
 
 If a signed-in person opens the device approval page for a pending code whose client is no longer registered, then the server MUST answer `400 invalid_client`.
@@ -1678,6 +1762,14 @@ When the sign-in page or the sign-in form receives a `return_to` that a browser 
 When the sign-in form receives a `return_to` that resolves to a path on the instance, the server MUST redirect to its path, query and fragment.
 
 **Tests:** `compliance/sign-in-surface.test.ts › sends a signed-in browser only to a path on the instance`.
+
+### `keys-and-oauth/sign-in-page-reprompt`
+
+When a browser with a live session opens `/auth/sign-in` with `prompt=login`, the server MUST show the sign-in form.
+
+**Reason:** A new sign-in is the only thing that makes a session recent, so the page cannot answer that the person is already signed in.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › lands the person back on the screen after they sign in again, where they approve`.
 
 ### `keys-and-oauth/sign-in-address-limit`
 
