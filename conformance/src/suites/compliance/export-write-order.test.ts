@@ -202,30 +202,42 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
   }
 });
 
+const IMPOSSIBLE_RULE = "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30";
+const REPAIRED_RULE = "RRULE:FREQ=YEARLY";
+
 async function incompatibleSelection(change: "repair" | "reregister") {
   const client = new MarfaClient({
     baseUrl: source.apiUrl,
     apiKey: source.workingKey,
   });
   const type = "snapshot.changing";
+  // Shaped as an event is, so the type can become one: the row it holds then
+  // names a rule that no calendar read can unfold, and a restore refuses it.
+  const fields = {
+    title: { type: "string" as const, required: true },
+    starts_at: { type: "string" as const, format: "datetime" as const },
+    recurrence: { type: "array" as const, items_type: "string" as const },
+  };
   expect(
-    (
-      await client.registerType({
-        id: type,
-        fields: { value: { type: "string" } },
-      })
-    ).status,
+    (await client.registerType({ id: type, version: 1, fields })).status,
   ).toBe(201);
   expect(
     (
       await client.bulkItems(
-        Array.from({ length: 59 }, () => ({ type, properties: {} })),
+        Array.from({ length: 59 }, () => ({
+          type,
+          properties: { title: "a plain row" },
+        })),
       )
     ).status,
   ).toBe(200);
   const made = await client.createItem({
     type,
-    properties: { value: "before page" },
+    properties: {
+      title: "the series",
+      starts_at: "2041-01-15T09:00:00.000Z",
+      recurrence: [IMPOSSIBLE_RULE],
+    },
   });
   expect(made.status).toBe(201);
   const before = await client.listItems({ type, limit: 100 });
@@ -248,13 +260,15 @@ async function incompatibleSelection(change: "repair" | "reregister") {
       0,
     );
     const replaced = await client.replaceType(type, {
-      fields: { value: { type: "number" } },
+      version: 2,
+      parent: "core.event",
+      fields,
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
     if (change === "repair") {
       const repaired = await client.updateItem(made.data.item.id, {
         version: made.data.item.version,
-        properties: { value: 7 },
+        properties: { recurrence: [REPAIRED_RULE] },
       });
       expect(repaired.status, JSON.stringify(repaired.error)).toBe(200);
       await source.clearFault();
@@ -264,7 +278,9 @@ async function incompatibleSelection(change: "repair" | "reregister") {
       await source.clearFault("hold:export-page");
       await source.waitForHold("hold:export-validation");
       const again = await client.replaceType(type, {
-        fields: { value: { type: "boolean" } },
+        version: 3,
+        parent: "core.event",
+        fields,
       });
       expect(again.status, JSON.stringify(again.error)).toBe(200);
       await source.clearFault();
@@ -301,8 +317,8 @@ it("retries an incompatible selection from the beginning and restores every item
   });
   const listed = await reader.listItems({ limit: 100 });
   expect(listed.data.data.map((row) => row.id).sort()).toEqual(ids);
-  expect((await reader.getItem(item.id)).data.item.properties).toEqual({
-    value: 7,
+  expect((await reader.getItem(item.id)).data.item.properties).toMatchObject({
+    recurrence: [REPAIRED_RULE],
   });
 });
 

@@ -213,6 +213,8 @@ async function buildArchive(
   pack.entry({ name: "manifest.json", size: manifestBuf.length }, manifestBuf);
   const ndjsonBuf = Buffer.from(ndjsonLines.join("\n") + "\n");
   pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
+  pack.entry({ name: "edges.ndjson", size: 0 }, Buffer.alloc(0));
+  pack.entry({ name: "types.ndjson", size: 0 }, Buffer.alloc(0));
 
   pack.finalize();
   await new Promise<void>((resolve) => gzip.on("end", resolve));

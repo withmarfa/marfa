@@ -156,7 +156,7 @@ interface ArchiveLine<T> {
 }
 
 async function* parsedLines<T>(
-  path: string | undefined,
+  path: string,
   pick: (parsed: unknown) => T | null,
 ): AsyncGenerator<ArchiveLine<T>> {
   for await (const line of archiveLines(path)) {
@@ -171,7 +171,7 @@ async function* parsedLines<T>(
   }
 }
 
-export function itemLines(path: string | undefined) {
+export function itemLines(path: string) {
   return parsedLines(path, (parsed) =>
     isRecord(parsed) && isRecord(parsed.item)
       ? (parsed as unknown as ArchivedItemLine)
@@ -179,7 +179,7 @@ export function itemLines(path: string | undefined) {
   );
 }
 
-export function edgeLines(path: string | undefined) {
+export function edgeLines(path: string) {
   return parsedLines(path, (parsed) =>
     isRecord(parsed) && isRecord(parsed.edge)
       ? (parsed as unknown as ArchivedEdgeLine)
@@ -325,7 +325,7 @@ export function edgeRefusal(
 
 /** The registrations of `types.ndjson`, each line that parses. */
 export async function archiveTypeEntries(
-  path: string | undefined,
+  path: string,
   pace?: (lineBytes: number) => Promise<void>,
 ): Promise<ArchiveTypeEntry[]> {
   const entries: ArchiveTypeEntry[] = [];

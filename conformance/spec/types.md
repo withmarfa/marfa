@@ -626,7 +626,15 @@ While a type is unregistered, the server MUST let an item of it have its tags, e
 
 **Reason:** a row nothing can describe can still be put away.
 
-**Tests:** `compliance/type-registry.test.ts › keeps the tags, extensions and lifecycle of a row a forced delete left writable`.
+**Tests:** `compliance/type-registry.test.ts › keeps the tags, extensions and lifecycle of a row a forced delete left writable`, `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+
+### `types/orphan-read`
+
+While a type is unregistered, the server MUST return its items from `GET /items/{id}`, `GET /items`, `GET /search`, `GET /items/{id}/versions` and `GET /items/{id}/edges`.
+
+**Reason:** a forced delete keeps the items (`types/delete-force`), and a row nothing can describe is still a row a person made. A row restored under an unregistered type is read the same way (`search-and-filters/restore-rows-orphan`).
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 
 ### `types/orphan-reregistered`
 

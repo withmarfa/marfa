@@ -1011,14 +1011,23 @@ export function validateProperties(
 
   const judged = judgeFields(schema, properties);
   if (judged.success) {
-    // An event's rule is unfolded on every calendar read, so a rule no read
-    // can unfold is refused here, where every item write is judged.
-    if (isSubtypeOf(typeId, EVENT_TYPE)) {
-      const errors = eventScheduleIssues(judged.data);
-      if (errors.length > 0) return { success: false, errors };
-    }
+    const errors = scheduleIssues(typeId, judged.data);
+    if (errors.length > 0) return { success: false, errors };
   }
   return judged;
+}
+
+/**
+ * The issues an event's schedule fields raise, none for a type that is not an
+ * event. An event's rule is unfolded on every calendar read, so a rule no read
+ * can unfold is refused where every item write is judged, and by a restore of
+ * a row that it otherwise takes in whatever shape it was archived.
+ */
+export function scheduleIssues(
+  typeId: string,
+  properties: Record<string, unknown>,
+): { field: string; message: string }[] {
+  return isSubtypeOf(typeId, EVENT_TYPE) ? eventScheduleIssues(properties) : [];
 }
 
 // A registered schema is frozen and replaced whole, never edited, so the

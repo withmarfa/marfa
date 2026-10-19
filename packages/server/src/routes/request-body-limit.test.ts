@@ -134,6 +134,8 @@ describe("global request-body size cap", () => {
       }) + "\n",
     );
     pack.entry({ name: "items.ndjson", size: items.length }, items);
+    pack.entry({ name: "edges.ndjson", size: 0 }, Buffer.alloc(0));
+    pack.entry({ name: "types.ndjson", size: 0 }, Buffer.alloc(0));
     pack.entry({ name: `blobs/${hash}`, size: data.length }, data);
     pack.finalize();
     await new Promise<void>((resolve) => gzip.on("end", resolve));

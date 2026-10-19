@@ -80,6 +80,7 @@ async function buildArchive(opts: {
     opts.edgeLines.length > 0 ? opts.edgeLines.join("\n") + "\n" : "",
   );
   pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
+  pack.entry({ name: "types.ndjson", size: 0 }, Buffer.alloc(0));
   for (const blob of blobs) {
     pack.entry(
       { name: `blobs/${blob.hash}`, size: blob.data.length },

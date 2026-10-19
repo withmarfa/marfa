@@ -57,6 +57,35 @@ async function seedNotes(target: TestContext, count: number) {
   );
 }
 
+/**
+ * Makes row `n` one a restore refuses, in the one way a write door cannot: an
+ * event whose rule names a day no month has, which no calendar read unfolds.
+ * `title` varies the row without mending it.
+ */
+async function breakRow(target: TestContext, n: number, title = "broken") {
+  await sql(
+    target,
+    "UPDATE items SET type = 'core.event', properties = jsonb(?) WHERE id = ?",
+    [
+      JSON.stringify({
+        title,
+        starts_at: "2041-01-15T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"],
+      }),
+      idAt(n),
+    ],
+  );
+}
+
+/** Mends a row `breakRow` broke. */
+async function mendRow(target: TestContext, n: number) {
+  await sql(
+    target,
+    "UPDATE items SET type = 'core.note', properties = jsonb(?) WHERE id = ?",
+    [JSON.stringify({ body: `note ${String(n)}` }), idAt(n)],
+  );
+}
+
 /** Edges from item `v` to item `v + step`, for every `v` that has one. */
 async function seedEdges(target: TestContext, count: number, step: number) {
   await sql(
@@ -839,73 +868,14 @@ withReader("archive concurrent writes (%s)", (credential) => {
     }
   });
 
-  it("refuses incompatible row schemas before sending archive bytes", async () => {
+  it("refuses a row a restore would refuse before sending archive bytes", async () => {
     await seedNotes(ctx, 60);
-    const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.workingKey,
-      body: {
-        id: "snapshot.changed",
-        version: 1,
-        fields: { value: { type: "string", required: true } },
-      },
-    });
-    expect(registered.status).toBe(201);
-    for (const n of [1, 60]) {
-      expect(
-        (
-          await request(ctx.app, "PATCH", `/items/${idAt(n)}`, {
-            key: ctx.workingKey,
-            body: {
-              version: 1,
-              retype: true,
-              type: "snapshot.changed",
-              properties: { value: "original" },
-            },
-          })
-        ).status,
-      ).toBe(200);
-    }
     const witness = await exportArchive(ctx, credential);
     expect(witness.status).toBe(200);
     await witness.arrayBuffer();
-    const outside = AsyncLocalStorage.snapshot();
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Forwarded with its original receiver below.
-    const append = TextSpool.prototype.append;
-    let changed = false;
-    vi.spyOn(TextSpool.prototype, "append").mockImplementation(async function (
-      this: TextSpool,
-      text,
-    ) {
-      await append.call(this, text);
-      if (changed || !text.includes('"item":')) return;
-      changed = true;
-      await outside(async () => {
-        const updated = await request(
-          ctx.app,
-          "PUT",
-          "/types/snapshot.changed",
-          {
-            key: ctx.workingKey,
-            body: {
-              version: 2,
-              fields: { value: { type: "number", required: true } },
-            },
-          },
-        );
-        expect(updated.status, await updated.clone().text()).toBe(200);
-        expect(
-          (
-            await request(ctx.app, "PATCH", `/items/${idAt(1)}`, {
-              key: ctx.workingKey,
-              body: { version: 2, properties: { value: 42 } },
-            })
-          ).status,
-        ).toBe(200);
-      });
-    });
-    // The write lands before the last page is read, so both selections
-    // read the same rows, and the row the replacement left invalid is the
-    // instance's own.
+    // The last page is read after the first page's write lands, so both
+    // selections read the same rows, and the broken one is the instance's own.
+    afterFirstItemPage(() => breakRow(ctx, 1));
     const { result, logged } = await watchingFaults(() =>
       exportArchive(ctx, credential),
     );
@@ -916,9 +886,9 @@ withReader("archive concurrent writes (%s)", (credential) => {
         details: {
           row: {
             kind: "item",
-            id: idAt(60),
-            type: "snapshot.changed",
-            field: "properties.value",
+            id: idAt(1),
+            type: "core.event",
+            field: "properties.recurrence",
             code: "invalid_properties",
           },
         },
@@ -932,23 +902,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
 
   it("names a lasting bad row even while writes land on other rows", async () => {
     await seedNotes(ctx, 60);
-    expect(
-      (
-        await request(ctx.app, "POST", "/types", {
-          key: ctx.workingKey,
-          body: {
-            id: "snapshot.moving",
-            version: 1,
-            fields: { value: { type: "number", required: true } },
-          },
-        })
-      ).status,
-    ).toBe(201);
-    await sql(
-      ctx,
-      "UPDATE items SET type = 'snapshot.moving', properties = jsonb(?) WHERE id = ?",
-      [JSON.stringify({ value: "not a number" }), idAt(60)],
-    );
+    await breakRow(ctx, 60);
     const outside = AsyncLocalStorage.snapshot();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Forwarded with its original receiver below.
     const append = TextSpool.prototype.append;
@@ -983,8 +937,8 @@ withReader("archive concurrent writes (%s)", (credential) => {
           row: {
             kind: "item",
             id: idAt(60),
-            type: "snapshot.moving",
-            field: "properties.value",
+            type: "core.event",
+            field: "properties.recurrence",
             code: "invalid_properties",
           },
         },
@@ -998,23 +952,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
 
   it("answers 503 to retry when the refused row itself changes between the reads", async () => {
     await seedNotes(ctx, 60);
-    expect(
-      (
-        await request(ctx.app, "POST", "/types", {
-          key: ctx.workingKey,
-          body: {
-            id: "snapshot.moving",
-            version: 1,
-            fields: { value: { type: "number", required: true } },
-          },
-        })
-      ).status,
-    ).toBe(201);
-    await sql(
-      ctx,
-      "UPDATE items SET type = 'snapshot.moving', properties = jsonb(?) WHERE id = ?",
-      [JSON.stringify({ value: "not a number" }), idAt(60)],
-    );
+    await breakRow(ctx, 60);
     const outside = AsyncLocalStorage.snapshot();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Forwarded with its original receiver below.
     const append = TextSpool.prototype.append;
@@ -1027,10 +965,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
       if (!text.includes('"item":') || !text.includes(idAt(60))) return;
       writes++;
       await outside(async () => {
-        await sql(ctx, "UPDATE items SET properties = jsonb(?) WHERE id = ?", [
-          JSON.stringify({ value: `still not a number ${String(writes)}` }),
-          idAt(60),
-        ]);
+        await breakRow(ctx, 60, `still broken ${String(writes)}`);
       });
     });
     const { result, logged } = await watchingFaults(() =>
@@ -1202,55 +1137,20 @@ withReader("archive concurrent writes (%s)", (credential) => {
     await expectRestorableExport(credential, 60, 0);
   });
 
-  it("restarts the whole selection once when mixed row schemas cannot restore", async () => {
+  it("restarts the whole selection once when a write between its pages breaks a row", async () => {
     await seedNotes(ctx, 60);
-    expect(
-      (
-        await request(ctx.app, "POST", "/types", {
-          key: ctx.workingKey,
-          body: {
-            id: "snapshot.retry",
-            version: 1,
-            fields: { value: { type: "string", required: true } },
-          },
-        })
-      ).status,
-    ).toBe(201);
-    expect(
-      (
-        await request(ctx.app, "PATCH", `/items/${idAt(60)}`, {
-          key: ctx.workingKey,
-          body: {
-            version: 1,
-            retype: true,
-            type: "snapshot.retry",
-            properties: { value: "before" },
-          },
-        })
-      ).status,
-    ).toBe(200);
-    const list = vi.spyOn(ctx.storage.items, "list");
-    afterFirstItemPage(async () => {
-      expect(
-        (
-          await request(ctx.app, "PUT", "/types/snapshot.retry", {
-            key: ctx.workingKey,
-            body: {
-              version: 2,
-              fields: { value: { type: "number", required: true } },
-            },
-          })
-        ).status,
-      ).toBe(200);
-      expect(
-        (
-          await request(ctx.app, "PATCH", `/items/${idAt(60)}`, {
-            key: ctx.workingKey,
-            body: { version: 2, properties: { value: 42 } },
-          })
-        ).status,
-      ).toBe(200);
-    });
+    const outside = AsyncLocalStorage.snapshot();
+    const read = ctx.storage.items.list.bind(ctx.storage.items);
+    let starts = 0;
+    const list = vi
+      .spyOn(ctx.storage.items, "list")
+      .mockImplementation(async (filter) => {
+        // The second selection starts after the row is mended.
+        if (!filter.cursor && ++starts === 2)
+          await outside(() => mendRow(ctx, 1));
+        return read(filter);
+      });
+    afterFirstItemPage(() => breakRow(ctx, 1));
     await expectRestorableExport(credential, 60, 0);
     expect(list.mock.calls.filter(([filter]) => !filter.cursor)).toHaveLength(
       2,
@@ -1310,7 +1210,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
     }).toEqual(before);
   });
 
-  it.each(["schema", "natural key"])(
+  it.each(["schedule", "natural key"])(
     "refuses both invalid %s selections before headers and removes every spool",
     async (kind) => {
       await seedNotes(ctx, 60);
@@ -1326,11 +1226,13 @@ withReader("archive concurrent writes (%s)", (credential) => {
         async function (this: TextSpool, text) {
           if (text.includes('"item":')) {
             poisoned++;
-            if (kind === "schema")
-              text = text.replace(
-                '"type":"core.note"',
-                '"type":"snapshot.missing"',
-              );
+            if (kind === "schedule")
+              text = text
+                .replaceAll('"type":"core.note"', '"type":"core.event"')
+                .replaceAll(
+                  '"properties":{',
+                  '"properties":{"title":"a series","starts_at":"2041-01-15T09:00:00.000Z","recurrence":["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"],',
+                );
             else
               text =
                 text
@@ -1359,12 +1261,12 @@ withReader("archive concurrent writes (%s)", (credential) => {
           code: "export_rows_unrestorable",
           details: {
             row:
-              kind === "schema"
+              kind === "schedule"
                 ? {
                     kind: "item",
-                    type: "snapshot.missing",
-                    field: "type",
-                    code: "unknown_type",
+                    type: "core.event",
+                    field: "properties.recurrence",
+                    code: "invalid_properties",
                   }
                 : {
                     kind: "item",

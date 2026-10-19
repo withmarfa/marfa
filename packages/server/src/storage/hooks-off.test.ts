@@ -441,6 +441,8 @@ it("holds an archive restore's announcements and later writes until the hold is 
       metadata: { tags: [], extensions: {} },
     }) + "\n",
   );
+  pack.entry({ name: "edges.ndjson" }, "");
+  pack.entry({ name: "types.ndjson" }, "");
   pack.finalize();
   await drained;
   const abort = new AbortController();
