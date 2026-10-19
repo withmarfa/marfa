@@ -1115,9 +1115,11 @@ A signed-in person approves an app on the consent screen, and the decision ends 
 
 ### `keys-and-oauth/consent-screen`
 
-When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names.
+When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names that no standing consent covers.
 
-**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`.
+**Reason:** A scope the person's standing consent already covers is carried with the form and shown as held, not offered again (`keys-and-oauth/approval-held-shown`).
+
+**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`, `compliance/approval-screens.test.ts › carries a scope the app holds in full without offering it as a choice on the consent screen`.
 
 ### `keys-and-oauth/consent-accepted`
 
@@ -1251,9 +1253,9 @@ The consent screen at `/auth/authorize` and the device approval page at `/auth/d
 
 ### `keys-and-oauth/approval-one-control`
 
-Where a request names both the read and the write of one item type, the server MUST offer that type, on the consent screen or the device approval page, as one control with the choices no access, read only and read and edit.
+While an app holds no access to an item type, where a request names both the read and the write of it, the server MUST offer that type, on the consent screen or the device approval page, as one control with the choices no access, read only and read and edit.
 
-**Reason:** Two boxes for one type let a person turn on writing and turn off reading, which is not a level anyone means.
+**Reason:** Two boxes for one type let a person turn on writing and turn off reading, which is not a level anyone means. Once the app holds the read, `keys-and-oauth/approval-levels-held` takes no access away and the control starts at read only.
 
 **Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`.
 

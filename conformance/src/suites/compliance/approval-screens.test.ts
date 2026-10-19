@@ -331,6 +331,22 @@ describe("what the approval pages show of what an app holds", () => {
     expect(fresh).not.toContain("Already allowed");
   });
 
+  it("carries a scope the app holds in full without offering it as a choice on the consent screen", async () => {
+    const app = await holder();
+    const { html } = await consentScreen(app, "core.note:read core.task:read");
+    expect(selectNamed(html, "Notes")).toBeUndefined();
+    expect(selectNamed(html, "Tasks")?.options.map((o) => o.label)).toEqual([
+      "No access",
+      "Read only",
+    ]);
+    // It still rides with the form, so the token carries it.
+    expect(
+      readControls(html).filter(
+        (c) => c.type === "hidden" && c.value === "core.note:read",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("offers no level below what the app holds, on both pages", async () => {
     const app = await holder();
     const browser = await consentScreen(app, WIDE);
