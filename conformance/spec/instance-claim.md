@@ -78,7 +78,7 @@ When a valid claim that carries the instance's own origin in its `Origin` header
 
 ### `instance-claim/claim-sign-in-failure`
 
-If the password sign-in that follows a valid claim carrying the instance's own origin in its `Origin` header is refused or fails, then the server MUST keep the owner the claim created and answer `201` with no owner session cookie.
+If the password sign-in that follows a valid claim carrying the instance's own origin in its `Origin` header is refused or fails, then the server MUST keep the owner the claim created and set no owner session cookie in the answer.
 
 **Reason:** The claim has committed, and a sign-in that cannot be made, such as one from an address that has spent its password attempts, must not undo it or hide it from the person. They sign in at the page that follows.
 
