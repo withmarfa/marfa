@@ -784,7 +784,7 @@ describe("a parent is named only within the key's reach", () => {
     }
   });
 
-  it("holds a replacement that changes the parent to the key's reach, and leaves one that keeps it", async () => {
+  it("holds both new and kept parents to the key's reach", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
     const foreign = `${owner}.base`;
@@ -829,14 +829,14 @@ describe("a parent is named only within the key's reach", () => {
     expect((await replace(wide, id, body(foreign))).status).toBe(200);
     expect((await stored(id)).parent).toBe(foreign);
 
-    // A type that already names a parent outside the map stays editable by
-    // the key that owns it, while it keeps that parent.
+    // Keeping the parent can constrain its fields, so it still needs reach.
     const kept = await replace(
       key,
       id,
       body(foreign, { more: { type: "string" } }),
     );
-    expect(kept.status, await kept.clone().text()).toBe(200);
+    expect(kept.status).toBe(403);
+    expect((await refusal(kept)).code).toBe("type_not_permitted");
     expect((await stored(id)).parent).toBe(foreign);
 
     // Moving it off the foreign parent needs no reach on the foreign parent,
@@ -845,7 +845,7 @@ describe("a parent is named only within the key's reach", () => {
     expect((await replace(key, id, body(undefined))).status).toBe(200);
   });
 
-  it("lets a connector key keep editing a type registered earlier under a foreign parent", async () => {
+  it("refuses a connector replacement retaining a parent outside its reach", async () => {
     const owner = namespace("owner");
     const mine = namespace("mine");
     const foreign = `${owner}.base`;
@@ -858,8 +858,7 @@ describe("a parent is named only within the key's reach", () => {
       ).status,
     ).toBe(201);
     const id = `${mine}.child`;
-    // Registered by a key whose reach is wide, as every such type was before
-    // the reach was asked.
+    // The owner can register the relationship before narrowing the key.
     expect(
       (
         await register(ctx.workingKey, {
@@ -874,6 +873,7 @@ describe("a parent is named only within the key's reach", () => {
       parent: foreign,
       fields: { size: { type: "integer" }, extra: { type: "string" } },
     });
-    expect(res.status, await res.clone().text()).toBe(200);
+    expect(res.status).toBe(403);
+    expect((await refusal(res)).code).toBe("type_not_permitted");
   });
 });

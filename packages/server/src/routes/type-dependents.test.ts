@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  type TestContext,
+} from "../test-utils.js";
 
 let ctx: TestContext;
 const target = "user.target";
@@ -22,6 +27,62 @@ async function register(body: unknown) {
 }
 
 describe("registration dependents", () => {
+  it.each([
+    { compatible_with: [target] },
+    { parent: target },
+    { parent: target, display_hints: { title_field: "title" } },
+    { parent: target, link_field: "title" },
+    { parent: target, merge_policy: { fields: { title: "last_writer_wins" } } },
+  ])(
+    "requires target write permission to add or keep %j",
+    async (dependency) => {
+      await register({ id: target, fields });
+      const id = "foreign.reader";
+      const key = await mintWorkingKey(ctx, {
+        permissions: ["schema.write"],
+        metadata_permissions: { types: "write" },
+        type_permissions: { "foreign.*": "write", [target]: "read" },
+      });
+      const schema = { fields: dependency.parent ? {} : fields, ...dependency };
+      const refusedParent = await request(ctx.app, "POST", "/types", {
+        key,
+        body: { id, fields: {}, parent: target },
+      });
+      expect(refusedParent.status).toBe(403);
+      const expected = await refusedParent.json();
+      const denied = async (method: string, path: string, body: unknown) => {
+        const res = await request(ctx.app, method, path, { key, body });
+        expect(res.status).toBe(403);
+        expect(await res.json()).toEqual(expected);
+      };
+      await denied("POST", "/types", { id, ...schema });
+      expect((await write("GET", `/types/${id}`)).status).toBe(404);
+      await register({ id, fields });
+      const before = await (await write("GET", `/types/${id}`)).json();
+      await denied("PUT", `/types/${id}`, schema);
+      expect(await (await write("GET", `/types/${id}`)).json()).toEqual(before);
+      expect((await write("PUT", `/types/${id}`, schema)).status).toBe(200);
+      await denied("PUT", `/types/${id}`, { ...schema, label: "Kept claim" });
+      // Removing the dependency needs no authority over its former target.
+      expect(
+        (
+          await request(ctx.app, "PUT", `/types/${id}`, {
+            key,
+            body: { fields },
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        (
+          await write("PUT", `/types/${target}`, {
+            fields: { title: { type: "integer" } },
+          })
+        ).status,
+      ).toBe(200);
+      expect((await write("DELETE", `/types/${target}`)).status).toBe(200);
+    },
+  );
+
   it.each(["target", "target ancestor", "reader ancestor"])(
     "refuses a replacement that breaks compatibility through the %s",
     async (changed) => {

@@ -12603,7 +12603,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.
-             *     - `type_not_permitted`: your type map doesn't grant write on the identifier, or on `parent` (`details.grant` names it).
+             *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).
              */
             403: {
                 headers: {
@@ -12946,9 +12946,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.
+             * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.
              *     - `core_type_immutable`: Marfa ships this type.
-             *     - `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).
+             *     - `type_not_permitted`: your type map lacks write on the type or a new or kept non-platform `parent` or `compatible_with` target (`details.grant` names it).
              */
             403: {
                 headers: {

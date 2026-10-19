@@ -20,7 +20,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { SchemaValidationIssue } from "@withmarfa/shared";
+import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -48,6 +48,15 @@ import { MergePolicySchema, nullableRef, wholeListOf } from "./_schemas.js";
 // ---------------------------------------------------------------------------
 // Constants & helpers
 // ---------------------------------------------------------------------------
+
+function requireDependencyReach(c: Context<AppEnv>, schema: TypeSchema): void {
+  // Retaining a parent can add constraints on its fields through display
+  // hints, links or merge policies, even when the parent itself is unchanged.
+  if (schema.parent) requireParentReach(c, schema.parent);
+  for (const target of schema.compatible_with ?? []) {
+    requireParentReach(c, target);
+  }
+}
 
 /**
  * How `POST /types` and `PUT /types/:id` phrase a rejected chain.
@@ -616,7 +625,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map doesn't grant write on the identifier, or on `parent` (`details.grant` names it).",
+        "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).",
     },
     409: {
       content: {
@@ -779,7 +788,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
+        "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new or kept non-platform `parent` or `compatible_with` target (`details.grant` names it).",
     },
     404: {
       content: {
@@ -1019,8 +1028,8 @@ export function typeRoutes(storage: Storage) {
 
           labelled(schema);
 
+          requireDependencyReach(c, schema);
           if (schema.parent) {
-            requireParentReach(c, schema.parent);
             validateParentChain(schema.id, schema.parent);
           }
           if (getTypeSchema(schema.id)) {
@@ -1076,6 +1085,7 @@ export function typeRoutes(storage: Storage) {
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );
+          requireDependencyReach(c, schema);
           if (schema.parent) {
             // Measured on the type as it stands, before the update lands, which
             // is the subtree that would move with it.

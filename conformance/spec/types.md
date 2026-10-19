@@ -506,7 +506,7 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on and whose dependencies satisfy `types/parent-reach`, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`.
 
 **Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
 
@@ -542,21 +542,15 @@ When a key holding `schema.write` sends `PUT /types/{id}` for a type its map gra
 
 **Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
 
-## Naming a parent
+## Dependency permissions
 
 ### `types/parent-reach`
 
-If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that changes the stored `parent`, names a parent, other than a platform type, the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming the parent, whether or not the parent is registered.
+If an otherwise valid `POST /types` or `PUT /types/{id}` adds or keeps a `parent` or `compatible_with` target, other than a platform type, that the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that target.
 
-**Reason:** a subtype stops its parent being deleted, so naming a parent is a write to it.
+**Reason:** a dependency can prevent replacement or deletion of its target, so declaring or retaining it requires write permission on that target; this includes inherited fields used by display hints, links and merge policies.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`.
-
-### `types/parent-kept`
-
-The server MUST NOT ask write on the parent of a replacement that keeps the stored `parent`.
-
-**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
+**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds both new and kept parents to the key's reach`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`, `compliance/type-dependency-permissions.test.ts › requires the parent's write permission for new and kept compatibility and inherited-field dependencies`.
 
 ### `types/parent-shipped`
 
