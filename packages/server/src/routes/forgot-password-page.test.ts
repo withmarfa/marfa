@@ -19,12 +19,16 @@ describe("the forgot-password page", () => {
     expect(text).toContain("on the machine Marfa runs on");
   });
 
-  it("gives the recovery command the CLI has, for a Mac and for Railway", () => {
+  it("gives the recovery command the CLI has, for a Mac, for Docker and for Railway", () => {
     const html = renderForgotPasswordPage();
     const text = visibleText(html);
     expect(text).toContain("If Marfa runs on your Mac");
     expect(text).toContain("marfa --socket PATH owner recover");
     expect(text).toContain("control/marfa.sock");
+    expect(text).toContain("If Marfa runs in Docker");
+    expect(text).toContain(
+      "docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover",
+    );
     expect(text).toContain("If Marfa runs on Railway");
     expect(text).toContain(
       'marfa --socket "$MARFA_CONTROL_SOCKET" owner recover',
@@ -59,7 +63,10 @@ describe("the forgot-password page", () => {
     // The socket is named by its place beside the database, never by an
     // absolute path of this machine.
     expect(text).toContain("control/marfa.sock");
-    expect(text).not.toMatch(/\/\S*control\/marfa\.sock/);
+    // The one absolute path is the image's own, the same in every container.
+    expect(text.replaceAll("/data/control/marfa.sock", "")).not.toMatch(
+      /\/\S*control\/marfa\.sock/,
+    );
   });
 
   it("is reachable from the sign-in page", async () => {
