@@ -1569,6 +1569,8 @@ export function itemRoutes(storage: Storage) {
                 details: { type: result.item.type },
               }
             : null,
+      undefined,
+      "item.create",
     );
 
     switch (result.outcome) {
@@ -2434,6 +2436,8 @@ export function itemRoutes(storage: Storage) {
               resource_id: id,
             }
           : null,
+      undefined,
+      "item.purge",
     );
     if (outcome.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this

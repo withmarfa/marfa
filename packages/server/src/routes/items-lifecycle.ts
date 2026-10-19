@@ -275,6 +275,8 @@ export function itemsLifecycleRoutes(storage: Storage) {
               resource_id: id,
               details: { from_state: result.from, to_state: state },
             },
+      undefined,
+      "item.transition",
     );
 
     if ("conflict" in result) {

@@ -777,24 +777,29 @@ export function bulkRoutes(storage: Storage) {
         const entry = () =>
           atomic
             ? work()
-            : runAuditedTransaction(storage, work, ({ result }) =>
-                result.outcome === "created" || result.outcome === "updated"
-                  ? {
-                      client_ip: c.get("clientIp") ?? null,
-                      key_id: keyId,
-                      action: "items.bulk",
-                      resource_type: "items.bulk",
-                      resource_id: result.id,
-                      details: {
-                        operation_id: operationId,
-                        mode,
-                        atomic: false,
-                        total: items.length,
-                        index: i,
-                        outcome: result.outcome,
-                      },
-                    }
-                  : null,
+            : runAuditedTransaction(
+                storage,
+                work,
+                ({ result }) =>
+                  result.outcome === "created" || result.outcome === "updated"
+                    ? {
+                        client_ip: c.get("clientIp") ?? null,
+                        key_id: keyId,
+                        action: "items.bulk",
+                        resource_type: "items.bulk",
+                        resource_id: result.id,
+                        details: {
+                          operation_id: operationId,
+                          mode,
+                          atomic: false,
+                          total: items.length,
+                          index: i,
+                          outcome: result.outcome,
+                        },
+                      }
+                    : null,
+                undefined,
+                "items.bulk",
               );
         let processed: ProcessedBulkItem;
         const committed = out.some((p) => mayHaveCommitted(p.result));
@@ -827,19 +832,25 @@ export function bulkRoutes(storage: Storage) {
     // Atomic: one transaction around the page, each entry a savepoint of
     // it. Best-effort: each entry its own transaction, opened by the write.
     const processed = atomic
-      ? await runAuditedTransaction(storage, run, (processed) => ({
-          client_ip: c.get("clientIp") ?? null,
-          key_id: keyId,
-          action: "items.bulk",
-          resource_type: "items.bulk",
-          details: {
-            operation_id: operationId,
-            mode,
-            atomic,
-            total: items.length,
-            ...countOutcomes(processed.map(({ result }) => result)),
-          },
-        }))
+      ? await runAuditedTransaction(
+          storage,
+          run,
+          (processed) => ({
+            client_ip: c.get("clientIp") ?? null,
+            key_id: keyId,
+            action: "items.bulk",
+            resource_type: "items.bulk",
+            details: {
+              operation_id: operationId,
+              mode,
+              atomic,
+              total: items.length,
+              ...countOutcomes(processed.map(({ result }) => result)),
+            },
+          }),
+          undefined,
+          "items.bulk",
+        )
       : await run();
     const results = processed.map((p) => p.result);
 
