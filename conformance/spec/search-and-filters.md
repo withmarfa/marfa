@@ -1454,6 +1454,38 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 
 **Tests:** `compliance/export-faults.test.ts › ends the response with an error, so the archive is cut short and cannot be taken for a whole one, and leaves nothing on disk`.
 
+### `search-and-filters/export-credential-ended`
+
+When the key or signed-in app that a `GET /export` request was admitted on is revoked, passes its expiry or is disconnected while the response is open, the server MUST end the response with an error and not with a clean end, in both formats and while an archive sends a blob.
+
+**Reason:** what a key holds open ends with it (`keys-and-oauth/revoke-immediate`), and a response that ended cleanly after its credential ended would read as a whole copy.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is revoked`, `› ends with an error when its key passes its expiry`, `› ends with an error when the app that opened it is disconnected`, `› ends with an error when its key is revoked while a blob is being sent`.
+
+### `search-and-filters/export-credential-narrowed`
+
+If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export has still to send, then the server MUST end the response with an error and not with a clean end, in both formats.
+
+**Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its rows and blobs in its manifest.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is narrowed to types the export does not carry`.
+
+### `search-and-filters/export-narrowed-reaches`
+
+When the credential that a `GET /export` request was admitted on is narrowed while the response is open, and it still reads everything the export has still to send, the server MUST send the rest of the export, in both formats.
+
+**Reason:** a narrowing that takes away nothing the export has still to send changes nothing the export has promised.
+
+**Tests:** `compliance/export-credential.test.ts › arrives whole when its credential stands, which is the witness for the cases below`, `› arrives whole when its key is narrowed to what the export still carries`.
+
+### `search-and-filters/archive-selection-key`
+
+If the key that a `GET /export?format=archive` request was admitted on is revoked before the response begins, then the server MUST answer `401 unauthorized` without sending archive bytes.
+
+**Reason:** the export reads and checks the whole selection before its first byte, and the answer is the one the next request on the key gets.
+
+**Tests:** `compliance/export-credential.test.ts › is refused 401 when its key is revoked while the selection is read`.
+
 ## Restore
 
 `POST /restore` takes an archive that `GET /export?format=archive` wrote, with direct owner or local authority, and answers counts of what it wrote and skipped.

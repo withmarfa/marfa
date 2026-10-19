@@ -349,7 +349,7 @@ When `DELETE /keys/{id}` revokes a key, the server MUST answer `200` with `ok: t
 
 When a key has been revoked, the server MUST answer the next request bearing it `401 unauthorized`.
 
-**Reason:** What the key queued or holds open ends with it: `items/job-credential-lost` holds its bulk actions and `events/credential-revoked` its event streams.
+**Reason:** What the key queued or holds open ends with it: `items/job-credential-lost` holds its bulk actions, `events/credential-revoked` its event streams and `search-and-filters/export-credential-ended` its exports.
 
 **Tests:** `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
 

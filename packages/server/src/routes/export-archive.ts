@@ -14,7 +14,12 @@
  * the same way, the instance's own data is at fault and the refusal names
  * the row; otherwise writes were landing, and the caller is told to retry.
  * The tar is then written from the spool with backpressure, and the spool
- * is removed on every outcome.
+ * is removed on every outcome. Each batch of spooled lines and each blob is
+ * sent only after the credential has been asked again (`export-authority.ts`),
+ * and a credential that ended or no longer reads what the archive has still to
+ * send ends the response with an error. The manifest, which lists every blob,
+ * and the type registrations are held only by the credential still standing,
+ * not by what it reads.
  *
  * A blob no store can read whole is named under the manifest's
  * `missing_blobs` and left out, so one lost file costs the backup that file
@@ -32,11 +37,17 @@ import * as tar from "tar-stream";
 import {
   ErrorCode,
   MarfaError,
+  type Edge,
   type EdgeTypeSchema,
   type Item,
 } from "@withmarfa/shared";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import type { OwnerItemRead } from "./_owner-item-read.js";
+import {
+  ExportCredentialEnded,
+  type CarriedRow,
+  type ExportAuthority,
+} from "./export-authority.js";
 import type { Storage, ItemFilters, LoadedType } from "../storage/interface.js";
 import {
   answeringFirst,
@@ -267,6 +278,7 @@ export async function handleArchiveExport(
   instanceId: string,
   filter: ExportFilter,
   reader: OwnerItemRead,
+  authority: ExportAuthority,
   reserve: DiskReserve,
   /** The largest properties this instance's write doors, and so its
    *  restore, take. */
@@ -281,6 +293,7 @@ export async function handleArchiveExport(
       instanceId,
       filter,
       reader,
+      authority,
       reserve,
       maxRowBytes,
       active.signal,
@@ -307,6 +320,7 @@ async function prepareArchiveExport(
   instanceId: string,
   filter: ExportFilter,
   reader: OwnerItemRead,
+  authority: ExportAuthority,
   reserve: DiskReserve,
   maxRowBytes: number,
   clientGone: AbortSignal,
@@ -325,6 +339,7 @@ async function prepareArchiveExport(
       selected = await collectSelection({
         storage,
         reader,
+        authority,
         filter,
         spool,
         signal: clientGone,
@@ -381,6 +396,10 @@ async function prepareArchiveExport(
         clientGone,
       );
       clientGone.throwIfAborted();
+      // The selection took a while to read and check, so ask once more
+      // before the response starts: a credential that ended is refused as
+      // its next request would be, with no byte sent.
+      await authority.current();
       break;
     } catch (error) {
       // The refused row is read back from the spool before it is removed.
@@ -466,6 +485,7 @@ async function prepareArchiveExport(
   ) =>
     pipeline(
       source,
+      new BlobReach(() => authority.blob(hash)),
       // The read was made outside the blob's upload lock, so the copy may
       // have been put right since: it is read again under the lock, as
       // `blob-integrity` reads it, and struck only if it is still wrong.
@@ -486,13 +506,18 @@ async function prepareArchiveExport(
       manifestSize,
       Readable.from(
         (async function* () {
+          await authority.standing();
           yield manifestHead;
-          for await (const chunk of selection.blobEntries.read()) {
-            yield chunk as Buffer;
+          for await (const chunk of heldBy(selection.blobEntries, () =>
+            authority.standing(),
+          )) {
+            yield chunk;
           }
           yield manifestMiddle;
-          for await (const chunk of selection.missingEntries.read()) {
-            yield chunk as Buffer;
+          for await (const chunk of heldBy(selection.missingEntries, () =>
+            authority.standing(),
+          )) {
+            yield chunk;
           }
           yield manifestTail;
         })(),
@@ -501,19 +526,43 @@ async function prepareArchiveExport(
     // The line files are emitted even when empty, so that a member missing
     // from the tar is a damaged archive rather than an empty one. The restore
     // has no other way to tell those apart.
-    for (const [name, text] of [
-      ["items.ndjson", selection.items],
-      ["edges.ndjson", selection.edges],
-      ["types.ndjson", selection.types],
-    ] as const) {
-      await entry(name, text.bytes, text.read());
-    }
+    await entry(
+      "items.ndjson",
+      selection.items.bytes,
+      Readable.from(
+        heldLines(selection.items, (lines) =>
+          authority.rows(lines.map((line) => JSON.parse(line) as CarriedRow)),
+        ),
+        { objectMode: false },
+      ),
+    );
+    await entry(
+      "edges.ndjson",
+      selection.edges.bytes,
+      Readable.from(
+        heldLines(selection.edges, (lines) =>
+          authority.edges(
+            lines.map((line) => (JSON.parse(line) as { edge: Edge }).edge),
+          ),
+        ),
+        { objectMode: false },
+      ),
+    );
+    await entry(
+      "types.ndjson",
+      selection.types.bytes,
+      Readable.from(
+        heldBy(selection.types, () => authority.standing()),
+        { objectMode: false },
+      ),
+    );
 
     for await (const line of spooledLines(selection.listedBlobs)) {
       const { hash, size_bytes: size } = JSON.parse(line) as {
         hash: string;
         size_bytes: number;
       };
+      await authority.blob(hash);
       // Content-addressed bytes cannot change with a database write. A
       // lost copy after the manifest was sent still cuts the archive short.
       const { read, store } = await readWhole(
@@ -539,6 +588,16 @@ async function prepareArchiveExport(
         error instanceof Error &&
         error.name === "AbortError"
       ) {
+        pack.destroy();
+        return;
+      }
+      if (error instanceof ExportCredentialEnded) {
+        const { reason } = error;
+        log("info", "Export ended with its credential", {
+          request_id: c.get("requestId"),
+          reason,
+        });
+        body.destroy(new ExportCredentialEnded(reason));
         pack.destroy();
         return;
       }
@@ -578,11 +637,12 @@ async function prepareArchiveExport(
 async function collectSelection(input: {
   storage: Storage;
   reader: OwnerItemRead;
+  authority: ExportAuthority;
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
 }): Promise<Selection> {
-  const { storage, reader, filter, spool, signal } = input;
+  const { storage, reader, authority, filter, spool, signal } = input;
   const readsHistory = reader.reads;
   const items = await spool.text();
   const edges = await spool.text();
@@ -631,8 +691,16 @@ async function collectSelection(input: {
     );
     await blobHashes.add(fresh.map((record) => record.hash));
   };
+  // Each page is read under the credential as it stands in the page's own
+  // snapshot, so a key that ended stops the reading at the next page.
   const readPage = <T>(read: () => Promise<T>) =>
-    storage.runInReadSnapshot(read, { deadlineAt: null, signal });
+    storage.runInReadSnapshot(
+      async () => {
+        await authority.current();
+        return read();
+      },
+      { deadlineAt: null, signal },
+    );
   const turn = async () => {
     signal.throwIfAborted();
     await yieldBulkWork();
@@ -981,5 +1049,77 @@ async function* spooledLines(spool: TextSpool): AsyncGenerator<string> {
   } finally {
     lines.close();
     stream.destroy();
+  }
+}
+
+/** The spool's bytes, each chunk held until `standing` accepts it. */
+async function* heldBy(
+  spool: TextSpool,
+  standing: () => Promise<void>,
+): AsyncGenerator<Buffer> {
+  for await (const chunk of spool.read()) {
+    await standing();
+    yield chunk as Buffer;
+  }
+}
+
+/**
+ * The spool's bytes, unchanged, in runs of whole lines. Each run is held
+ * until `holds` accepts the lines it carries, which is the last thing awaited
+ * before the run is handed on.
+ */
+async function* heldLines(
+  spool: TextSpool,
+  holds: (lines: string[]) => Promise<void>,
+): AsyncGenerator<Buffer> {
+  // The bytes of a line that has not ended yet, joined only when it does.
+  let partial: Buffer[] = [];
+  for await (const chunk of spool.read()) {
+    const bytes = chunk as Buffer;
+    const end = bytes.lastIndexOf(0x0a) + 1;
+    if (end === 0) {
+      partial.push(bytes);
+      continue;
+    }
+    const whole = Buffer.concat([...partial, bytes.subarray(0, end)]);
+    partial = end < bytes.length ? [bytes.subarray(end)] : [];
+    await holds(whole.toString("utf8").split("\n").slice(0, -1));
+    yield whole;
+  }
+  if (partial.length > 0) throw new Error("A spooled line file ended mid-line");
+}
+
+/** How many blob bytes pass between asking whether the credential still reads the blob. */
+const BLOB_REACH_BYTES = 1024 * 1024;
+
+/** Passes a blob's bytes on, asking `reaches` again for every megabyte. */
+class BlobReach extends Transform {
+  private since = 0;
+
+  constructor(private readonly reaches: () => Promise<void>) {
+    super();
+  }
+
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: Buffer) => void,
+  ): void {
+    this.since += chunk.length;
+    if (this.since < BLOB_REACH_BYTES) {
+      callback(null, chunk);
+      return;
+    }
+    this.since = 0;
+    this.reaches().then(
+      () => {
+        callback(null, chunk);
+      },
+      (error: unknown) => {
+        callback(
+          error instanceof Error ? error : new Error(errorMessage(error)),
+        );
+      },
+    );
   }
 }
