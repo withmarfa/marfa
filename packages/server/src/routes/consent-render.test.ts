@@ -149,6 +149,15 @@ describe("renderConsentScreen: one control for each thing asked for", () => {
     ).toHaveLength(0);
   });
 
+  it("says that editing includes adding and deleting items, where a level to edit is offered", () => {
+    const line = "Edit includes adding and deleting items.";
+    expect(
+      visibleText(render(["core.note:read", "core.note:write"])),
+    ).toContain(line);
+    // Where nothing can be edited the line has nothing to explain.
+    expect(visibleText(render(["core.note:read"]))).not.toContain(line);
+  });
+
   it("offers no level above the one asked for", () => {
     const found = selects(render(["core.note:read", "core.task:read"]));
     for (const select of found)

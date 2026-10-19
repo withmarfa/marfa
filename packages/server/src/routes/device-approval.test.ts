@@ -97,6 +97,16 @@ describe("renderDeviceConsentScreen", () => {
     expect(selects.every((c) => c.name === "scopes")).toBe(true);
   });
 
+  it("says that editing includes adding and deleting items, where a level to edit is offered", () => {
+    const line = "Edit includes adding and deleting items.";
+    const text = (literals: string[]) =>
+      visibleText(
+        renderDeviceConsentScreen({ ...PARAMS, scopes: literals.map(scope) }),
+      );
+    expect(text(["core.note:read", "core.note:write"])).toContain(line);
+    expect(text(["core.note:read"])).not.toContain(line);
+  });
+
   it("starts each type at the level asked for, and a power off", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,

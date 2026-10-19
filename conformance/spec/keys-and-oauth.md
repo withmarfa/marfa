@@ -1259,6 +1259,14 @@ While an app holds no access to an item type, where a request names both the rea
 
 **Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`.
 
+### `keys-and-oauth/approval-edit-words`
+
+Where the consent screen or the device approval page offers the choice read and edit, the server MUST say beside the choices for data that edit includes adding and deleting items.
+
+**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers on its own.
+
+**Tests:** `compliance/approval-screens.test.ts › says that editing includes adding and deleting items, where a level to edit is offered, on both pages`.
+
 ### `keys-and-oauth/approval-levels-asked`
 
 The server MUST NOT offer, on the consent screen or the device approval page, a level for a type above the highest level the request names for it.

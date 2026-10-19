@@ -202,6 +202,19 @@ describe("what the approval pages offer", () => {
     }
   });
 
+  it("says that editing includes adding and deleting items, where a level to edit is offered, on both pages", async () => {
+    const line = "Edit includes adding and deleting items.";
+    for (const [page, html] of await bothPages(
+      "core.note:read core.note:write",
+    )) {
+      expect(visibleText(html), page).toContain(line);
+    }
+    // The witness: asked for reads only, no level to edit is offered and the line is not.
+    for (const [page, html] of await bothPages("core.note:read")) {
+      expect(visibleText(html), page).not.toContain(line);
+    }
+  });
+
   it("offers no level above the one the request names, on both pages", async () => {
     for (const [page, html] of await bothPages(
       "core.note:read core.note:write core.task:read",

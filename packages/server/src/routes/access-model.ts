@@ -105,6 +105,8 @@ export interface AccessModel {
   carried: string[];
   /** Whether the app already holds some access. */
   returning: boolean;
+  /** Whether a data control offers the level to edit. */
+  offersEdit: boolean;
 }
 
 export interface AccessInput {
@@ -342,6 +344,9 @@ export function buildAccess(input: AccessInput): AccessModel {
     held: heldRows(held, input),
     carried,
     returning,
+    offersEdit: data.some((row) =>
+      row.options.some((option) => option.label === LEVEL_LABELS.write),
+    ),
   };
 }
 

@@ -11,6 +11,7 @@ import {
 import type { AccessModel, LevelRow, SwitchRow } from "./access-model.js";
 
 const DATA_NOTE = "One choice for each type of data it asked for.";
+const EDIT_NOTE = "Edit includes adding and deleting items.";
 
 function LevelControl(props: { row: LevelRow }) {
   const { row } = props;
@@ -97,7 +98,13 @@ export function AccessChoices(props: AccessChoicesProps) {
         </RowGroup>
       )}
       {model.data.length > 0 && (
-        <Section id="access-data" title="Your data" description={DATA_NOTE}>
+        <Section
+          id="access-data"
+          title="Your data"
+          description={
+            model.offersEdit ? `${DATA_NOTE} ${EDIT_NOTE}` : DATA_NOTE
+          }
+        >
           <Controls rows={model.data} />
         </Section>
       )}
