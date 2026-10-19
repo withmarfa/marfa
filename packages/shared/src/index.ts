@@ -15,3 +15,4 @@ export * from "./registry-view.js";
 export * from "./string-length.js";
 
 export * from "./profile-permissions.js";
+export * from "./well-formed.js";

@@ -44,6 +44,24 @@ describe("a document that inflates", () => {
   });
 });
 
+describe("a document whose text is cut to the cap", () => {
+  it("is not cut through a surrogate pair, and keeps the pair when it fits", async () => {
+    const paragraph = (text: string) =>
+      Buffer.from(`<w:p><w:r><w:t>${text}</w:t></w:r></w:p>`);
+    const bytes = docx(paragraph(`${"a".repeat(999)}😀tail`));
+    expect(await extractOfficeText(bytes, "docx", GENEROUS)).toBe(
+      "a".repeat(999),
+    );
+    // The witness: a cap with room for both units keeps the pair.
+    expect(
+      await extractOfficeText(bytes, "docx", {
+        ...GENEROUS,
+        maxTextChars: 1001,
+      }),
+    ).toBe(`${"a".repeat(999)}😀`);
+  });
+});
+
 describe("a document that needs more memory than extraction may use", () => {
   it("is refused as past the limits, and the same document is read when it may use more", async () => {
     // Far inside any inflated bound worth setting, and more than the heap

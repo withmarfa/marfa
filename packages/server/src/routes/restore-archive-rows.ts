@@ -11,6 +11,8 @@ import {
   TIERS,
   validateTransition,
   SYSTEM_DEFAULT_STATE,
+  findLoneSurrogate,
+  toWellFormedText,
 } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 import { reservedCredentialSourcePrefix } from "../middleware/auth.js";
@@ -26,6 +28,35 @@ import {
   type ArchiveTypeBaseline,
   type ArchiveTypeEntry,
 } from "./restore-archive-types.js";
+
+/**
+ * The refusal for a line holding text that is not well-formed UTF-16 (a
+ * lone surrogate) anywhere in it, in a string or a key. A restore is not a
+ * way to plant text the write doors refuse. `field` is the JSON pointer into
+ * the line.
+ */
+function wellFormedRefusal(
+  file: "items" | "edges" | "types",
+  id: unknown,
+  line: unknown,
+  index: number,
+): MarfaError | null {
+  const field = findLoneSurrogate(line);
+  if (field === null) return null;
+  const kind = file === "items" ? "item" : file === "edges" ? "edge" : "type";
+  const named = toWellFormedText(String(id));
+  return new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `Invalid ${kind} ${named} in ${file}.ndjson parsed row ${String(index + 1)}: ${field} holds a lone surrogate, which is not well-formed UTF-16`,
+    { [`${kind}_id`]: named, row: index + 1, field },
+  );
+}
+
+function archivedTypeId(entry: unknown): unknown {
+  if (!isRecord(entry)) return undefined;
+  const registered = entry.type ?? entry.edge_type;
+  return isRecord(registered) ? registered.id : undefined;
+}
 
 export function archiveScalarRefusal(
   kind: "item" | "edge",
@@ -213,6 +244,8 @@ export function itemRefusal(
   maxRowBytes: number,
 ): MarfaError | null {
   const { item } = entry;
+  const text = wellFormedRefusal("items", item.id, entry, index);
+  if (text) return text;
   archiveDates("item", item, index);
   archiveRestoredAt(item, entry.restored_at, index);
   archiveWriter(item, entry.writer, index);
@@ -269,10 +302,13 @@ export function itemRefusal(
 
 /** The refusals that need nothing from the database, asked of one edge line. */
 export function edgeRefusal(
-  edge: Record<string, unknown>,
+  line: ArchivedEdgeLine,
   index: number,
   maxRowBytes: number,
 ): MarfaError | null {
+  const { edge } = line;
+  const text = wellFormedRefusal("edges", edge.id, line, index);
+  if (text) return text;
   archiveDates("edge", edge, index);
   return (
     archiveScalarRefusal("edge", edge, index) ??
@@ -295,11 +331,21 @@ export async function archiveTypeEntries(
   const entries: ArchiveTypeEntry[] = [];
   for await (const line of archiveLines(path)) {
     if (pace) await pace(Buffer.byteLength(line));
+    let entry: ArchiveTypeEntry;
     try {
-      entries.push(JSON.parse(line) as ArchiveTypeEntry);
+      entry = JSON.parse(line) as ArchiveTypeEntry;
     } catch {
       // Same rule as item and edge lines.
+      continue;
     }
+    const text = wellFormedRefusal(
+      "types",
+      archivedTypeId(entry),
+      entry,
+      entries.length,
+    );
+    if (text) throw text;
+    entries.push(entry);
   }
   return entries;
 }
@@ -335,7 +381,7 @@ export async function prepareArchive(
   for await (const { value: line, bytes } of edgeLines(paths["edges.ndjson"])) {
     if (pace) await pace(bytes);
     if (line === null) continue;
-    const refusal = edgeRefusal(line.edge, totalEdges, maxRowBytes);
+    const refusal = edgeRefusal(line, totalEdges, maxRowBytes);
     if (refusal) throw refusal;
     totalEdges++;
   }

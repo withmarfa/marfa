@@ -602,6 +602,14 @@ When a folder whose search names no type hydrates its copy, a device MUST read t
 
 **Tests:** `device/folders.test.ts › holds exactly what its search matches`, `› takes every type, and any default type, where its search names no type`.
 
+### `device/hydrate-surrogate-pair`
+
+When a hydration or a catch-up reads a row whose text holds a surrogate pair, in a property value, a property name or a list, a device MUST hold the text unchanged.
+
+**Reason:** the server holds a character outside the Basic Multilingual Plane only as a surrogate pair (`items/json-text-well-formed`).
+
+**Tests:** `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
+
 ## Catch-up
 
 A device takes an event when it applies it or skips it; both move its cursor past the event. Every rule here holds within an unchanged read view; a changed one expires the copy (`device/view-changed`).

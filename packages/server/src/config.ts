@@ -268,9 +268,9 @@ export interface AppConfig {
   /** Blobs above this size are skipped without being read. Default
    *  20MB; env override `MARFA_ENRICHMENT_MAX_BLOB_BYTES`. */
   enrichmentMaxBlobBytes?: number;
-  /** Extracted text is truncated to this many characters. Defaults to the
-   *  validator's own default string ceiling, because text longer than that
-   *  is a value the write path refuses; env override
+  /** Extracted text is cut to at most this many UTF-16 code units.
+   *  Defaults to the validator's own default string ceiling, because text
+   *  longer than that is a value the write path refuses; env override
    *  `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. Raising it past the ceiling is
    *  allowed and is not silently clamped: the sweeper validates before it
    *  writes, so an over-long extraction is parked rather than stored. */
@@ -1148,7 +1148,7 @@ const settingsShape = {
   // parks an over-long extraction rather than storing it.
   MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(
     DEFAULT_MAX_STRING_LENGTH,
-    "The most characters of extracted text the server keeps. Longer text is truncated.",
+    "The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.",
   ),
   MARFA_ENRICHMENT_MAX_INFLATED_BYTES: count(
     64 * 1024 * 1024,

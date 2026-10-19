@@ -80,7 +80,13 @@ process.stdin.on("end", async () => {
       pdfParserConfig: { separateProcess: false },
     });
     const text = (await ast.to("text")).value.trim();
-    process.stdout.write(JSON.stringify({ text: text.slice(0, options.maxTextChars) }));
+    // Not cut between the two units of a surrogate pair, which would leave
+    // one alone at the end.
+    let end = Math.min(text.length, options.maxTextChars);
+    const before = text.charCodeAt(end - 1);
+    const after = text.charCodeAt(end);
+    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end--;
+    process.stdout.write(JSON.stringify({ text: text.slice(0, end) }));
   } catch (error) {
     const message = String((error && error.message) || error);
     process.stdout.write(JSON.stringify({

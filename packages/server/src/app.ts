@@ -111,7 +111,7 @@ import {
   CONNECTOR_STATE_BODY_CAP,
   REGISTRATION_BODY_CAP,
 } from "./middleware/body-cap.js";
-import { jsonDepthLimit } from "./middleware/json-depth.js";
+import { jsonBodyGuard } from "./middleware/json-body.js";
 import { servedContractVersion } from "./contract.js";
 import { contractHeader } from "./middleware/contract-header.js";
 import {
@@ -407,16 +407,17 @@ export function createApp(
       return requestBodyLimit(c, next);
     }),
   );
-  // A write naming an instance has its depth judged after the instance, so
-  // another instance refuses it for that alone (`instance/write-instance-order`).
-  // On a protected door, depth still precedes a missing credential refusal.
+  // A write naming an instance has its body's depth and text judged after the
+  // instance, so another instance refuses it for that alone
+  // (`instance/write-instance-order`). On a protected door, they still precede
+  // a missing credential refusal.
   const namesInstance = (c: Context<AppEnv>) =>
     c.req.header(INSTANCE_HEADER) !== undefined &&
     !/^\/auth(?:\/|$)/.test(c.req.path);
   app.use(
     "*",
     createMiddleware<AppEnv>((c, next) =>
-      namesInstance(c) ? next() : jsonDepthLimit(c, next),
+      namesInstance(c) ? next() : jsonBodyGuard(c, next),
     ),
   );
 
@@ -657,7 +658,7 @@ export function createApp(
   app.use(
     "*",
     createMiddleware<AppEnv>((c, next) =>
-      namesInstance(c) ? jsonDepthLimit(c, next) : next(),
+      namesInstance(c) ? jsonBodyGuard(c, next) : next(),
     ),
   );
 
