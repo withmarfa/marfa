@@ -57,10 +57,10 @@ Restoring a Railway volume backup rolls the database back to the backup. Do the 
 
 1. In the Marfa server's variables, change `S3_PREFIX` to a new value that this instance has never used, such as `restored/blobs`. Railway's [variables documentation](https://docs.railway.com/variables) says a variable change becomes a staged change that you must review and deploy.
 2. Restore the backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes. Railway stages the restore, mounts a new volume at the same location as the original, and keeps the previous volume, unmounted.
-3. Before you deploy, review the staged changes. Railway's documentation does not say whether the variable change and the restore are deployed together, so check that the list shows both. If either is missing, do not deploy until it is staged.
-4. After the deployment, open the deploy logs. Check that the `replicating to` line ends with the new prefix and `/db`, and that no `detected database behind replica` line appears.
+3. Before you deploy, review the staged changes. Railway's [staged changes documentation](https://docs.railway.com/deployments/staged-changes) says that selecting **Deploy** deploys all of them at once, so check that the list shows both the variable change and the volume restore. If either is missing, do not deploy until it is staged.
+4. After the deployment, open the deploy logs. Check that the `replicating to` line shows `path=` followed by the new prefix and `/db`, and that no `detected database behind replica` line appears.
 
-The old prefix keeps the newer history. **It also holds the bytes of files saved after the backup, which the restored instance cannot see**; [the deployment guide](README.md#what-the-steps-leave-behind) says how to read them. Keep the old prefix and the previous volume until you are sure you do not need them. Later recoveries use the new `S3_PREFIX`.
+The old prefix keeps the newer history. **It also holds the database that names the files saved after the backup, and the bytes of those that had been copied to the bucket, none of which the restored instance can see**; [the deployment guide](README.md#what-the-steps-leave-behind) says how to read them. Keep the old prefix and the previous volume until you are sure you do not need them. Later recoveries use the new `S3_PREFIX`.
 
 ## Recover a forgotten password
 
