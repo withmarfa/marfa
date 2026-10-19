@@ -100,12 +100,7 @@ const CHANGES = {
   revoked: {
     status: 401,
     code: "unauthorized",
-    change: (key: Minted) => async (): Promise<void> => {
-      const res = await ctx.ownerRequest(`/keys/${key.id}`, {
-        method: "DELETE",
-      });
-      expect(res.status).toBe(200);
-    },
+    change: revokeKey,
   },
 } as const;
 

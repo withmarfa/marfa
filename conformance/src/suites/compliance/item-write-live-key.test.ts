@@ -11,14 +11,17 @@ import { generateId } from "../../generators/items.js";
 
 /**
  * An item write is judged by the key as it stands when it commits
- * (`items/write-race-key-narrowed`, `items/write-race-key-revoked`).
+ * (`items/write-race-key-narrowed`, `items/write-race-key-narrowed-atomic`,
+ * `items/write-race-key-narrowed-entry`, `items/write-race-key-revoked`,
+ * `items/write-race-key-revoked-entry`).
  *
  * Each case holds the key's write after the server has admitted it and before
  * it opens its transaction (`hold:write`), changes the key through the API,
  * and releases the write. A server that judged the write by the key it read
  * on admission would write with a grant already taken back. Each case first
  * sends the same write with no change to the key, which is written, so the
- * refusal is the change's and not the request's.
+ * refusal is the change's and not the request's; in the later-entry cases,
+ * the page's first entry, written before the change, is that witness.
  */
 let server: FreshServer;
 let admin: MarfaClient;
