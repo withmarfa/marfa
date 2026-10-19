@@ -28,6 +28,9 @@ import {
   isValidId,
   getResolvedFields,
   getTypeSchema,
+  isPlatformTypeFamily,
+  isValidTypeIdentifier,
+  scheduleIssues,
   validateProperties,
   validateTransition,
   getEdgeTypeSchema,
@@ -640,7 +643,7 @@ function judgeResult(
  * `occurred_at`, a type the registry does not hold, and properties that type
  * does not take. Answers the properties as validation coerced them.
  */
-export function creatableItem(
+function creatableItem(
   input: Pick<
     StoredCreateItemInput,
     "id" | "type" | "properties" | "occurred_at"
@@ -693,6 +696,71 @@ export function creatableItem(
   };
 }
 
+/**
+ * Whether a restore holds a row of `type` to the shape the type has: a `core`
+ * or `system` type is fixed by the build that wrote the archive and read by
+ * the server's own code, and cannot be deleted or replaced.
+ */
+function restoreHoldsShape(type: string): boolean {
+  return isPlatformTypeFamily(type.split(".")[0]);
+}
+
+/**
+ * What a restore refuses of an item line before it reads the database: a type
+ * that is no identifier and properties that are no object. A row of a `core`
+ * or `system` type is then judged as a create is. Any other row is refused
+ * only a malformed id or `occurred_at` and a schedule no calendar read can
+ * unfold; its properties come back as the archive holds them, whatever shape
+ * its type has now and whether or not the type is registered, because a type
+ * may gain a required field or be force-deleted while its rows stand
+ * (`search-and-filters/restore-rows-shape-free`).
+ */
+export function restoredItem(
+  input: Pick<
+    StoredCreateItemInput,
+    "id" | "type" | "properties" | "occurred_at"
+  >,
+): { occurred_at?: string; properties: Record<string, unknown> } {
+  const named = `item ${String(input.id)}`;
+  if (typeof input.type !== "string" || !isValidTypeIdentifier(input.type)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid ${named}: type must be a type identifier`,
+      { type: input.type },
+    );
+  }
+  const properties: unknown = input.properties;
+  if (
+    typeof properties !== "object" ||
+    properties === null ||
+    Array.isArray(properties)
+  ) {
+    throw new MarfaError(
+      ErrorCode.INVALID_PROPERTIES,
+      `Invalid ${named}: properties must be an object`,
+      { errors: [{ field: "_root", message: "Expected an object" }] },
+    );
+  }
+  if (restoreHoldsShape(input.type)) return creatableItem(input);
+  const occurredAt =
+    input.occurred_at === undefined
+      ? undefined
+      : normalizeTimeBound(input.occurred_at, "occurred_at");
+  if (input.id && !isValidId(input.id)) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+  }
+  const errors = scheduleIssues(input.type, input.properties);
+  if (errors.length > 0) {
+    throw new MarfaError(ErrorCode.INVALID_PROPERTIES, "Invalid properties", {
+      errors,
+    });
+  }
+  return {
+    ...(occurredAt !== undefined && { occurred_at: occurredAt }),
+    properties: input.properties,
+  };
+}
+
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
@@ -712,7 +780,7 @@ export class SqliteItemStore implements ItemStore {
 
   async create(input: StoredCreateItemInput): Promise<Item> {
     const { occurred_at: occurredAt, properties: validated } =
-      creatableItem(input);
+      input.as_archived === true ? restoredItem(input) : creatableItem(input);
     if (occurredAt !== undefined) input = { ...input, occurred_at: occurredAt };
     const id = input.id ?? generateId();
     const declared = Object.keys(
@@ -744,14 +812,22 @@ export class SqliteItemStore implements ItemStore {
       // since the check above leaves the registry before its delete commits,
       // and a row written now would name a type nothing holds.
       const current = getTypeSchema(input.type);
-      if (!current) {
+      if (
+        !current &&
+        (input.as_archived !== true || restoreHoldsShape(input.type))
+      ) {
         throw new MarfaError(
           ErrorCode.UNKNOWN_TYPE,
           `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
           { type: input.type },
         );
       }
-      const schemaVersion = current.version;
+      // A restore keeps the version the archive holds; without one, an
+      // unregistered type has none to stamp.
+      const schemaVersion =
+        (input.as_archived === true ? input.schema_version : undefined) ??
+        current?.version ??
+        0;
 
       try {
         await tx

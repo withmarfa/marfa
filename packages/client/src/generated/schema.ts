@@ -21226,14 +21226,14 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/gzip": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of your own type, as archived, whatever the schema now says or the type is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21273,9 +21273,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.
-             *     - `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.
-             *     - `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.
+             * @description - `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.
+             *     - `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.
+             *     - `invalid_schema`: an archived type is invalid or has an unknown key.
              */
             400: {
                 headers: {

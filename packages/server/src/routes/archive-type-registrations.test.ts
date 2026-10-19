@@ -1217,20 +1217,19 @@ describe("archives carry type registrations", () => {
     }
   });
 
-  it("restores an archive carrying no registrations", async () => {
+  it("restores an archive whose types.ndjson holds no registration", async () => {
     const source = await newContext();
     const destination = await newContext();
     await itemWrites(source.storage).create({
       writer: null,
       type: "core.note",
-      properties: { body: "from an older exporter" },
+      properties: { body: "from an instance with no registration" },
       source: "at-o",
       source_id: "o1",
     });
 
     const entries = await extractArchive(await exportArchive(source));
-    entries.delete("types.ndjson");
-    const withoutTypes = await repack(entries, {});
+    const withoutTypes = await repack(entries, { "types.ndjson": "" });
 
     const res = await restore(destination, withoutTypes);
     expect(res.status).toBe(200);

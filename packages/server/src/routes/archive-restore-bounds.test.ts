@@ -48,9 +48,17 @@ function* zeroChunks(bytes: number): Generator<Buffer> {
   }
 }
 
-/** A gzipped tar of `entries`, streamed so an entry of zeros costs nothing
+/** A gzipped tar of `given` entries, streamed so an entry of zeros costs nothing
  *  to build however large it is. */
-async function buildArchive(entries: Entry[]): Promise<Buffer> {
+async function buildArchive(given: Entry[]): Promise<Buffer> {
+  // A line file the case leaves out is one the export would have written
+  // empty, and an archive without one is refused.
+  const entries: Entry[] = [
+    ...given,
+    ...["items.ndjson", "edges.ndjson", "types.ndjson"]
+      .filter((name) => !given.some((entry) => entry.name === name))
+      .map((name) => ({ name, text: "" })),
+  ];
   const pack = tar.pack();
   const gzip = createGzip();
   const chunks: Buffer[] = [];

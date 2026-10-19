@@ -88,8 +88,8 @@ async function errorOf(res: Response) {
   ).error;
 }
 
-/** A gzipped tar of a manifest and one blob entry of `mebibytes` MiB of
- *  zeros, under a name that is a hash, which inflates a thousandfold. */
+/** A gzipped tar of a manifest, the three empty line files and one blob
+ *  entry of `mebibytes` MiB of zeros, under a name that is a hash, which inflates a thousandfold. */
 async function inflatingArchive(mebibytes: number): Promise<Buffer> {
   const pack = tar.pack();
   const gzip = createGzip();
@@ -113,6 +113,10 @@ async function inflatingArchive(mebibytes: number): Promise<Buffer> {
       size: mebibytes * MIB,
     }),
   );
+  // After the blob, so the entry that inflates is the first one admitted.
+  for (const name of ["items.ndjson", "edges.ndjson", "types.ndjson"]) {
+    pack.entry({ name, size: 0 }, Buffer.alloc(0));
+  }
   pack.finalize();
   await ended;
   return Buffer.concat(chunks);

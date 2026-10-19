@@ -140,6 +140,38 @@ it("refuses a cycle as restore skips it, naming the edge that closes it", async 
 
 it("names the item a restore refuses, with its type, field and code", async () => {
   const lineFiles = selection(3, []);
+  const event = (id: string, recurrence: string) =>
+    JSON.stringify({
+      item: {
+        id,
+        type: "core.event",
+        properties: {
+          title: "a meeting",
+          starts_at: "2041-01-15T09:00:00.000Z",
+          recurrence: [recurrence],
+        },
+      },
+    });
+  writeFileSync(
+    lineFiles["items.ndjson"],
+    `${event(idAt(1), "RRULE:FREQ=YEARLY")}\n${event(idAt(2), "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30")}\n`,
+  );
+  const refused = await validate(lineFiles).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(refused).toBeInstanceOf(SelectionRefusal);
+  expect((refused as SelectionRefusal).row).toMatchObject({
+    kind: "item",
+    id: idAt(2),
+    type: "core.event",
+    field: "properties.recurrence",
+    code: "invalid_properties",
+  });
+});
+
+it("names the item a core type's shape refuses, with its type, field and code", async () => {
+  const lineFiles = selection(3, []);
   writeFileSync(
     lineFiles["items.ndjson"],
     `${JSON.stringify({ item: { id: idAt(1), type: "core.note", properties: { body: "one" } } })}\n${JSON.stringify({ item: { id: idAt(2), type: "core.note", properties: {} } })}\n`,
@@ -155,6 +187,35 @@ it("names the item a restore refuses, with its type, field and code", async () =
     type: "core.note",
     field: "properties.body",
     code: "invalid_properties",
+  });
+});
+
+const typedRow = (id: string, type: string) =>
+  JSON.stringify({ item: { id, type, properties: { anything: 1 } } });
+
+it("takes an item of a type nothing registers", async () => {
+  const lineFiles = selection(3, []);
+  writeFileSync(
+    lineFiles["items.ndjson"],
+    `${typedRow(idAt(1), "user.forgotten")}\n`,
+  );
+  await expect(validate(lineFiles)).resolves.toBeUndefined();
+});
+
+it("refuses an item whose type identifier is no identifier", async () => {
+  const lineFiles = selection(3, []);
+  writeFileSync(
+    lineFiles["items.ndjson"],
+    `${typedRow(idAt(1), "user.forgotten")}\n${typedRow(idAt(2), "Not A Type")}\n`,
+  );
+  const refused = await validate(lineFiles).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  expect(refused).toBeInstanceOf(SelectionRefusal);
+  expect((refused as SelectionRefusal).row).toMatchObject({
+    id: idAt(2),
+    code: "validation_error",
   });
 });
 

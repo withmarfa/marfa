@@ -47,10 +47,9 @@ async function buildArchive(
   manifest: Record<string, unknown>,
   ndjsonLines: string[],
   blobs: { hash: string; data: Buffer }[],
-  /** Lines for `edges.ndjson`. Omitted entirely when empty, so an archive
-   *  without edges keeps the shape every existing case builds. */
+  /** Lines for `edges.ndjson`, which an archive always carries, empty or not. */
   edgeLines: string[] = [],
-  /** Lines for `types.ndjson`, omitted when empty for the same reason. */
+  /** Lines for `types.ndjson`, likewise. */
   typeLines: string[] = [],
 ): Promise<Buffer> {
   const pack = tar.pack();
@@ -67,14 +66,12 @@ async function buildArchive(
   const ndjsonBuf = Buffer.from(ndjsonLines.join("\n") + "\n");
   pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
 
-  if (edgeLines.length > 0) {
-    const edgesBuf = Buffer.from(edgeLines.join("\n") + "\n");
-    pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
-  }
-
-  if (typeLines.length > 0) {
-    const typesBuf = Buffer.from(typeLines.join("\n") + "\n");
-    pack.entry({ name: "types.ndjson", size: typesBuf.length }, typesBuf);
+  for (const [name, lines] of [
+    ["edges.ndjson", edgeLines],
+    ["types.ndjson", typeLines],
+  ] as const) {
+    const body = Buffer.from(lines.length > 0 ? lines.join("\n") + "\n" : "");
+    pack.entry({ name, size: body.length }, body);
   }
 
   for (const blob of blobs) {
@@ -241,9 +238,9 @@ describe("POST /restore", () => {
     expect((await errorOf(refusal)).message).toContain(
       "created_at must be a valid instant",
     );
-    // The body's spool, the item lines' and the blob entry's.
+    // The body's spool, those of the three line files, and the blob entry's.
     const refusedSpools = spoolsMinted();
-    expect(refusedSpools).toHaveLength(3);
+    expect(refusedSpools).toHaveLength(5);
     for (const path of refusedSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(refused.hash)).toBeNull();
@@ -262,7 +259,7 @@ describe("POST /restore", () => {
       ((await restored.json()) as { blobs_imported: number }).blobs_imported,
     ).toBe(1);
     const keptSpools = spoolsMinted();
-    expect(keptSpools).toHaveLength(3);
+    expect(keptSpools).toHaveLength(5);
     for (const path of keptSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
@@ -278,7 +275,7 @@ describe("POST /restore", () => {
       ((await again.json()) as { blobs_imported: number }).blobs_imported,
     ).toBe(1);
     const againSpools = spoolsMinted();
-    expect(againSpools).toHaveLength(3);
+    expect(againSpools).toHaveLength(5);
     for (const path of againSpools) expect(existsSync(path)).toBe(false);
     expect(readdirSync(spoolDir)).toEqual([]);
     expect(await ctx.blobs.disk.has(kept.hash)).toEqual({
@@ -1719,5 +1716,172 @@ describe("POST /restore app sources", () => {
     expect((await ctx.storage.items.get(id))?.properties.status).toBe(
       "revoked",
     );
+  });
+});
+
+describe("POST /restore of rows their type no longer shapes", () => {
+  const row = (item: Record<string, unknown>, tags: string[] = []): string =>
+    JSON.stringify({
+      item: { source: "shape-test", ...item },
+      metadata: { tags, extensions: { "shape.notes": { kept: true } } },
+    });
+  const restoreLines = async (
+    lines: string[],
+    typeLines: string[] = [],
+  ): Promise<Response> =>
+    postArchive(await buildArchive(manifestFor(), lines, [], [], typeLines));
+
+  it("stores an item of an unregistered type, and one lacking a field its type requires, as the archive holds them", async () => {
+    const orphan = generateId();
+    const lacking = generateId();
+    const type = `user.shape_${orphan.slice(-8)}`;
+    const gained = `user.gained_${orphan.slice(-8)}`;
+    const registration = JSON.stringify({
+      type: {
+        id: gained,
+        label: "Gained",
+        version: 2,
+        fields: {
+          name: { type: "string" },
+          owner: { type: "string", required: true },
+        },
+      },
+    });
+    const res = await restoreLines(
+      [
+        row(
+          {
+            id: orphan,
+            type,
+            version: 3,
+            schema_version: 4,
+            state: "archived",
+            properties: { anything: ["goes", 1], nested: { here: true } },
+          },
+          ["kept-tag"],
+        ),
+        row({
+          id: lacking,
+          type: gained,
+          version: 2,
+          schema_version: 1,
+          properties: { name: "written before owner" },
+        }),
+      ],
+      [registration],
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({ imported: 2 });
+
+    expect(getTypeSchema(type)).toBeUndefined();
+    const stored = await ctx.storage.items.getIncludingTrashed(orphan);
+    expect(stored).toMatchObject({
+      type,
+      version: 3,
+      schema_version: 4,
+      state: "archived",
+      properties: { anything: ["goes", 1], nested: { here: true } },
+    });
+    const short = await ctx.storage.items.getIncludingTrashed(lacking);
+    expect(short).toMatchObject({
+      type: gained,
+      schema_version: 1,
+      properties: { name: "written before owner" },
+    });
+    const metadata = await ctx.storage.metadata.get(orphan);
+    expect(metadata.tags).toEqual(["kept-tag"]);
+    expect(metadata.extensions).toEqual({ "shape.notes": { kept: true } });
+
+    // The witness: the doors that write the type still hold it to its shape.
+    const ordinary = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: gained, properties: { name: "no owner" } },
+    });
+    expect(ordinary.status).toBe(400);
+    expect((await errorOf(ordinary)).code).toBe("invalid_properties");
+    const unknown = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type, properties: {} },
+    });
+    expect((await errorOf(unknown)).code).toBe("unknown_type");
+  });
+
+  it("still holds a core type's rows to its shape, and refuses a type that is no identifier or properties that are no object", async () => {
+    const good = generateId();
+    const cases: [string, Record<string, unknown>, string][] = [
+      [
+        "a core type's shape",
+        { type: "core.note", properties: {} },
+        "invalid_properties",
+      ],
+      [
+        "an identifier that names no type",
+        { type: "Not A Type", properties: {} },
+        "validation_error",
+      ],
+      ["no type at all", { properties: { a: 1 } }, "validation_error"],
+      [
+        "properties that are a list",
+        { type: "user.shape_list", properties: [1, 2] },
+        "invalid_properties",
+      ],
+    ];
+    for (const [what, item, code] of cases) {
+      const refused = await restoreLines([
+        row({ id: good, type: "user.shape_witness", properties: {} }),
+        row({ id: generateId(), ...item }),
+      ]);
+      expect(refused.status, what).toBe(400);
+      expect((await errorOf(refused)).code, what).toBe(code);
+      expect(
+        await ctx.storage.items.getIncludingTrashed(good),
+        what,
+      ).toBeNull();
+    }
+    // The witness: the first line alone restores.
+    const restored = await restoreLines([
+      row({ id: good, type: "user.shape_witness", properties: {} }),
+    ]);
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(await ctx.storage.items.getIncludingTrashed(good)).not.toBeNull();
+  });
+
+  it("refuses a row of an event type whose rule no calendar read can unfold, though it takes the rest of the type's shape as it is", async () => {
+    const series = `user.series_${generateId().slice(-8)}`;
+    const registration = JSON.stringify({
+      type: {
+        id: series,
+        label: "Series",
+        version: 1,
+        parent: "core.event",
+        fields: { title: { type: "string", required: true } },
+      },
+    });
+    const event = (rule: string, extra: Record<string, unknown> = {}) =>
+      row({
+        id: generateId(),
+        type: series,
+        properties: {
+          starts_at: "2041-01-15T09:00:00.000Z",
+          recurrence: [rule],
+          ...extra,
+        },
+      });
+    const refused = await restoreLines(
+      [event("RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30")],
+      [registration],
+    );
+    expect(refused.status).toBe(400);
+    expect((await errorOf(refused)).code).toBe("invalid_properties");
+    expect(getTypeSchema(series)).toBeUndefined();
+
+    // The witness: a rule that unfolds restores, without the title the type
+    // requires.
+    const restored = await restoreLines(
+      [event("RRULE:FREQ=YEARLY")],
+      [registration],
+    );
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(await restored.json()).toMatchObject({ imported: 1 });
   });
 });

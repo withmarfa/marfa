@@ -47,7 +47,7 @@ import {
   type EdgeProposal,
 } from "../storage/edge-constraints.js";
 import { linkOf } from "../storage/sqlite/item-links.js";
-import { creatableItem } from "../storage/sqlite/item-store.js";
+import { restoredItem } from "../storage/sqlite/item-store.js";
 import { registryContext } from "../storage/sqlite/registry-context.js";
 import { stageTypeRegistration } from "../storage/sqlite/type-store.js";
 import { RESTORE_BATCH_BYTES, RESTORE_BATCH_LINES } from "./restore-archive.js";
@@ -463,7 +463,7 @@ class ItemCheck {
           "malformed",
           "an item with no type",
         );
-      const { properties } = creatableItem({
+      const { properties } = restoredItem({
         ...(id !== undefined && { id }),
         type,
         properties: restoredProperties(item),
