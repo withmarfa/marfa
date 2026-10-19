@@ -219,7 +219,10 @@ export async function projectGrantOnConsent(
   opts: {
     authUserId: string;
     clientId: string;
+    /** The grant the app holds afterwards: the standing one plus this approval. */
     scopes: string[];
+    /** What this approval alone granted. Absent: the same as `scopes`. */
+    approved?: string[];
     clientIp: string | null;
     /** The browser that approved. */
     by: WrittenBy;
@@ -289,7 +292,8 @@ export async function projectGrantOnConsent(
     details: {
       client_id: opts.clientId,
       user_id: opts.authUserId,
-      scopes: opts.scopes,
+      scopes: opts.approved ?? opts.scopes,
+      resulting_scopes: opts.scopes,
       grant_item_id: itemId,
     },
   };

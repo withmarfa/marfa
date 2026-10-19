@@ -61,6 +61,7 @@ import {
   waitForConsentLockDepth,
 } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
+import { visibleText } from "../test-html.js";
 
 // Every test here boots a server, signs a user up and in (two password
 // hashes), and drives a full consent round trip before it asserts
@@ -612,9 +613,12 @@ describe("GET /auth/authorize (consent skip)", () => {
     const res = await landOnConsentPage(ctx, supersetSignedQuery, { cookie });
     const html = await res.text();
     expectRendersConsent(res, html);
-    // Diff sections from the re-consent renderer.
-    expect(html).toContain(">New</p>");
-    expect(html).toContain("Already allowed");
+    // What the app holds is shown apart, and what it newly asks is marked.
+    const text = visibleText(html);
+    expect(text).toContain("wants more access");
+    expect(text).toContain("Already allowed");
+    expect(text).toContain("Now: Read only");
+    expect(text).toContain("New");
   });
 
   it("prompt=consent forces a render even when the grant covers the request", async () => {
@@ -1349,7 +1353,7 @@ function holdSilentFlowAfterReadingGrant(c: TestContext): {
 }
 
 describe("GET /auth/authorize (consent skip) — concurrent grant changes", () => {
-  it("REGRESSION: a narrowing that lands mid-flight is not undone by the silent restoration", async () => {
+  it("REGRESSION: a narrower approval that lands mid-flight leaves the standing grant whole, whichever request runs first", async () => {
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
@@ -1373,9 +1377,9 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
     const silent = landOnConsentPage(c, silentQuery, { cookie });
     await reachedRead;
 
-    // Meanwhile the user unticks core.task:read on the consent screen.
+    // Meanwhile a decision approves the same request with less chosen.
     const narrowQuery = await mintSignedQuery(authorizeFields(clientId, wide));
-    const narrowing = request(c.app, "POST", "/auth/authorize/decision", {
+    const narrower = request(c.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
         oauth_query: narrowQuery,
@@ -1383,22 +1387,24 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
       },
       headers: { cookie, origin: ORIGIN },
     });
-    // The narrowing has to be queued behind the parked holder before the
-    // holder is let go. Released early, the two run one after the other
-    // and the restoration never has a decision to overwrite.
+    // The decision has to be queued behind the parked holder before the
+    // holder is let go. Released early, the two run one after the other and
+    // the restoration never has a decision to overwrite.
     await waitForConsentLockDepth(clientId, authUserId, 2);
     resume();
 
-    const [silentRes, narrowRes] = await Promise.all([silent, narrowing]);
+    const [silentRes, narrowRes] = await Promise.all([silent, narrower]);
     expectCodeRedirect(silentRes);
     expect(narrowRes.status).toBe(302);
 
-    // The permission the user took away must stay taken away. Whichever
-    // way the two requests are ordered, a scope can only come back
-    // through an interaction that asks for it.
+    // Approving never lowers what the app holds, so neither order loses a
+    // scope.
     const stored = await readStandingGrant(clientId, authUserId);
-    expect(stored).not.toContain("core.task:read");
-    expect([...(stored ?? [])].sort()).toEqual(["core.note:read", "openid"]);
+    expect([...(stored ?? [])].sort()).toEqual([
+      "core.note:read",
+      "core.task:read",
+      "openid",
+    ]);
   });
 
   it("REGRESSION: a revocation that lands mid-flight is not resurrected by the silent restoration", async () => {

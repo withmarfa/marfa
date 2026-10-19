@@ -42,14 +42,14 @@ import {
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import { getPermissionBundles } from "../config.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
-import { humanizeType, SCOPE_LABELS } from "./consent.js";
+import { humanizeType, SCOPE_LABELS } from "./scope-copy.js";
 import {
   renderConsentScreen,
   renderDeviceConsentScreen,
 } from "./test-render.js";
 import { PERMISSION_LABELS, permissionLabel } from "./permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
-import { escapeHtml } from "./auth-html.js";
+import { visibleText } from "../test-html.js";
 
 /**
  * A publisher handle of the shape boot installs from the `types`
@@ -436,34 +436,38 @@ describe("the consent copy guard derives the scopes it checks", () => {
       descriptions,
     });
 
-    // Both screens escape what they print, and several curated sentences
-    // carry an apostrophe, so the copy is escaped before it is looked for
-    // rather than the assertions being written around the ones that do not.
+    // Read as a person reads it, with entities decoded, because several
+    // curated sentences carry an apostrophe.
+    const deviceText = visibleText(device);
+    const authorizeText = visibleText(authorize);
     for (const scope of covered) {
       const copy = descriptions[scope.typePattern];
       // Positive first, and it is the half that keeps the negatives from
       // being satisfied by a row that never rendered at all.
       expect(copy ?? "", scope.typePattern).toMatch(/\S/);
 
-      // Both screens resolve a row's label from the curated label where
-      // there is one and from the description otherwise. Held to whichever
-      // of those applies rather than to "not `humanizeType`":
-      // `core.media.series` is curated as "Series" and humanizes to
-      // "Series", so a check on the two differing would report a
-      // coincidence as a defect.
-      const label = SCOPE_LABELS[scope.typePattern] ?? copy ?? "";
-      expect(device, scope.typePattern).toContain(escapeHtml(label));
-      expect(authorize, scope.typePattern).toContain(escapeHtml(label));
+      // A row is titled by its curated name, or by its description without
+      // the full stop where nothing curated names it. Held to whichever of
+      // those applies rather than to "not `humanizeType`": `core.media.series`
+      // is curated as "Series" and humanizes to "Series", so a check on the
+      // two differing would report a coincidence as a defect.
+      const title =
+        scope.typePattern === "*" && scope.kind === "type"
+          ? "All your data"
+          : (SCOPE_LABELS[scope.typePattern] ??
+            (copy ?? "").replace(/\.$/, ""));
+      expect(deviceText, scope.typePattern).toContain(title);
+      expect(authorizeText, scope.typePattern).toContain(title);
     }
     // **No negative floor is asserted here, and the omission is deliberate
     // rather than an oversight to be corrected.** Two were written and both
     // were unreachable, which is worse than absent: an assertion that cannot
     // fire reads to the next person as a floor that is being held.
     //
-    // On the authorize screen, `not.toContain("<span>" + literal + "<")`
-    // cannot fire at all. `labelFor` falls `SCOPE_LABELS` → description →
-    // `humanizeType`, and `humanizeType` returns a title-cased segment of
-    // the pattern, so the literal is not a string that chain can produce.
+    // On the authorize screen, `not.toContain(literal)` cannot fire at all.
+    // A row falls `SCOPE_LABELS` → description → `humanizeType`, and
+    // `humanizeType` returns a title-cased segment of the pattern, so the
+    // literal is not a string that chain can produce.
     //
     // On the device screen the same chain answers, so the same holds there.
     //

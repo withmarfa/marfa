@@ -55,11 +55,12 @@ import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
 } from "../auth/ceiling-catchup.js";
+import { renderDevicePage } from "./device-pages.js";
 import {
-  renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
-} from "./device-pages.js";
+} from "./device-approval.js";
+import { resolveSelection } from "./access-model.js";
 import { setNoStore } from "./no-store.js";
 import {
   answerSignInAgain,
@@ -863,13 +864,14 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       .filter(
         (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
       );
+    const priorScopes = await storage.oauthProvider?.getPriorConsent(
+      client.clientId,
+      sessionResult.session.user.id,
+    );
     const signInAgain = signInAgainBeforeConsent(
       c,
       scopeList(verdict.scope),
-      await storage.oauthProvider?.getPriorConsent(
-        client.clientId,
-        sessionResult.session.user.id,
-      ),
+      priorScopes,
       `${url.pathname}${url.search}`,
     );
     if (signInAgain) return signInAgain;
@@ -890,6 +892,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         webOrigins: webOriginsOf(client),
         scopes: parsedScopes,
         userCode,
+        priorScopes,
         descriptions,
         // The same enumeration of an open-ended pattern the authorize screen
         // shows, so the reach reads the same on both.
@@ -897,10 +900,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           parsedScopes,
         ),
-        // The screen decides its own ticks from these, the same way the
-        // authorize screen does. Passed rather than read inside the
-        // renderer so both surfaces resolve the bundle set at their own
-        // call site, which is the standing convention for this pair.
         bundles: getPermissionBundles(),
       }),
     );
@@ -951,30 +950,29 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     )
       return c.text("Invalid scope: profile.email:write", 400);
 
-    // The ticked set, intersected with what the device asked for.
-    //
-    // **An intersection rather than a substitution**, because this form is a
-    // browser surface and its fields are whoever's browser it is to edit. A
-    // hand-edited submission must not grant an app more than the client
-    // requested or more than the screen displayed, and the stored row is what
-    // every later reader treats as the request.
-    //
-    // **Nothing ticked is a denial**, the same rule the authorize screen
-    // applies to a zero-scope accept and for the same reason: a grant of
-    // nothing is not a grant, and recording one leaves a projection and a
-    // consent row standing for an app that can do nothing with them. It also
-    // keeps the two surfaces answering one question the same way.
-    const requestedScopeSet = new Set(requestedScopes);
-    const approvedScopes = [
-      ...new Set(
-        formData
-          .getAll("scopes")
-          .filter((v): v is string => typeof v === "string")
-          .filter((v) => requestedScopeSet.has(v)),
-      ),
-    ];
+    // What the person chose is what the device asked for, narrowed: a value
+    // the code did not carry is a form edited to ask for more than the screen
+    // showed, and nothing from it is granted. Nothing chosen is a denial, the
+    // same rule the authorize screen applies, because a grant of nothing
+    // leaves a projection and a consent row standing for a device that can do
+    // nothing with them. A denial reads no choice.
+    const selection =
+      decision === "approve"
+        ? resolveSelection(
+            requestedScopes,
+            formData
+              .getAll("scopes")
+              .filter((v): v is string => typeof v === "string"),
+          )
+        : null;
+    if (selection && !selection.ok)
+      return c.text(
+        "The decision names a scope the device did not ask for",
+        400,
+      );
+    const approvedScopes = selection?.ok ? selection.scopes : [];
 
-    if (decision === "deny" || approvedScopes.length === 0) {
+    if (!selection?.ok || !selection.chosen) {
       const denied = await deviceAuth.deviceDeny(userCode, c.req.raw.headers);
       if (!denied.ok) {
         return c.redirect(

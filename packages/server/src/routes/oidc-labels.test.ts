@@ -1,12 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-  OIDC_LABELS,
-  OIDC_SHORT,
-  oidcLabel,
-  oidcShort,
-} from "./oidc-labels.js";
+import { OIDC_LABELS, oidcLabel } from "./oidc-labels.js";
 import { CONSENT_SCOPE_DESCRIPTIONS } from "./auth-consent.js";
 
 /**
@@ -19,21 +14,18 @@ import { CONSENT_SCOPE_DESCRIPTIONS } from "./auth-consent.js";
  */
 const LITERALS = ["openid", "profile", "email", "offline_access"] as const;
 
-describe("every literal is named in both registers", () => {
+describe("every literal is named", () => {
   it("covers the four literals and nothing else", () => {
     // The union already holds key parity at compile time. This holds the
     // half a type cannot: that the union itself has not quietly grown a
     // fifth member nobody wrote copy for.
-    for (const map of [OIDC_LABELS, OIDC_SHORT]) {
-      expect(Object.keys(map).sort()).toEqual([...LITERALS].sort());
-    }
+    expect(Object.keys(OIDC_LABELS).sort()).toEqual([...LITERALS].sort());
   });
 
-  it("resolves each literal to real copy through each accessor", () => {
+  it("resolves each literal to real copy", () => {
     for (const literal of LITERALS) {
       // Not `toBeTruthy`, which a single space satisfies.
       expect(oidcLabel(literal), literal).toMatch(/\S/);
-      expect(oidcShort(literal), literal).toMatch(/\S/);
     }
   });
 
@@ -42,7 +34,6 @@ describe("every literal is named in both registers", () => {
     // lookup that has no entry for it and come back with something.
     for (const other of ["core.note:read", "webhooks.manage", "", "OPENID"]) {
       expect(oidcLabel(other), other).toBeUndefined();
-      expect(oidcShort(other), other).toBeUndefined();
     }
   });
 
@@ -51,7 +42,6 @@ describe("every literal is named in both registers", () => {
     // resolve to something truthy off the prototype chain.
     for (const inherited of ["constructor", "toString", "__proto__"]) {
       expect(oidcLabel(inherited), inherited).toBeUndefined();
-      expect(oidcShort(inherited), inherited).toBeUndefined();
     }
   });
 });
@@ -68,22 +58,18 @@ describe("every literal is named in both registers", () => {
  */
 describe("the copy does not over-state what a scope grants", () => {
   it("claims nothing for profile beyond a name and a picture", () => {
-    const all = [OIDC_LABELS.profile, OIDC_SHORT.profile]
-      .join(" ")
-      .toLowerCase();
+    const all = OIDC_LABELS.profile.toLowerCase();
     for (const overclaim of ["username", "bio", "handle", "phone", "address"]) {
       expect(all, `profile copy claims "${overclaim}"`).not.toContain(
         overclaim,
       );
     }
     expect(all).toContain("name");
-    // The label carries it; the inline form deliberately does not, because
-    // a conjunction inside a joined list reads as two items.
-    expect(OIDC_LABELS.profile.toLowerCase()).toContain("picture");
+    expect(all).toContain("picture");
   });
 
   it("keeps email about the address", () => {
-    const all = [OIDC_LABELS.email, OIDC_SHORT.email].join(" ").toLowerCase();
+    const all = OIDC_LABELS.email.toLowerCase();
     expect(all).toContain("email");
     expect(all).not.toContain("name");
   });

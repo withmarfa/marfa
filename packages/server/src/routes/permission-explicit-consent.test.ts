@@ -1,19 +1,10 @@
 /**
- * A permission is granted by being ticked, on every surface that offers
+ * A permission is granted by being turned on, on every surface that offers
  * one.
  *
- * **Two screens held opposite opinions and which one a person met decided
- * what they handed over.** The code-flow consent screen gives a
- * permission no bundle claims its own unticked row, on the reasoning that it
- * is authority over the instance itself and has to be handed over deliberately
- * rather than by silence. The
- * device-approval screen could not reach that reasoning: its only withholding
- * input was derived from the configured bundles, so a permission no
- * bundle names was in no withheld set, and its rows were confirmations rather
- * than toggles — one Approve granted the lot.
- *
- * Both now read `requiresExplicitConsent`, so the rule has one home. These
- * cases are the two screens asked the same question.
+ * Two screens held opposite opinions once, and which one a person met decided
+ * what they handed over. Both now read `requiresExplicitConsent`, so the rule
+ * has one home. These cases are the two screens asked the same question.
  */
 import { describe, it, expect } from "vitest";
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
@@ -23,6 +14,7 @@ import {
   renderDeviceConsentScreen,
 } from "./test-render.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
+import { defaultSubmission, readControls } from "../test-html.js";
 
 function parsed(literal: string): ParsedScope {
   const p = parseScope(literal);
@@ -30,15 +22,8 @@ function parsed(literal: string): ParsedScope {
   return p;
 }
 
-/** The row a checkbox renders for one literal, so a case can assert on the
- *  tick rather than on the whole document. */
-function rowFor(html: string, literal: string): string {
-  const marker = `value="${literal}"`;
-  const at = html.indexOf(marker);
-  if (at === -1) return "";
-  // The `checked` attribute, when present, follows the value on the same tag.
-  return html.slice(at, html.indexOf(">", at) + 1);
-}
+const switchFor = (html: string, literal: string) =>
+  readControls(html).find((c) => c.role === "switch" && c.value === literal);
 
 const CONSENT_PARAMS = {
   clientName: "Test CLI",
@@ -48,25 +33,23 @@ const CONSENT_PARAMS = {
   descriptions: {},
 };
 
-describe("the code-flow consent screen never pre-ticks a permission", () => {
-  it("renders an unclaimed permission unticked", () => {
+describe("the authorize screen never turns a permission on for the person", () => {
+  it("starts an unclaimed permission off", () => {
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "keys.mint")).not.toContain("checked");
-    // The ordinary literal beside it still arrives ticked, so the case is not
-    // passing because nothing is ticked at all.
-    expect(rowFor(html, "core.note:read")).toContain("checked");
+    expect(switchFor(html, "keys.mint")?.checked).toBe(false);
+    // The ordinary literal beside it still starts on, so the case is not
+    // passing because nothing is on at all.
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.note:read"]);
   });
 
-  it("renders it unticked even when a default-on bundle claims it", () => {
-    // The case the bundle branch could not see. `default_on` is a bundle's
-    // opinion about its own contents; `requiresExplicitConsent` is the
-    // platform's about the scope, and the platform's outranks it. Without
-    // this the fallback bucket never fires for a claimed literal and the
-    // permission inherits the bundle's tick.
+  it("starts it off even when a default-on bundle claims it", () => {
+    // `default_on` is a bundle's opinion about its own contents;
+    // `requiresExplicitConsent` is the platform's about the scope, and the
+    // platform's outranks it.
     const claiming: PermissionBundle = {
       id: "operator-custom",
       label: "Operator custom",
@@ -79,66 +62,48 @@ describe("the code-flow consent screen never pre-ticks a permission", () => {
       scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: [claiming],
     });
-    expect(rowFor(html, "keys.mint")).not.toContain("checked");
-    expect(rowFor(html, "core.note:read")).toContain("checked");
+    expect(switchFor(html, "keys.mint")?.checked).toBe(false);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.note:read"]);
   });
 
-  it("shows a permission the person already granted as granted", () => {
-    // The other direction, and the one that costs an app its tokens if it is
-    // wrong: a default that decides what to OFFER must never decide what to
-    // KEEP. At re-consent a standing grant renders from the prior grant, so
-    // an untouched Continue cannot silently drop a permission and
-    // trigger the narrowing revoke.
+  it("keeps a permission the person already granted granted", () => {
+    // A default that decides what to offer must never decide what to keep:
+    // an untouched Approve would otherwise drop a permission the app holds.
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("keys.mint"), parsed("core.note:read")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
-      // A standing grant, so this render is the re-consent diff: the
-      // permission lands in "Already allowed", which is being shown
-      // rather than offered.
       priorScopes: ["keys.mint"],
     });
-    expect(rowFor(html, "keys.mint")).toContain("checked");
+    expect(switchFor(html, "keys.mint")).toBeUndefined();
+    expect(defaultSubmission(html, "scopes")).toEqual([
+      "keys.mint",
+      "core.note:read",
+    ]);
   });
 });
 
-describe("the device-approval screen offers a permission as a toggle", () => {
+describe("the device approval screen offers a permission the same way", () => {
   const DEVICE_PARAMS = {
     clientName: "Marfa CLI",
-    userCode: "ABCD-EFGH",
+    userCode: "ABCDEFGH",
     descriptions: {},
   };
 
-  it("submits a checkbox per scope rather than confirming a list", () => {
-    // The premise of the whole fix. While the rows were confirmations the
-    // approve form carried only the user code and a decision, so there was
-    // nothing for "leaving it alone grants nothing" to mean on this screen.
+  it("offers a switch for it, and leaves it off while everything else starts on", () => {
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
       scopes: [parsed("core.note:read"), parsed("keys.mint")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(html).toContain('name="scopes"');
-    expect(html).toContain('value="core.note:read"');
-    expect(html).toContain('value="keys.mint"');
+    expect(switchFor(html, "keys.mint")?.checked).toBe(false);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.note:read"]);
   });
 
-  it("leaves a permission unticked and everything else ticked", () => {
-    const html = renderDeviceConsentScreen({
-      ...DEVICE_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("keys.mint")],
-      bundles: DEFAULT_PERMISSION_BUNDLES,
-    });
-    expect(rowFor(html, "keys.mint")).not.toContain("checked");
-    expect(rowFor(html, "core.note:read")).toContain("checked");
-  });
-
-  it("carries the hidden mechanisms without a toggle", () => {
+  it("carries the hidden mechanisms without a control", () => {
     // `openid` and `offline_access` are how a client gets an identity and a
-    // refresh token rather than data permissions, and the code-flow screen
-    // submits them as hidden checked fields for the same reason: a person
-    // cannot decline a control they cannot see. Dropping them here would
-    // hand the CLI a session it cannot renew.
+    // refresh token, and a person cannot decline a control they cannot see.
+    // Dropping them here would hand the CLI a session it cannot renew.
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
       scopes: [
@@ -148,7 +113,14 @@ describe("the device-approval screen offers a permission as a toggle", () => {
       ],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "openid")).toContain("hidden");
-    expect(rowFor(html, "offline_access")).toContain("hidden");
+    const hidden = readControls(html).filter(
+      (c) => c.name === "scopes" && c.type === "hidden",
+    );
+    expect(hidden.map((c) => c.value)).toEqual(["openid", "offline_access"]);
+    expect(
+      readControls(html).some(
+        (c) => c.role === "switch" && c.value === "openid",
+      ),
+    ).toBe(false);
   });
 });

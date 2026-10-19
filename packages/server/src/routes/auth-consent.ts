@@ -104,7 +104,9 @@ import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
-import { renderConsentScreen, profileWriteDescription } from "./consent.js";
+import { renderConsentScreen } from "./consent.js";
+import { resolveSelection } from "./access-model.js";
+import { profileWriteDescription } from "./scope-copy.js";
 import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -124,23 +126,6 @@ import {
   answerSignInAgain,
   signInAgainBeforeConsent,
 } from "./sign-in-again.js";
-
-/**
- * Query parameter carrying a consent-page error banner code back from the
- * decision handler.
- *
- * Marfa-owned and Marfa-named: the plugin signs an exact parameter set,
- * and the round trip has to carry the signed query back untouched, so a
- * parameter added for the page's own use must be one this route knows to
- * lift off before handing the query back. It also has to be a name the
- * plugin will never sign — `error` alone is an OAuth response parameter
- * and reserving it here would be reserving somebody else's word.
- */
-const CONSENT_ERROR_PARAM = "marfa_consent_error";
-
-/** Every parameter this route adds to its own URL. Stripped before the
- *  query is handed back to the plugin. */
-const CONSENT_DISPLAY_PARAMS = [CONSENT_ERROR_PARAM] as const;
 
 /**
  * Outcome of the consent-skip critical section: either the request falls
@@ -174,16 +159,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
 
     const url = new URL(c.req.url);
     // The plugin signs an exact parameter set and expects it returned
-    // verbatim. `signedParams` is that set and nothing else: Marfa's own
-    // display-only parameters are lifted off first (see
-    // `CONSENT_DISPLAY_PARAMS`), because the signature covers every
-    // remaining key and one extra pair invalidates it. Everything this
-    // handler reads about the request comes from here rather than from
-    // `url`, so no unsigned parameter can influence a decision. It
-    // round-trips to the plugin through the form's `oauth_query` field.
+    // verbatim. Everything this handler reads about the request comes from
+    // `signedParams` rather than from `url`, so no unsigned parameter can
+    // influence a decision. It round-trips to the plugin through the form's
+    // `oauth_query` field.
     const signedParams = new URLSearchParams(url.search);
-    const consentError = signedParams.get(CONSENT_ERROR_PARAM);
-    for (const name of CONSENT_DISPLAY_PARAMS) signedParams.delete(name);
     const oauthQuery = signedParams.toString();
 
     const clientId = signedParams.get("client_id") ?? "";
@@ -286,9 +266,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           "End-User authentication is required",
         );
       }
-      // Round-trip the signed parameter set, not the raw search: the
-      // display-only parameters have served their purpose and a stale
-      // error banner after signing in would be noise.
       const returnTo = encodeURIComponent(`${url.pathname}?${oauthQuery}`);
       return c.redirect(`/auth/sign-in?return_to=${returnTo}`);
     }
@@ -308,12 +285,8 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // `isWithheldFromAllowlist` — the second through
     // `publishableBundleScopes`.
     // Deduplicated, order preserved. A client may name the same literal
-    // twice and nothing upstream stops it, which produced two identical
-    // toggles carrying one checkbox value: unticking the row in front of you
-    // reliably did nothing, because the decision handler takes the union of
-    // what was submitted. The device screen has always deduplicated, so one
-    // request rendered coherently on one surface and incoherently on the
-    // other.
+    // twice and nothing upstream stops it, which produced two controls for
+    // one literal, of which only the first could be changed to any effect.
     //
     // Done here rather than only at the render because the duplicate did not
     // stop at the screen. It survived into `formScopes`, through
@@ -544,12 +517,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     );
     const bundles = resolveConsentBundles();
 
-    // Optional error banner (e.g. when redirected back from a zero-scopes
-    // accept). Renderer ignores undefined.
-    const errorMessage = consentError
-      ? translateConsentError(consentError)
-      : undefined;
-
     // Before the page is shown, so the reaper keeps the client while the
     // owner decides, however old its registration is.
     await deps.storage.oauthProvider?.markClientOffered(clientId);
@@ -565,7 +532,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       descriptions,
       wildcardExpansions,
       priorScopes,
-      errorMessage,
+      signedInAs: session.user.email,
       bundles,
     });
 
@@ -677,44 +644,27 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text(`Unknown client: ${clientId}`, 404);
     }
 
-    // Form-supplied scopes are the user's per-row checkbox state.
-    // Validate they're a subset of the signed scopes (the consent UI
-    // can only narrow, not widen). Anything outside the signed set is
-    // a hostile or buggy form — drop and continue with the signed set.
+    // What the person chose is the request narrowed: every value must be a
+    // literal the signed request named. A submission naming anything else is
+    // a form edited to ask for more than the screen showed, and nothing from
+    // it is granted. A deny reads no choice at all.
     //
-    // Deduplicated, and this is a second source rather than the same one
-    // twice. The render now emits one row per literal, so an honest browser
-    // cannot submit a duplicate — but this is a form, and `getAll` returns
-    // whatever was posted. A hand-crafted POST naming one literal twice
-    // passes the membership test on both copies, because `signedScopes` is a
-    // `Set`, and writes the duplicate into the stored grant no matter what
-    // the screen rendered.
-    const formScopes = [
-      ...new Set(
-        form
-          .getAll("scopes")
-          .filter((v): v is string => typeof v === "string")
-          .filter((s) => signedScopes.has(s)),
-      ),
-    ];
-
-    // Zero-scopes accept = deny. If the user submits `accept=true` with
-    // no checkboxes ticked, the plugin would default to the full originally-
-    // requested scope set AND the projection would skip — leaving /security
-    // showing no grant while tokens are valid. Treat as deny + redirect
-    // back with an error banner.
-    //
-    // The banner rides a Marfa-owned parameter that the consent page lifts
-    // back off before handing the query on. Appending anything else here
-    // would leave the user on a page whose signed query no longer
-    // verifies, so every retry after a mis-click would die at the
-    // signature check — the one failure mode this recovery exists to
-    // avoid.
-    if (accept && formScopes.length === 0) {
-      const bounce = new URLSearchParams(oauthQuery);
-      bounce.set(CONSENT_ERROR_PARAM, "no_scopes_selected");
-      return c.redirect(`/auth/authorize?${bounce.toString()}`, 302);
-    }
+    // Nothing chosen is a denial, answered exactly as Deny is. The
+    // mechanisms the screen carries without a control (`openid`,
+    // `offline_access`) are not a choice: approving them alone grants no
+    // access, and the plugin would otherwise issue a code for them.
+    const selection = accept
+      ? resolveSelection(
+          [...signedScopes],
+          form
+            .getAll("scopes")
+            .filter((v): v is string => typeof v === "string"),
+        )
+      : null;
+    if (selection && !selection.ok)
+      return c.text("The decision names a scope the request did not", 400);
+    const approving = selection?.ok === true && selection.chosen;
+    const formScopes = approving ? selection.scopes : [];
 
     requireDirectAuthority(c);
     const scopeStr = formScopes.join(" ");
@@ -729,40 +679,60 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return runAuditedTransaction(
         deps.storage,
         async () => {
-          if (accept) {
-            const prior =
-              (await deps.storage.oauthProvider?.getPriorConsent(
+          const prior = approving
+            ? ((await deps.storage.oauthProvider?.getPriorConsent(
                 clientId,
                 session.user.id,
-              )) ?? [];
-            if (needsRecentSignIn(formScopes, prior))
-              requireRecentOwnerAuthentication(c);
-          }
+              )) ?? [])
+            : [];
+          if (approving && needsRecentSignIn(formScopes, prior))
+            requireRecentOwnerAuthentication(c);
           const proxyResp = await proxyConsentDecision(
             auth,
             c.req.url,
             c.req.raw.headers,
             c.var.clientIp ?? null,
             {
-              accept,
-              scope: accept && scopeStr ? scopeStr : undefined,
+              accept: approving,
+              scope: approving ? scopeStr : undefined,
               oauthQuery,
             },
           );
-          if (
-            accept &&
-            classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code"
-          ) {
-            audit = await projectGrantOnConsent(deps.storage, {
-              authUserId: session.user.id,
-              clientId,
-              scopes: formScopes,
-              clientIp: c.var.clientIp ?? null,
-              by: browserWriter(
-                session.session.id,
-                session.session.userAgent ?? null,
-              ),
-            });
+          if (approving) {
+            // The plugin writes the consent row as exactly what was
+            // approved. Approving never lowers what the app already holds,
+            // so the row, and the projection, keep the standing grant and
+            // add this approval to it. The token this code makes carries
+            // only what was approved.
+            const standing = [...new Set([...prior, ...formScopes])];
+            const issued =
+              classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code";
+            if (standing.length > formScopes.length) {
+              const restored =
+                await deps.storage.oauthProvider?.setConsentScopes(
+                  clientId,
+                  session.user.id,
+                  standing,
+                  formScopes,
+                );
+              if (!restored && issued)
+                throw new Error(
+                  "Standing consent changed during its locked operation",
+                );
+            }
+            if (issued) {
+              audit = await projectGrantOnConsent(deps.storage, {
+                authUserId: session.user.id,
+                clientId,
+                scopes: standing,
+                approved: formScopes,
+                clientIp: c.var.clientIp ?? null,
+                by: browserWriter(
+                  session.session.id,
+                  session.session.userAgent ?? null,
+                ),
+              });
+            }
           }
           return withNoStore(proxyResp);
         },
@@ -1083,7 +1053,6 @@ export async function appBehindReturnTo(
   }
   if (target.pathname !== "/auth/authorize") return null;
   const signed = new URLSearchParams(target.search);
-  for (const name of CONSENT_DISPLAY_PARAMS) signed.delete(name);
   const clientId = signed.get("client_id");
   if (!clientId) return null;
   if ((await verifySignedQuery(deps.auth, signed.toString())) !== "valid") {
@@ -1147,11 +1116,11 @@ function buildPromptNoneErrorRedirect(
  * narrowed it.
  *
  * The OAuth Provider plugin rewrites `auth_oauth_consent.scopes` to the
- * requested set on every accept. That is right for the interactive path
- * — the user is looking at the checkboxes — but on the silent path
- * nobody agreed to anything: a client that asks for one scope this time
- * would shrink a three-scope grant it was given, with no interaction and
- * no way for the user to see it happen. The next request for the full
+ * requested set on every accept. The decision handler puts the standing
+ * grant back too, since approving never lowers it. On the silent path
+ * nobody agreed to anything either: a client that asks for one scope this
+ * time would shrink a three-scope grant it was given, with no interaction
+ * and no way for the user to see it happen. The next request for the full
  * set would then re-prompt, and the projected `system.connection` row
  * (which the silent path leaves alone) would disagree with the consent
  * row in the meantime.
@@ -1725,16 +1694,4 @@ export function buildScopeDescriptions(
     if (description) out[scope.typePattern] = description;
   }
   return out;
-}
-
-/**
- * Map the `?error=...` query param (set when GET /authorize is reached
- * via a redirect from a failed decision attempt) to a user-facing
- * sentence. Unknown error codes return undefined → no banner shown.
- */
-function translateConsentError(code: string): string | undefined {
-  if (code === "no_scopes_selected") {
-    return "Approve needs at least one permission ticked. Tick what you'd like to grant, or click Deny to cancel.";
-  }
-  return undefined;
 }

@@ -57,22 +57,3 @@ export function confirmIcon(kind: "mail" | "check" | "alert"): string {
 export function unverifiedAppCallout(): string {
   return `<div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>`;
 }
-
-/**
- * The line naming the web addresses an approval lets reach the server, from
- * `webOriginsOf`, or nothing for an app with none. One function for every
- * page that approves an app, so the owner confirms the same addresses
- * whichever page the flow put them on.
- */
-export function pageOriginLine(origins: readonly string[]): string {
-  if (origins.length === 0) return "";
-  const named = origins.map((origin) => `<b>${escapeHtml(origin)}</b>`);
-  const last = named.pop() ?? "";
-  const list =
-    named.length === 0
-      ? `the web page at ${last}`
-      : named.length === 1
-        ? `web pages at ${named.join("")} and ${last}`
-        : `web pages at ${named.join(", ")}, and ${last}`;
-  return `<p class="sub">Allowing access also lets ${list} reach your server from a browser.</p>`;
-}

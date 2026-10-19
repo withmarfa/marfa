@@ -15,6 +15,7 @@ import {
   renderConsentScreen,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
+  renderDevicePage,
 } from "./test-render.js";
 import {
   contentSecurityPolicy,
@@ -274,16 +275,14 @@ describe("the pages with scopes on them", () => {
     }
   });
 
-  it("gives its inline script the nonce, and shows the scan can find one", () => {
-    // The witness: the re-consent page has an inline script, so a scan of
-    // inline scripts looks at something.
-    expect(consent).toContain("lsec--later");
-    const inline = startTagAttributes(consent, "script").filter(
-      (attributes) => !attributes.includes("src="),
-    );
-    expect(inline.length).toBeGreaterThan(0);
-    for (const attributes of inline) {
-      expect(attributes).toContain('nonce="test-nonce"');
+  it("carries no script of its own, and the scan can tell a page that does", () => {
+    // The witness: the page where a code is typed has an inline script, so a
+    // scan for scripts looks at something.
+    expect(
+      startTagAttributes(renderDevicePage({ prefilled: "" }), "script").length,
+    ).toBeGreaterThan(0);
+    for (const [name, html] of Object.entries(pages)) {
+      expect(startTagAttributes(html, "script"), name).toEqual([]);
     }
   });
 });

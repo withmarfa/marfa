@@ -471,11 +471,11 @@ export interface OtelSettings {
 
 /**
  * The default consent-screen permission bundles, derived from the type
- * registry at module load. Each scope renders as one plain-language
- * per-type toggle; the issued token carries exactly the scopes the user
- * keeps ticked, enforced through the usual permission maps. Every bundle
- * here declares `default_on: true`, so all of them arrive pre-ticked, and
- * that is a property of these five rather than of the renderer.
+ * registry at module load. A type renders as one plain-language control
+ * with a level for each of its scopes; the issued token carries exactly the
+ * scopes the user chooses, enforced through the usual permission maps. Every
+ * bundle here declares `default_on: true`, so all of them start on, and that
+ * is a property of these five rather than of the renderer.
  *
  * The derivation, its family rules, and the rationale each rule carries
  * live in `auth/default-bundles.ts`. A deployment that registered custom

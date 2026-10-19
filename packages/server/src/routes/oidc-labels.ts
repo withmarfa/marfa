@@ -59,28 +59,6 @@ export const OIDC_LABELS: Record<OidcScope, string> = {
 };
 
 /**
- * Inline-list forms, for the generated sentence on the consent screen.
- *
- * Lower case and comma-free. `summarize` joins these into one sentence and
- * capitalizes whatever ends up first, so a capital here lands mid-clause and
- * a comma turns one item into two.
- */
-export const OIDC_SHORT: Record<OidcScope, string> = {
-  openid: "confirm your identity",
-  // "your name", not "your name and picture", and the difference is the
-  // register rather than the facts. These are joined into one sentence with
-  // "and" between the last two, so an item carrying its own conjunction
-  // produces "your name and picture and your email address" — the same
-  // defect the comma rule below exists to prevent, one word along. The
-  // picture is on the toggle label and in the description, which is where
-  // somebody deciding actually reads it; this is a summary and it
-  // understates rather than misleads.
-  profile: "your name",
-  email: "your email address",
-  offline_access: "stay signed in",
-};
-
-/**
  * Whether a literal is one this build has copy for.
  *
  * Derived from the copy itself rather than from a separate list, so the two
@@ -96,10 +74,4 @@ function isOidcLiteral(literal: string): literal is OidcScope {
  *  cannot be asserted into a lookup that has no entry for it. */
 export function oidcLabel(literal: string): string | undefined {
   return isOidcLiteral(literal) ? OIDC_LABELS[literal] : undefined;
-}
-
-/** The inline-list form for a literal, or undefined when it names no OIDC
- *  scope. */
-export function oidcShort(literal: string): string | undefined {
-  return isOidcLiteral(literal) ? OIDC_SHORT[literal] : undefined;
 }
