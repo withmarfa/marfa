@@ -556,6 +556,16 @@ describe("keyboard", () => {
             .evaluate((d) => (d as BrowserElement).open),
         ).toBe(true);
         expect(await field.inputValue()).toBe("a note worth keeping");
+        // The reverse drag, from the backdrop into the card, keeps it open too.
+        await page.mouse.move(4, 4);
+        await page.mouse.down();
+        await page.mouse.move(box.x + 20, box.y + 10);
+        await page.mouse.up();
+        expect(
+          await page
+            .locator("dialog#confirm")
+            .evaluate((d) => (d as BrowserElement).open),
+        ).toBe(true);
         // Witness: a press and release that both land on the backdrop still close it.
         await page.mouse.click(4, 4);
         expect(

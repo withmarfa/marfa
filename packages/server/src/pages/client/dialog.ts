@@ -17,15 +17,24 @@ export function openDialog(
 }
 
 export function initDialogs(): void {
-  // Where the press began. A drag that starts in a field (to select text) and
-  // ends on the backdrop produces a click on the dialog element, which must
-  // not count as a click on the backdrop.
+  // Where the press began and ended. A drag between a field and the backdrop,
+  // either way, produces a click on the dialog element, which must not count
+  // as a click on the backdrop.
   let pressedOnBackdrop = false;
+  let releasedOnBackdrop = false;
+  const onBackdrop = (event: Event): boolean =>
+    event.target instanceof HTMLDialogElement && event.target.open;
   document.addEventListener(
     "pointerdown",
     (event) => {
-      pressedOnBackdrop =
-        event.target instanceof HTMLDialogElement && event.target.open;
+      pressedOnBackdrop = onBackdrop(event);
+    },
+    true,
+  );
+  document.addEventListener(
+    "pointerup",
+    (event) => {
+      releasedOnBackdrop = onBackdrop(event);
     },
     true,
   );
@@ -56,7 +65,12 @@ export function initDialogs(): void {
 
     // A click on the backdrop lands on the dialog element itself, because the
     // card inside it fills the box.
-    if (target instanceof HTMLDialogElement && target.open && pressedOnBackdrop)
+    if (
+      target instanceof HTMLDialogElement &&
+      target.open &&
+      pressedOnBackdrop &&
+      releasedOnBackdrop
+    )
       target.close();
   });
 
