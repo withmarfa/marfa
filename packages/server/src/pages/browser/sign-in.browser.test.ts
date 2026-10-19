@@ -500,7 +500,7 @@ describe("a passkey", () => {
 
 describe("Forgot password", () => {
   inBrowser(
-    "is reached from sign-in, gives the commands for a Mac and for Railway, and goes back",
+    "is reached from sign-in, gives the commands for a Mac, Docker and Railway, and goes back",
     async () => {
       const { page, context, problems } = await open();
       try {
@@ -514,6 +514,7 @@ describe("Forgot password", () => {
           .getByRole("heading", { name: "Reset your password" })
           .waitFor();
         await page.getByText("If Marfa runs on your Mac").waitFor();
+        await page.getByText("If Marfa runs in Docker").waitFor();
         await page.getByText("If Marfa runs on Railway").waitFor();
 
         // The Copy buttons need the script, which shows them.
@@ -539,6 +540,11 @@ describe("Forgot password", () => {
     try {
       await page.goto(`${main.origin}/auth/forgot-password`);
       await page.getByText("marfa --socket PATH owner recover").waitFor();
+      await page
+        .getByText(
+          "docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover",
+        )
+        .waitFor();
       await page
         .getByText('marfa --socket "$MARFA_CONTROL_SOCKET" owner recover')
         .waitFor();
