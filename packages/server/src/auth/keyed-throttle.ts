@@ -37,6 +37,15 @@ export interface KeyedThrottleOptions {
   windowMs: number;
 }
 
+/**
+ * Whole seconds until a window that resets at `resetAt` (epoch-ms) allows
+ * another attempt, never less than one: this is what `Retry-After` carries and
+ * what the pages turn into minutes.
+ */
+export function secondsUntilReset(resetAt: number): number {
+  return Math.max(1, Math.ceil((resetAt - clock.nowMs()) / 1000));
+}
+
 export class KeyedThrottle {
   private readonly family: string;
   private readonly limit: number;

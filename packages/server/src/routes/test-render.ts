@@ -14,6 +14,7 @@ import {
   renderDeviceDecisionPage as deviceDecision,
   renderDevicePage as device,
 } from "./device-pages.js";
+import { renderForgotPasswordPage as forgot } from "./forgot-password-page.js";
 import { renderHttpErrorPage as httpError } from "./http-error-page.js";
 import { renderSignInPage as signIn } from "./sign-in-page.js";
 import { renderSignedInPage as signedIn } from "./signed-in-page.js";
@@ -58,6 +59,8 @@ export const renderAuthErrorPage = (errorCode: string | null): string =>
 
 export const renderHttpErrorPage = (status: number): string =>
   httpError(status, TEST_NONCE);
+
+export const renderForgotPasswordPage = (): string => forgot(TEST_NONCE);
 
 export const renderSignedOutPage = (): string => signedOut(TEST_NONCE);
 

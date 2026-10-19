@@ -1,4 +1,5 @@
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
+import { pageField, visibleText } from "../../utils/page-html.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ErrorResponse } from "../../client/types.js";
 import {
@@ -134,9 +135,10 @@ describe("the sign-in surface", () => {
       const page = await fetch(
         `${server!.apiUrl}/auth/sign-in?return_to=${encodeURIComponent(offInstance)}`,
       );
-      expect(await page.text(), offInstance).toContain(
-        'name="return_to" value="/"',
-      );
+      expect(
+        pageField(await page.text(), "return_to")?.value,
+        offInstance,
+      ).toBe("/");
       const signedIn = await postForm(
         "/auth/sign-in",
         { ...OWNER, return_to: offInstance },
@@ -174,8 +176,18 @@ describe("the sign-in surface", () => {
       { origin, [CLIENT_HEADER]: guesser },
     );
     expect(form.status).toBe(302);
-    expect(form.headers.get("location")).toContain("error=too_many_attempts");
+    const refusal = new URL(form.headers.get("location") ?? "", origin);
+    expect(refusal.searchParams.get("error")).toBe("too_many_attempts");
     expect(form.headers.get("set-cookie")).toBeNull();
+    // The wait is the one the address limit's own refusal carries, and no
+    // longer than its fifteen minutes.
+    const wait = Number(refusal.searchParams.get("retry_after"));
+    expect(Number.isInteger(wait)).toBe(true);
+    expect(wait).toBeGreaterThan(0);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
+    expect(
+      Math.abs(wait - Number(throttled.headers.get("retry-after"))),
+    ).toBeLessThanOrEqual(2);
 
     // The owner, somewhere else, signs in.
     expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
@@ -197,9 +209,11 @@ describe("the sign-in surface", () => {
         "error=invalid_code",
       );
     }
-    expect(await enter("ZZ999999", sweeper)).toContain(
-      "error=too_many_attempts",
-    );
+    const sweepRefusal = new URL(await enter("ZZ999999", sweeper), origin);
+    expect(sweepRefusal.searchParams.get("error")).toBe("too_many_attempts");
+    const deviceWait = Number(sweepRefusal.searchParams.get("retry_after"));
+    expect(deviceWait).toBeGreaterThan(0);
+    expect(deviceWait).toBeLessThanOrEqual(15 * 60);
     expect(await enter("ZZ999998", "198.51.100.30")).toContain(
       "error=invalid_code",
     );
@@ -334,26 +348,104 @@ describe("the pages a person reads at sign-in", () => {
     expect(location).toContain("error=invalid_credentials");
     expect(location).not.toContain("not-the-password");
     const page = await (await fetch(`${server!.apiUrl}${location}`)).text();
-    expect(page).toContain(`value="${OWNER.email}"`);
+    expect(pageField(page, "email")?.value).toBe(OWNER.email);
+    expect(pageField(page, "password")?.value).toBeUndefined();
     expect(page).not.toContain("not-the-password");
+  });
+
+  it("tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in", async () => {
+    // The wait the page names is the one the real lock set: lock an address,
+    // follow the form's redirect, and read the page it lands on.
+    const guesser = "203.0.113.60";
+    for (let i = 0; i < 10; i++)
+      expect((await signIn("not the password", guesser)).status).toBe(401);
+    const refused = await postForm(
+      "/auth/sign-in",
+      { ...OWNER, return_to: "/" },
+      { origin, [CLIENT_HEADER]: guesser },
+    );
+    const location = refused.headers.get("location") ?? "";
+    const seconds = Number(
+      new URL(location, origin).searchParams.get("retry_after"),
+    );
+    const minutes = Math.ceil(seconds / 60);
+    const real = visibleText(
+      await (await fetch(`${server!.apiUrl}${location}`)).text(),
+    );
+    expect(real).toContain(
+      `Try again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`,
+    );
+    expect(real).toContain("passkey");
+
+    // Whole minutes, rounded up, for waits either side of a minute.
+    for (const [retryAfter, said] of [
+      ["1", "1 minute"],
+      ["60", "1 minute"],
+      ["61", "2 minutes"],
+      ["900", "15 minutes"],
+      ["3599", "60 minutes"],
+    ] as const) {
+      const text = visibleText(
+        await (
+          await fetch(
+            `${server!.apiUrl}/auth/sign-in?error=too_many_attempts&retry_after=${retryAfter}`,
+          )
+        ).text(),
+      );
+      expect(text, retryAfter).toContain(`Try again in ${said}`);
+    }
+
+    // Witness: the page names a number of minutes only when it was given a
+    // wait; nothing in the address and it promises none.
+    const none = visibleText(
+      await (
+        await fetch(`${server!.apiUrl}/auth/sign-in?error=too_many_attempts`)
+      ).text(),
+    );
+    expect(none).toContain("Too many attempts");
+    expect(none).not.toMatch(/\d+ minutes?/);
+  });
+
+  it("tells a person who has tried too many device codes how long to wait, in whole minutes rounded up", async () => {
+    for (const [retryAfter, said] of [
+      ["1", "1 minute"],
+      ["61", "2 minutes"],
+      ["900", "15 minutes"],
+    ] as const) {
+      const text = visibleText(
+        await (
+          await fetch(
+            `${server!.apiUrl}/auth/device?error=too_many_attempts&retry_after=${retryAfter}`,
+          )
+        ).text(),
+      );
+      expect(text, retryAfter).toContain(`Try again in ${said}`);
+    }
+    const none = visibleText(
+      await (
+        await fetch(`${server!.apiUrl}/auth/device?error=too_many_attempts`)
+      ).text(),
+    );
+    expect(none).toContain("Too many codes");
+    expect(none).not.toMatch(/\d+ minutes?/);
   });
 
   it("names the app an authorization sent the person for, and no app for a link edited after signing", async () => {
     const signInUrl = await startAuthorization("Conformance Notes");
     expect(signInUrl.pathname).toBe("/auth/sign-in");
-    const named = await (await fetch(signInUrl)).text();
+    const named = visibleText(await (await fetch(signInUrl)).text());
     expect(named).toContain("Conformance Notes");
     // An app that registered itself is flagged as the consent page flags it.
     expect(named).toContain("hasn't verified this app");
 
     const edited = new URL(signInUrl);
     edited.searchParams.set("scope", "core.note:write");
-    expect(await (await fetch(edited)).text()).not.toContain(
+    expect(visibleText(await (await fetch(edited)).text())).not.toContain(
       "Conformance Notes",
     );
     const unsigned = new URL(signInUrl);
     unsigned.searchParams.delete("sig");
-    expect(await (await fetch(unsigned)).text()).not.toContain(
+    expect(visibleText(await (await fetch(unsigned)).text())).not.toContain(
       "Conformance Notes",
     );
   });
@@ -363,17 +455,20 @@ describe("the pages a person reads at sign-in", () => {
     const page = await (
       await fetch(`${server!.apiUrl}/auth/sign-in`, { headers: { cookie } })
     ).text();
-    expect(page).toContain("You&#39;re signed in");
-    expect(page).toContain(OWNER.email);
-    expect(page).not.toContain('name="password"');
+    expect(visibleText(page)).toContain("You're signed in");
+    expect(visibleText(page)).toContain(OWNER.email);
+    expect(pageField(page, "password")).toBeUndefined();
 
     const wanted = await startAuthorization("Conformance Again");
     const again = await (await fetch(wanted, { headers: { cookie } })).text();
-    expect(again).toContain('name="password"');
+    expect(pageField(again, "password")).toBeDefined();
     // Witness for both: nobody signed in is shown the form.
     expect(
-      await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text(),
-    ).toContain('name="password"');
+      pageField(
+        await (await fetch(`${server!.apiUrl}/auth/sign-in`)).text(),
+        "password",
+      ),
+    ).toBeDefined();
   });
 
   it("tells a link edited after it was signed that it is invalid, not that it has expired", async () => {

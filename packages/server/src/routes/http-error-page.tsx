@@ -20,6 +20,7 @@
  * class is what makes it safe to render at all, which is the same reasoning
  * the authorize-expired page carries.
  */
+import { waitInMinutes } from "../pages/lockout.js";
 import { renderDocument } from "../pages/render.js";
 import { Button } from "../pages/parts/controls.js";
 import { MomentCard } from "../pages/parts/layout.js";
@@ -50,7 +51,7 @@ interface ProblemCopy {
  * which of forty codes fired; they need to know whether the thing they asked
  * for exists, whether they are allowed it, and whether trying again helps.
  */
-function copyFor(status: number): ProblemCopy {
+function copyFor(status: number, retryAfter: number | undefined): ProblemCopy {
   if (status === 404) {
     return {
       title: "That page isn't here",
@@ -66,7 +67,10 @@ function copyFor(status: number): ProblemCopy {
   if (status === 429) {
     return {
       title: "Too many attempts",
-      lede: "Wait a few minutes, then try again.",
+      lede:
+        retryAfter === undefined
+          ? "Wait a few minutes, then try again."
+          : `Try again in ${waitInMinutes(retryAfter)}.`,
     };
   }
   if (status >= 500) {
@@ -87,6 +91,11 @@ export interface ErrorPageOptions {
    * make again by following the same address, which is a GET.
    */
   retry?: boolean;
+  /**
+   * The whole seconds the refusal's `Retry-After` named, for a 429. The page
+   * says that wait in minutes, rounded up, instead of guessing at one.
+   */
+  retryAfter?: number;
 }
 
 export function renderHttpErrorPage(
@@ -94,7 +103,7 @@ export function renderHttpErrorPage(
   nonce: string,
   options: ErrorPageOptions = {},
 ): string {
-  const copy = copyFor(status);
+  const copy = copyFor(status, options.retryAfter);
   const home = (
     <Button kind="primary" wide={!(status >= 500 && options.retry)} href="/">
       Go to Home

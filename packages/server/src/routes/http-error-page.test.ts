@@ -15,6 +15,12 @@ import { pageAssetUrl } from "../pages/assets.js";
  * silently changing what an API returns.
  */
 import { describe, it, expect, afterEach } from "vitest";
+import { Hono } from "hono";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import type { AppEnv } from "../middleware/auth.js";
+import { createErrorHandler } from "../middleware/error-handler.js";
+import { visibleText } from "../pages/reading.js";
+import { pageSecurityPolicy } from "./content-security-policy.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -138,6 +144,21 @@ describe("the rendered page", () => {
     ]);
   });
 
+  it("says how long to wait on a 429 when it is told, in whole minutes rounded up", () => {
+    const said = (seconds: number | undefined) =>
+      visibleText(renderWithNonce(429, "test-nonce", { retryAfter: seconds }));
+    expect(said(1)).toContain("Try again in 1 minute.");
+    expect(said(60)).toContain("Try again in 1 minute.");
+    expect(said(61)).toContain("Try again in 2 minutes.");
+    expect(said(900)).toContain("Try again in 15 minutes.");
+    // Told nothing, it promises no number.
+    expect(said(undefined)).toContain("Wait a few minutes, then try again.");
+    // Only a 429 has a wait to say.
+    expect(
+      visibleText(renderWithNonce(500, "test-nonce", { retryAfter: 600 })),
+    ).not.toContain("10 minutes");
+  });
+
   it("refuses to render without the response's nonce", () => {
     expect(() => renderWithNonce(404, "")).toThrow(/nonce/);
   });
@@ -213,5 +234,26 @@ describe("content negotiation end to end", () => {
       headers: { accept: "text/html" },
     });
     expect(res.headers.get("x-request-id")).toBeTruthy();
+  });
+
+  it("tells a browser a limit refused how long to wait, and keeps Retry-After for everyone", async () => {
+    const app = new Hono<AppEnv>();
+    app.use("*", pageSecurityPolicy);
+    app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+    app.get("/limited", (c) => {
+      c.header("Retry-After", "125");
+      throw new MarfaError(ErrorCode.RATE_LIMITED, "Too many requests");
+    });
+    const page = await app.request("/limited", {
+      headers: { accept: "text/html" },
+    });
+    expect(page.status).toBe(429);
+    expect(page.headers.get("retry-after")).toBe("125");
+    expect(visibleText(await page.text())).toContain("Try again in 3 minutes.");
+    // Witness: an API client still gets the JSON and the header.
+    const program = await app.request("/limited");
+    expect(program.status).toBe(429);
+    expect(program.headers.get("content-type")).toContain("application/json");
+    expect(program.headers.get("retry-after")).toBe("125");
   });
 });

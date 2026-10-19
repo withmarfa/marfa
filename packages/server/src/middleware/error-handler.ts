@@ -10,6 +10,7 @@ import { loggablePath } from "../inbound/address.js";
 import { diskFull } from "../storage/disk-space.js";
 import { PasswordAttemptsSpent } from "../auth/sign-in-throttle.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
+import { parseWaitSeconds } from "../pages/lockout.js";
 import * as clock from "../clock.js";
 
 /**
@@ -43,6 +44,7 @@ function jsonResponse(
     headers.set("Content-Type", "text/html; charset=utf-8");
     const page = renderHttpErrorPage(status, c.var.cspNonce, {
       retry: c.req.method === "GET",
+      retryAfter: parseWaitSeconds(headers.get("retry-after")),
     });
     return new Response(page, {
       status,

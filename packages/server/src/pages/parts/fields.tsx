@@ -23,6 +23,8 @@ export interface TextFieldProps {
   validateMessage?: string;
   /** Sits on the label's line, at the right: a "Forgot?" link. */
   labelEnd?: Child;
+  /** Takes focus when the page loads, for a field the server marked invalid. */
+  autofocus?: boolean;
 }
 
 interface FieldFrameProps {
@@ -86,6 +88,7 @@ export function TextField(props: TextFieldProps) {
         required={props.required}
         readonly={props.readonly}
         maxlength={props.maxlength}
+        autofocus={props.autofocus}
         aria-invalid={props.error !== undefined ? "true" : undefined}
         aria-describedby={describedBy(props)}
         data-validate-msg={props.validateMessage}
@@ -111,6 +114,7 @@ export function PasswordField(props: PasswordFieldProps) {
           type="password"
           autocomplete={props.autocomplete}
           required={props.required}
+          autofocus={props.autofocus}
           aria-invalid={props.error !== undefined ? "true" : undefined}
           aria-describedby={describedBy(props)}
           data-validate-msg={props.validateMessage}

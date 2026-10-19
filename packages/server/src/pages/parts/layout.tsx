@@ -41,6 +41,15 @@ export function MomentCard(props: MomentCardProps) {
   );
 }
 
+/** A line with a word in the middle, between two ways of doing the same thing. */
+export function Divider(props: { children?: Child }) {
+  return (
+    <div class="or" aria-hidden="true">
+      {props.children}
+    </div>
+  );
+}
+
 /** The console's one quiet column, 720 pixels wide. */
 export function ConsoleColumn(props: { children?: Child }) {
   return (

@@ -28,8 +28,7 @@ import {
   CLIENT_ADDRESS_HEADER,
   addressBucket,
 } from "../middleware/client-ip.js";
-import { KeyedThrottle } from "./keyed-throttle.js";
-import * as clock from "../clock.js";
+import { KeyedThrottle, secondsUntilReset } from "./keyed-throttle.js";
 
 /** Attempts one address may make at one account per window. */
 export const SIGN_IN_ADDRESS_LIMIT = 10;
@@ -71,13 +70,7 @@ export function passwordAttempts(storage: Storage) {
     const local = await perAddress.attempt(`${account}|${address}`);
     const refused = local.allowed ? await perAccount.attempt(account) : local;
     if (refused.allowed) return { allowed: true };
-    return {
-      allowed: false,
-      retryAfter: Math.max(
-        1,
-        Math.ceil((refused.resetAt - clock.nowMs()) / 1000),
-      ),
-    };
+    return { allowed: false, retryAfter: secondsUntilReset(refused.resetAt) };
   };
 }
 

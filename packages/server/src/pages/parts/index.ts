@@ -11,6 +11,7 @@ export type {
   SelectProps,
   SwitchProps,
 } from "./controls.js";
+export { CommandBlock, Disclosure } from "./command.js";
 export { Dialog } from "./dialog.js";
 export type { DialogProps } from "./dialog.js";
 export { EmptyState, Notice } from "./feedback.js";
@@ -22,7 +23,13 @@ export type {
   SearchFieldProps,
   TextFieldProps,
 } from "./fields.js";
-export { ConsoleColumn, MomentCard, PageHeader, Section } from "./layout.js";
+export {
+  ConsoleColumn,
+  Divider,
+  MomentCard,
+  PageHeader,
+  Section,
+} from "./layout.js";
 export type {
   MomentCardProps,
   PageHeaderProps,

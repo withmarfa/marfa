@@ -160,6 +160,8 @@ const OPEN_DOORS: Record<string, string> = {
     "RFC 9728 resource metadata, which a bearer challenge points at",
   "GET /auth/sign-in": "the sign-in page",
   "POST /auth/sign-in": "its form post, which is how a credential is got",
+  "GET /auth/forgot-password":
+    "the page that says how to recover a forgotten password, which needs no credential",
   "GET /auth/authorize": "the consent screen, gated on a session cookie",
   "POST /auth/authorize/decision": "the consent decision, gated the same way",
   "GET /auth/device": "the device-code entry page",
@@ -172,7 +174,6 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/static/pages.css": "the stylesheet those pages load",
   "GET /auth/static/pages.js": "a script those pages load",
   "GET /auth/static/passkeys.js": "a script those pages load",
-  "GET /auth/static/password-toggle.js": "a script those pages load",
   "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/*":
     "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself; every other path answers 404",

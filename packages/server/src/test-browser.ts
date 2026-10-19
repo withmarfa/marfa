@@ -104,7 +104,9 @@ export function listen(
   also?: (request: Request) => Response | undefined,
 ): { close: () => Promise<void> } {
   const server = serve({
-    fetch: (request) => also?.(request) ?? app.fetch(request),
+    // The adapter's environment carries the connection, which is where the
+    // server reads the caller's address from, as it does in production.
+    fetch: (request, env) => also?.(request) ?? app.fetch(request, env),
     port,
     hostname: "127.0.0.1",
   });

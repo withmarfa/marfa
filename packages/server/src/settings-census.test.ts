@@ -35,6 +35,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "finds the browser a test runs in, from the machine's own environment, a test's own switch",
   "pages/browser/pages.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
+  "pages/browser/sign-in.browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/auth-pages-browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/auth-asset-cache-browser.test.ts":

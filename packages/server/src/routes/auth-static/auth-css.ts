@@ -312,20 +312,15 @@ select:focus {
   box-shadow: 0 0 0 3px var(--ring);
 }
 /* A field carrying a validation error: red border + matching focus ring on its
-   input. Targets the input directly (and through the password-toggle wrapper,
-   which inserts a .pw-wrap between .field and the input). */
+   input. */
 .field--error > input[type="email"],
 .field--error > input[type="password"],
-.field--error > input[type="text"],
-.field--error .pw-wrap > input[type="password"],
-.field--error .pw-wrap > input[type="text"] {
+.field--error > input[type="text"] {
   border-color: var(--error-border);
 }
 .field--error > input[type="email"]:focus,
 .field--error > input[type="password"]:focus,
-.field--error > input[type="text"]:focus,
-.field--error .pw-wrap > input[type="password"]:focus,
-.field--error .pw-wrap > input[type="text"]:focus {
+.field--error > input[type="text"]:focus {
   border-color: var(--error-fg);
   box-shadow: 0 0 0 3px var(--error-bg);
 }
@@ -386,60 +381,6 @@ select:focus {
 }
 .field--error .otp .otp__cell {
   border-color: var(--error-border);
-}
-
-/* Password show/hide toggle. The button is injected by
-   /auth/static/password-toggle.js into a .pw-wrap around each password
-   input, so a scripting-disabled client just gets a normal field (no dead
-   control). Dark mode falls out of the tokens. */
-.pw-wrap {
-  position: relative;
-  display: block;
-}
-.pw-wrap input[type="password"],
-.pw-wrap input[type="text"] {
-  /* Room for the toggle so typed text never runs under the icon. */
-  padding-right: 46px;
-}
-.pw-toggle {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  right: 6px;
-  margin: auto 0;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--fg-faint);
-  border-radius: var(--r-sm);
-  cursor: pointer;
-  transition:
-    color 0.12s var(--ease),
-    background 0.12s var(--ease);
-}
-/* The toggle script hides the eye until the field has a value (nothing to
-   reveal on an empty field). The author display:inline-flex above outranks
-   the UA hidden-attribute rule, so re-assert none here for it to take. */
-.pw-toggle[hidden] {
-  display: none;
-}
-.pw-toggle:hover {
-  color: var(--fg);
-}
-.pw-toggle:focus-visible {
-  outline: none;
-  color: var(--fg);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.pw-toggle svg {
-  display: block;
-  width: 20px;
-  height: 20px;
 }
 
 /* ---------------------------------------------------------------- */

@@ -121,6 +121,25 @@ describe("password sign-in", () => {
     const elsewhere = await signIn(account, OWNER.password, "198.51.100.1");
     expect(elsewhere.status).toBe(429);
     expect(Number(elsewhere.headers.get("retry-after"))).toBeGreaterThan(0);
+
+    // The form names the account window's wait, which runs for an hour and
+    // not the fifteen minutes an address is held for.
+    const form = await fetch(`${account.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: await issuerOrigin(account),
+        [CLIENT_HEADER]: "198.51.100.2",
+      },
+      body: new URLSearchParams({ ...OWNER, return_to: "/" }),
+      redirect: "manual",
+    });
+    expect(form.status).toBe(302);
+    const refusal = new URL(form.headers.get("location") ?? "", account.apiUrl);
+    expect(refusal.searchParams.get("error")).toBe("too_many_attempts");
+    const wait = Number(refusal.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(15 * 60);
+    expect(wait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
 });
 

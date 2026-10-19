@@ -22,6 +22,7 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
+import { waitInMinutes } from "../pages/lockout.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { labelFor, profileWriteDescription } from "./consent.js";
 import {
@@ -37,6 +38,9 @@ interface DevicePageParams {
   prefilled: string;
   /** Error code from a previous attempt. */
   error?: string;
+  /** The whole seconds until the limit that refused the attempt allows
+   *  another, from the `retry_after` the server redirected with. */
+  retryAfter?: number;
   /** The nonce the response's content security policy names, which the
    *  inline script carries. */
   nonce: string;
@@ -78,11 +82,16 @@ const ERROR_MESSAGES: Record<string, string> = {
     "That code has already been used. Restart the sign-in on your other device.",
   expired_code:
     "That code has expired. Restart the sign-in on your other device.",
-  too_many_attempts:
-    "Too many codes have been tried. Wait a few minutes and try again.",
   another_account:
     "That code was started under a different account. Sign in as that account, or restart the sign-in on your other device.",
 };
+
+/** What a code lookup refused by a limit says: the wait, when the server gave one. */
+function tooManyCodesMessage(retryAfter: number | undefined): string {
+  return retryAfter === undefined
+    ? "Too many codes have been tried. Try again later."
+    : `Too many codes have been tried. Try again in ${waitInMinutes(retryAfter)}.`;
+}
 
 /**
  * The literal a scope row submits, which is what the person grants by ticking
@@ -176,7 +185,9 @@ const OTP_SCRIPT = `
 /** Renders the verification form where the user types the user_code. */
 export function renderDevicePage(params: DevicePageParams): string {
   const errorMessage = params.error
-    ? (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
+    ? params.error === "too_many_attempts"
+      ? tooManyCodesMessage(params.retryAfter)
+      : (ERROR_MESSAGES[params.error] ?? "Something went wrong. Try again.")
     : null;
   // Single-field form, so the error renders under the code input.
   const hasError = errorMessage !== null;
