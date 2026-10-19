@@ -28,25 +28,35 @@ const PARAMS = {
 };
 
 describe("renderDeviceConsentScreen", () => {
-  it("uses the shared page system, with no inline style, no handlers and no script", () => {
+  it("uses the shared page system, with no inline style or handler and only the page script, which it does not need", () => {
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toContain(`href="${pageAssetUrl("pages.css")}"`);
     expect(html).not.toContain("<style");
     expect(html).not.toMatch(/\sstyle=|\son[a-z]+=/);
-    // It works in full without a script, so it loads none and does not say
-    // it needs one.
-    expect(html).not.toContain("<script");
+    const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain(`src="${pageAssetUrl("pages.js")}"`);
     expect(visibleText(html)).not.toContain("needs JavaScript");
   });
 
-  it("names the app and the code the device shows, as the device shows it", () => {
-    const text = visibleText(renderDeviceConsentScreen(PARAMS));
+  it("names the app and shows the code the device shows, in cells with its dash", () => {
+    const html = renderDeviceConsentScreen({
+      ...PARAMS,
+      signedInAs: "owner@example.test",
+    });
+    const text = visibleText(html);
     expect(text).toContain("marfa CLI wants access to Marfa");
-    expect(text).toContain("ABCD1234");
-    expect(text).toContain("matches the one on your device");
+    expect(text).toContain("Signed in as owner@example.test");
+    expect(text).toContain("Check this code matches your device");
+    // One picture, named by the code with its dash, two groups of four.
+    expect(html).toContain('role="img" aria-label="ABCD-1234"');
+    expect(html.match(/<span>[A-Z0-9]<\/span>/g)).toHaveLength(8);
+    expect(html).toMatch(/<span>D<\/span><i><\/i><span>1<\/span>/);
+    // The code is not also written out as one string.
+    expect(text).not.toContain("ABCD1234");
   });
 
-  it("posts the code and the decision to the device handler, with deny first", () => {
+  it("posts the code and the decision to the device handler, with cancel first", () => {
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toMatch(
       /<form[^>]*method="post"[^>]*action="\/auth\/device\/consent"/,
@@ -58,15 +68,19 @@ describe("renderDeviceConsentScreen", () => {
     ).toBe("ABCD1234");
     const decisions = controls.filter((c) => c.name === "decision");
     expect(decisions.map((c) => [c.value, c.label])).toEqual([
-      ["deny", "Deny"],
+      ["deny", "Cancel"],
       ["approve", "Approve"],
     ]);
   });
 
-  it("says the app is unverified", () => {
+  it("says under the card that the app is unverified and that its access can be ended", () => {
     const text = visibleText(renderDeviceConsentScreen(PARAMS));
-    expect(text).toContain("can't confirm who made this app");
-    expect(text).toContain("Only approve apps you trust");
+    expect(text).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
+    expect(text).toContain(
+      "You can end its access at any time in Connected apps.",
+    );
   });
 
   it("offers one control for each type, with the levels asked for and below", () => {
@@ -79,7 +93,7 @@ describe("renderDeviceConsentScreen", () => {
       ],
     });
     const selects = readControls(html).filter((c) => c.tag === "select");
-    expect(selects.map((c) => c.label)).toEqual(["Notes", "Tasks"]);
+    expect(selects.map((c) => c.label)).toEqual(["Note", "Task"]);
     expect(
       selects.map((c) => c.options.map((o) => [o.label, o.value])),
     ).toEqual([
@@ -130,7 +144,7 @@ describe("renderDeviceConsentScreen", () => {
         scopes: [scope("core.note:read"), scope("webhooks.manage")],
       }),
     );
-    expect(text).toContain("Notes");
+    expect(text).toContain("Note");
     expect(text).toContain(
       "Manage webhooks that send events to other services",
     );
@@ -222,13 +236,13 @@ describe("renderDeviceConsentScreen", () => {
       "a type's write asked while its read is held",
       ["core.note:write"],
       ["core.note:read"],
-      "Notes",
+      "Note",
     ],
     [
       "a type's write asked beside a wildcard read the app holds",
       ["core.*:read", "core.note:write"],
       ["core.*:read"],
-      "Notes",
+      "Note",
     ],
     [
       "the profile's write asked while its read is held",

@@ -501,8 +501,9 @@ describe("the device authorization grant through the provider plugin", () => {
     const screen = await openConsent(c, init.user_code, cookie);
     expect(screen.status).toBe(200);
     const html = await screen.text();
-    expect(html).toContain('role="status"');
-    expect(visibleText(html)).toContain("can't confirm who made this app");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("warns about an app that authenticates with a secret too", async () => {
@@ -530,8 +531,9 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(screen.status).toBe(200);
     const html = await screen.text();
     expect(visibleText(html)).toContain("Device Test App");
-    expect(html).toContain('role="status"');
-    expect(visibleText(html)).toContain("can't confirm who made this app");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("a denial answers the poll with access_denied and leaves no grant", async () => {

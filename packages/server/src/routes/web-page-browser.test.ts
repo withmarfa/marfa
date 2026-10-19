@@ -131,7 +131,10 @@ inBrowser("a web page in a browser", () => {
       await popup.fill('input[name="password"]', PASSWORD);
       await popup.click('button[type="submit"]');
       await popup.waitForURL(/\/auth\/authorize\?/);
-      expect(await popup.textContent("body")).toContain(PAGE);
+      // The origin is written without its secure scheme.
+      expect(await popup.textContent("body")).toContain(
+        PAGE.replace("https://", ""),
+      );
       await popup.click('button[name="accept"][value="true"]');
       await expect
         .poll(() => page.textContent("#state"), { timeout: 15_000 })

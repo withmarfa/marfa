@@ -275,14 +275,23 @@ describe("the pages with scopes on them", () => {
     }
   });
 
-  it("carries no script of its own, and the scan can tell a page that does", () => {
+  it("carries no script of its own beyond the shared file, and the scan can tell a page that does", () => {
     // The witness: the page where a code is typed has an inline script, so a
     // scan for scripts looks at something.
     expect(
       startTagAttributes(renderDevicePage({ prefilled: "" }), "script").length,
     ).toBeGreaterThan(0);
+    const shared =
+      /^ src="\/auth\/static\/pages\.js\?v=[0-9a-f]{40}" nonce="[^"]+" defer(="")?$/;
     for (const [name, html] of Object.entries(pages)) {
-      expect(startTagAttributes(html, "script"), name).toEqual([]);
+      const found = startTagAttributes(html, "script");
+      // The approval pages load the shared script, which only keeps their
+      // summary lines true; the page that ends them loads none.
+      if (name === "the device decision page") expect(found, name).toEqual([]);
+      else {
+        expect(found, name).toHaveLength(1);
+        expect(found[0], name).toMatch(shared);
+      }
     }
   });
 });

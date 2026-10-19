@@ -21,6 +21,7 @@ import {
 import {
   appBehindReturnTo,
   buildScopeDescriptions,
+  resolveTypeLabels,
   resolveWildcardExpansions,
 } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
@@ -890,6 +891,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         userCode,
         priorScopes,
         descriptions,
+        typeLabels: await resolveTypeLabels(storage, [
+          ...scopeList(verdict.scope),
+          ...(priorScopes ?? []),
+        ]),
+        signedInAs: sessionResult.session.user.email,
         // The same enumeration of an open-ended pattern the authorize screen
         // shows, so the reach reads the same on both.
         wildcardExpansions: await resolveWildcardExpansions(

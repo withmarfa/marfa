@@ -38,6 +38,9 @@ const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 /** What an approval page says beside the addresses it names. */
 const REACH_LINE = "from your browser";
 
+/** An origin as the approval pages write it: without a secure scheme, which is understood. */
+const shown = (origin: string): string => origin.replace(/^https:\/\//, "");
+
 beforeAll(async () => {
   server = await bootFreshServer("web-page-origin", {
     CORS_ORIGINS: CONFIGURED,
@@ -492,7 +495,7 @@ describe("where the owner reads a page's address", () => {
     });
     expect(screen.status).toBe(200);
     const text = visibleText(await screen.text());
-    expect(text).toContain(origin);
+    expect(text).toContain(shown(origin));
     expect(text).toContain(REACH_LINE);
     // A native app's screen names no address.
     const app = await registerPage(
@@ -525,8 +528,8 @@ describe("where the owner reads a page's address", () => {
     });
     expect(consent.status).toBe(200);
     const consentText = visibleText(await consent.text());
-    expect(consentText).toContain(first);
-    expect(consentText).toContain(second);
+    expect(consentText).toContain(shown(first));
+    expect(consentText).toContain(shown(second));
 
     const code = await fetch(`${server.apiUrl}/auth/device/code`, {
       method: "POST",
@@ -546,8 +549,8 @@ describe("where the owner reads a page's address", () => {
     );
     expect(device.status).toBe(200);
     const deviceText = visibleText(await device.text());
-    expect(deviceText).toContain(first);
-    expect(deviceText).toContain(second);
+    expect(deviceText).toContain(shown(first));
+    expect(deviceText).toContain(shown(second));
   });
 
   it("names the page's origin on the device approval page, and allows it once approved there", async () => {
@@ -585,7 +588,7 @@ describe("where the owner reads a page's address", () => {
     );
     expect(screen.status).toBe(200);
     const text = visibleText(await screen.text());
-    expect(text).toContain(origin);
+    expect(text).toContain(shown(origin));
     expect(text).toContain(REACH_LINE);
     await expectRefused(origin, server.workingKey);
 

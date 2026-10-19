@@ -8,44 +8,20 @@ import { PERMISSION_LABELS } from "./permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 
 /**
- * Names keyed by type pattern, which carries no verb: the level is a control
- * beside the name and never part of it.
+ * Names for what is not one item type, keyed by pattern, which carries no
+ * verb: the level is a control beside the name and never part of it. An item
+ * type is named by its own label in the registry, which the approval pages
+ * read, so it has no entry here.
  *
  * A name may be shorter than its description but never narrower than its
  * scope, because a grant that sounds smaller than it is makes a person
- * approve more than they think they are approving. A bare `core.entity` is
- * exact, so its name says "Organizations" and leaves the people and places
- * to the two types that carry their own rows. A name holds no conjunction:
- * whether the grant reaches types added later is a line the screen composes
- * from `isOpenEnded`.
+ * approve more than they think they are approving. A name holds no
+ * conjunction: whether the grant reaches types added later is a line the
+ * screen composes from `isOpenEnded`.
  */
 export const SCOPE_LABELS: Record<string, string> = {
-  "core.note": "Notes",
-  "core.task": "Tasks",
-  "core.bookmark": "Bookmarks",
-  "core.highlight": "Highlights",
-  "core.event": "Calendar",
-  "core.message": "Messages",
-  "core.entity": "Organizations",
-  "core.entity.person": "Contacts",
-  "core.entity.place": "Places",
-  "core.file": "Files",
-  "core.file.audio": "Audio files",
-  "core.file.image": "Images",
-  "core.file.video": "Videos",
-  "core.media": "Media",
-  "core.media.album": "Albums",
-  "core.media.article": "Articles",
-  "core.media.book": "Books",
-  "core.media.episode": "Episodes",
-  "core.media.film": "Films",
-  "core.media.series": "Series",
-  "core.media.song": "Songs",
   "user.*": "Your custom types",
-  // "Connections" rather than "Connected accounts", which would narrow the
-  // grant to the case that happens to have a login.
-  "system.connection": "Connections",
-  "system.folder": "Folders",
+  "edge.*": "Links between items",
   profile: "Profile",
   "profile.name": "Name",
   "profile.email": "Email address",
@@ -55,6 +31,47 @@ export const SCOPE_LABELS: Record<string, string> = {
   "metadata.edge_types": "Custom relationship types",
   content: "Your content",
 };
+
+/**
+ * What a name is in the middle of a sentence about a choice, where it reads
+ * differently from the name above a control: "your profile" for "Profile".
+ * Any other name is that name in lower case.
+ */
+export const SCOPE_NOUNS: Record<string, string> = {
+  profile: "your profile",
+  "profile.name": "your name",
+  "profile.email": "your email address",
+  "profile.avatar": "your avatar",
+};
+
+const IRREGULAR_PLURALS: Record<string, string> = {
+  person: "people",
+  audio: "audio files",
+  media: "media",
+  series: "series",
+  species: "species",
+};
+
+/**
+ * The plural of a type's label, lower case, for a sentence about a choice:
+ * "notes", "people", "summaries". The last word is the one that changes. A
+ * label the registry spells in capitals is left as it is written.
+ */
+export function pluralNoun(label: string): string {
+  const words = label.trim().split(/\s+/);
+  const last = words.pop() ?? "";
+  const lower = last.toLowerCase();
+  const irregular = IRREGULAR_PLURALS[lower];
+  let plural: string;
+  if (irregular !== undefined) plural = irregular;
+  else if (/[^aeiou]y$/i.test(last)) plural = `${last.slice(0, -1)}ies`;
+  else if (/(s|x|z|ch|sh)$/i.test(last)) plural = `${last}es`;
+  else plural = `${last}s`;
+  const noun = [...words, plural].join(" ");
+  return /^[A-Z]{2}/.test(noun)
+    ? noun
+    : noun.charAt(0).toLowerCase() + noun.slice(1);
+}
 
 /** Title-case the most specific segment of a dotted type pattern, for scopes
  *  outside the curated label map (e.g. a third-party app's custom request). */

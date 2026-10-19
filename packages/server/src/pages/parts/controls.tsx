@@ -3,6 +3,7 @@
 import type { Child } from "hono/jsx";
 import { localHref } from "../href.js";
 import { Icon, type IconName } from "../icons.js";
+import { dataAttributes } from "./data.js";
 
 export type ButtonKind =
   "primary" | "quiet" | "outline" | "danger" | "danger-quiet" | "icon-only";
@@ -96,6 +97,8 @@ export interface SelectProps {
   auto?: boolean;
   /** Send the form it is in when the choice changes. */
   autosubmit?: boolean;
+  /** Read by the browser module that drives the page, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
 }
 
 function renderOption(option: SelectOption, value: string | undefined) {
@@ -115,6 +118,7 @@ export function Select(props: SelectProps) {
         aria-label={props.label}
         disabled={props.disabled}
         data-autosubmit={props.autosubmit ? "" : undefined}
+        {...dataAttributes(props.data)}
       >
         {props.options.map((entry) =>
           "options" in entry ? (
@@ -140,6 +144,8 @@ export interface SwitchProps {
   disabled?: boolean;
   /** The accessible name, when no visible label points at the switch. */
   label?: string;
+  /** Read by the browser module that drives the page, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
 }
 
 export function Switch(props: SwitchProps) {
@@ -154,6 +160,15 @@ export function Switch(props: SwitchProps) {
       checked={props.checked}
       disabled={props.disabled}
       aria-label={props.label}
+      {...dataAttributes(props.data)}
     />
   );
+}
+
+/**
+ * Two buttons of equal width side by side, the main one last: how a moment
+ * ends where the person decides between two things.
+ */
+export function ButtonPair(props: { children?: Child }) {
+  return <div class="pair">{props.children}</div>;
 }

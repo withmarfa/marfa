@@ -16,6 +16,7 @@
  */
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
+  getTypeSchema,
   grantCoversScope,
   HIDDEN_MECHANISM_SCOPES,
   parseScope,
@@ -23,14 +24,28 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import {
+  dataSummary,
+  heldSummary,
+  levelOfValue,
+  powersSummary,
+  profileSummary,
+  type HeldLevel,
+  type Level,
+  type LevelPick,
+} from "../pages/access-summary.js";
+import {
   DESTRUCTIVE_PERMISSIONS,
   PERMISSION_GROUPS,
   permissionDescription,
 } from "./permission-labels.js";
 import { reachLine } from "./scope-openness.js";
-import { SCOPE_LABELS, scopeTitle } from "./scope-copy.js";
-
-type Level = "none" | "read" | "write";
+import {
+  humanizeType,
+  pluralNoun,
+  SCOPE_LABELS,
+  SCOPE_NOUNS,
+  scopeTitle,
+} from "./scope-copy.js";
 
 const RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
@@ -64,10 +79,13 @@ export interface LevelRow {
   id: string;
   title: string;
   description?: string;
+  /** What the row is for in a sentence about the choice, lower case and plural. */
+  noun: string;
+  /** The level the app already holds. */
+  held: Level;
   /** Lowest first. Never above the request, never below what the app holds. */
   options: LevelOption[];
   selected: string;
-  isNew: boolean;
 }
 
 /** One thing the app asks for that is simply on or off. */
@@ -80,27 +98,32 @@ export interface SwitchRow {
   /** Deletes data with no way back. */
   destructive: boolean;
   checked: boolean;
-  isNew: boolean;
 }
 
+/** One thing the app holds, at the level it holds it. */
 export interface HeldRow {
   title: string;
   value: string;
 }
 
-export interface PowerSection {
-  id: string;
-  title: string;
-  description: string;
-  rows: SwitchRow[];
+/** The line under each opening row, for the choice the controls start at. */
+export interface AccessSummaries {
+  data: string;
+  profile: string;
+  powers: string;
+  /** What each says when nothing is on, which the browser module says again. */
+  empty: { data: string; profile: string };
+  held: string;
 }
 
 export interface AccessModel {
   data: LevelRow[];
   profile: (LevelRow | SwitchRow)[];
-  powers: PowerSection[];
+  /** Every permission asked for, in the order the pages list them. */
+  powers: SwitchRow[];
   /** What the app already holds, to show and not to change. */
   held: HeldRow[];
+  summaries: AccessSummaries;
   /** Submitted with the form without a control: the OAuth mechanisms the request names. */
   mechanisms: string[];
   /** Whether the app already holds some access. */
@@ -121,6 +144,12 @@ export interface AccessInput {
   descriptions?: Record<string, string>;
   /** The types an open-ended pattern matches today, keyed by pattern. */
   wildcardExpansions?: Record<string, string[]>;
+  /**
+   * The label of each item type the request or the held consent names, keyed
+   * by type id, for a type registered on the instance. A shipped type's label
+   * comes from the shipped registry, so a caller passes only what it looked up.
+   */
+  typeLabels?: Record<string, string>;
   bundles: readonly PermissionBundle[];
 }
 
@@ -154,31 +183,65 @@ function isCarried(literal: string, held: readonly string[]): boolean {
   return isMechanism(literal) || grantCoversScope(held, literal);
 }
 
+const lowerFirst = (text: string): string =>
+  text.charAt(0).toLowerCase() + text.slice(1);
+
+/** Whether a scope names one item type exactly, which has a label of its own. */
+const isExactType = (scope: ParsedScope): boolean =>
+  scope.kind === "type" &&
+  scope.typePattern !== "*" &&
+  !scope.typePattern.endsWith(".*");
+
+/** The label an exact item type carries: the instance's, then the shipped registry's. */
+function typeLabel(pattern: string, input: AccessInput): string {
+  return (
+    input.typeLabels?.[pattern] ??
+    getTypeSchema(pattern)?.label ??
+    humanizeType(pattern)
+  );
+}
+
 /**
- * The title a row carries, and the line under it where one adds something.
+ * The title a row carries, the sentence about the choice it sits in, and the
+ * line under the title where one adds something.
  *
- * A curated name is the title. Without one the sentence that explains the
- * scope stands in, without its full stop, and the humanized pattern is the
- * floor. The line under the title says how far an open-ended grant reaches,
- * which is composed from the grammar and never written into any copy, and,
- * for a metadata area, a profile row or the content category, a sentence
- * that says what the name alone does not.
+ * An item type is named by its own singular label, as the registry gives it.
+ * Anything else a curated name titles. Without one the sentence that explains
+ * the scope stands in, without its full stop, and the humanized pattern is
+ * the floor. The line under the title says how far an open-ended grant
+ * reaches, which is composed from the grammar and never written into any
+ * copy, and, for a metadata area, a profile row or the content category, a
+ * sentence that says what the name alone does not.
  */
 function describe(
   scope: ParsedScope,
   input: AccessInput,
-): { title: string; description?: string } {
+): { title: string; noun: string; description?: string } {
   const sentence = input.descriptions?.[scope.typePattern];
-  const curated = SCOPE_LABELS[scope.typePattern];
   const expansion =
     scope.kind === "oidc"
       ? undefined
       : input.wildcardExpansions?.[scope.typePattern];
   const reach = reachLine(scope, expansion);
+  if (isExactType(scope)) {
+    const label = typeLabel(scope.typePattern, input);
+    return {
+      title: label,
+      noun: pluralNoun(label),
+      description: reach || undefined,
+    };
+  }
   if (scope.kind === "type" && scope.typePattern === "*")
-    return { title: "All your data", description: reach || undefined };
-  if (scope.kind === "oidc" || scope.kind === "permission")
-    return { title: scopeTitle(scope) };
+    return {
+      title: "All your data",
+      noun: "all your data",
+      description: reach || undefined,
+    };
+  if (scope.kind === "oidc" || scope.kind === "permission") {
+    const title = scopeTitle(scope);
+    return { title, noun: lowerFirst(title) };
+  }
+  const curated = SCOPE_LABELS[scope.typePattern];
   if (curated !== undefined) {
     const explains =
       scope.kind === "metadata" ||
@@ -186,14 +249,17 @@ function describe(
       scope.kind === "content";
     return {
       title: curated,
+      noun: SCOPE_NOUNS[scope.typePattern] ?? lowerFirst(curated),
       description:
         [explains ? sentence : undefined, reach || undefined]
           .filter(Boolean)
           .join(" ") || undefined,
     };
   }
+  const title = sentence?.replace(/\.$/, "") ?? scopeTitle(scope);
   return {
-    title: sentence?.replace(/\.$/, "") ?? scopeTitle(scope),
+    title,
+    noun: lowerFirst(title),
     description: reach || undefined,
   };
 }
@@ -253,19 +319,20 @@ export function buildAccess(input: AccessInput): AccessModel {
       .reverse()
       .find((c) => c.value === "" || startsOn(c.value));
     const pick = wanted ?? options[0];
-    const { title, description } = describe(ask.scope, input);
-    const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}.`;
+    const { title, noun, description } = describe(ask.scope, input);
+    const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}`;
     return {
       kind: "level",
       id: nextId(),
       title,
-      description: [now, description].filter(Boolean).join(" ") || undefined,
+      noun,
+      held: floor,
+      description: [now, description].filter(Boolean).join(". ") || undefined,
       options: options.map((c) => ({
         value: c.value,
         label: LEVEL_LABELS[c.level],
       })),
       selected: pick?.value ?? "",
-      isNew: returning,
     };
   };
 
@@ -312,7 +379,6 @@ export function buildAccess(input: AccessInput): AccessModel {
       description: permission ? permissionDescription(permission) : undefined,
       destructive,
       checked: startsOn(literal),
-      isNew: returning,
     };
     if (scope.kind === "permission") {
       const group =
@@ -325,36 +391,70 @@ export function buildAccess(input: AccessInput): AccessModel {
     }
   }
 
-  const sections: PowerSection[] = [];
-  for (const group of PERMISSION_GROUPS) {
-    const rows = (powers.get(group.id) ?? []).sort(
-      (a, b) =>
-        group.permissions.findIndex((p) => p === a.literal) -
-        group.permissions.findIndex((p) => p === b.literal),
+  const ordered: SwitchRow[] = [];
+  for (const group of PERMISSION_GROUPS)
+    ordered.push(
+      ...(powers.get(group.id) ?? []).sort(
+        (a, b) =>
+          group.permissions.findIndex((p) => p === a.literal) -
+          group.permissions.findIndex((p) => p === b.literal),
+      ),
     );
-    if (rows.length > 0)
-      sections.push({
-        id: group.id,
-        title: group.title,
-        description: group.description,
-        rows,
-      });
-  }
+
+  const heldList = heldRows(held, input);
+  const empty = {
+    data: returning ? "Nothing new turned on" : "No access to your data",
+    profile: returning ? "Nothing new turned on" : "No access to your profile",
+  };
+  const picks = (rows: readonly (LevelRow | SwitchRow)[]): LevelPick[] =>
+    rows
+      .filter((row): row is LevelRow => row.kind === "level")
+      .map((row) => ({
+        noun: row.noun,
+        held: row.held,
+        level: levelOfValue(row.selected, row.held),
+      }));
 
   return {
     data,
     profile,
-    powers: sections,
-    held: heldRows(held, input),
+    powers: ordered,
+    held: heldList.rows,
+    summaries: {
+      data: dataSummary(picks(data), empty.data),
+      profile: profileSummary(
+        picks(profile),
+        profile
+          .filter((row): row is SwitchRow => row.kind === "switch")
+          .filter((row) => row.checked)
+          .map((row) => row.title),
+        empty.profile,
+      ),
+      powers: powersSummary(
+        ordered.filter((row) => row.checked).length,
+        ordered.length,
+      ),
+      empty,
+      held: heldList.summary,
+    },
     mechanisms,
     returning,
     offersEdit,
   };
 }
 
-/** Everything the app holds, one line for each thing, at the level it holds it. */
-function heldRows(held: readonly string[], input: AccessInput): HeldRow[] {
+/**
+ * Everything the app holds, one line for each thing, at the level it holds
+ * it, and the line the group of them says.
+ */
+function heldRows(
+  held: readonly string[],
+  input: AccessInput,
+): { rows: HeldRow[]; summary: string } {
   const rows = new Map<string, HeldRow>();
+  const levels: HeldLevel[] = [];
+  const seen: string[] = [];
+  const powers: string[] = [];
   for (const literal of held) {
     const scope = parseScope(literal);
     if (!scope || (scope.kind === "oidc" && isMechanism(literal))) continue;
@@ -362,15 +462,21 @@ function heldRows(held: readonly string[], input: AccessInput): HeldRow[] {
       ? `${scope.kind}:${scope.typePattern}`
       : literal;
     if (rows.has(key)) continue;
-    const { title } = describe(scope, input);
-    rows.set(key, {
-      title,
-      value: isLevelKind(scope)
-        ? LEVEL_LABELS[levelHeld(held, scope.typePattern)]
-        : "On",
-    });
+    const { title, noun } = describe(scope, input);
+    if (isLevelKind(scope)) {
+      const level = levelHeld(held, scope.typePattern);
+      rows.set(key, { title, value: LEVEL_LABELS[level] });
+      levels.push({ noun, level });
+    } else {
+      rows.set(key, { title, value: "On" });
+      if (scope.kind === "permission") powers.push(title);
+      else seen.push(title);
+    }
   }
-  return [...rows.values()];
+  return {
+    rows: [...rows.values()],
+    summary: heldSummary(levels, seen, powers),
+  };
 }
 
 export type Selection =

@@ -1119,7 +1119,7 @@ When a signed-in person's authorization request names scopes no standing consent
 
 **Reason:** A scope the person's standing consent already covers is shown as held and not offered again (`keys-and-oauth/approval-held-shown`). The server adds it to an approval while the consent still covers it (`keys-and-oauth/approval-held-now`).
 
-**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`, `compliance/approval-screens.test.ts › carries a scope the app holds in full without offering it as a choice on the consent screen`.
+**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`, `compliance/approval-screens.test.ts › shows a scope the app holds in full without offering it as a choice, and does not post it, on the consent screen`.
 
 ### `keys-and-oauth/consent-accepted`
 
@@ -1137,9 +1137,9 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
-**Reason:** Approving with everything turned off is declining, so the app is told what Deny tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
+**Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
-**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as Deny is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
 
 ### `keys-and-oauth/consent-ticked`
 
@@ -2123,7 +2123,7 @@ The server MUST show the unverified-app caution for an app that authenticates wi
 
 ### `keys-and-oauth/consent-names-page`
 
-When the consent screen offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+When the consent screen offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered, written without its `https://` scheme where it has one.
 
 **Reason:** Approving the page allows those addresses, so the owner confirms the address and not only the name the page chose.
 
@@ -2131,7 +2131,7 @@ When the consent screen offers access to a web client, the server MUST name on i
 
 ### `keys-and-oauth/device-names-page`
 
-When the device approval page offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+When the device approval page offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered, written without its `https://` scheme where it has one.
 
 **Reason:** Approving a web client on this page allows its addresses as approving it on the consent screen does.
 

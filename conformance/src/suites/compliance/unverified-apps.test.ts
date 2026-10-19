@@ -265,7 +265,7 @@ describe("a grant a person reads", () => {
     // The read and the write of one type are one control, with the levels
     // told apart.
     const notes = readControls(consentPageHtml).find(
-      (c) => c.tag === "select" && c.label === "Notes",
+      (c) => c.tag === "select" && c.label === "Note",
     );
     expect(notes?.options.map((o) => [o.value, o.label])).toEqual([
       ["", "No access"],

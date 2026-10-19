@@ -36,6 +36,7 @@ import type { ParsedScope } from "@withmarfa/shared";
 import {
   PERMISSIONS,
   EDGE_TYPE_REGISTRY,
+  getTypeSchema,
   parseScope,
   TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -446,16 +447,24 @@ describe("the consent copy guard derives the scopes it checks", () => {
       // being satisfied by a row that never rendered at all.
       expect(copy ?? "", scope.typePattern).toMatch(/\S/);
 
-      // A row is titled by its curated name, or by its description without
-      // the full stop where nothing curated names it. Held to whichever of
-      // those applies rather than to "not `humanizeType`": `core.media.series`
-      // is curated as "Series" and humanizes to "Series", so a check on the
-      // two differing would report a coincidence as a defect.
+      // A row is titled by the registry's label for one item type, by its
+      // curated name, or by its description without the full stop where
+      // nothing curated names it. Held to whichever of those applies rather
+      // than to "not `humanizeType`": `core.media.series` is labeled "Series"
+      // and humanizes to "Series", so a check on the two differing would
+      // report a coincidence as a defect.
+      const exactType =
+        scope.kind === "type" &&
+        scope.typePattern !== "*" &&
+        !scope.typePattern.endsWith(".*");
       const title =
         scope.typePattern === "*" && scope.kind === "type"
           ? "All your data"
-          : (SCOPE_LABELS[scope.typePattern] ??
-            (copy ?? "").replace(/\.$/, ""));
+          : exactType
+            ? (getTypeSchema(scope.typePattern)?.label ?? "")
+            : (SCOPE_LABELS[scope.typePattern] ??
+              (copy ?? "").replace(/\.$/, ""));
+      expect(title, scope.typePattern).toMatch(/\S/);
       expect(deviceText, scope.typePattern).toContain(title);
       expect(authorizeText, scope.typePattern).toContain(title);
     }

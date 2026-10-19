@@ -300,7 +300,7 @@ describe("buildAccess", () => {
       held: undefined,
       bundles,
     });
-    expect(model.data.map((r) => r.title)).toEqual(["Notes", "Tasks"]);
+    expect(model.data.map((r) => r.title)).toEqual(["Note", "Task"]);
   });
 
   it("offers the held level as a choice that adds nothing when the request names only a level above it", () => {
@@ -322,7 +322,7 @@ describe("buildAccess", () => {
       held: ["core.*:read"],
       bundles,
     });
-    expect(model.data.map((r) => r.title)).toEqual(["Notes"]);
+    expect(model.data.map((r) => r.title)).toEqual(["Note"]);
     expect(model.data[0]?.options).toEqual([
       { value: "", label: "Read only" },
       { value: "core.note:write", label: "Read and edit" },
@@ -408,7 +408,7 @@ describe("buildAccess", () => {
     });
   });
 
-  it("treats an app that holds only the mechanisms as new, with nothing marked New", () => {
+  it("treats an app that holds only the mechanisms as new", () => {
     const model = buildAccess({
       scopes: [scope("core.note:read"), scope("keys.mint")],
       held: ["openid", "offline_access"],
@@ -416,10 +416,6 @@ describe("buildAccess", () => {
     });
     expect(model.returning).toBe(false);
     expect(model.held).toEqual([]);
-    expect(model.data.every((row) => !row.isNew)).toBe(true);
-    expect(
-      model.powers.every((section) => section.rows.every((row) => !row.isNew)),
-    ).toBe(true);
   });
 
   it("treats an app that holds any access beyond the mechanisms as returning", () => {
@@ -429,7 +425,6 @@ describe("buildAccess", () => {
       bundles,
     });
     expect(model.returning).toBe(true);
-    expect(model.data.map((row) => row.isNew)).toEqual([true]);
   });
 
   it("lists everything the app holds, including what this request does not ask for", () => {
@@ -439,12 +434,12 @@ describe("buildAccess", () => {
       bundles,
     });
     expect(model.held).toEqual([
-      { title: "Notes", value: "Read and edit" },
+      { title: "Note", value: "Read and edit" },
       { title: "Make, see, edit and revoke keys", value: "On" },
     ]);
   });
 
-  it("groups powers in a fixed order whatever order the app asked in", () => {
+  it("lists every power in one fixed order whatever order the app asked in", () => {
     const model = buildAccess({
       scopes: [
         scope("items.purge"),
@@ -455,11 +450,96 @@ describe("buildAccess", () => {
       held: undefined,
       bundles,
     });
-    expect(
-      model.powers.map((s) => [s.title, s.rows.map((r) => r.literal)]),
-    ).toEqual([
-      ["Keys and apps", ["keys.mint", "keys.manage"]],
-      ["Connections and records", ["webhooks.manage", "items.purge"]],
+    expect(model.powers.map((row) => row.literal)).toEqual([
+      "keys.mint",
+      "keys.manage",
+      "webhooks.manage",
+      "items.purge",
     ]);
+  });
+
+  describe("names and the line each group says", () => {
+    it("titles an item type by its own singular label and speaks of it in the plural", () => {
+      const model = buildAccess({
+        scopes: [
+          scope("core.note:write"),
+          scope("core.entity.person:read"),
+          scope("core.media.series:read"),
+        ],
+        held: undefined,
+        bundles,
+      });
+      expect(model.data.map((row) => [row.title, row.noun])).toEqual([
+        ["Note", "notes"],
+        ["Person", "people"],
+        ["Series", "series"],
+      ]);
+    });
+
+    it("reads the label of a type registered on the instance from what the caller looked up", () => {
+      const model = buildAccess({
+        scopes: [scope("app.inkwell.draft:write")],
+        held: undefined,
+        typeLabels: { "app.inkwell.draft": "Reading summary" },
+        bundles,
+      });
+      expect(model.data[0]).toMatchObject({
+        title: "Reading summary",
+        noun: "reading summaries",
+      });
+      expect(model.summaries.data).toBe("Read and edit reading summaries");
+    });
+
+    it("says what the starting choice gives, and that nothing is on when nothing is", () => {
+      const model = buildAccess({
+        scopes: [
+          scope("core.note:write"),
+          scope("core.task:read"),
+          scope("keys.mint"),
+        ],
+        held: undefined,
+        bundles,
+      });
+      expect(model.summaries.data).toBe("Read and edit notes; read tasks");
+      expect(model.summaries.powers).toBe(
+        "1 thing asked, off until you turn it on",
+      );
+      const none = buildAccess({
+        scopes: [scope("core.note:write")],
+        held: undefined,
+        bundles: [
+          {
+            id: "manage",
+            label: "Manage",
+            description: "",
+            scopes: ["core.note:write"],
+            default_on: false,
+          },
+        ],
+      });
+      expect(none.summaries.data).toBe("No access to your data");
+    });
+
+    it("leaves out of the line what the app already holds, and says nothing new when that is all", () => {
+      const model = buildAccess({
+        scopes: [scope("core.note:write"), scope("core.event:read")],
+        held: ["core.note:read", "core.event:read"],
+        bundles,
+      });
+      expect(model.summaries.data).toBe("Read and edit notes");
+      expect(model.summaries.empty.data).toBe("Nothing new turned on");
+      expect(model.summaries.held).toBe("Read notes and events");
+    });
+
+    it("says what the app holds in the same words, with the powers after", () => {
+      const model = buildAccess({
+        scopes: [scope("core.task:read")],
+        held: ["core.task:write", "core.event:read", "keys.mint"],
+        bundles,
+      });
+      expect(model.summaries.held).toBe(
+        "Read and edit tasks; read events. Can also make, see, edit and revoke keys",
+      );
+    });
   });
 });

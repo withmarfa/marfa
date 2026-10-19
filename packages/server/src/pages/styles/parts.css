@@ -1208,25 +1208,30 @@ button.row:hover .rt {
 }
 
 /* A row that opens in place, and the rows beneath it */
-.disclosure > summary {
+.disclosure-row > summary {
   list-style: none;
   cursor: pointer;
 }
-.disclosure > summary::-webkit-details-marker {
+.disclosure-row > summary::-webkit-details-marker {
   display: none;
 }
-.disclosure > summary:hover .rt {
+.disclosure-row > summary:hover .rt {
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-color: var(--line);
 }
-.disclosure > summary .chev .icon {
+.disclosure-row > summary .chev .icon {
   transition: transform 120ms ease;
 }
-.disclosure[open] > summary .chev .icon {
+.disclosure-row[open] > summary .chev .icon {
   transform: rotate(90deg);
 }
-.group > .disclosure:first-child > summary {
+.disclosure-row > summary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-line);
+  outline-offset: calc(-1 * var(--focus-width));
+  border-radius: var(--radius-small);
+}
+.group > .disclosure-row:first-child > summary {
   border-top: 0;
 }
 .sub {
@@ -1235,6 +1240,17 @@ button.row:hover .rt {
 }
 .sub > .row:first-child {
   border-top: 0;
+}
+.sub .row {
+  min-height: var(--row-height);
+}
+.sub-note {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--divider);
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  color: var(--fg2);
+  text-wrap: pretty;
 }
 
 /* A short mark after a title */
@@ -1259,15 +1275,46 @@ button.row:hover .rt {
   display: grid;
 }
 
-/* The code a device shows, displayed whole for the person to compare */
-.code-tile {
+/* The code a device shows, one cell for each character, for the person to compare */
+.code-cells {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: center;
+  align-items: center;
+}
+.code-cells span {
+  width: 32px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
   font-family: var(--mono);
-  font-size: var(--title-size);
-  line-height: var(--title-line);
-  letter-spacing: 0.12em;
+  font-size: var(--card-title-size);
+  font-weight: var(--weight-medium);
+  background: var(--control);
+}
+.code-cells i {
+  width: var(--space-2);
+  height: 1px;
+  background: var(--fg2);
+}
+.caption {
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  color: var(--fg2);
   text-align: center;
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--fill);
-  overflow-wrap: anywhere;
+}
+.stack-8 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.small {
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  text-wrap: pretty;
+}
+.strong {
+  font-weight: var(--weight-medium);
 }

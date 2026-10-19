@@ -56,12 +56,18 @@ const switches = (html: string) =>
   readControls(html).filter((c) => c.role === "switch");
 
 describe("renderConsentScreen: the page", () => {
-  it("uses the shared page system, with no inline style, no handlers and no script", () => {
+  it("uses the shared page system, with no inline style or handler and only the page script, which it does not need", () => {
     const html = render(["core.note:read"]);
     expect(html).toContain(`href="${pageAssetUrl("pages.css")}"`);
     expect(html).not.toContain("<style");
     expect(html).not.toMatch(/\sstyle=|\son[a-z]+=/);
-    expect(html).not.toContain("<script");
+    // The one script is the shared file, named by the page's nonce. Nothing
+    // is written into the page.
+    const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain(`src="${pageAssetUrl("pages.js")}"`);
+    expect(scripts[0]).toContain('nonce="test-nonce"');
+    // It only keeps the summary lines true, so the page does not say it needs it.
     expect(visibleText(html)).not.toContain("needs JavaScript");
   });
 
@@ -84,7 +90,7 @@ describe("renderConsentScreen: the page", () => {
     expect(visibleText(html)).toContain("<script>x</script> wants access");
   });
 
-  it("posts the signed request back unchanged to the decision handler, with Deny before Approve", () => {
+  it("posts the signed request back unchanged to the decision handler, with Cancel before Approve", () => {
     const html = render(["core.note:read"]);
     expect(html).toMatch(
       /<form[^>]*method="post"[^>]*action="\/auth\/authorize\/decision"/,
@@ -101,21 +107,35 @@ describe("renderConsentScreen: the page", () => {
         .filter((c) => c.name === "accept")
         .map((c) => [c.value, c.label]),
     ).toEqual([
-      ["false", "Deny"],
+      ["false", "Cancel"],
       ["true", "Approve"],
     ]);
   });
 
-  it("says that approving with everything off denies the request", () => {
+  it("says that approving with everything off denies the request, where there is something to turn off", () => {
     expect(visibleText(render(["core.note:read"]))).toContain(
       "If everything is off, approving denies the request.",
     );
+    // Nothing to turn off: asking only to know who the person is.
+    expect(visibleText(render(["openid"]))).not.toContain(
+      "If everything is off",
+    );
   });
 
-  it("cautions that the app is unverified, as a status", () => {
+  it("cautions under the card, in small print, that the app is unverified and can be ended", () => {
     const html = render(["core.note:read"]);
-    expect(html).toContain('role="status"');
-    expect(visibleText(html)).toContain("can't confirm who made this app");
+    const text = visibleText(html);
+    expect(text).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
+    expect(text).toContain(
+      "You can end its access at any time in Connected apps.",
+    );
+    // After the form, outside the card, and not a notice box.
+    expect(html.indexOf("can&#39;t confirm")).toBeGreaterThan(
+      html.indexOf("</form>"),
+    );
+    expect(html).not.toContain('role="status"');
   });
 
   it("names the origin of each web page the approval allows", () => {
@@ -125,11 +145,27 @@ describe("renderConsentScreen: the page", () => {
       }),
     );
     expect(text).toContain(
-      "Approving also lets web pages at https://one.example and https://two.example reach Marfa from your browser.",
+      "Approving also lets one.example and two.example reach Marfa from your browser.",
+    );
+    // A secure address is understood; any other scheme is shown.
+    expect(
+      visibleText(
+        render(["core.note:read"], { webOrigins: ["http://localhost:3000"] }),
+      ),
+    ).toContain(
+      "Approving also lets http://localhost:3000 reach Marfa from your browser.",
     );
     expect(
       visibleText(render(["core.note:read"], { webOrigins: [] })),
     ).not.toContain("from your browser");
+  });
+
+  it("puts the origins above the buttons, with each in bold", () => {
+    const html = render(["core.note:read"], {
+      webOrigins: ["https://one.example"],
+    });
+    expect(html).toContain('<strong class="strong">one.example</strong>');
+    expect(html.indexOf("one.example")).toBeLessThan(html.indexOf("Cancel"));
   });
 });
 
@@ -138,7 +174,7 @@ describe("renderConsentScreen: one control for each thing asked for", () => {
     const html = render(["core.note:read", "core.note:write"]);
     const found = selects(html);
     expect(found).toHaveLength(1);
-    expect(found[0]?.label).toBe("Notes");
+    expect(found[0]?.label).toBe("Note");
     expect(found[0]?.options.map((o) => [o.label, o.value])).toEqual([
       ["No access", ""],
       ["Read only", "core.note:read"],
@@ -249,12 +285,15 @@ describe("renderConsentScreen: powers", () => {
     expect(found.map((c) => c.value).sort()).toEqual([...PERMISSIONS].sort());
     expect(found.every((c) => !c.checked)).toBe(true);
     const text = visibleText(html);
+    // All of them are in one row to open, not under a heading each.
+    expect(text).toContain("More control over Marfa");
+    expect(text).toContain("12 things asked, each off until you turn it on");
     for (const heading of [
       "Keys and apps",
       "Running Marfa",
       "Connections and records",
     ])
-      expect(text).toContain(heading);
+      expect(text).not.toContain(heading);
     for (const permission of PERMISSIONS)
       expect(text).toContain(PERMISSION_LABELS[permission]);
     expect(defaultSubmission(html, "scopes")).toEqual([]);
@@ -384,7 +423,7 @@ describe("renderConsentScreen: a grant that reaches things not yet created", () 
       descriptions: buildScopeDescriptions([scope("core.note:read")]),
     });
     const text = rowText(html, "core.note:read");
-    expect(text).toContain("Notes");
+    expect(text).toContain("Note");
     const { stated, residue } = strip(text);
     expect(stated).toBe(0);
     expect(residue).not.toMatch(FUTURITY);
@@ -432,7 +471,10 @@ describe("renderConsentScreen: asking again", () => {
     expect(text).toContain("It already has access to some of your data");
     expect(text).toContain("Already allowed");
     expect(html).toMatch(/<details(?![^>]*\sopen)/);
-    expect(text).toContain("Notes Read only");
+    expect(text).toContain("Already allowed Read notes Note Read only");
+    expect(text).toContain(
+      "Approving never lowers this. To end its access, use Connected apps.",
+    );
   });
 
   it("greets an app that holds only openid as a first request", () => {
@@ -449,12 +491,23 @@ describe("renderConsentScreen: asking again", () => {
   it("marks what is new, and what the row holds now", () => {
     const text = visibleText(render(BASE, { priorScopes: ["core.note:read"] }));
     expect(text).toContain("Now: Read only");
-    expect(text.split("New").length - 1).toBeGreaterThanOrEqual(2);
+    // What the app is newly asked for is marked on the row that holds it.
+    expect(text).toContain("Your data New");
+  });
+
+  it("marks the powers newly asked for, on the row and on each power", () => {
+    const text = visibleText(
+      render(["core.note:read", "keys.mint", "webhooks.manage"], {
+        priorScopes: ["core.note:read"],
+      }),
+    );
+    expect(text).toContain("More control over Marfa New");
+    expect(text.split("New").length - 1).toBe(3);
   });
 
   it("never offers a level below what the app holds", () => {
     const html = render(BASE, { priorScopes: ["core.note:read"] });
-    const note = selects(html).find((c) => c.label === "Notes");
+    const note = selects(html).find((c) => c.label === "Note");
     expect(note?.options.map((o) => o.label)).toEqual([
       "Read only",
       "Read and edit",
@@ -466,13 +519,13 @@ describe("renderConsentScreen: asking again", () => {
       "a type's write asked while its read is held",
       ["core.note:write"],
       ["core.note:read"],
-      "Notes",
+      "Note",
     ],
     [
       "a type's write asked beside a wildcard read the app holds",
       ["core.*:read", "core.note:write"],
       ["core.*:read"],
-      "Notes",
+      "Note",
     ],
     [
       "the profile's write asked while its read is held",
@@ -516,7 +569,7 @@ describe("renderConsentScreen: asking again", () => {
     const html = render(BASE, {
       priorScopes: ["core.note:read", "core.note:write"],
     });
-    expect(selects(html).map((c) => c.label)).toEqual(["Tasks"]);
+    expect(selects(html).map((c) => c.label)).toEqual(["Task"]);
     expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 
@@ -584,7 +637,7 @@ describe("renderConsentScreen: what starts on", () => {
     // It is still there to choose.
     expect(
       selects(html)
-        .find((c) => c.label === "Notes")
+        .find((c) => c.label === "Note")
         ?.options.map((o) => o.value),
     ).toContain("core.note:write");
   });

@@ -76,10 +76,8 @@ describe("the authorize screen never turns a permission on for the person", () =
       priorScopes: ["keys.mint"],
     });
     expect(switchFor(html, "keys.mint")).toBeUndefined();
-    expect(defaultSubmission(html, "scopes")).toEqual([
-      "keys.mint",
-      "core.note:read",
-    ]);
+    // Not posted: the server adds what the app still holds when it approves.
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.note:read"]);
   });
 });
 

@@ -182,7 +182,7 @@ describe("what the approval pages offer", () => {
     for (const [page, html] of await bothPages(
       "core.note:read core.note:write core.task:read",
     )) {
-      const notes = selectNamed(html, "Notes");
+      const notes = selectNamed(html, "Note");
       expect(notes?.name, page).toBe("scopes");
       expect(
         notes?.options.map((o) => [o.value, o.label]),
@@ -224,7 +224,7 @@ describe("what the approval pages offer", () => {
       "core.note:read core.note:write core.task:read",
     )) {
       expect(
-        selectNamed(html, "Tasks")?.options.map((o) => o.label),
+        selectNamed(html, "Task")?.options.map((o) => o.label),
         page,
       ).toEqual(["No access", "Read only"]);
       expect(offeredValues(html, "scopes"), page).not.toContain(
@@ -267,7 +267,7 @@ describe("what the approval pages offer", () => {
       const rows = readRows(html);
       const all = rows.find((r) => r.control.label === "All your data");
       expect(all?.text, page).toMatch(/added later/i);
-      const notes = rows.find((r) => r.control.label === "Notes");
+      const notes = rows.find((r) => r.control.label === "Note");
       expect(notes?.text.replace(all?.text ?? "", ""), page).not.toMatch(
         /added later/i,
       );
@@ -406,20 +406,20 @@ describe("what the approval pages show of what an app holds", () => {
     expect(fresh).not.toContain("Already allowed");
   });
 
-  it("carries a scope the app holds in full without offering it as a choice on the consent screen", async () => {
+  it("shows a scope the app holds in full without offering it as a choice, and does not post it, on the consent screen", async () => {
     const app = await holder();
     const { html } = await consentScreen(app, "core.note:read core.task:read");
-    expect(selectNamed(html, "Notes")).toBeUndefined();
-    expect(selectNamed(html, "Tasks")?.options.map((o) => o.label)).toEqual([
+    expect(selectNamed(html, "Note")).toBeUndefined();
+    expect(selectNamed(html, "Task")?.options.map((o) => o.label)).toEqual([
       "No access",
       "Read only",
     ]);
-    // It still rides with the form, so the token carries it.
+    // The page posts nothing for it: the server adds what the app still holds
+    // (`keys-and-oauth/approval-held-now`).
     expect(
-      readControls(html).filter(
-        (c) => c.type === "hidden" && c.value === "core.note:read",
-      ),
-    ).toHaveLength(1);
+      readControls(html).filter((c) => c.value === "core.note:read"),
+    ).toEqual([]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 
   it("offers no level below what the app holds, on both pages", async () => {
@@ -431,12 +431,12 @@ describe("what the approval pages show of what an app holds", () => {
       ["the device approval page", device.html],
     ] as const) {
       expect(
-        selectNamed(html, "Notes")?.options.map((o) => o.label),
+        selectNamed(html, "Note")?.options.map((o) => o.label),
         page,
       ).toEqual(["Read only", "Read and edit"]);
       // A type the app holds nothing of keeps the choice of no access.
       expect(
-        selectNamed(html, "Tasks")?.options.map((o) => o.label),
+        selectNamed(html, "Task")?.options.map((o) => o.label),
         page,
       ).toEqual(["No access", "Read only"]);
     }
@@ -498,7 +498,12 @@ describe("what the approval pages show of what an app holds", () => {
     expect(approved.status).toBe(200);
     const issued = await poll(app, again);
     expect(issued.status).toBe(200);
-    expect(issued.body.scope).toBe("core.note:read");
+    // What was chosen is nothing new, and the request names both levels the
+    // app holds, so the token carries both.
+    expect(issued.body.scope?.split(" ").sort()).toEqual([
+      "core.note:read",
+      "core.note:write",
+    ]);
     // The write is still held: a browser request for it is answered silently.
     const silent = await sentTo(
       server,
@@ -608,13 +613,14 @@ describe("what an approval with everything newly asked turned off does for an ap
     return app;
   }
 
-  /** What the page posts when Tasks is set to no access and the rest is left. */
+  /** What the page posts when Task is set to no access and the rest is left. */
   function tasksOff(html: string): string[] {
     const posted = defaultSubmission(html, "scopes").filter(
       (v) => v !== "core.task:read",
     );
-    // What the page carries, and nothing newly asked.
-    expect(posted).toEqual(["core.note:read"]);
+    // What the page posts, and nothing newly asked: what the app holds is not
+    // posted.
+    expect(posted).toEqual([]);
     return posted;
   }
 
@@ -653,7 +659,7 @@ describe("what an approval with everything newly asked turned off does for an ap
       ),
     );
     expect(again?.pathname).toBe("/auth/authorize");
-    // The witness: the same page with Tasks left on is a code.
+    // The witness: the same page with Task left on is a code.
     const approved = await decide(
       server,
       origin,
@@ -678,7 +684,7 @@ describe("what an approval with everything newly asked turned off does for an ap
     const polled = await poll(app, screen);
     expect(polled.status).toBe(400);
     expect(polled.body.error).toBe("access_denied");
-    // The witness: the same page with Tasks left on is a token.
+    // The witness: the same page with Task left on is a token.
     const again = await deviceScreen(app, ASKED);
     expect(
       (
@@ -989,7 +995,7 @@ describe("what an approval posted to the approval pages grants", () => {
     expect(issued.body.scope).toBe("core.note:read");
   });
 
-  it("answers an approval with nothing chosen as access_denied, as Deny is answered", async () => {
+  it("answers an approval with nothing chosen as access_denied, as declining is answered", async () => {
     const scope = "openid offline_access core.note:read";
     const app = await register(scope);
     const screen = await consentScreen(app, scope);

@@ -2,7 +2,7 @@ export { Breadcrumb } from "./breadcrumb.js";
 export type { BreadcrumbProps, Crumb } from "./breadcrumb.js";
 export { CommandSearch } from "./command-search.js";
 export type { CommandSearchProps } from "./command-search.js";
-export { Button, Select, Switch } from "./controls.js";
+export { Button, ButtonPair, Select, Switch } from "./controls.js";
 export type {
   ButtonKind,
   ButtonProps,
@@ -37,7 +37,14 @@ export type {
 } from "./layout.js";
 export { ListToolbar, Pager, Tabs } from "./list.js";
 export type { ListToolbarProps, PagerProps, TabsProps } from "./list.js";
-export { ClosingAction, Disclosure, Row, RowGroup } from "./rows.js";
-export type { DisclosureProps, RowGroupProps, RowProps } from "./rows.js";
+export {
+  ClosingAction,
+  DisclosureRow,
+  Row,
+  RowGroup,
+  RowNote,
+} from "./rows.js";
+export type { DisclosureRowProps, RowGroupProps, RowProps } from "./rows.js";
+export { CodeCells } from "./code-cells.js";
 export { PageShell } from "./shell.js";
 export type { PageShellProps } from "./shell.js";

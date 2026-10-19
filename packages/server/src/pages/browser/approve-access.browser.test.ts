@@ -246,6 +246,19 @@ async function illegible(page: Page): Promise<string[]> {
   });
 }
 
+/** Opens a row of the approval card, as a person does, unless it is open. */
+async function openRow(page: Page, title: string): Promise<void> {
+  const row = page.locator("details.disclosure-row", {
+    has: page.locator("summary .rt", { hasText: title }),
+  });
+  if ((await row.getAttribute("open")) === null)
+    await row.locator("summary").click();
+}
+
+const openChoices = async (page: Page): Promise<void> => {
+  await openRow(page, "Your data");
+};
+
 describe("Approve access in a browser", () => {
   inWorld();
 
@@ -316,7 +329,20 @@ describe("Approve access in a browser", () => {
         }));
         expect(widths.page).toBeLessThanOrEqual(widths.viewport);
         expect(await illegible(b.page)).toEqual([]);
-        for (const name of ["Notes", "Tasks"])
+        // With every row open the page is at its widest and tallest.
+        for (const title of [
+          "Your data",
+          "Your profile",
+          "More control over Marfa",
+        ])
+          await openRow(b.page, title);
+        const open = await b.page.evaluate(() => ({
+          page: document.documentElement.scrollWidth,
+          viewport: window.innerWidth,
+        }));
+        expect(open.page).toBeLessThanOrEqual(open.viewport);
+        expect(await illegible(b.page)).toEqual([]);
+        for (const name of ["Note", "Task"])
           await b.page.getByRole("combobox", { name }).scrollIntoViewIfNeeded();
         await b.page
           .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
@@ -331,13 +357,28 @@ describe("Approve access in a browser", () => {
     const b = await openSignedIn();
     try {
       const { app, proof } = await openConsent(b, "Keyboard App");
-      const notes = b.page.getByRole("combobox", { name: "Notes" });
-      await notes.waitFor();
-      // Tab to it: nothing before it needs a mouse.
+      const summary = b.page.locator("summary", { hasText: "Your data" });
+      await summary.waitFor();
+      // Tab to the row: nothing before it needs a mouse.
       for (let i = 0; i < 12; i++) {
         await b.page.keyboard.press("Tab");
-        if (await notes.evaluate((el) => el === document.activeElement)) break;
+        if (await summary.evaluate((el) => el === document.activeElement))
+          break;
       }
+      expect(
+        await summary.evaluate((el) => el === document.activeElement),
+      ).toBe(true);
+      // The focus ring is drawn on it.
+      expect(
+        await summary.evaluate(
+          (el: BrowserElement) => getComputedStyle(el).outlineStyle,
+        ),
+      ).toBe("solid");
+      // Enter opens it, and the next Tab is the first control in it.
+      await b.page.keyboard.press("Enter");
+      const notes = b.page.getByRole("combobox", { name: "Note" });
+      await notes.waitFor();
+      await b.page.keyboard.press("Tab");
       expect(await notes.evaluate((el) => el === document.activeElement)).toBe(
         true,
       );
@@ -346,12 +387,16 @@ describe("Approve access in a browser", () => {
       await b.page.keyboard.type("Read o");
       expect(await notes.inputValue()).toBe("core.note:read");
       await b.page.keyboard.press("Tab");
-      const tasks = b.page.getByRole("combobox", { name: "Tasks" });
+      const tasks = b.page.getByRole("combobox", { name: "Task" });
       expect(await tasks.evaluate((el) => el === document.activeElement)).toBe(
         true,
       );
       await b.page.keyboard.type("No");
       expect(await tasks.inputValue()).toBe("");
+      // The line under the row followed what was chosen.
+      expect(
+        await summary.locator("..").locator("[data-summary]").textContent(),
+      ).toBe("Read notes");
       // The primary action is reachable and the Enter key presses it.
       await b.page.getByRole("button", { name: "Approve" }).focus();
       const sent = await arrival(b, () => b.page.keyboard.press("Enter"));
@@ -366,13 +411,14 @@ describe("Approve access in a browser", () => {
   });
 
   inBrowser(
-    "approves what the page offered, chosen by mouse, and denies on Deny",
+    "approves what the page offered, chosen by mouse, and denies on Cancel",
     async () => {
       const b = await openSignedIn();
       try {
         const approving = await openConsent(b, "Mouse App");
+        await openChoices(b.page);
         await b.page
-          .getByRole("combobox", { name: "Notes" })
+          .getByRole("combobox", { name: "Note" })
           .selectOption({ label: "Read only" });
         const sent = new URL(
           await arrival(b, () =>
@@ -392,7 +438,7 @@ describe("Approve access in a browser", () => {
         await openConsent(b, "Denied App");
         const denied = new URL(
           await arrival(b, () =>
-            b.page.getByRole("button", { name: "Deny" }).click(),
+            b.page.getByRole("button", { name: "Cancel" }).click(),
           ),
         );
         expect(denied.searchParams.get("error")).toBe("access_denied");
@@ -409,7 +455,8 @@ describe("Approve access in a browser", () => {
       const b = await openSignedIn();
       try {
         await openConsent(b, "Nothing App");
-        for (const name of ["Notes", "Tasks"])
+        await openChoices(b.page);
+        for (const name of ["Note", "Task"])
           await b.page
             .getByRole("combobox", { name })
             .selectOption({ label: "No access" });
@@ -433,9 +480,14 @@ describe("Approve access in a browser", () => {
       const b = await openSignedIn({ js: false });
       try {
         const { app, proof } = await openConsent(b, "No Script App");
-        expect(await b.page.locator("script").count()).toBe(0);
+        // The rows open with no script, and the line that says what happens
+        // when everything is off is there to read, with nothing to hide it.
+        await openChoices(b.page);
         await b.page
-          .getByRole("combobox", { name: "Tasks" })
+          .getByText("If everything is off, approving denies the request.")
+          .waitFor();
+        await b.page
+          .getByRole("combobox", { name: "Task" })
           .selectOption({ label: "No access" });
         const sent = await arrival(b, () =>
           b.page.getByRole("button", { name: "Approve" }).click(),
@@ -512,6 +564,71 @@ describe("Approve access in a browser", () => {
   );
 });
 
+describe("Approve access in a browser, its lines", () => {
+  inWorld();
+
+  inBrowser(
+    "keeps the line under each row true as the choices change, and says when everything is off",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await openConsent(
+          b,
+          "Lines App",
+          `${REQUEST} keys.mint webhooks.manage`,
+        );
+        const line = (title: string) =>
+          b.page
+            .locator("details.disclosure-row", {
+              has: b.page.locator("summary .rt", { hasText: title }),
+            })
+            .locator("summary [data-summary]");
+        const nothing = b.page.getByText(
+          "If everything is off, approving denies the request.",
+        );
+        expect(await line("Your data").textContent()).toBe(
+          "Read and edit notes; read tasks",
+        );
+        expect(await line("More control over Marfa").textContent()).toBe(
+          "2 things asked, each off until you turn it on",
+        );
+        // Something is on, so the line about everything being off is gone.
+        await nothing.waitFor({ state: "hidden" });
+
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read only" });
+        expect(await line("Your data").textContent()).toBe(
+          "Read notes and tasks",
+        );
+        await openRow(b.page, "More control over Marfa");
+        await b.page
+          .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+          .check();
+        expect(await line("More control over Marfa").textContent()).toBe(
+          "1 of 2 turned on",
+        );
+        for (const name of ["Note", "Task"])
+          await b.page
+            .getByRole("combobox", { name })
+            .selectOption({ label: "No access" });
+        expect(await line("Your data").textContent()).toBe(
+          "No access to your data",
+        );
+        // A power is still on, so approving is a choice.
+        await nothing.waitFor({ state: "hidden" });
+        await b.page
+          .getByRole("switch", { name: /Make, see, edit and revoke keys/ })
+          .uncheck();
+        await nothing.waitFor({ state: "visible" });
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+});
+
 interface DeviceAsk {
   app: Registered;
   userCode: string;
@@ -577,7 +694,12 @@ describe("Connect a device in a browser", () => {
             name: `Device ${scheme} wants access to Marfa`,
           })
           .waitFor();
-        expect(await b.page.getByText(ask.userCode).count()).toBe(1);
+        await b.page
+          .getByRole("img", {
+            name: `${ask.userCode.slice(0, 4)}-${ask.userCode.slice(4)}`,
+          })
+          .waitFor();
+        await b.page.getByText("Check this code matches your device").waitFor();
         expect(await illegible(b.page)).toEqual([]);
       } finally {
         await b.context.close();
@@ -615,7 +737,8 @@ describe("Connect a device in a browser", () => {
         await b.page.goto(
           `${origin}/auth/device/consent?user_code=${ask.userCode}`,
         );
-        const notes = b.page.getByRole("combobox", { name: "Notes" });
+        await openChoices(b.page);
+        const notes = b.page.getByRole("combobox", { name: "Note" });
         await notes.focus();
         await b.page.keyboard.type("Read o");
         expect(await notes.inputValue()).toBe("core.note:read");
@@ -643,7 +766,7 @@ describe("Connect a device in a browser, deciding", () => {
   inWorld();
 
   inBrowser(
-    "denies on Deny, and when everything is turned off and Approve is pressed",
+    "denies on Cancel, and when everything is turned off and Approve is pressed",
     async () => {
       const b = await openSignedIn();
       try {
@@ -651,7 +774,7 @@ describe("Connect a device in a browser, deciding", () => {
         await b.page.goto(
           `${origin}/auth/device/consent?user_code=${denied.userCode}`,
         );
-        await b.page.getByRole("button", { name: "Deny" }).click();
+        await b.page.getByRole("button", { name: "Cancel" }).click();
         await b.page
           .getByRole("heading", { name: "You didn't approve access" })
           .waitFor();
@@ -661,7 +784,8 @@ describe("Connect a device in a browser, deciding", () => {
         await b.page.goto(
           `${origin}/auth/device/consent?user_code=${nothing.userCode}`,
         );
-        for (const name of ["Notes", "Tasks"])
+        await openChoices(b.page);
+        for (const name of ["Note", "Task"])
           await b.page
             .getByRole("combobox", { name })
             .selectOption({ label: "No access" });
@@ -683,7 +807,6 @@ describe("Connect a device in a browser, deciding", () => {
       await b.page.goto(
         `${origin}/auth/device/consent?user_code=${ask.userCode}`,
       );
-      expect(await b.page.locator("script").count()).toBe(0);
       await b.page.getByRole("button", { name: "Approve" }).click();
       await b.page.getByRole("heading", { name: "Access approved" }).waitFor();
       expect((await pollDevice(ask)).status).toBe(200);

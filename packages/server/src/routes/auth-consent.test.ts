@@ -8,7 +8,7 @@
  *     or `client_id` is missing
  *   - POST /auth/authorize/decision without a session redirects to /auth/sign-in
  *   - POST decision reads client_id from oauth_query, not the form
- *   - POST decision accept=true with nothing selected → denied, like Deny
+ *   - POST decision accept=true with nothing selected → denied, like Cancel
  *   - auth.grant.created audit row carries client_ip
  *   - GET /authorize render carries Cache-Control: no-store
  *   - POST decision without session preserves oauth_query in return_to
@@ -466,8 +466,9 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('role="status"');
-    expect(visibleText(html)).toContain("can't confirm who made this app");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("flags an app that authenticates with a secret as unverified too", async () => {
@@ -487,8 +488,9 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(visibleText(html)).toContain("Secret App");
-    expect(html).toContain('role="status"');
-    expect(visibleText(html)).toContain("can't confirm who made this app");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("404s when client genuinely does not exist", async () => {
@@ -610,7 +612,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(location).toBe("/auth/sign-in");
   });
 
-  it("F2: approving with nothing selected is denied as Deny is, with no projection", async () => {
+  it("F2: approving with nothing selected is denied as Cancel is, with no projection", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -647,7 +649,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(audits.data.length).toBe(0);
   });
 
-  it("answers nothing selected exactly as it answers Deny", async () => {
+  it("answers nothing selected exactly as it answers Cancel", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -706,7 +708,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       return (grants.data[0]?.properties.scopes as string[] | undefined) ?? [];
     };
 
-    it("denies an approval with everything newly asked turned off, as Deny is answered, and keeps what it holds", async () => {
+    it("denies an approval with everything newly asked turned off, as Cancel is answered, and keeps what it holds", async () => {
       ctx = await createTestContext({});
       const clientId = await seedClient(ctx);
       const cookie = await signInUser(ctx);

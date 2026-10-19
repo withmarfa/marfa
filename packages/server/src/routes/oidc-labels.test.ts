@@ -137,6 +137,7 @@ const COPY_FAMILIES = [
       // in the same file is still caught.
       "export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {",
       "export const SCOPE_LABELS: Record<string, string> = {",
+      "export const SCOPE_NOUNS: Record<string, string> = {",
     ] as string[],
   },
   {
@@ -151,8 +152,12 @@ const COPY_FAMILIES = [
     // statement of this copy. It holds the short toggle name, a different
     // field on the same key that `labelFor` falls back *from* to a
     // description, and folding the two together would collapse a distinction
-    // the renderer depends on.
-    excise: ["export const SCOPE_LABELS: Record<string, string> = {"],
+    // the renderer depends on. `SCOPE_NOUNS` is the same name as it reads in
+    // the middle of a sentence about a choice.
+    excise: [
+      "export const SCOPE_LABELS: Record<string, string> = {",
+      "export const SCOPE_NOUNS: Record<string, string> = {",
+    ],
   },
 ];
 

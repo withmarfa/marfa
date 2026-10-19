@@ -515,6 +515,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       deps.storage,
       parsed,
     );
+    const typeLabels = await resolveTypeLabels(deps.storage, [
+      ...scopeLiterals,
+      ...(priorScopes ?? []),
+    ]);
     const bundles = resolveConsentBundles();
 
     // Before the page is shown, so the reaper keeps the client while the
@@ -531,6 +535,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       oauthQuery,
       descriptions,
       wildcardExpansions,
+      typeLabels,
       priorScopes,
       signedInAs: session.user.email,
       bundles,
@@ -669,7 +674,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           // anything else is a form edited to ask for more than the screen
           // showed, and nothing from it is granted. A deny reads no choice.
           //
-          // Nothing newly chosen is a denial, answered exactly as Deny is.
+          // Nothing newly chosen is a denial, answered exactly as Cancel is.
           // What the screen carries without a control, the mechanisms
           // (`openid`, `offline_access`) and what the app already holds in
           // full, is not a choice: approving it alone grants nothing new, and
@@ -1545,6 +1550,33 @@ export async function resolveWildcardExpansions(
     if (names.length > 0) out[`${root}.*`] = names;
   }
   return out;
+}
+
+/**
+ * The label of each exact item type the scopes name, keyed by type id, as the
+ * registry holds it: the shipped types and the instance's own. A pattern
+ * covering many types has no label of its own and is left out.
+ */
+export async function resolveTypeLabels(
+  storage: Storage,
+  literals: readonly string[],
+): Promise<Record<string, string>> {
+  const ids = new Set<string>();
+  for (const literal of literals) {
+    const scope = parseScope(literal);
+    if (
+      scope?.kind === "type" &&
+      scope.typePattern !== "*" &&
+      !scope.typePattern.endsWith(".*")
+    )
+      ids.add(scope.typePattern);
+  }
+  const found = await Promise.all(
+    [...ids].map(async (id) => [id, (await storage.types.get(id))?.label]),
+  );
+  return Object.fromEntries(
+    found.filter((entry): entry is [string, string] => !!entry[1]),
+  );
 }
 
 /**

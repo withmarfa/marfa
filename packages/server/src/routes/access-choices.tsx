@@ -1,16 +1,15 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import {
-  Disclosure,
+  DisclosureRow,
   Row,
   RowGroup,
-  Section,
+  RowNote,
   Select,
   Switch,
 } from "../pages/parts/index.js";
 import type { AccessModel, LevelRow, SwitchRow } from "./access-model.js";
 
-const DATA_NOTE = "One choice for each type of data it asked for.";
 const EDIT_NOTE = "Edit includes adding and deleting items.";
 
 function LevelControl(props: { row: LevelRow }) {
@@ -19,7 +18,6 @@ function LevelControl(props: { row: LevelRow }) {
     <Row
       title={row.title}
       description={row.description}
-      badge={row.isNew ? "New" : undefined}
       control={
         <Select
           id={row.id}
@@ -27,20 +25,21 @@ function LevelControl(props: { row: LevelRow }) {
           label={row.title}
           value={row.selected}
           options={row.options}
+          data={{ noun: row.noun, held: row.held }}
         />
       }
     />
   );
 }
 
-function SwitchControl(props: { row: SwitchRow }) {
+function SwitchControl(props: { row: SwitchRow; badge?: string }) {
   const { row } = props;
   return (
     <Row
       title={row.title}
       description={row.description}
       descriptionTone={row.destructive ? "danger" : undefined}
-      badge={row.isNew ? "New" : undefined}
+      badge={props.badge}
       for={row.id}
       control={
         <Switch
@@ -48,24 +47,16 @@ function SwitchControl(props: { row: SwitchRow }) {
           name="scopes"
           value={row.literal}
           checked={row.checked}
+          data={{ phrase: row.title }}
         />
       }
     />
   );
 }
 
-function Controls(props: { rows: readonly (LevelRow | SwitchRow)[] }) {
-  return (
-    <RowGroup>
-      {props.rows.map((row) =>
-        row.kind === "level" ? (
-          <LevelControl row={row} />
-        ) : (
-          <SwitchControl row={row} />
-        ),
-      )}
-    </RowGroup>
-  );
+/** Whether the page offers anything to turn on or off. */
+export function offersChoice(model: AccessModel): boolean {
+  return model.data.length + model.profile.length + model.powers.length > 0;
 }
 
 export interface AccessChoicesProps {
@@ -73,13 +64,16 @@ export interface AccessChoicesProps {
 }
 
 /**
- * The part of an approval screen where a person chooses: what the app
- * already holds, then one control for each thing it asks for. Every control
- * is a field named `scopes` whose value is a scope literal the request
- * named, so the form posts the same way with or without a script.
+ * The part of an approval screen where a person decides: what the app already
+ * holds, then one row to open for each kind of thing it asks for. Each row
+ * says in a line what the choice beneath it gives, and opens in place with no
+ * script. Every control is a field named `scopes` whose value is a scope
+ * literal the request named, so the form posts the same way with or without a
+ * script. What the app holds is never posted: the server adds it.
  */
 export function AccessChoices(props: AccessChoicesProps) {
   const { model } = props;
+  const isNew = model.returning ? "New" : undefined;
   return (
     <>
       {model.mechanisms.map((literal) => (
@@ -87,41 +81,74 @@ export function AccessChoices(props: AccessChoicesProps) {
       ))}
       {model.held.length > 0 && (
         <RowGroup>
-          <Disclosure
+          <DisclosureRow
             title="Already allowed"
-            description="Approving never lowers this. To end its access, use Connected apps."
+            description={model.summaries.held}
           >
             {model.held.map((row) => (
               <Row title={row.title} value={row.value} />
             ))}
-          </Disclosure>
+            <RowNote>
+              Approving never lowers this. To end its access, use Connected
+              apps.
+            </RowNote>
+          </DisclosureRow>
         </RowGroup>
       )}
-      {model.data.length > 0 && (
-        <Section
-          id="access-data"
-          title="Your data"
-          description={
-            model.offersEdit ? `${DATA_NOTE} ${EDIT_NOTE}` : DATA_NOTE
-          }
-        >
-          <Controls rows={model.data} />
-        </Section>
+      {offersChoice(model) && (
+        <RowGroup>
+          {model.data.length > 0 && (
+            <DisclosureRow
+              title="Your data"
+              badge={isNew}
+              description={model.summaries.data}
+              live
+              data={{
+                "access-group": "data",
+                "access-empty": model.summaries.empty.data,
+              }}
+            >
+              {model.data.map((row) => (
+                <LevelControl row={row} />
+              ))}
+              {model.offersEdit && <RowNote>{EDIT_NOTE}</RowNote>}
+            </DisclosureRow>
+          )}
+          {model.profile.length > 0 && (
+            <DisclosureRow
+              title="Your profile"
+              badge={isNew}
+              description={model.summaries.profile}
+              live
+              data={{
+                "access-group": "profile",
+                "access-empty": model.summaries.empty.profile,
+              }}
+            >
+              {model.profile.map((row) =>
+                row.kind === "level" ? (
+                  <LevelControl row={row} />
+                ) : (
+                  <SwitchControl row={row} />
+                ),
+              )}
+            </DisclosureRow>
+          )}
+          {model.powers.length > 0 && (
+            <DisclosureRow
+              title="More control over Marfa"
+              badge={isNew}
+              description={model.summaries.powers}
+              live
+              data={{ "access-group": "powers" }}
+            >
+              {model.powers.map((row) => (
+                <SwitchControl row={row} badge={isNew} />
+              ))}
+            </DisclosureRow>
+          )}
+        </RowGroup>
       )}
-      {model.profile.length > 0 && (
-        <Section id="access-profile" title="Your profile">
-          <Controls rows={model.profile} />
-        </Section>
-      )}
-      {model.powers.map((section) => (
-        <Section
-          id={`access-${section.id}`}
-          title={section.title}
-          description={`${section.description} Each is off until you turn it on.`}
-        >
-          <Controls rows={section.rows} />
-        </Section>
-      ))}
     </>
   );
 }

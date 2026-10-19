@@ -1,14 +1,18 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
-import { Notice } from "../pages/parts/index.js";
 
-/** The caution beside every app a person is about to approve: any program can pick any name. */
-export function UnverifiedAppNotice() {
+/**
+ * The two lines under an approval card. Marfa never knows who made an app, so
+ * the first is always said: any program can pick any name when it registers.
+ */
+export function ApprovalFoot() {
   return (
-    <Notice title="Marfa can't confirm who made this app">
-      Only approve apps you trust.
-    </Notice>
+    <>
+      Marfa can't confirm who made this app. Only approve apps you trust.
+      <br />
+      You can end its access at any time in Connected apps.
+    </>
   );
 }
 
@@ -25,6 +29,9 @@ function joined(items: readonly Child[]): Child[] {
   return out;
 }
 
+/** An origin as a person reads it: the scheme of a secure address is understood. */
+const shown = (origin: string): string => origin.replace(/^https:\/\//, "");
+
 /**
  * The addresses an approval lets reach the server from a browser, or nothing
  * for an app with none. One part for both approval screens, so the owner
@@ -32,12 +39,28 @@ function joined(items: readonly Child[]): Child[] {
  */
 export function WebOriginNote(props: { origins: readonly string[] }) {
   if (props.origins.length === 0) return null;
-  const named = props.origins.map((origin) => <strong>{origin}</strong>);
   return (
-    <p class="secd">
+    <p class="small muted">
       Approving also lets{" "}
-      {props.origins.length === 1 ? "the web page at " : "web pages at "}
-      {joined(named)} reach Marfa from your browser.
+      {joined(
+        props.origins.map((origin) => (
+          <strong class="strong">{shown(origin)}</strong>
+        )),
+      )}{" "}
+      reach Marfa from your browser.
+    </p>
+  );
+}
+
+/**
+ * Said while nothing is on. The page shows it to a browser that runs no
+ * script, because there is nothing to hide it; the script hides it as soon as
+ * something is on.
+ */
+export function EverythingOffNote() {
+  return (
+    <p class="small muted" data-access-nothing>
+      If everything is off, approving denies the request.
     </p>
   );
 }

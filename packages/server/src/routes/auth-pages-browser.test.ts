@@ -120,7 +120,7 @@ async function newPage(): Promise<Page> {
 }
 
 inBrowser("the consent page, in a browser", () => {
-  it("still works after Back from Deny", async () => {
+  it("still works after Back from Cancel", async () => {
     const page = await newPage();
     try {
       await page.goto(await authorizeUrl("Back Test App"));
@@ -147,7 +147,7 @@ inBrowser("the consent page, in a browser", () => {
       expect(await allow.isDisabled()).toBe(false);
       const deny = page.locator('button[name="accept"][value="false"]');
       expect(await deny.isDisabled()).toBe(false);
-      expect(await deny.textContent()).toBe("Deny");
+      expect(await deny.textContent()).toBe("Cancel");
 
       await allow.click();
       await page.waitForURL(/\/callback\?.*code=/);
@@ -273,12 +273,10 @@ inBrowser("the device approval page, in a browser", () => {
       await page.waitForURL(/\/auth\/sign-in\?/);
       await signIn(page);
       await page.waitForURL(/\/auth\/device\/consent\?/);
-      expect(await page.getByRole("status").textContent()).toContain(
-        "can't confirm who made this app",
-      );
+      await page.getByText("Marfa can't confirm who made this app.").waitFor();
 
-      // Deny, then Back: the page works again, as the consent page does.
-      await page.click('button:has-text("Deny")');
+      // Cancel, then Back: the page works again, as the consent page does.
+      await page.click('button:has-text("Cancel")');
       await page.waitForSelector("text=You didn't approve access");
       await page.goBack({ waitUntil: "commit" });
       await page.waitForURL(/\/auth\/device\/consent\?/, {
@@ -358,15 +356,18 @@ inBrowser("the policy, in a browser", () => {
       await page.waitForSelector("[data-otp] input");
       expect(await page.locator("[data-otp] input").count()).toBe(8);
 
-      // The consent page needs no script of its own: its controls are plain
-      // form fields, and a level changes with none running.
+      // The consent page loads the shared script under its nonce, and the
+      // policy runs it: the line under a row follows the control, which the
+      // server's own line would not.
       await page.goto(await authorizeUrl("Policy App"));
       await signIn(page);
       await page.waitForURL(/\/auth\/authorize\?/);
-      expect(await page.locator("script").count()).toBe(0);
+      expect(await page.locator("script").count()).toBe(1);
+      await page.locator("summary", { hasText: "Your data" }).click();
       const level = page.getByRole("combobox").first();
       await level.selectOption({ label: "No access" });
       expect(await level.inputValue()).toBe("");
+      await page.getByText("No access to your data").waitFor();
     } finally {
       await page.context().close();
     }

@@ -1,4 +1,5 @@
 /** The one script every page loads. Each module finds its own markup and does nothing without it. */
+import { initAccess } from "./access.js";
 import { initCommandSearch } from "./command-search.js";
 import { initCopy } from "./copy.js";
 import { initDialogs } from "./dialog.js";
@@ -19,6 +20,7 @@ function start(): void {
   initPasskey();
   initSetup();
   initPasskeySignIn();
+  initAccess();
 }
 
 if (document.readyState === "loading")
