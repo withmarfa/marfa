@@ -34,6 +34,10 @@ const OUTBOUND: Record<string, string> = {
     "pings the liveness URL the operator configures; no credential names it",
   "middleware/error-notifier.ts":
     "posts 500 alerts to the URL the operator configures; no credential names it",
+  "pages/client/passkey.ts":
+    "runs in the owner's browser and calls this server's own passkey door; it sends no webhook delivery",
+  "pages/client/setup.ts":
+    "runs in the owner's browser and calls this server's own setup doors; it sends no webhook delivery",
   "test-browser.ts":
     "dispatches browser fixture requests through app.fetch in process; it sends no webhook delivery",
 };

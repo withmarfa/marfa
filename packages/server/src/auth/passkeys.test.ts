@@ -51,11 +51,11 @@ async function signedOwner() {
       headers: { origin, cookie, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-  expect((await post("/owner", { ...owner, code: ctx.setupCode })).status).toBe(
-    201,
-  );
-  const login = await post("/auth/sign-in/email", owner);
-  const ownerCookie = cookies(login);
+  // A claim from the instance's own origin signs the owner in, so the one
+  // browser session these tests count is the claim's own.
+  const claimed = await post("/owner", { ...owner, code: ctx.setupCode });
+  expect(claimed.status).toBe(201);
+  const ownerCookie = cookies(claimed);
   const options = async (
     kind: "register" | "authenticate",
     cookie = kind === "register" ? ownerCookie : "",
