@@ -154,7 +154,7 @@ export interface TypeSchema {
    * validates at registration and rejects mismatched claims with
    * `compatible_with_violation`.
    */
-  compatible_with?: string;
+  compatible_with?: string | string[];
 }
 
 /** What a purge left of a row's link or natural key under its type. */

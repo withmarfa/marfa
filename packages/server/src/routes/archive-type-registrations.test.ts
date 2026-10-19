@@ -184,6 +184,64 @@ async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
 }
 
 describe("archives carry type registrations", () => {
+  it.each([
+    { reversed: false, inherited: false },
+    { reversed: true, inherited: false },
+    { reversed: false, inherited: true },
+    { reversed: true, inherited: true },
+  ])(
+    "restores mutually compatible types into an empty store (reversed: $reversed, inherited: $inherited)",
+    async ({ reversed, inherited }) => {
+      const source = await newContext();
+      const suffix = uniqueSuffix();
+      const first = `user.mutual_${suffix}`;
+      const second = `user.mutual_${suffix}.peer`;
+      const shape = {
+        label: "Compatible",
+        description: "A compatible type.",
+        ...(inherited ? { parent: "core.note" } : {}),
+        fields: { title: { type: "string", required: true } },
+      };
+      for (const body of [
+        { id: first, ...shape },
+        { id: second, ...shape, compatible_with: [first] },
+      ]) {
+        const registered = await request(source.app, "POST", "/types", {
+          key: source.workingKey,
+          body,
+        });
+        expect(registered.status).toBe(201);
+      }
+      const replaced = await request(source.app, "PUT", `/types/${first}`, {
+        key: source.workingKey,
+        body: { ...shape, compatible_with: [second] },
+      });
+      expect(replaced.status).toBe(200);
+      const archive = await exportArchive(source);
+      const entries = await extractArchive(archive);
+      const lines = entries.get("types.ndjson")!.toString().trim().split("\n");
+      if (reversed) lines.reverse();
+      const reordered = await repack(entries, {
+        "types.ndjson": lines.join("\n") + "\n",
+      });
+      // The in-process source and destination share the registry. A fresh
+      // destination process would not know either exported registration.
+      unregisterTypeSchema(first);
+      unregisterTypeSchema(second);
+      const destination = await newContext();
+      const restored = await restore(destination, reordered);
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      expect(await restored.json()).toMatchObject({ types_registered: 2 });
+      const types = await destination.storage.types.listRegistered();
+      expect(types.find((type) => type.id === first)?.compatible_with).toEqual([
+        second,
+      ]);
+      expect(types.find((type) => type.id === second)?.compatible_with).toEqual(
+        [first],
+      );
+    },
+  );
+
   it("round-trips a database whose items use its own types", async () => {
     const source = await newContext();
     const suffix = uniqueSuffix();

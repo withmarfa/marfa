@@ -2,11 +2,9 @@
  * Registering the types an archive carries, before the restore writes
  * anything that needs them.
  *
- * An item can be of a type registered here rather than shipped, and until
- * the archive carried those registrations a restore into an empty database
- * dropped every such item as an unknown type. The registrations are planned
- * before anything is written, and written first inside the restore's one
- * transaction, so they commit with the rows that use them or not at all.
+ * Registrations and the rows that use them share one transaction, so an
+ * invalid schema leaves neither rows nor registrations behind. Compatibility
+ * checks need the complete batch because their targets can name each other.
  */
 
 import {
@@ -213,7 +211,9 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           { namespace: tier },
         );
       }
-      const result = validateTypeSchema(entry.type);
+      const result = validateTypeSchema(entry.type, {
+        deferCompatibilityChecks: true,
+      });
       if (!result.success) {
         throw new MarfaError(
           ErrorCode.INVALID_SCHEMA,
@@ -288,13 +288,15 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 /** The registrations an archive adds, decided before anything is written. */
 export interface ArchiveTypePlan {
   types: PendingType[];
+  typesToValidate: TypeSchema[];
   edgeTypes: EdgeTypeSchema[];
   typesSkipped: number;
   edgeTypesSkipped: number;
 }
 
 /**
- * Validates the archive's types and decides which to register.
+ * Validates schema shapes and decides which registrations to add.
+ * Compatibility is checked against the complete batch in the write transaction.
  *
  * Conflicts are decided over the whole batch so a refusal names every
  * clashing id at once, before anything has been written. An identical
@@ -358,6 +360,7 @@ export async function planArchiveTypes(
   }
   return {
     types: typesToWrite,
+    typesToValidate: types.map((entry) => entry.schema),
     edgeTypes: edgeTypesToWrite,
     typesSkipped,
     edgeTypesSkipped,
@@ -409,7 +412,9 @@ export async function writeArchiveTypes(
             // Checked again now its parent is registered: the first pass ran
             // before the batch's own parents were, so it could not see what a
             // child inherits from one of them, a second thumbnail among it.
-            const inherited = validateTypeSchema(schema);
+            const inherited = validateTypeSchema(schema, {
+              deferCompatibilityChecks: true,
+            });
             if (!inherited.success) {
               throw new MarfaError(
                 ErrorCode.INVALID_SCHEMA,
@@ -457,6 +462,20 @@ export async function writeArchiveTypes(
       ErrorCode.VALIDATION_ERROR,
       `Archive types name parents that do not resolve: ${pending.map((e) => e.schema.id).join(", ")}`,
     );
+  }
+
+  // Compatibility is structural, not an inheritance dependency. Its targets
+  // can name each other, so check the complete batch under the restore's
+  // write lock; a refusal rolls back both rows and the registry overlay.
+  for (const schema of plan.typesToValidate) {
+    const result = validateTypeSchema(schema);
+    if (!result.success) {
+      throw new MarfaError(
+        ErrorCode.INVALID_SCHEMA,
+        `Archive carries an invalid type schema for "${schema.id}"`,
+        { errors: result.errors },
+      );
+    }
   }
 
   // The names were checked when the archive was read, and much has been

@@ -1532,6 +1532,14 @@ If an archive registers a type with a `link_field` in which two rows that a forc
 
 **Tests:** `compliance/links.test.ts › stops a restore registering a link the rows a forced delete left share`.
 
+### `search-and-filters/restore-compatible-types`
+
+When an otherwise valid archive carries types whose `compatible_with` declarations satisfy `types/compatible-with`, the server MUST restore those types regardless of their order in the archive, including declarations that form a cycle.
+
+**Reason:** compatibility describes readable fields rather than inheritance, so types registered and replaced through the ordinary routes can name each other and their exported backup must remain restorable.
+
+**Tests:** `compliance/restore-compatible-types.test.ts › round-trips mutually compatible types into an empty store (reversed: %s)`.
+
 ### `search-and-filters/restore-type-conflict`
 
 If an archive registers a type or an edge type that the instance holds differently, then the server MUST answer `409 conflict` naming each in `details.conflicting_ids`.

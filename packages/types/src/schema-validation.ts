@@ -196,6 +196,11 @@ export interface SchemaValidationContext {
    * type is registered yet (the codegen path).
    */
   descendantsOf?: (typeId: string) => TypeSchema[];
+  /**
+   * Check declaration syntax only. A batch restore must validate again with
+   * every target present before committing the transaction.
+   */
+  deferCompatibilityChecks?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1576,6 +1581,8 @@ function validateCompatibleWith(
     );
     return;
   }
+
+  if (ctx.deferCompatibilityChecks) return;
 
   const candidateFields = new Map<string, FieldDefinition>();
   for (const [name, inherited] of ancestorFields) {

@@ -1208,8 +1208,12 @@ export function validateTransition(
  * to a dedicated HTTP error code also carries `code` — `property_shadows_field`,
  * `inheritance_violation`, `compatible_with_violation`.
  */
-export function validateTypeSchema(input: unknown): TypeSchemaValidationResult {
+export function validateTypeSchema(
+  input: unknown,
+  options: { deferCompatibilityChecks?: boolean } = {},
+): TypeSchemaValidationResult {
   return validateTypeSchemaShape(input, {
+    ...options,
     resolveSchema: (typeId) => resolveSchema(typeId),
     isValidTypeIdentifier,
     descendantsOf: (typeId) =>
