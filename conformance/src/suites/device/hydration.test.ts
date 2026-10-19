@@ -805,6 +805,43 @@ describe("how a hydration completes", () => {
     expect((await device.list()).ok).toBe(false);
   });
 
+  it("ends a hydration decoding, and does not expire the copy, where the reader cannot decode an answer", async () => {
+    harness = await startHarness("undecodable-page");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "held" } }] },
+    });
+    // The first hydration takes the scripted listing; the next two take a
+    // page cut short and then a whole one.
+    server.copyAnswer(
+      "GET",
+      "/items",
+      { kind: "json", status: 200, body: null, raw: '{"data":[' },
+      itemsPage([{ item: wireItem({ id: "n2" }) }]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const refused = await device.hydrate(["core.note"], "library");
+    expect(
+      refused.ok,
+      "a page the reader could not decode was taken as a page",
+    ).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code, JSON.stringify(refused)).toBe("decoding");
+      expect(refused.refusal.raw).toContain("/items");
+    }
+    const status = await device.status();
+    // Under way, as after any hydration that ends other than expired: the
+    // caller asks again, and the copy is not owed a hydration it cannot have.
+    expect(status.ok && status.value.hydration).toBe("in_progress");
+
+    // The witness: the same door answered whole is taken.
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect((await device.get("n2")).ok).toBe(true);
+  });
+
   it("expires the copy when a listing hands back a cursor it already read", async () => {
     harness = await startHarness("repeated-cursor");
     const { server, device } = harness;

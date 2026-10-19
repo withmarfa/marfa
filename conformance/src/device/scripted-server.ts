@@ -49,6 +49,8 @@ export type Answer =
       kind: "json";
       status: number;
       body: unknown;
+      /** Text sent in place of `body`, for a body the server's own encoder never writes. */
+      raw?: string;
       headers?: Record<string, string>;
       /**
        * The contract this one answer names, where it is not the server's:
@@ -466,7 +468,7 @@ export class ScriptedServer {
       return;
     }
     if (answer.kind === "json") {
-      const body = JSON.stringify(answer.body);
+      const body = answer.raw ?? JSON.stringify(answer.body);
       const named =
         answer.contract === undefined
           ? this.named()

@@ -3660,6 +3660,139 @@ mod tests {
         assert_eq!(stored_cursor(core), None, "the cursor was kept");
     }
 
+    /// An event `item_payload` describes, whole or cut short so that no JSON
+    /// reader takes it.
+    fn eleven(whole: bool) -> String {
+        let payload = item_payload("item.created", "n1", NOTE, 11);
+        let payload = if whole {
+            &payload
+        } else {
+            &payload[..payload.len() / 2]
+        };
+        event("11", "item.created", payload)
+    }
+
+    /// An event that is not JSON says nothing against the copy's read view,
+    /// and reading it again fails the same way, so the run ends `decoding`
+    /// and leaves the copy and its cursor as they were.
+    #[test]
+    fn an_event_that_is_not_json_ends_a_catch_up_decoding_and_keeps_the_copy() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("11"), eleven(false)],
+                Then::End,
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        match core.catch_up() {
+            Err(CoreError::Decoding(message)) => {
+                assert!(message.starts_with("an event the stream sent"), "{message}");
+            }
+            other => panic!("an event that is not JSON ended {other:?}"),
+        }
+        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
+        assert!(!read_view::expired(&core.conn().unwrap()).unwrap());
+
+        // The witness: the whole event is applied.
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("11"),
+                    eleven(true),
+                    stream_live(Some("11")),
+                ],
+                Then::End,
+            )],
+        );
+        core.catch_up().unwrap();
+        assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn an_event_that_is_not_json_ends_a_follow_decoding_and_keeps_the_copy() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("11"), eleven(false)],
+                held(),
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        match run.ended() {
+            Err(CoreError::Decoding(_)) => {}
+            other => panic!("an event that is not JSON ended the follow {other:?}"),
+        }
+        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
+        assert!(!read_view::expired(&core.conn().unwrap()).unwrap());
+
+        // The witness: the whole event is applied.
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("11"),
+                    eleven(true),
+                    stream_live(Some("11")),
+                ],
+                held(),
+            )],
+        );
+        let run = follow_on(&core, QUICK, None);
+        run.change();
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+    }
+
+    /// Each is JSON that is not what the copy's stream carries, so the frame
+    /// is one the copy cannot accept and it expires.
+    #[test]
+    fn an_event_that_is_json_and_does_not_fit_expires_the_copy() {
+        let marker = |kind: &str, field: &str| {
+            let mut value: serde_json::Value = serde_json::from_str(
+                crate::scripted::copy_marker(kind, "11")
+                    .lines()
+                    .find_map(|line| line.strip_prefix("data: "))
+                    .unwrap(),
+            )
+            .unwrap();
+            value[field] = 7.into();
+            format!("event: {kind}\ndata: {value}\n\n")
+        };
+        let listed = |listed: serde_json::Value| {
+            let mut value: serde_json::Value =
+                serde_json::from_str(&item_payload("item.created", "n1", NOTE, 11)).unwrap();
+            value["listed"] = listed;
+            event("11", "item.created", &value.to_string())
+        };
+        let mut frames = vec![
+            vec![stream_cursor("11"), listed("yes".into())],
+            vec![stream_cursor("11"), listed(1.into())],
+        ];
+        for field in ["read_view", "instance_id", "cursor"] {
+            frames.push(vec![marker("stream_cursor", field)]);
+            frames.push(vec![stream_cursor("11"), marker("stream_live", field)]);
+        }
+        for frames in frames {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            let mut sent = vec![connected()];
+            sent.extend(frames.clone());
+            server.on("/events", vec![stream(sent, Then::End)]);
+            let (_dir, core) = hydrated(&server);
+            expired(core.catch_up(), &core, "read_view_invalid");
+        }
+    }
+
     fn cursor_ahead(requested: &str, head: &str) -> String {
         format!(
             "event: cursor_ahead\ndata: {{\"event_type\":\"cursor_ahead\",\"requested\":\"{requested}\",\"head\":\"{head}\"}}\n\n"

@@ -305,6 +305,29 @@ impl From<serde_json::Error> for CoreError {
     }
 }
 
+/// An answer that does not read, named by where it came from. Serde's text
+/// for a value of the wrong type quotes the value, so only a syntax error or
+/// a missing field is repeated; another is named by what it fails to be. A
+/// position is given where serde knows one: a value already parsed has none.
+pub(crate) fn unreadable(what: &str, error: &serde_json::Error) -> CoreError {
+    use serde_json::error::Category;
+    let why = match error.classify() {
+        Category::Data if !error.to_string().starts_with("missing field") => {
+            let mut why = String::from("not the shape the contract describes");
+            if error.line() > 0 {
+                why.push_str(&format!(
+                    " at line {} column {}",
+                    error.line(),
+                    error.column()
+                ));
+            }
+            why
+        }
+        _ => error.to_string(),
+    };
+    CoreError::Decoding(format!("{what}: {why}"))
+}
+
 impl From<url::ParseError> for CoreError {
     fn from(error: url::ParseError) -> Self {
         CoreError::Invalid(format!("invalid url: {error}"))
@@ -409,5 +432,44 @@ mod tests {
         };
         assert!(!refused.is_environmental());
         assert_eq!(refused.retry_after(), None);
+    }
+
+    #[test]
+    fn an_answer_that_does_not_read_is_named_without_repeating_what_it_said() {
+        #[derive(serde::Deserialize, Debug)]
+        struct Row {
+            #[allow(dead_code)]
+            count: u32,
+        }
+        let message = |text: &str| match serde_json::from_str::<Row>(text) {
+            Err(error) => match unreadable("/rows", &error) {
+                CoreError::Decoding(message) => message,
+                other => panic!("{other:?}"),
+            },
+            Ok(row) => panic!("{row:?}"),
+        };
+        let quoted = message(r#"{"count":"private words"}"#);
+        assert!(quoted.starts_with("/rows: "), "{quoted}");
+        assert!(!quoted.contains("private words"), "{quoted}");
+        // The witness: serde's own text for this does quote the value.
+        let own = serde_json::from_str::<Row>(r#"{"count":"private words"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(own.contains("private words"), "{own}");
+        assert!(quoted.contains("at line 1 column"), "{quoted}");
+        assert!(message("{}").contains("missing field `count`"));
+        assert!(message(r#"{"count":"#).contains("EOF"));
+
+        // A value parsed already has no position, and none is made up.
+        let parsed = serde_json::from_value::<Row>(serde_json::json!({"count": "private words"}))
+            .unwrap_err();
+        let CoreError::Decoding(text) = unreadable("edge type 2", &parsed) else {
+            panic!("not a decoding failure");
+        };
+        assert!(text.starts_with("edge type 2: not the shape"), "{text}");
+        assert!(
+            !text.contains("line 0") && !text.contains("private words"),
+            "{text}"
+        );
     }
 }

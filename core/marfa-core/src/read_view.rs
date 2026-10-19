@@ -34,7 +34,22 @@ pub(crate) fn event_payload(
     id: Option<&str>,
     data: &str,
 ) -> Result<crate::wire::EventPayload> {
-    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|_| invalid())?;
+    // Data that does not parse as JSON says nothing against the copy's read
+    // view, and reading it again fails the same way. JSON that is not an
+    // event is a frame the copy cannot accept, whatever field fails first.
+    // Read straight from the text, so a member named twice is refused as a
+    // shape error rather than collapsed to its last value.
+    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|error| {
+        use serde_json::error::Category::{Eof, Syntax};
+        if matches!(error.classify(), Syntax | Eof) {
+            return crate::error::unreadable("an event the stream sent", &error);
+        }
+        // A field of the wrong type can stand before the place the data stops.
+        match serde_json::from_str::<serde_json::Value>(data) {
+            Err(error) => crate::error::unreadable("an event the stream sent", &error),
+            Ok(_) => invalid(),
+        }
+    })?;
     if matches!(name, Some("stream_cursor" | "stream_live"))
         || matches!(payload.event_type.as_str(), "stream_cursor" | "stream_live")
     {
@@ -229,6 +244,59 @@ pub(crate) fn forget_listed(conn: &Connection, id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn an_event_is_decoding_where_its_data_stops_whatever_field_failed_first() {
+        let message = |data: &str| match event_payload(Some("item.created"), Some("11"), data) {
+            Err(CoreError::Decoding(message)) => message,
+            other => panic!("{data}: {other:?}"),
+        };
+        // A field of the wrong type stands before the place the data stops.
+        let cut = message(r#"{"listed":"yes","event_type":"item.created","item":{"id""#);
+        assert!(cut.starts_with("an event the stream sent"), "{cut}");
+        assert!(!cut.contains("yes"), "{cut}");
+        message(r#"{"event_type":"item.created","item":{"id""#);
+
+        // The witness: the same field of the wrong type, with the data whole,
+        // is a frame the copy cannot accept.
+        for data in [
+            r#"{"listed":"yes","event_type":"item.created"}"#,
+            r#"{"listed":1,"event_type":"item.created"}"#,
+            r#"[]"#,
+        ] {
+            assert_eq!(
+                event_payload(Some("item.created"), Some("11"), data).unwrap_err(),
+                invalid(),
+                "{data}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_member_named_twice_is_a_frame_the_copy_cannot_accept() {
+        assert_eq!(
+            event_payload(
+                Some("item.created"),
+                Some("11"),
+                r#"{"listed":true,"listed":false,"event_type":"item.created"}"#
+            )
+            .unwrap_err(),
+            invalid()
+        );
+        let fence = "a".repeat(64);
+        let marker = format!(
+            r#"{{"event_type":"stream_cursor","cursor":"1","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+        );
+        assert_eq!(
+            event_payload(Some("stream_cursor"), None, &marker).unwrap_err(),
+            invalid()
+        );
+        // The witness: the same marker naming its cursor once is accepted.
+        let once = format!(
+            r#"{{"event_type":"stream_cursor","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+        );
+        assert!(event_payload(Some("stream_cursor"), None, &once).is_ok());
+    }
+
     #[test]
     fn proof_grammar_is_canonical_and_bounded() {
         assert!(valid_fence(&"a".repeat(64)));
