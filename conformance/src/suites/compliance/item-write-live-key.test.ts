@@ -207,19 +207,13 @@ async function held(door: Door, change: Change | null) {
   return { answer: await pending, written };
 }
 
-/** The code a refused write carries, whether on its envelope or its page. */
-function codeOf(answer: ApiResponse<unknown>): string | undefined {
-  const error = answer.error?.error;
-  const details = error?.details as { code?: string } | undefined;
-  return details?.code ?? error?.code;
-}
-
 /** The write with no change is written; the same with `change` is not. */
 async function refusedAfter(
   door: Door,
   change: Change,
   status: number,
   code: string,
+  detailsCode?: string,
 ): Promise<void> {
   const witness = await held(door, null);
   expect(
@@ -230,11 +224,21 @@ async function refusedAfter(
 
   const refused = await held(door, change);
   expect(refused.answer.status).toBe(status);
-  expect(codeOf(refused.answer)).toBe(code);
+  expect(refused.answer.error?.error.code).toBe(code);
+  if (detailsCode !== undefined) {
+    const details = refused.answer.error?.error.details as
+      { code?: string } | undefined;
+    expect(details?.code).toBe(detailsCode);
+  }
   expect(await refused.written()).toBe(false);
 }
 
 const NARROWED = [403, "type_not_permitted"] as const;
+const ROLLED_BACK = [
+  403,
+  "bulk_atomic_rollback",
+  "type_not_permitted",
+] as const;
 const REVOKED = [401, "unauthorized"] as const;
 
 it("refuses a create 403 type_not_permitted when its key is narrowed to read after the write is held", async () => {
@@ -261,8 +265,8 @@ it("refuses a transition 403 type_not_permitted when its key is narrowed to read
   await refusedAfter(transition, narrow, ...NARROWED);
 });
 
-it("refuses an atomic bulk page 403 type_not_permitted when its key is narrowed to read after the write is held", async () => {
-  await refusedAfter(bulk(true), narrow, ...NARROWED);
+it("refuses an atomic bulk page 403 bulk_atomic_rollback with type_not_permitted in details.code when its key is narrowed to read after the write is held", async () => {
+  await refusedAfter(bulk(true), narrow, ...ROLLED_BACK);
 });
 
 it("errors a best-effort bulk entry type_not_permitted when its key is narrowed to read after the write is held", async () => {
@@ -309,6 +313,50 @@ it("refuses an atomic bulk page 401 when its key is revoked after the write is h
   await refusedAfter(bulk(true), revoke, ...REVOKED);
 });
 
-it("refuses a best-effort bulk page 401 when its key is revoked after the write is held", async () => {
+it("refuses a best-effort bulk page 401 when its key is revoked before its first entry is written", async () => {
   await refusedAfter(bulk(false), revoke, ...REVOKED);
+});
+
+/** A best-effort page of two entries, held as its second entry is reached. */
+async function secondEntryHeld(change: Change) {
+  const key = await writer();
+  const ids = [generateId(), generateId()];
+  await server.setFault("hold:write=items.bulk@2");
+  const pending = key.client.bulkItems({
+    atomic: false,
+    items: ids.map((id) => ({
+      id,
+      type: "core.note",
+      properties: { body: "bulk" },
+    })),
+  });
+  await server.waitForHold("hold:write");
+  await change(key);
+  await server.clearFault("hold:write");
+  const answer = await pending;
+  expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+  const { results } = answer.data as {
+    results: { outcome: string; error?: { code: string } }[];
+  };
+  return {
+    results,
+    first: await bodyOf(ids[0]!),
+    second: await bodyOf(ids[1]!),
+  };
+}
+
+it("errors a later best-effort bulk entry type_not_permitted when its key is narrowed to read after an earlier entry is written", async () => {
+  const { results, first, second } = await secondEntryHeld(narrow);
+  expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
+  expect(results[1]?.error?.code).toBe("type_not_permitted");
+  expect(first).toBe("bulk");
+  expect(second).toBeUndefined();
+});
+
+it("errors a later best-effort bulk entry unauthorized when its key is revoked after an earlier entry is written", async () => {
+  const { results, first, second } = await secondEntryHeld(revoke);
+  expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
+  expect(results[1]?.error?.code).toBe("unauthorized");
+  expect(first).toBe("bulk");
+  expect(second).toBeUndefined();
 });
