@@ -30,11 +30,12 @@ export function rememberRecentAuthentication(): void {
 }
 
 /**
- * Called under the write lock, before a transaction's body runs. A revoked
- * credential is refused here, and a narrowed one is read again into the
- * request's context. A door judges the credential as it stands only by
- * reading it from the context inside the transaction (`requireAuth`): a key
- * read before the transaction opened is the key as it was before the change
+ * Called under the write lock by `storage.runInTransaction`, before its body
+ * runs. A revoked credential is refused here, and a narrowed one is read
+ * again into the request's context. A door judges the credential as it
+ * stands only by reading it from the context inside such a transaction
+ * (`requireAuth`): a key read before it opened, or inside a store's own
+ * transaction, is the key as it was before the change
  * (`routes/item-write-live-key.test.ts`).
  */
 export async function validateRequestAuthority(): Promise<void> {
