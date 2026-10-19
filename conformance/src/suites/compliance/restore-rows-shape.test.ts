@@ -263,7 +263,7 @@ describe("a restore of rows whose type no longer shapes them", () => {
     expect(await held(working(third), ids)).toEqual(read);
   }, 180_000);
 
-  it("restores an item of a platform type that this build no longer ships as an orphan, and holds one it ships to its shape", async () => {
+  it("restores an item of a platform type that this build no longer ships as an orphan", async () => {
     const source = working(origin);
     const retired = "core.retired_thing";
     expect(

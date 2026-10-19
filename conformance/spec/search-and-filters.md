@@ -1398,7 +1398,7 @@ When `GET /export?format=archive` selects an item that is not of a `core` or `sy
 
 **Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a platform type that this build no longer ships as an orphan`.
 
 ### `search-and-filters/archive-validation-retry`
 
@@ -1800,7 +1800,7 @@ When `POST /restore` writes an item that is not of a `core` or `system` type tha
 
 **Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
 
-**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item of a platform type that this build no longer ships as an orphan`.
 
 ### `search-and-filters/restore-item-type`
 
