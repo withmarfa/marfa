@@ -4,16 +4,15 @@ import type {
   BulkActionJobStore,
   Storage,
 } from "../storage/interface.js";
+import {
+  validateRequestAuthority,
+  withRequestAuthority,
+} from "../auth/request-authority.js";
 import { BulkActionWorker } from "./worker.js";
 
 /**
- * Idle-poll backoff is the only behavior under test here, so the storage
- * surface is stubbed down to the two methods the loop touches: `recoverStale`
- * (called once on `start()`) and `claimNext` (called once per tick). A queue
- * that always returns `null` from `claimNext` is "empty"; returning a row once
- * simulates a claimed job. `matched_ids: "[]"` keeps `executeJob`'s chunk loop
- * a no-op so `complete` is the only other method exercised — `runChunk` never
- * runs.
+ * Empty matched IDs isolate polling and completion from chunk execution,
+ * so these tests need no item storage or chunk-authority fixtures.
  */
 function makeRow(): BulkActionJobRow {
   return {
@@ -365,5 +364,45 @@ describe("BulkActionWorker.wake", () => {
     worker.wake();
     await vi.advanceTimersByTimeAsync(1000);
     expect(stub.ticks()).toBe(before);
+  });
+});
+
+describe("BulkActionWorker and the request that woke it", () => {
+  it("runs its jobs outside the authority of that request, whose credential may be revoked since", async () => {
+    const stub = makeStubStorage();
+    let completed = false;
+    (stub.storage.bulkActionJobs as Partial<BulkActionJobStore>).completeOwned =
+      async () => {
+        // A write commit asks the authority of the request it runs under.
+        await validateRequestAuthority();
+        completed = true;
+        return true;
+      };
+    const worker = new BulkActionWorker({
+      storage: stub.storage,
+      pollIntervalMs: 60_000,
+      maxPollIntervalMs: 60_000,
+    });
+    try {
+      await worker.start();
+      let asked = false;
+      stub.enqueueJob();
+      await withRequestAuthority(
+        () => {
+          asked = true;
+          return Promise.reject(new Error("the credential was revoked"));
+        },
+        () => {
+          worker.wake();
+          return Promise.resolve();
+        },
+      );
+      await vi.waitFor(() => {
+        expect(completed).toBe(true);
+      });
+      expect(asked).toBe(false);
+    } finally {
+      await worker.stop();
+    }
   });
 });

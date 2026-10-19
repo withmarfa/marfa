@@ -1,5 +1,6 @@
 import { EventEmitter, on } from "node:events";
 import { setImmediate } from "node:timers/promises";
+import { runInBackground } from "./background-context.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
@@ -304,16 +305,18 @@ let announcements: Promise<void> = Promise.resolve();
 
 function inAnnouncementOrder(task: () => void | Promise<void>): void {
   announcementsPending += 1;
-  announcements = announcements
-    .then(task)
-    .catch(() => {
-      // Subscribers end their streams and resume from the log, which holds
-      // every event the announcement could not hand on.
-      emitter.emit("LIVE_DELIVERY_FAILED");
-    })
-    .finally(() => {
-      announcementsPending -= 1;
-    });
+  announcements = runInBackground(() =>
+    announcements
+      .then(task)
+      .catch(() => {
+        // Subscribers end their streams and resume from the log, which holds
+        // every event the announcement could not hand on.
+        emitter.emit("LIVE_DELIVERY_FAILED");
+      })
+      .finally(() => {
+        announcementsPending -= 1;
+      }),
+  );
 }
 
 function emitInOrder(emit: () => void): void {

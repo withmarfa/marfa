@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // ---------------------------------------------------------------------------
 // notifyError — the debounce and the sweep that bounds it
@@ -26,6 +27,24 @@ function notification(error: string, path: string) {
 }
 
 describe("the error webhook's debounce", () => {
+  it.each([WEBHOOK, "https://api.telegram.org/bot123/sendMessage"])(
+    "sends %s outside the failed request's context",
+    async (url) => {
+      const { notifyError } = await freshNotifier();
+      const request = new AsyncLocalStorage<string>();
+      const contexts: (string | undefined)[] = [];
+      vi.stubGlobal("fetch", () => {
+        contexts.push(request.getStore());
+        return Promise.resolve(new Response(null, { status: 204 }));
+      });
+      request.run("request", () => {
+        notifyError(url, notification("boom", "/context"));
+        expect(request.getStore()).toBe("request");
+      });
+      expect(contexts).toEqual([undefined]);
+    },
+  );
+
   let sent: number;
   let elapsed: number;
 

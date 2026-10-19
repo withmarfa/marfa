@@ -8,6 +8,7 @@ import { logJobTickFailure } from "../storage/job-tick.js";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { runInBackground } from "../background-context.js";
 import { atPoint, deadlineFault } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 
@@ -300,7 +301,16 @@ export class Housekeeping {
     }
   }
 
-  private async execute(
+  private execute(
+    job: HousekeepingJob,
+    claimed: HousekeepingRow,
+  ): Promise<HousekeepingRun> {
+    // The manual claim has already checked the caller under the write lock.
+    // Its authority must not govern the admitted job or its completion record.
+    return runInBackground(() => this.executeRun(job, claimed));
+  }
+
+  private async executeRun(
     job: HousekeepingJob,
     claimed: HousekeepingRow,
   ): Promise<HousekeepingRun> {

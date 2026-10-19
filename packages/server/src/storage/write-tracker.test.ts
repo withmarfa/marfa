@@ -1,9 +1,25 @@
 import { inspect } from "node:util";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { DrizzleQueryError } from "drizzle-orm";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { WriteTracker } from "./write-tracker.js";
 
 describe("WriteTracker", () => {
+  it("runs a deferred operational write outside its caller's context", async () => {
+    const request = new AsyncLocalStorage<string>();
+    const tracker = new WriteTracker("last-used");
+    const contexts: (string | undefined)[] = [];
+    await request.run("request", async () => {
+      expect(request.getStore()).toBe("request");
+      await tracker.track(async () => {
+        await Promise.resolve();
+        contexts.push(request.getStore());
+      });
+      expect(request.getStore()).toBe("request");
+    });
+    expect(contexts).toEqual([undefined]);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });

@@ -4,6 +4,16 @@ What one deployment says about itself, and what happens to it as an owner runs i
 
 `GET /` answers one of two things. The description is the JSON object with `name`, `version`, `instance_id`, `contract` and `features`, and with `release` when the build is a numbered release. A page is the HTML a browser is given instead.
 
+## Background work
+
+### `instance/background-request-authority`
+
+When a request starts or wakes background work, the server MUST evaluate that work's authorization independently of the request's authority.
+
+**Reason:** housekeeping runs as server-owned work, even if the requesting key is revoked after the run is admitted; a bulk-action job rechecks its stored credential under `items/job-credential-lost` and can still record its failure.
+
+**Tests:** `compliance/background-authority.test.ts › background jobs after the requesting key is revoked`.
+
 ## Identity
 
 ### `instance/id-at-root`
