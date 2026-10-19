@@ -1,9 +1,28 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { createApp } from "../app.js";
-import { clockOffsetMs, resetClockForTests } from "../clock.js";
+import {
+  clockOffsetMs,
+  installDateShim,
+  resetClockForTests,
+  withRealTime,
+} from "../clock.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
-import { activeFaults, clearFaults, holdAt } from "./faults.js";
+import {
+  activeFaults,
+  clearFaults,
+  holdAt,
+  scriptedAnswer,
+  scriptedConnectionAddress,
+} from "./faults.js";
 
 let ctx: TestContext;
 let instanceId: string;
@@ -88,6 +107,70 @@ describe("the test hook routes", () => {
 });
 
 describe("the clock route", () => {
+  it("pauses real-time drift while explicit advances still work", async () => {
+    const app = appFor(true, true);
+    const post = (body: unknown) =>
+      app.request("/_control/test/clock", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    const paused = await post({ paused: true });
+    expect(paused.status).toBe(200);
+    const start = (await paused.json()) as { now: string };
+    const real = Date.now();
+    const wall = vi.spyOn(Date, "now").mockReturnValue(real + 60_000);
+    try {
+      const moved = await post({ advance_ms: 999 });
+      expect(Date.parse(((await moved.json()) as { now: string }).now)).toBe(
+        Date.parse(start.now) + 999,
+      );
+      const due = await post({ advance_ms: 1 });
+      expect(Date.parse(((await due.json()) as { now: string }).now)).toBe(
+        Date.parse(start.now) + 1000,
+      );
+      const resumed = await post({ paused: false });
+      expect(
+        Date.parse(((await resumed.json()) as { now: string }).now),
+      ).toBeGreaterThanOrEqual(real + 61_000);
+    } finally {
+      wall.mockRestore();
+    }
+  });
+
+  it("pauses the Date shim with the stated clock while external time keeps running", async () => {
+    const systemDate = Date;
+    installDateShim();
+    const app = appFor(true, true);
+    const post = (body: unknown) =>
+      app.request("/_control/test/clock", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    await post({ advance_ms: 86_400_000 });
+    const paused = await post({ paused: true });
+    const instant = Date.parse(((await paused.json()) as { now: string }).now);
+    expect(Date.now()).toBe(instant);
+    const wall = vi.spyOn(systemDate, "now").mockReturnValue(instant + 60_000);
+    try {
+      expect(Date.now()).toBe(instant);
+      expect(new Date().getTime()).toBe(instant);
+      expect(
+        await withRealTime(async () => {
+          await Promise.resolve();
+          return Date.now();
+        }),
+      ).toBe(instant + 60_000);
+      await post({ advance_ms: 1000 });
+      expect(Date.now()).toBe(instant + 1000);
+      await post({ paused: true });
+      expect(Date.now()).toBe(instant + 1000);
+      await post({ paused: false });
+      expect(Date.now()).toBe(instant + 60_000 + 86_401_000);
+    } finally {
+      wall.mockRestore();
+    }
+  });
+
   it("moves the clock forward and reports the offset", async () => {
     const app = appFor(true, true);
     const moved = await app.request("/_control/test/clock", {
@@ -111,6 +194,8 @@ describe("the clock route", () => {
       { advance_ms: -1 },
       { advance_ms: 1.5 },
       { advance_ms: "5" },
+      { paused: "true" },
+      { paused: true, advance_ms: 1 },
       {},
     ]) {
       const refused = await app.request("/_control/test/clock", {
@@ -177,6 +262,13 @@ describe("the fault routes", () => {
       { name: "fail:lock", arg: "items.bulk@2" },
       { name: "fail:commit", arg: "items.bulk@0" },
       { name: "fail:housekeeping:no-such-job" },
+      { name: "hold:<job>" },
+      { name: "resolve:rebind.test" },
+      { name: "resolve:rebind.test", arg: "not-an-address" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1;" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1>" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1>2.2.2.2>3.3.3.3" },
+      { name: "resolve:Not A Host", arg: "1.1.1.1" },
       {},
     ]) {
       const refused = await app.request("/_control/test/faults", {
@@ -197,6 +289,8 @@ describe("the fault routes", () => {
       { name: "hold:read-snapshot" },
       { name: "fail:stream-credential", arg: "3" },
       { name: "unfold-deadline", arg: "1" },
+      { name: "hold:webhook-schedule:queued" },
+      { name: "resolve:rebind.test", arg: "1.1.1.1,::1;127.0.0.1" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",
@@ -224,5 +318,37 @@ describe("the fault routes", () => {
     expect(activeFaults().map((fault) => fault.name)).toEqual([
       "hold:version-thinning:item",
     ]);
+  });
+});
+
+describe("the resolve fault", () => {
+  it("answers one scripted answer per lookup, repeats the last, and counts the lookups", async () => {
+    const app = appFor(true, true);
+    expect(scriptedAnswer("rebind.test")).toBeUndefined();
+    const armed = await app.request("/_control/test/faults", {
+      method: "PUT",
+      body: JSON.stringify({
+        name: "resolve:rebind.test",
+        arg: "1.1.1.1>127.0.0.1,2606:4700:4700::1111;::1",
+      }),
+    });
+    expect(armed.status).toBe(200);
+    expect(scriptedAnswer("rebind.test")).toEqual({
+      checked: ["1.1.1.1", "2606:4700:4700::1111"],
+      connected: ["127.0.0.1", "2606:4700:4700::1111"],
+    });
+    expect(scriptedConnectionAddress("rebind.test", "1.1.1.1")).toBe(
+      "127.0.0.1",
+    );
+    expect(scriptedAnswer("REBIND.test")?.checked).toEqual(["::1"]);
+    expect(scriptedConnectionAddress("rebind.test", "::1")).toBe("::1");
+    expect(scriptedAnswer("rebind.test")?.checked).toEqual(["::1"]);
+    expect(scriptedAnswer("other.test")).toBeUndefined();
+    expect(activeFaults()[0]).toMatchObject({
+      name: "resolve:rebind.test",
+      fired: 3,
+    });
+    clearFaults();
+    expect(scriptedAnswer("rebind.test")).toBeUndefined();
   });
 });

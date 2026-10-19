@@ -20,6 +20,7 @@ import type { DeliveryReach } from "./reach.js";
 import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { faultsArmed, holdAt } from "../control/faults.js";
 
 /**
  * Stripe-style webhook signature. The HMAC is computed over
@@ -592,6 +593,8 @@ export class WebhookScheduler {
         )
           break;
       }
+      if (scheduled > 0 && faultsArmed())
+        await holdAt("webhook-schedule:queued");
       if (considered > 0 || position.lastEventId !== initialLastEventId)
         await storage.outboundWebhooks.acknowledge(position);
       return {

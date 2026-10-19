@@ -1293,13 +1293,13 @@ When a receiver's `Retry-After` is shorter than the ordinary wait for the attemp
 
 When a receiver's `Retry-After` is longer than five minutes, the server MUST wait the longer of five minutes and the ordinary wait.
 
-**Tests:** waiting on #2073.
+**Tests:** `compliance/webhook-retries.test.ts › waits five minutes for a longer Retry-After in seconds, and the ordinary wait where that is longer`, `› reads a Retry-After given as a date against the server's clock, and caps it`.
 
 ### `events/retry-schedule`
 
 When a receiver answers every attempt with a retryable failure, the server MUST make eight attempts, with seven waits of 1, 5, 25, 125, 625, 3125 and 15625 seconds between them, and then record the delivery `dead_letter`.
 
-**Tests:** waiting on #2073.
+**Tests:** `compliance/webhook-retries.test.ts › makes eight attempts with the seven waits of the schedule, then records dead_letter`.
 
 ### `events/retry-poll-run`
 
@@ -1311,7 +1311,7 @@ When a caller authorized by `instance.maintain` or direct owner or local authori
 
 When the server stops while it schedules deliveries and starts again, the server MUST queue exactly one delivery for each event and each subscription entitled to it.
 
-**Tests:** waiting on #2073.
+**Tests:** `compliance/webhook-retries.test.ts › queues each event once for each subscription entitled to it when the server stops while it schedules`.
 
 ## Settling a delivery unsent
 
@@ -1523,7 +1523,7 @@ Where the instance does not allow private addresses, the server MUST connect to 
 
 **Reason:** a second resolution could move the connection to an address that is not public.
 
-**Tests:** waiting on #2073.
+**Tests:** `compliance/webhook-resolution.test.ts › connects to the address it checked and does not resolve the name again`.
 
 ## When delivery starts
 

@@ -19,12 +19,21 @@
  * An operator running receivers on a private network turns the check off
  * with `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES`.
  */
-import { lookup as dnsLookup, type LookupAddress } from "node:dns";
+import {
+  lookup as realDnsLookup,
+  type LookupAddress,
+  type LookupAllOptions,
+} from "node:dns";
 import { lookup as dnsLookupAll } from "node:dns/promises";
-import type { LookupFunction } from "node:net";
+import { isIP, type LookupFunction } from "node:net";
 import ipaddr from "ipaddr.js";
 import { Agent, fetch } from "undici";
 import { log } from "../middleware/logger.js";
+import {
+  faultsArmed,
+  scriptedAnswer,
+  scriptedConnectionAddress,
+} from "../control/faults.js";
 
 /** Why a delivery reached no receiver, as the delivery log records it. */
 export const DELIVERY_FAILURE = {
@@ -209,34 +218,107 @@ export async function refuseNonPublicHost(
   return `url's host resolves to an address that is not public. ${SETTING_HINT}`;
 }
 
-/**
- * Resolve as the system resolver does, and refuse the connection unless
- * every address the name resolves to is public. Every rather than any,
- * because a name answering one public and one private address would let
- * the connection land on whichever the socket tried first.
- */
-const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
+/** Script only the resolver; the address check always sees its answer. */
+function dnsLookup(
+  hostname: string,
+  options: LookupAllOptions,
+  callback: (
+    err: NodeJS.ErrnoException | null,
+    addresses: LookupAddress[],
+  ) => void,
+): void {
+  const scripted = faultsArmed() ? scriptedAnswer(hostname) : undefined;
+  if (scripted === undefined) {
+    realDnsLookup(hostname, options, callback);
+    return;
+  }
+  callback(
+    null,
+    scripted.checked.map((address) => ({ address, family: isIP(address) })),
+  );
+}
+
+const systemLookup: LookupFunction = (hostname, options, callback) => {
   dnsLookup(hostname, { ...options, all: true }, (err, all) => {
-    if (err) {
-      callback(err, "", 0);
-      return;
-    }
-    if (all.length === 0 || !all.every((a) => isPublicAddress(a.address))) {
-      callback(new AddressNotPublicError(), "", 0);
-      return;
-    }
-    if (options.all === true) {
-      (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
-      return;
-    }
-    const first = all[0];
-    if (first === undefined) {
-      callback(new AddressNotPublicError(), "", 0);
-      return;
-    }
-    callback(null, first.address, first.family);
+    settle(err, all, options, callback, true);
   });
 };
+
+/**
+ * Refuse the connection unless every address that was checked is public, and
+ * connect to the addresses of the same lookup. Every rather than any, because
+ * a name answering one public and one private address would let the
+ * connection land on whichever the socket tried first.
+ */
+function settle(
+  err: NodeJS.ErrnoException | null,
+  all: LookupAddress[],
+  options: Parameters<LookupFunction>[1],
+  callback: Parameters<LookupFunction>[2],
+  allowPrivateAddresses = false,
+): void {
+  if (err) {
+    callback(err, "", 0);
+    return;
+  }
+  if (
+    all.length === 0 ||
+    (!allowPrivateAddresses && !all.every((a) => isPublicAddress(a.address)))
+  ) {
+    callback(new AddressNotPublicError(), "", 0);
+    return;
+  }
+  if (options.all === true) {
+    (callback as unknown as (e: null, a: LookupAddress[]) => void)(null, all);
+    return;
+  }
+  const first = all[0];
+  if (first === undefined) {
+    callback(new AddressNotPublicError(), "", 0);
+    return;
+  }
+  callback(null, first.address, first.family);
+}
+
+const publicOnlyLookup: LookupFunction = (hostname, options, callback) => {
+  dnsLookup(hostname, { ...options, all: true }, (err, all) => {
+    settle(err, all, options, callback);
+  });
+};
+
+/** Map checked public answers onto local sockets without another lookup. */
+function localSocketLookup(lookup: LookupFunction): LookupFunction {
+  return (hostname, options, callback) => {
+    if (!faultsArmed()) {
+      lookup(hostname, options, callback);
+      return;
+    }
+    const connected = (address: string) =>
+      scriptedConnectionAddress(hostname, address);
+    lookup(hostname, options, ((
+      err: NodeJS.ErrnoException | null,
+      address: string | LookupAddress[],
+      family: number,
+    ) => {
+      if (err) {
+        callback(err, "", 0);
+        return;
+      }
+      if (Array.isArray(address)) {
+        (callback as unknown as (e: null, a: LookupAddress[]) => void)(
+          null,
+          address.map((a) => ({
+            address: connected(a.address),
+            family: isIP(connected(a.address)),
+          })),
+        );
+      } else {
+        const mapped = connected(address);
+        callback(null, mapped, isIP(mapped) || family);
+      }
+    }) as Parameters<LookupFunction>[2]);
+  };
+}
 
 export interface WebhookPost {
   url: string;
@@ -302,7 +384,11 @@ export function createWebhookHttpClient(options: {
   allowPrivateAddresses: boolean;
 }): WebhookHttpClient {
   const dispatcher = new Agent({
-    connect: options.allowPrivateAddresses ? {} : { lookup: publicOnlyLookup },
+    connect: {
+      lookup: localSocketLookup(
+        options.allowPrivateAddresses ? systemLookup : publicOnlyLookup,
+      ),
+    },
   });
   return {
     async post(request) {

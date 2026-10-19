@@ -1,10 +1,19 @@
 import { Hono } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { z } from "zod";
-import { advanceClock, clockOffsetMs, now, nowMs } from "../clock.js";
+import {
+  advanceClock,
+  clockOffsetMs,
+  now,
+  nowMs,
+  pauseClock,
+} from "../clock.js";
 import { activeFaults, clearFaults, faultProblem, setFault } from "./faults.js";
 
-const advanceInput = z.object({ advance_ms: z.number() }).strict();
+const advanceInput = z.union([
+  z.object({ advance_ms: z.number() }).strict(),
+  z.object({ paused: z.boolean() }).strict(),
+]);
 const faultInput = z
   .object({ name: z.string(), arg: z.string().nullable().optional() })
   .strict();
@@ -29,10 +38,11 @@ export function testRoutes(jobNames: () => readonly string[]) {
     if (!input.success)
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Provide advance_ms, a whole number of milliseconds",
+        "Provide advance_ms, a whole number of milliseconds, or paused, a boolean",
       );
     try {
-      advanceClock(input.data.advance_ms);
+      if ("paused" in input.data) pauseClock(input.data.paused);
+      else advanceClock(input.data.advance_ms);
     } catch (error) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,

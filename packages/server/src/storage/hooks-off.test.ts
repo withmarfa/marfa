@@ -1,3 +1,4 @@
+import { createServer } from "node:http";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import { createGzip } from "node:zlib";
@@ -6,9 +7,12 @@ import {
   activeFaults,
   clearFaults,
   setFault,
+  scriptedAnswer,
   unfoldDeadlineFault,
 } from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
+import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
+import { WebhookScheduler } from "../webhooks/delivery.js";
 import {
   createTestContext,
   collectItemEvents,
@@ -28,6 +32,7 @@ const spies = vi.hoisted(() => ({
   headConstruction: vi.fn(),
   rows: vi.fn(),
   edge: vi.fn(),
+  lookup: vi.fn(),
 }));
 vi.mock("../control/event-faults.js", async (importOriginal) => {
   const actual =
@@ -57,6 +62,10 @@ vi.mock("../control/faults.js", async (importOriginal) => {
   return {
     ...actual,
     unfoldDeadlineFault: vi.fn(actual.unfoldDeadlineFault),
+    scriptedAnswer: (...args: Parameters<typeof actual.scriptedAnswer>) => {
+      spies.lookup();
+      return actual.scriptedAnswer(...args);
+    },
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
       spies.hold();
       return actual.holdAt(...args);
@@ -467,5 +476,74 @@ it("holds an archive restore's announcements and later writes until the hold is 
     clearFaults();
     abort.abort();
     await observed.done;
+  }
+});
+it("passes the webhook scheduler's hold point by without a call with no fault set, and reaches it once one is", async () => {
+  const sub = await request(ctx.app, "POST", "/webhooks", {
+    key: ctx.workingKey,
+    body: { url: "http://receiver.invalid/hook", events: ["item.created"] },
+  });
+  expect(sub.status).toBe(201);
+  const scheduler = new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  });
+  const note = async () => {
+    const made = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "scheduled" } },
+    });
+    expect(made.status).toBe(201);
+  };
+  await note();
+  expect((await scheduler.runOnce()).scheduled).toBe(1);
+  expect(spies.hold).not.toHaveBeenCalled();
+
+  // The witness: with any fault set, the same run reaches the point.
+  setFault("fail:job-row", null);
+  await note();
+  expect((await scheduler.runOnce()).scheduled).toBe(1);
+  expect(spies.hold).toHaveBeenCalledTimes(1);
+});
+
+it("answers no lookup from a script with no fault set, and one once a resolve fault is", () => {
+  expect(scriptedAnswer("rebind.test")).toBeUndefined();
+  setFault("resolve:rebind.test", "1.1.1.1");
+  expect(scriptedAnswer("rebind.test")).toEqual({
+    checked: ["1.1.1.1"],
+    connected: ["1.1.1.1"],
+  });
+});
+
+it("does not enter the scripted resolver with hooks off, and does with a fault armed", async () => {
+  const receiver = createServer((_req, res) => res.end());
+  await new Promise<void>((resolve) =>
+    receiver.listen(0, "127.0.0.1", resolve),
+  );
+  try {
+    const address = receiver.address();
+    if (address === null || typeof address === "string")
+      throw new Error("no receiver port");
+    const post = () =>
+      createWebhookHttpClient({ allowPrivateAddresses: true }).post({
+        url: `http://localhost:${String(address.port)}/hook`,
+        headers: {},
+        body: "{}",
+        timeoutMs: 5000,
+      });
+    spies.lookup.mockClear();
+    expect(await post()).toMatchObject({ status: 200 });
+    expect(spies.lookup).not.toHaveBeenCalled();
+    setFault("resolve:localhost", "127.0.0.1");
+    expect(await post()).toMatchObject({ status: 200 });
+    expect(spies.lookup).toHaveBeenCalledTimes(1);
+  } finally {
+    receiver.closeAllConnections();
+    await new Promise<void>((resolve, reject) =>
+      receiver.close((error) => {
+        if (error) reject(error);
+        else resolve();
+      }),
+    );
   }
 });

@@ -3,6 +3,8 @@ import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
 
 export interface Received {
+  /** When the receiver took the delivery, on the receiver's stated clock. */
+  at: number;
   method: string;
   path: string;
   headers: Record<string, string | string[] | undefined>;
@@ -39,7 +41,13 @@ const WAIT_MS = 60_000;
 export type ReceiverStatus = number | ((received: Received) => number);
 
 export async function startReceiver(
-  options: { status?: ReceiverStatus } = {},
+  options: {
+    status?: ReceiverStatus;
+    /** The target clock when the fixture moves or pauses it. */
+    now?: () => number;
+    /** Headers to answer a delivery with, chosen by the delivery's own turn. */
+    headers?: (received: Received) => Record<string, string>;
+  } = {},
 ): Promise<Receiver> {
   const received: Received[] = [];
   const server: Server = createServer((req, res) => {
@@ -49,6 +57,7 @@ export async function startReceiver(
     });
     req.on("end", () => {
       const arrived: Received = {
+        at: (options.now ?? Date.now)(),
         method: req.method ?? "",
         path: req.url ?? "",
         headers: req.headers,
@@ -56,7 +65,10 @@ export async function startReceiver(
       };
       received.push(arrived);
       const status = options.status ?? 200;
-      res.writeHead(typeof status === "function" ? status(arrived) : status);
+      res.writeHead(
+        typeof status === "function" ? status(arrived) : status,
+        options.headers?.(arrived),
+      );
       res.end("ok");
     });
   });

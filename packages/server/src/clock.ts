@@ -6,6 +6,8 @@
  *
  * The clock is the system clock plus an offset, which is zero unless the
  * server was started with `MARFA_TEST_HOOKS` and the test hooks move it.
+ * A test hook may pause the system-time component while explicit advances
+ * still add to the offset. Resuming or restarting catches up with real time.
  * It only moves forward: ids, versions and cursors assume time does not go
  * back. Timers and `monotonicMs()` stay on real time.
  *
@@ -50,10 +52,11 @@ const MAX_INSTANT_MS = 8_640_000_000_000_000;
 export const MAX_CLOCK_OFFSET_MS = 3_153_600_000_000;
 
 let offsetMs = 0;
+let pausedAt: number | undefined;
 
 /** The current time in milliseconds since the epoch. */
 export function nowMs(): number {
-  return systemNow() + offsetMs;
+  return (pausedAt ?? systemNow()) + offsetMs;
 }
 
 /** The current time as a `Date`. */
@@ -119,7 +122,7 @@ export function setClockOffset(ms: number): void {
 export function installDateShim(): void {
   if (installed) return;
   const shifted = (): number =>
-    systemNow() + (realTime.getStore() === true ? 0 : offsetMs);
+    realTime.getStore() === true ? systemNow() : nowMs();
   const shim = new Proxy(SystemDate, {
     construct: (target, args: unknown[], newTarget): object =>
       Reflect.construct(
@@ -143,6 +146,7 @@ export function installDateShim(): void {
 
 /** Puts the clock back on the system clock, for a test's own isolation. */
 export function resetClockForTests(): void {
+  pausedAt = undefined;
   offsetMs = 0;
   if (!installed) return;
   Object.defineProperty(SystemDate.prototype, "constructor", {
@@ -152,4 +156,9 @@ export function resetClockForTests(): void {
   });
   globalThis.Date = SystemDate;
   installed = false;
+}
+
+/** Test-only pause. Resuming catches up with real time; the offset is retained. */
+export function pauseClock(paused: boolean): void {
+  pausedAt = paused ? (pausedAt ?? systemNow()) : undefined;
 }
