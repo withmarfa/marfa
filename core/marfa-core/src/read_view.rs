@@ -37,14 +37,24 @@ pub(crate) fn event_payload(
     // Data that does not parse as JSON says nothing against the copy's read
     // view, and reading it again fails the same way. JSON that is not an
     // event is a frame the copy cannot accept, whatever field fails first.
-    let value: serde_json::Value = serde_json::from_str(data)
-        .map_err(|error| crate::error::unreadable("an event the stream sent", &error))?;
-    let payload: crate::wire::EventPayload =
-        serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+    // Read straight from the text, so a member named twice is refused as a
+    // shape error rather than collapsed to its last value.
+    let payload: crate::wire::EventPayload = serde_json::from_str(data).map_err(|error| {
+        use serde_json::error::Category::{Eof, Syntax};
+        if matches!(error.classify(), Syntax | Eof) {
+            return crate::error::unreadable("an event the stream sent", &error);
+        }
+        // A field of the wrong type can stand before the place the data stops.
+        match serde_json::from_str::<serde_json::Value>(data) {
+            Err(error) => crate::error::unreadable("an event the stream sent", &error),
+            Ok(_) => invalid(),
+        }
+    })?;
     if matches!(name, Some("stream_cursor" | "stream_live"))
         || matches!(payload.event_type.as_str(), "stream_cursor" | "stream_live")
     {
-        let fields = value.as_object().ok_or_else(invalid)?;
+        let fields: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(data).map_err(|_| invalid())?;
         if id.is_some()
             || name != Some(payload.event_type.as_str())
             || fields.len() != 4
@@ -259,6 +269,32 @@ mod tests {
                 "{data}"
             );
         }
+    }
+
+    #[test]
+    fn a_member_named_twice_is_a_frame_the_copy_cannot_accept() {
+        assert_eq!(
+            event_payload(
+                Some("item.created"),
+                Some("11"),
+                r#"{"listed":true,"listed":false,"event_type":"item.created"}"#
+            )
+            .unwrap_err(),
+            invalid()
+        );
+        let fence = "a".repeat(64);
+        let marker = format!(
+            r#"{{"event_type":"stream_cursor","cursor":"1","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+        );
+        assert_eq!(
+            event_payload(Some("stream_cursor"), None, &marker).unwrap_err(),
+            invalid()
+        );
+        // The witness: the same marker naming its cursor once is accepted.
+        let once = format!(
+            r#"{{"event_type":"stream_cursor","cursor":"2","instance_id":"i","read_view":"{fence}"}}"#
+        );
+        assert!(event_payload(Some("stream_cursor"), None, &once).is_ok());
     }
 
     #[test]
