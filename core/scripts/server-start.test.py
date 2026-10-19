@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="marfa-start-") as directory:
                 assert private["instance_id"] == expected, "published URL reaches a different instance"
             for url in urls:
                 issuer = get(url + "/auth/.well-known/oauth-authorization-server")["issuer"]
-                expected_origin = urllib.parse.urlparse(url.replace("127.0.0.1", "localhost"))
+                expected_origin = urllib.parse.urlparse(url)
                 actual_origin = urllib.parse.urlparse(issuer)
                 assert (actual_origin.scheme, actual_origin.netloc) == (expected_origin.scheme, expected_origin.netloc), issuer
                 assert not url.endswith(f":{candidate}")
