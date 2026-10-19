@@ -15,7 +15,7 @@ import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import { DEFAULT_CONNECTOR_HOLD_MS } from "../config.js";
 import type { AppConfig } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { mayReadType, authorityId } from "../middleware/auth.js";
+import { mayReadType, authorityId, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -500,10 +500,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), HoldInputSchema);
     const { process } = c.req.valid("json");
-    const hold = await storage.connectors.takeHold(
-      connector.id,
-      process,
-      holdMs,
+    const hold = await storage.runInTransaction(() =>
+      storage.connectors.takeHold(connector.id, process, holdMs),
     );
     if (hold === null) {
       throw new MarfaError(
@@ -521,9 +519,9 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(releaseHoldRoute, async (c) => {
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, c);
-    await storage.connectors.releaseHold(
-      connector.id,
-      c.req.valid("query").process,
+    const { process } = c.req.valid("query");
+    await storage.runInTransaction(() =>
+      storage.connectors.releaseHold(connector.id, process),
     );
     return c.json({ ok: true as const }, 200);
   });
@@ -624,11 +622,15 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
         { field: `set[${String(oversized)}].record` },
       );
     }
-    const written = await storage.connectorState.writeAgreements(
-      { connectorId: connector.id, keyId: key.id, process: body.process },
-      connector.source,
-      { set, clear },
-      (type) => mayReadType(key, type),
+    // The key is read in the transaction, which refreshes it, and not before:
+    // a narrowing saved since admission decides which rows are skipped.
+    const written = await storage.runInTransaction(() =>
+      storage.connectorState.writeAgreements(
+        { connectorId: connector.id, keyId: key.id, process: body.process },
+        connector.source,
+        { set, clear },
+        (type) => mayReadType(requireAuth(c), type),
+      ),
     );
     if (!("written" in written)) throw held(written.expires_at);
     return c.json(written, 200);
