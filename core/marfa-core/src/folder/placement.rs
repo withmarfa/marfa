@@ -277,7 +277,7 @@ impl Folder {
             .lock()
             .map_err(|_| CoreError::Store("the key's record was poisoned".into()))?;
         if let Some(read) = last.as_ref()
-            && read.at.elapsed() < KEY_REREAD
+            && crate::clock::now().saturating_duration_since(read.at) < KEY_REREAD
         {
             return read.state.clone().ok_or_else(|| {
                 CoreError::Network("the key could not be read, and is asked again later".into())
@@ -290,7 +290,7 @@ impl Folder {
             .map(|key| key.map(|key| KeyState::of(&key)).unwrap_or_default());
         *last = Some(KeyRead {
             state: asked.as_ref().ok().cloned(),
-            at: Instant::now(),
+            at: crate::clock::now(),
         });
         asked
     }
@@ -374,7 +374,7 @@ impl Folder {
             .unread_give_ways
             .lock()
             .map_err(|_| CoreError::Store("the give-way record was poisoned".into()))?;
-        unread.retain(|_, at| at.elapsed() < GIVE_WAY_REREAD);
+        unread.retain(|_, at| crate::clock::now().saturating_duration_since(*at) < GIVE_WAY_REREAD);
         let mut gave_way = 0;
         let mut withdrawn = HashSet::new();
         for row in latest {
@@ -390,7 +390,7 @@ impl Folder {
                 Err(error) if !goes_on(&error) => return Err(error),
                 Err(error) => {
                     if watched {
-                        unread.insert(row.id, Instant::now());
+                        unread.insert(row.id, crate::clock::now());
                     }
                     // Every read after it would wait on the same server.
                     if error.is_environmental() {
@@ -461,6 +461,7 @@ impl Folder {
             held: held.map(Box::new),
             before,
         };
+        crate::fault::hold("folder-give-way-read");
         let result = (|| {
             let mut reads = Vec::new();
             let mut cursor: Option<String> = None;
@@ -494,6 +495,7 @@ impl Folder {
                 return Ok(None);
             }
             let withdrawn = store::withdraw_edge_writes(&tx, edge_id, through)?;
+            crate::fault::hold("folder-give-way-withdrawn");
             for read in &reads {
                 crate::drain::apply_read_back(&tx, read)?;
             }

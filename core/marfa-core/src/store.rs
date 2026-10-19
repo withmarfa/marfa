@@ -1120,7 +1120,11 @@ pub fn untaken_creates_for_item(
 }
 
 pub fn now_iso() -> String {
-    let now = std::time::SystemTime::now()
+    iso_at(std::time::SystemTime::now())
+}
+
+pub(crate) fn iso_at(now: std::time::SystemTime) -> String {
+    let now = now
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     let secs = now.as_secs() as i64;

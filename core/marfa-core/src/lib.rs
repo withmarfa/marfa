@@ -87,6 +87,8 @@ pub use model::{
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
 pub use watch::{Listening, WatchListener};
+#[cfg(debug_assertions)]
+pub use watch::{ReentryAnswers, ReentryProbe};
 
 pub type Result<T> = std::result::Result<T, CoreError>;
 

@@ -434,7 +434,7 @@ fn supervise<S: Supervised>(
         let mut unread: Option<String> = None;
         let mut none_said = false;
         let mut missing = Missing::new();
-        let mut next_read = Instant::now();
+        let mut next_read = crate::clock::now();
         let watched = loop {
             if stop.load(Ordering::SeqCst) {
                 break Ok(());
@@ -446,13 +446,13 @@ fn supervise<S: Supervised>(
             // the command took off the registry leaves rather than being
             // said to be no folder.
             if parked_due(&entries) {
-                next_read = Instant::now();
+                next_read = crate::clock::now();
             }
             if let Err(error) = missing.tell(&entries, every, timing) {
                 break Err(error);
             }
-            if Instant::now() >= next_read {
-                next_read = Instant::now() + timing.reread;
+            if crate::clock::now() >= next_read {
+                next_read = crate::clock::now() + timing.reread;
                 let read = reconcile(
                     list(),
                     &mut entries,
@@ -468,7 +468,8 @@ fn supervise<S: Supervised>(
             if let Err(error) = start_due(scope, &mut entries, every, record, timing) {
                 break Err(error);
             }
-            std::thread::sleep(timing.poll);
+            crate::fault::hold("folders-watch-polled");
+            crate::clock::wait(stop, timing.poll, timing.poll);
         };
         // Every watch is stopped before any is waited for, so they wind down
         // together.
@@ -488,7 +489,7 @@ fn supervise<S: Supervised>(
 }
 
 fn parked_due<E>(entries: &BTreeMap<PathBuf, Entry<'_, E>>) -> bool {
-    let now = Instant::now();
+    let now = crate::clock::now();
     entries
         .values()
         .any(|entry| entry.parked && matches!(entry.run, Run::Waiting { until } if until <= now))
@@ -506,7 +507,7 @@ struct Missing {
 impl Missing {
     fn new() -> Missing {
         Missing {
-            seen: (Vec::new(), Instant::now()),
+            seen: (Vec::new(), crate::clock::now()),
             told: Vec::new(),
         }
     }
@@ -527,10 +528,11 @@ impl Missing {
             .collect();
         self.told.retain(|dir| now.contains(dir));
         if now != self.seen.0 {
-            self.seen = (now, Instant::now());
+            self.seen = (now, crate::clock::now());
             return Ok(());
         }
-        if self.seen.1.elapsed() >= timing.reread && now.iter().any(|dir| !self.told.contains(dir))
+        if crate::clock::now().saturating_duration_since(self.seen.1) >= timing.reread
+            && now.iter().any(|dir| !self.told.contains(dir))
         {
             every.tell(Every::Missing { dirs: &now })?;
             self.told = now;
@@ -554,7 +556,7 @@ fn reap<S: Supervised>(
         )
         .map(|(dir, _)| dir.clone())
         .collect();
-    let now = Instant::now();
+    let now = crate::clock::now();
     for dir in finished {
         let entry = entries.get_mut(&dir).expect("a finished entry");
         let Run::Watching {
@@ -700,7 +702,7 @@ fn reconcile<S: Supervised>(
     if unread.take().is_some() {
         every.tell(Every::Registry(None))?;
     }
-    let now = Instant::now();
+    let now = crate::clock::now();
     for (dir, folder) in &listed {
         record.listed(dir, folder);
         entries
@@ -754,7 +756,7 @@ fn start_due<'scope, 'env, S: Supervised>(
     record: &'env WatchRecord,
     timing: Timing,
 ) -> Result<(), S::Error> {
-    let now = Instant::now();
+    let now = crate::clock::now();
     for (dir, entry) in entries.iter_mut() {
         match &entry.run {
             Run::Waiting { until } if *until <= now && !entry.leaving => {
@@ -817,7 +819,7 @@ fn run<S: Supervised>(
                         every.tell(Every::Storage { dir, cause })?;
                     }
                     if start.quiet {
-                        start.said = Said::Held(Instant::now());
+                        start.said = Said::Held(crate::clock::now());
                         return Ok(());
                     }
                     if start.taken_back {

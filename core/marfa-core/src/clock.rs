@@ -18,6 +18,31 @@ pub(crate) fn now() -> Instant {
     Instant::now()
 }
 
+/// The wall timestamp on the same clock, for persistent folder deadlines.
+pub(crate) fn system_time() -> std::time::SystemTime {
+    #[cfg(debug_assertions)]
+    if let Some(manual) = manual::set() {
+        return manual.system_time();
+    }
+    std::time::SystemTime::now()
+}
+
+/// Waits for a channel event or a deadline on the engine clock. The manual
+/// clock polls only for external I/O and stop signals; elapsed wall time
+/// never reaches its deadline.
+pub(crate) fn recv_timeout<T>(
+    receiver: &std::sync::mpsc::Receiver<T>,
+    stop: &AtomicBool,
+    timeout: Duration,
+) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+    #[cfg(debug_assertions)]
+    if let Some(manual) = manual::set() {
+        return manual.recv_timeout(receiver, stop, timeout);
+    }
+    let _ = stop;
+    receiver.recv_timeout(timeout)
+}
+
 /// Waits for `wait`, looking at `stop` every `poll`, and returns once `stop`
 /// is set. A wait too long to add to the clock lasts until `stop` is set.
 pub(crate) fn wait(stop: &AtomicBool, wait: Duration, poll: Duration) {
@@ -113,6 +138,7 @@ mod manual {
 
     pub(super) struct Manual {
         base: Instant,
+        wall: std::time::SystemTime,
         state: Mutex<State>,
         moved: Condvar,
     }
@@ -165,6 +191,7 @@ mod manual {
         pub(super) fn new() -> Self {
             Self {
                 base: Instant::now(),
+                wall: std::time::SystemTime::now(),
                 state: Mutex::new(State::default()),
                 moved: Condvar::new(),
             }
@@ -174,6 +201,12 @@ mod manual {
             self.base
                 .checked_add(held(&self.state).elapsed)
                 .unwrap_or(self.base)
+        }
+
+        pub(super) fn system_time(&self) -> std::time::SystemTime {
+            self.wall
+                .checked_add(held(&self.state).elapsed)
+                .unwrap_or(self.wall)
         }
 
         pub(super) fn advance(&self, by: Duration) {
@@ -204,6 +237,47 @@ mod manual {
         fn close(&self) {
             held(&self.state).closed = true;
             self.moved.notify_all();
+        }
+
+        pub(super) fn recv_timeout<T>(
+            &self,
+            receiver: &std::sync::mpsc::Receiver<T>,
+            stop: &AtomicBool,
+            timeout: Duration,
+        ) -> Result<T, std::sync::mpsc::RecvTimeoutError> {
+            use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+            let mut state = held(&self.state);
+            let until = state
+                .elapsed
+                .checked_add(timeout)
+                .filter(|until| self.base.checked_add(*until).is_some());
+            let id = state.next;
+            state.next += 1;
+            state.waits.push(Pending {
+                id,
+                asked: timeout,
+                until,
+            });
+            let result = loop {
+                match receiver.try_recv() {
+                    Ok(event) => break Ok(event),
+                    Err(TryRecvError::Disconnected) => break Err(RecvTimeoutError::Disconnected),
+                    Err(TryRecvError::Empty) => {}
+                }
+                if stop.load(Ordering::Relaxed)
+                    || state.closed
+                    || until.is_some_and(|until| state.elapsed >= until)
+                {
+                    break Err(RecvTimeoutError::Timeout);
+                }
+                state = self
+                    .moved
+                    .wait_timeout(state, Duration::from_millis(5))
+                    .unwrap_or_else(|error| error.into_inner())
+                    .0;
+            };
+            state.waits.retain(|pending| pending.id != id);
+            result
         }
 
         /// Returns once the clock has been advanced by `wait`, `stop` is set
@@ -252,6 +326,43 @@ mod manual {
             while !done() {
                 assert!(Instant::now() < hung, "{what}");
                 thread::sleep(MS(2));
+            }
+        }
+
+        #[test]
+        fn a_channel_wait_ends_on_an_event_or_manual_deadline_and_stop() {
+            let clock = Arc::new(Manual::new());
+            let stop = Arc::new(AtomicBool::new(false));
+            for finish in ["event", "deadline", "stop"] {
+                let (send, receive) = std::sync::mpsc::channel();
+                let (wait_clock, wait_stop) = (Arc::clone(&clock), Arc::clone(&stop));
+                let waiting =
+                    thread::spawn(move || wait_clock.recv_timeout(&receive, &wait_stop, MS(1_000)));
+                until("the receive deadline was not registered", || {
+                    !clock.waits().is_empty()
+                });
+                clock.advance(MS(999));
+                assert!(
+                    !waiting.is_finished(),
+                    "the receive timed out before its deadline"
+                );
+                match finish {
+                    "event" => send.send(42).unwrap(),
+                    "deadline" => clock.advance(MS(1)),
+                    _ => stop.store(true, Ordering::Relaxed),
+                }
+                assert_eq!(
+                    waiting.join().unwrap(),
+                    if finish == "event" {
+                        Ok(42)
+                    } else {
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                    }
+                );
+                assert!(
+                    clock.waits().is_empty(),
+                    "a completed receive kept its deadline"
+                );
             }
         }
 

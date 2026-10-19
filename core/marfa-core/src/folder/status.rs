@@ -90,7 +90,12 @@ impl Folder {
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
             crate::store::catalog_scope(&conn, |conn| {
-                Ok((Catalog::load(conn)?, EdgeTypes::load(conn)?))
+                let catalog = Catalog::load(conn)?;
+                crate::fault::hold("folder-status-catalog");
+                let edge_types = EdgeTypes::load(conn)?;
+                #[cfg(debug_assertions)]
+                edge_types.observe_status_types();
+                Ok((catalog, edge_types))
             })?
         };
         let lists = settings.lists()?;

@@ -5,7 +5,9 @@
 //! command that made it and a reused process id cannot pass for it.
 
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(any(debug_assertions, test))]
+use std::time::Instant;
 
 use crate::Result;
 use crate::directory::Directory;
@@ -46,7 +48,7 @@ pub(crate) fn claim_asking(
         return Ok(lock);
     }
     drop(lock);
-    let deadline = Instant::now() + wait;
+    let deadline = crate::clock::now() + wait;
     let mut request: Option<WriterLock> = None;
     let mut unmade: Option<CoreError> = None;
     loop {
@@ -76,13 +78,14 @@ pub(crate) fn claim_asking(
             }
             Err(error) => return Err(error),
         }
-        if Instant::now() >= deadline {
+        if crate::clock::now() >= deadline {
             return Err(match unmade {
                 Some(error) => unasked(root, error),
                 None => CoreError::ReadingHandle,
             });
         }
-        std::thread::sleep(POLL);
+        crate::fault::hold("folder-handover-wait");
+        crate::clock::wait(&std::sync::atomic::AtomicBool::new(false), POLL, POLL);
     }
 }
 
@@ -122,6 +125,7 @@ fn unasked(root: &Path, error: CoreError) -> CoreError {
 /// Holds a folder opened by asking until a fixture releases its gate, or for
 /// the milliseconds the fault names, to observe the watch while it is let go.
 pub(crate) fn hold_if_asked() {
+    crate::fault::hold("folder-handed-over");
     #[cfg(debug_assertions)]
     if let Some(gate) = crate::fault::named("gate-handed-folder") {
         std::fs::write(format!("{gate}.ready"), b"").expect("write handover gate readiness");

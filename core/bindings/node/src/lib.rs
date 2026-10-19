@@ -1,5 +1,7 @@
 //! The Node-facing shape of `marfa_core`.
 
+mod folders;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 
@@ -2485,6 +2487,53 @@ pub mod test_controls {
     use std::time::Duration;
 
     use napi_derive::napi;
+
+    /// Recorded operation answers; an absent error means the call succeeded.
+    #[napi(object)]
+    pub struct ReentryAnswers {
+        pub hydration_error: Option<String>,
+        pub catch_up_error: Option<String>,
+    }
+
+    #[napi]
+    pub struct ReentryProbe {
+        inner: marfa_core::ReentryProbe,
+    }
+
+    #[napi]
+    impl ReentryProbe {
+        /// Null until the engine has called the listener.
+        #[napi]
+        pub fn answers(&self) -> Option<ReentryAnswers> {
+            self.inner.answers().map(|answers| ReentryAnswers {
+                hydration_error: answers
+                    .hydration
+                    .err()
+                    .map(|error| super::describe(&error).0),
+                catch_up_error: answers
+                    .catch_up
+                    .err()
+                    .map(|error| super::describe(&error).0),
+            })
+        }
+
+        #[napi]
+        pub fn stop(&self) {
+            self.inner.stop();
+        }
+    }
+
+    /// Registers a listener that attempts hydration and catch-up on the
+    /// engine's dispatcher thread, where a synchronous binding calls back.
+    #[napi(namespace = "testHooks")]
+    pub fn probe_reentry(env: napi::Env, core: &super::MarfaCore) -> napi::Result<ReentryProbe> {
+        Ok(ReentryProbe {
+            inner: core
+                .inner
+                .probe_watch_reentry()
+                .map_err(|error| super::failure(env, error))?,
+        })
+    }
 
     /// A wait the engine has asked the test clock for.
     #[napi(object)]
