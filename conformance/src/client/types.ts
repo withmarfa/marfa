@@ -699,6 +699,8 @@ export interface TrackedResource {
    * declared parent is what the server answers on, not the dotted name.
    */
   parent?: string;
+  /** Compatibility targets must outlive the types that name them. */
+  compatibleWith?: string[];
 }
 
 export interface TestContext {

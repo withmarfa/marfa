@@ -210,7 +210,7 @@ export function trackWebhook(
 
 /**
  * Record every successful type registration made through this client, and
- * every re-parent, so `cleanup` removes the types in an order the server
+ * every replacement, so `cleanup` removes the types in an order the server
  * accepts. Wrapping the client rather than asking each call site to remember
  * is what makes the rule hold for the next file too.
  */
@@ -224,14 +224,19 @@ export function trackRegisteredTypes(
   ) => {
     const response = await original(...args);
     if (response.ok) {
-      const id = args[0]?.id;
-      const parent = args[0]?.parent;
-      if (typeof id === "string") {
+      const schema = response.data.type;
+      const tracked = ctx.trackedTypes.find((t) => t.id === schema.id);
+      if (tracked) {
+        tracked.createdBy = client;
+        tracked.parent = schema.parent;
+        tracked.compatibleWith = compatibilityTargets(schema.compatible_with);
+      } else {
         trackType(
           ctx,
-          id,
+          schema.id,
           client,
-          typeof parent === "string" ? parent : undefined,
+          schema.parent,
+          schema.compatible_with,
         );
       }
     }
@@ -245,10 +250,13 @@ export function trackRegisteredTypes(
     const response = await originalReplace(...args);
     if (response.ok) {
       const id = args[0];
-      const parent = (args[1] as { parent?: unknown } | undefined)?.parent;
       const tracked = ctx.trackedTypes.find((t) => t.id === id);
-      // A `PUT` that omits `parent` is not saying the type has none.
-      if (tracked && typeof parent === "string") tracked.parent = parent;
+      if (tracked) {
+        tracked.parent = response.data.type.parent;
+        tracked.compatibleWith = compatibilityTargets(
+          response.data.type.compatible_with,
+        );
+      }
     }
     return response;
   };
@@ -256,7 +264,7 @@ export function trackRegisteredTypes(
 
 /**
  * Track a registered item type for cleanup, with the credential that
- * registered it and the parent it declared. A registered type is permanent
+ * registered it and the dependencies it declared. A registered type is permanent
  * and global, so a suite that leaves them behind slowly stops modeling the
  * thing it exists to model.
  */
@@ -265,9 +273,21 @@ export function trackType(
   id: string,
   createdBy?: unknown,
   parent?: string,
+  compatibleWith?: string | string[],
 ): void {
   if (ctx.trackedTypes.some((t) => t.id === id)) return;
-  ctx.trackedTypes.push({ id, createdBy, parent });
+  ctx.trackedTypes.push({
+    id,
+    createdBy,
+    parent,
+    compatibleWith: compatibilityTargets(compatibleWith),
+  });
+}
+
+function compatibilityTargets(
+  targets?: string | string[],
+): string[] | undefined {
+  return typeof targets === "string" ? [targets] : targets?.slice();
 }
 
 /**
@@ -351,41 +371,34 @@ async function deleteAllByOwner(
 }
 
 /**
- * Split the tracked types into deletion levels, deepest first.
+ * Split tracked types into deletion levels, dependents first.
  *
  * `DELETE /types/{id}` answers 409 while another registered type declares
- * this one as its parent, and deletes within a phase are concurrent, so
- * ordering only holds if a child's batch is awaited before its parent's. Each
- * level is one such batch. Depth counts only ancestors this teardown is
- * itself deleting. The walk carries the ids it has seen, because a loop here
- * would cost the whole run its report.
+ * this one as its parent, or 422 while a compatibility claim depends on it.
+ * Deletes within a level are concurrent, so each dependent's level must
+ * finish before its targets'. A cycle has no deletion order; attempt the
+ * remaining rows once so teardown reports refusals instead of hanging.
  */
 export function typeDeletionLevels(
   tracked: readonly TrackedResource[],
 ): TrackedResource[][] {
-  const byId = new Map(tracked.map((t) => [t.id, t]));
-  const depthOf = (start: TrackedResource): number => {
-    const seen = new Set<string>([start.id]);
-    let depth = 0;
-    let parent = start.parent;
-    while (parent !== undefined && byId.has(parent) && !seen.has(parent)) {
-      seen.add(parent);
-      depth += 1;
-      parent = byId.get(parent)?.parent;
+  const remaining = new Map(tracked.map((t) => [t.id, t]));
+  const levels: TrackedResource[][] = [];
+  while (remaining.size > 0) {
+    const held = new Set<string>();
+    for (const type of remaining.values()) {
+      if (type.parent) held.add(type.parent);
+      for (const target of type.compatibleWith ?? []) held.add(target);
     }
-    return depth;
-  };
-
-  const levels = new Map<number, TrackedResource[]>();
-  for (const t of tracked) {
-    const depth = depthOf(t);
-    const bucket = levels.get(depth);
-    if (bucket) bucket.push(t);
-    else levels.set(depth, [t]);
+    const level = [...remaining.values()].filter((type) => !held.has(type.id));
+    if (level.length === 0) {
+      levels.push([...remaining.values()]);
+      break;
+    }
+    levels.push(level);
+    for (const type of level) remaining.delete(type.id);
   }
-  return [...levels.entries()]
-    .sort(([a], [b]) => b - a)
-    .map(([, members]) => members);
+  return levels;
 }
 
 function mergeOutcomes(
@@ -411,7 +424,7 @@ function mergeOutcomes(
  * Phase order is load-bearing. Edges go first so `parent-of` cascades do not
  * race the deletion of tracked children. Items are soft-deleted then purged,
  * because a soft delete alone leaves the row. Webhooks, edge types and types
- * go through the credential that made them, types deepest-subtype first.
+ * go through the credential that made them, types dependents first.
  * Keys go last, through the provisioning client, because one of the tracked
  * keys is the file's own. Types are deleted non-forced: a type that still
  * owns rows at that point is a genuine leak and fails loudly.

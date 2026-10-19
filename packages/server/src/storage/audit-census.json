@@ -370,10 +370,11 @@
     }
   },
   "routes/restore-archive-types.ts": {
-    "boundary": "Audited registration units nested in the restore's one transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
+    "boundary": "Audited registration units and staged type normalization nested in the restore's one audited transaction, committing or rolling back with it; external-audit.test.ts and archive-restore-bounds.test.ts.",
     "calls": {
       "EdgeTypeStore.create": 1,
       "TypeStore.create": 1,
+      "TypeStore.update": 1,
       "runAuditedTransaction": 2
     }
   },
