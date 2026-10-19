@@ -1443,7 +1443,7 @@ export interface paths {
         put?: never;
         /**
          * Claim the instance
-         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.
+         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup. A claim from the instance's own origin, which is what the setup page sends, also signs the owner in: the answer sets the same session cookie as a password sign-in. A claim with no `Origin` header, such as a script's, and a refused claim set no cookie.
          */
         post: operations["createOwner"];
         delete?: never;
