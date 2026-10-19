@@ -171,8 +171,8 @@ export interface EdgeProposal {
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
- * 2. Source and target items both exist, and the caller may read both
- *    types: an end it may not read is answered as missing.
+ * 2. Source and target items both exist outside the bin, and the caller
+ *    may read both types: an end it may not read is answered as missing.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
@@ -182,8 +182,9 @@ export interface EdgeProposal {
  *    graph. Both answer `edge_cycle`.
  * 8. The properties are what the edge type requires, and an `in-folder`
  *    edge does not target a revoked folder. `replay`, for the edges an
- *    archive recorded, leaves out the `property_schema` judgment and lets an
- *    `in-folder` edge target a revoked folder.
+ *    archive recorded, leaves out the `property_schema` judgment, lets an
+ *    `in-folder` edge target a revoked folder and takes an end in the bin,
+ *    which held the edge there.
  *
  * `replacing` names a stored edge the one proposal moves, which the
  * cardinality counts leave out.
@@ -234,7 +235,9 @@ export async function assertEdgesCanBeCreated(
     itemIds.add(p.source_id);
     itemIds.add(p.target_id);
   }
-  const itemMap = await itemStore.getMany(Array.from(itemIds));
+  const itemMap = await itemStore.getMany(Array.from(itemIds), {
+    includeTrashed: opts.replay === true,
+  });
   for (const { p, schema } of resolved) {
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);

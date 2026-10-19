@@ -823,4 +823,115 @@ describe("complete archive round trips", () => {
     );
     expect(JSON.parse(event!.payload).item).toEqual(archived);
   });
+
+  it("keeps the edges of an item in the bin, in both directions", async () => {
+    const source = await context();
+    const target = await context();
+    const before = await note(source, "before");
+    const binned = await note(source, "binned");
+    const after = await note(source, "after");
+    const edges = [];
+    for (const [from, to] of [
+      [before, binned],
+      [binned, after],
+    ] as const) {
+      const created = await request(source.app, "POST", "/edges", {
+        key: source.workingKey,
+        body: {
+          source_id: from.id,
+          target_id: to.id,
+          edge_type: "references",
+          properties: { context: `from ${from.id}` },
+        },
+      });
+      expect(created.status).toBe(201);
+      edges.push(((await created.json()) as { edge: { id: string } }).edge);
+    }
+    const trashed = await request(source.app, "DELETE", `/items/${binned.id}`, {
+      key: source.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+    const archived = await Promise.all(
+      edges.map((edge) => source.storage.edges.get(edge.id)),
+    );
+
+    const response = await restore(
+      target,
+      await exported(source, "&state=any"),
+    );
+    expect(response.status, await response.clone().text()).toBe(200);
+    const counts = (await response.clone().json()) as {
+      edges_skipped_reasons: Record<string, number>;
+    };
+    expect(counts.edges_skipped_reasons).toEqual({});
+    expect(await response.json()).toMatchObject({
+      imported: 3,
+      edges_imported: 2,
+      edges_skipped: 0,
+    });
+    expect(
+      (await target.storage.items.getIncludingTrashed(binned.id))!.state,
+    ).toBe("trashed");
+    for (const edge of archived) {
+      expect(await target.storage.edges.get(edge!.id)).toEqual(edge);
+    }
+
+    const back = await request(
+      target.app,
+      "POST",
+      `/items/${binned.id}/restore`,
+      { key: target.workingKey },
+    );
+    expect(back.status).toBe(200);
+    for (const edge of archived) {
+      expect(await target.storage.edges.get(edge!.id)).toEqual(edge);
+    }
+  });
+
+  it("keeps an archived edge whose end only the instance holds, in the bin", async () => {
+    const source = await context();
+    const target = await context();
+    const live = await note(source, "live");
+    const binned = await note(source, "binned");
+    const created = await request(source.app, "POST", "/edges", {
+      key: source.workingKey,
+      body: {
+        source_id: live.id,
+        target_id: binned.id,
+        edge_type: "references",
+      },
+    });
+    expect(created.status).toBe(201);
+    const { edge } = (await created.json()) as { edge: { id: string } };
+    const archive = await exported(source);
+
+    // The instance holds the end in the bin, and the archive does not
+    // carry it.
+    expect((await restore(target, archive)).status).toBe(200);
+    const deleted = await request(target.app, "DELETE", `/edges/${edge.id}`, {
+      key: target.workingKey,
+    });
+    expect(deleted.status).toBe(200);
+    const trashed = await request(target.app, "DELETE", `/items/${binned.id}`, {
+      key: target.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+    const entries = await unpack(archive);
+    const lines = entries.get("items.ndjson")!.toString().split("\n");
+    const kept = lines.filter((line) => !line.includes(binned.id));
+    expect(kept.length).toBe(lines.length - 1);
+    entries.set("items.ndjson", Buffer.from(kept.join("\n")));
+
+    const response = await restore(target, await pack(entries));
+    expect(response.status, await response.clone().text()).toBe(200);
+    const counts = (await response.json()) as {
+      edges_imported: number;
+      edges_skipped_reasons: Record<string, number>;
+    };
+    expect(counts.edges_skipped_reasons).toEqual({});
+    expect(counts.edges_imported).toBe(1);
+    expect(await target.storage.edges.get(edge.id)).toEqual(
+      await source.storage.edges.get(edge.id),
+    );
+  });
 });
