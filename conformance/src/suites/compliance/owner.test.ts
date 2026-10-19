@@ -298,8 +298,26 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
-  it("refuses a key the setup doors do not declare in a JSON body without consuming valid setup proof", async () => {
+  it("refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof", async () => {
     const origin = new URL(server.url).origin;
+    for (const [path, fields] of [
+      ["/setup/exchange", { code }],
+      ["/setup/claim", { ...OWNER, code }],
+    ] as const) {
+      const refused = await fetch(`${server.url}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin,
+        },
+        body: new URLSearchParams({ ...fields, bogus: "1" }),
+      });
+      expect(refused.status, `${path} as a form`).toBe(400);
+      const { error } = await refused.json();
+      expect(error.code).toBe("validation_error");
+      expect(error.details.unknown_body_fields).toEqual(["bogus"]);
+      expect(refused.headers.get("set-cookie")).toBeNull();
+    }
     for (const [path, body] of [
       ["/setup/exchange", { code }],
       ["/setup/claim", { ...OWNER, code }],

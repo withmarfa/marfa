@@ -243,6 +243,39 @@ describe("the claim and setup pages", () => {
     ).toBe(403);
   });
 
+  it("refuses a key the forms do not send, and keeps the code unspent", async () => {
+    const ctx = await fixture();
+    const { code } = await issueSetupCode(ctx.storage);
+    for (const stray of ["bogus", "_trace", "ticket"]) {
+      const refused = await ctx.app.request(
+        "/setup/exchange",
+        form({ code, [stray]: "1" }, { origin }),
+      );
+      expect(refused.status, stray).toBe(400);
+      const body = (await refused.json()) as {
+        error: { code: string; details?: { unknown_body_fields?: string[] } };
+      };
+      expect(body.error.code).toBe("validation_error");
+      expect(body.error.details?.unknown_body_fields).toEqual([stray]);
+      expect(refused.headers.get("set-cookie")).toBeNull();
+    }
+    const claim = await ctx.app.request(
+      "/setup/claim",
+      form({ ...details, code, bogus: "1" }, { origin }),
+    );
+    expect(claim.status).toBe(400);
+    expect((await claim.json()).error.details.unknown_body_fields).toEqual([
+      "bogus",
+    ]);
+    expect((await getClaimStatus(ctx.storage)).claimed).toBe(false);
+    // The witness: the same request without the stray key exchanges the code.
+    const exchanged = await ctx.app.request(
+      "/setup/exchange",
+      form({ code }, { origin }),
+    );
+    expect(exchanged.status).toBe(303);
+  });
+
   it("names the wait when the address has used its attempts", async () => {
     const ctx = await fixture();
     for (let attempt = 0; attempt < 10; attempt++)

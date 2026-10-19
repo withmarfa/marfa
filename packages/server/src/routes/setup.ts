@@ -59,6 +59,8 @@ const ClaimBody = z.object({
   name: z.string(),
   code: z.string(),
 });
+/** What the setup page's code form sends. */
+const ExchangeForm = z.object({ code: z.string() });
 
 const FORM_TYPES = ["application/x-www-form-urlencoded", "multipart/form-data"];
 const isForm = (c: Context<AppEnv>): boolean => {
@@ -129,6 +131,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
     const address = c.get("clientIp") ?? null;
     if (isForm(c)) {
       const body = await c.req.parseBody();
+      refuseUnknownBodyKeys(body, ExchangeForm);
       const code = typeof body.code === "string" ? body.code : "";
       if (code.trim() === "")
         return page(
@@ -186,7 +189,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
     const body = json
       ? await c.req.json<Record<string, string>>()
       : await c.req.parseBody<Record<string, string>>();
-    if (json) refuseUnknownBodyKeys(body, ClaimBody);
+    refuseUnknownBodyKeys(body, ClaimBody);
     const token = getCookie(c, SETUP_COOKIE);
     const form = !json && isBrowserClaim(auth, c.req.raw.headers);
     let owner;
