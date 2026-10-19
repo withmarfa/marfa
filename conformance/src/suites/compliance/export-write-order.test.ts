@@ -202,7 +202,7 @@ it("restores a custom type retyped away and deleted between archive pages", asyn
   }
 });
 
-async function incompatibleSelection(repair: boolean) {
+async function incompatibleSelection(change: "repair" | "reregister") {
   const client = new MarfaClient({
     baseUrl: source.apiUrl,
     apiKey: source.workingKey,
@@ -240,6 +240,7 @@ async function incompatibleSelection(repair: boolean) {
     ),
   ).toBe(true);
   await source.setFault("hold:export-page=1");
+  if (change === "reregister") await source.setFault("hold:export-validation");
   const pending = client.exportArchive();
   try {
     await source.waitForHold("hold:export-page");
@@ -250,14 +251,24 @@ async function incompatibleSelection(repair: boolean) {
       fields: { value: { type: "number" } },
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    if (repair) {
+    if (change === "repair") {
       const repaired = await client.updateItem(made.data.item.id, {
         version: made.data.item.version,
         properties: { value: 7 },
       });
       expect(repaired.status, JSON.stringify(repaired.error)).toBe(200);
+      await source.clearFault();
+    } else {
+      // The first selection is complete and waits before its rows are
+      // checked, so this change lands between the two reads.
+      await source.clearFault("hold:export-page");
+      await source.waitForHold("hold:export-validation");
+      const again = await client.replaceType(type, {
+        fields: { value: { type: "boolean" } },
+      });
+      expect(again.status, JSON.stringify(again.error)).toBe(200);
+      await source.clearFault();
     }
-    await source.clearFault();
     return {
       exported: await pending,
       item: made.data.item,
@@ -270,7 +281,7 @@ async function incompatibleSelection(repair: boolean) {
 }
 
 it("retries an incompatible selection from the beginning and restores every item after repair", async () => {
-  const { exported, item, ids } = await incompatibleSelection(true);
+  const { exported, item, ids } = await incompatibleSelection("repair");
   expect(exported.status).toBe(200);
   const owner = new MarfaClient({
     baseUrl: target.apiUrl,
@@ -295,8 +306,8 @@ it("retries an incompatible selection from the beginning and restores every item
   });
 });
 
-it("refuses two incompatible selections with export_unrestorable and an empty spool", async () => {
-  const { exported } = await incompatibleSelection(false);
+it("refuses with export_unrestorable when the refused row's type is registered again between the reads", async () => {
+  const { exported } = await incompatibleSelection("reregister");
   expect(exported.status).toBe(503);
   expect(exported.headers.get("content-type")).toContain("application/json");
   expect(JSON.parse(Buffer.from(exported.data).toString())).toMatchObject({

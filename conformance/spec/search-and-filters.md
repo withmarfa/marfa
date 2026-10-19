@@ -1406,7 +1406,7 @@ If both archive selections fail restore validation and the second selection refu
 
 **Reason:** a row that changed between the reads, or a different row refused, shows that writes were landing on what failed, and a later retry can read it after the writes have finished. Returning an invalid archive would claim a backup the restore cannot read.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › refuses with export_unrestorable when the refused row's type is registered again between the reads`.
 
 ### `search-and-filters/archive-rows-refused`
 
