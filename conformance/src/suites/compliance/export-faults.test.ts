@@ -37,6 +37,9 @@ let working: MarfaClient;
 const hashes: string[] = [];
 
 beforeAll(async () => {
+  // On the disk store alone: with a second store, replication reads and
+  // writes blob bytes in the background and can take a blob fault armed for
+  // the request under test.
   server = await bootFreshServer("export-faults", DISK_ONLY);
   ({ working } = clientsFor(server));
   for (let blob = 0; blob < 2; blob++) {
