@@ -1519,8 +1519,10 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 
 /// The bytes the cache keeps for the queue: those of every upload not yet
 /// taken, and those of every taken upload a write that may still be sent
-/// waits on, unanswered, blocked or dead, which a drain under another
-/// credential sends again (`uploads_to_send_again`).
+/// waits on, which a drain under another credential sends again
+/// (`uploads_to_send_again`). A write may still be sent while it has no
+/// verdict, is blocked or dead, or is refused unsent behind no withdrawn
+/// write, as `release` decides: released, it waits on the upload again.
 pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue
@@ -1539,30 +1541,41 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
         )?
         .collect::<Result<HashSet<_>, _>>()?;
     let mut statement = conn.prepare(
-        "SELECT DISTINCT upload.blob FROM queue AS upload
+        "SELECT DISTINCT upload.blob, waiting.id, waiting.verdict = :refused
+           FROM queue AS upload, queue AS waiting, json_each(waiting.depends_on) AS named
           WHERE upload.kind = :upload AND upload.blob IS NOT NULL
             AND upload.verdict IN (:accepted, :merged, :conflicted)
-            AND EXISTS (
-              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
-               WHERE named.value = upload.id
-                 AND (waiting.verdict IS NULL OR waiting.verdict IN (:blocked, :dead))
-            )",
+            AND named.value = upload.id
+            AND (waiting.verdict IS NULL
+                 OR waiting.verdict IN (:blocked, :dead)
+                 OR waiting.verdict = :refused AND waiting.sent = 0)",
     )?;
-    hashes.extend(
-        statement
-            .query_map(
-                named_params! {
-                    ":upload": WriteKind::UploadBlob.as_str(),
-                    ":accepted": Verdict::Accepted.as_str(),
-                    ":merged": Verdict::Merged.as_str(),
-                    ":conflicted": Verdict::Conflicted.as_str(),
-                    ":blocked": Verdict::Blocked.as_str(),
-                    ":dead": Verdict::Dead.as_str(),
-                },
-                |row| row.get::<_, String>(0),
-            )?
-            .collect::<Result<Vec<_>, _>>()?,
-    );
+    let waiting = statement
+        .query_map(
+            named_params! {
+                ":upload": WriteKind::UploadBlob.as_str(),
+                ":accepted": Verdict::Accepted.as_str(),
+                ":merged": Verdict::Merged.as_str(),
+                ":conflicted": Verdict::Conflicted.as_str(),
+                ":blocked": Verdict::Blocked.as_str(),
+                ":dead": Verdict::Dead.as_str(),
+                ":refused": Verdict::Refused.as_str(),
+            },
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    for (hash, waiting, refused) in waiting {
+        if hashes.contains(&hash) || refused && waits_for_withdrawn(conn, &waiting)? {
+            continue;
+        }
+        hashes.insert(hash);
+    }
     Ok(hashes)
 }
 
@@ -3111,7 +3124,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(false);
     }
     // Released, a row whose dependency was withdrawn would wait for a write
-    // the queue no longer holds, which a drain holds forever.
+    // the queue no longer holds, which a drain holds forever. `kept_uploads`
+    // keeps bytes for a refused row on these same two tests.
     if refused_by_dependency && waits_for_withdrawn(conn, id)? {
         return Ok(false);
     }

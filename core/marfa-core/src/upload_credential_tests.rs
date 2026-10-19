@@ -220,3 +220,177 @@ fn sends_a_taken_upload_again_only_once_the_write_waiting_on_it_is_released() {
     core.trim_blobs(None, 0);
     assert!(!core.blob_held(&hash).unwrap());
 }
+
+/// A file added and its content updated under the key `first`, with both
+/// uploads taken and the create counted once and left waiting, so the
+/// update waits on the create and on the second upload.
+struct UpdatedFile {
+    core: std::sync::Arc<crate::Core>,
+    create: String,
+    update: String,
+    first: String,
+    second: String,
+}
+
+fn taken(hash: &str, size: usize) -> crate::scripted::Answer {
+    scripted::json(201, &format!(r#"{{"hash":"{hash}","size_bytes":{size}}}"#))
+}
+
+fn file_updated_while_its_create_waits(server: &Scripted, dir: &std::path::Path) -> UpdatedFile {
+    let core = copy_in_keyed(server, dir, "first");
+    holding_a_catalog(&core);
+    let file = dir.join("photo.txt");
+    std::fs::write(&file, b"the bytes of a photo").unwrap();
+    let added = core
+        .add_file(&file, &crate::Attachment::default(), &[])
+        .unwrap();
+    let file_id = added.item.item_id.clone().unwrap();
+    let first = added.upload.blob.clone().unwrap();
+    let edited = dir.join("edited.txt");
+    std::fs::write(&edited, b"the bytes of an edited photo").unwrap();
+    let edit = crate::model::Edit {
+        base_version: Some(0),
+        ..crate::model::Edit::default()
+    };
+    let update = core
+        .update_file_item(&file_id, &edited, &edit, crate::Based::OnHeld)
+        .unwrap()
+        .id;
+    let second = core
+        .queue()
+        .unwrap()
+        .into_iter()
+        .filter(|queued| queued.kind == crate::model::WriteKind::UploadBlob)
+        .find_map(|queued| queued.blob.filter(|hash| *hash != first))
+        .unwrap();
+    server.on("/blobs", vec![taken(&first, 20), taken(&second, 28)]);
+    // Counted, not environmental, so the pass goes on to the second upload.
+    server.on(
+        "/items",
+        vec![scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    core.drain().unwrap();
+    let queue = core.queue().unwrap();
+    assert_eq!(
+        queue
+            .iter()
+            .filter(|queued| queued.kind == crate::model::WriteKind::UploadBlob)
+            .map(|queued| queued.verdict)
+            .collect::<Vec<_>>(),
+        [Some(Verdict::Accepted); 2]
+    );
+    let waiting = queue.iter().find(|queued| queued.id == update).unwrap();
+    assert!(waiting.depends_on.contains(&added.item.id), "{waiting:?}");
+    UpdatedFile {
+        core,
+        create: added.item.id,
+        update,
+        first,
+        second,
+    }
+}
+
+fn queued(core: &crate::Core, id: &str) -> crate::model::QueuedWrite {
+    core.queue()
+        .unwrap()
+        .into_iter()
+        .find(|queued| queued.id == id)
+        .unwrap()
+}
+
+#[test]
+fn keeps_the_bytes_of_a_file_update_refused_with_a_dead_create_until_it_is_released() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let UpdatedFile {
+        core,
+        create,
+        update,
+        first,
+        second,
+    } = file_updated_while_its_create_waits(&server, dir.path());
+    // The create reaches the refusal ceiling, and the next pass refuses the
+    // update waiting on it before sending it, as `readiness` does.
+    crate::store::record_verdict(
+        &core.conn().unwrap(),
+        &create,
+        &crate::store::Answered {
+            verdict: Verdict::Dead,
+            reason: None,
+            answer: None,
+            conflicted_copy_id: None,
+        },
+    )
+    .unwrap();
+    let held = queued(&core, &update);
+    crate::store::record_refusal(
+        &core.conn().unwrap(),
+        &held,
+        "the create_item it waits for was dead",
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(queued(&core, &update).verdict, Some(Verdict::Refused));
+
+    core.trim_blobs(None, 0);
+    assert!(
+        core.blob_held(&second).unwrap(),
+        "a trim let go of bytes a refused update that can be released still names"
+    );
+
+    // Released under a new key, the create releases the update with it, and
+    // both uploads go again under that key ahead of them.
+    drop(core);
+    let core = copy_in_keyed(&server, dir.path(), "second");
+    assert!(core.release(&create).unwrap());
+    assert_eq!(queued(&core, &update).verdict, None);
+    server.on("/blobs", vec![taken(&first, 20), taken(&second, 28)]);
+    server.on(
+        "/items",
+        vec![scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    core.drain().unwrap();
+    assert_eq!(
+        authorizations(&server, "/blobs"),
+        [
+            "Bearer first",
+            "Bearer first",
+            "Bearer second",
+            "Bearer second"
+        ],
+        "the released update would go out under a key that never sent its bytes"
+    );
+}
+
+#[test]
+fn lets_go_the_bytes_of_a_file_update_refused_behind_a_withdrawn_create() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let UpdatedFile {
+        core,
+        create,
+        update,
+        second,
+        ..
+    } = file_updated_while_its_create_waits(&server, dir.path());
+    let row = queued(&core, &create);
+    {
+        let conn = core.conn().unwrap();
+        let held = crate::store::held_for(&conn, &create).unwrap();
+        assert_eq!(
+            held.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
+            [update.as_str()]
+        );
+        crate::store::withdraw(&conn, &row, &held).unwrap();
+    }
+    assert_eq!(queued(&core, &update).verdict, Some(Verdict::Refused));
+    // No release can send the update again, so nothing waits on the bytes.
+    assert!(!core.release(&update).unwrap());
+
+    core.trim_blobs(None, 0);
+    assert!(
+        !core.blob_held(&second).unwrap(),
+        "a trim kept bytes for a refused update no release can send"
+    );
+}
