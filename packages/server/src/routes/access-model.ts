@@ -30,25 +30,25 @@ import {
 import { reachLine } from "./scope-openness.js";
 import { SCOPE_LABELS, scopeTitle } from "./scope-copy.js";
 
-export type Level = "none" | "read" | "write";
+type Level = "none" | "read" | "write";
 
 const RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
-export const LEVEL_LABELS: Record<Level, string> = {
+const LEVEL_LABELS: Record<Level, string> = {
   none: "No access",
   read: "Read only",
   write: "Read and edit",
 };
 
 /** The literal a parsed scope came from, which is what a control submits. */
-export function scopeLiteral(scope: ParsedScope): string {
+function scopeLiteral(scope: ParsedScope): string {
   if (scope.kind === "oidc") return scope.oidcScope ?? scope.typePattern;
   if (scope.kind === "permission") return scope.permission ?? scope.typePattern;
   return `${scope.typePattern}:${scope.operation}`;
 }
 
 /** An OAuth mechanism rather than a data permission: it rides along unseen. */
-export function isMechanism(literal: string): boolean {
+function isMechanism(literal: string): boolean {
   return (HIDDEN_MECHANISM_SCOPES as readonly string[]).includes(literal);
 }
 

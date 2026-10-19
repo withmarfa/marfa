@@ -332,8 +332,8 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // (revocation deletes it), so it falls through too.
     //
     // An EMPTY requested set is not "covered" even though it is
-    // vacuously a subset of anything. The decision handler treats a
-    // zero-scope accept as a deny; the two must not disagree about
+    // vacuously a subset of anything. The decision handler treats an accept
+    // that chooses nothing as a deny; the two must not disagree about
     // whether a request for nothing is something the server approves.
     //
     // Reading the standing grant, letting the plugin narrow it, and

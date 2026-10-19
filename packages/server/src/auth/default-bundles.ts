@@ -244,11 +244,11 @@ export function buildDefaultPermissionBundles(
       // the three claims to the whole read surface, bio and timezone and the
       // username that namespaces published types, and does so on the next
       // approval rather than silently: a standing grant that lacks it meets
-      // the re-consent screen with the new row under "New", ticked, and the
+      // the re-consent screen with the new row marked "New", on, and the
       // person decides. The write half is administrative authority over the
       // profile and follows the content category's precedent instead:
-      // requestable, in no shipped bundle, asked for by name and shown
-      // pre-ticked under the fallback bucket when it is.
+      // requestable, in no shipped bundle, and offered on when it is asked
+      // for by name.
       scopes: ["openid", "profile", "email", "profile:read"],
       default_on: true,
     },

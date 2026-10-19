@@ -82,7 +82,7 @@ import { forwardHeaders } from "./forward-headers.js";
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
  * writes there are the standing grant plus this approval, never less: an
- * untick on the device screen reaches the token this device is issued, which
+ * lowering a level on the device screen reaches the token this device is issued, which
  * the plugin mints for the code's own narrowed scope, rather than the record.
  * A revoked grant is not a standing one, so it contributes nothing and the
  * record comes back at the approval alone.
@@ -130,11 +130,11 @@ async function createUserAppGrant(
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
     } else {
-      // Union rather than overwrite. This screen offers per-scope toggles,
+      // Union rather than overwrite. This screen offers a level for each type,
       // so a narrower set arriving here may be the client asking for less or
-      // the person unticking a row and nothing at this call site can tell
+      // the person choosing a lower level and nothing at this call site can tell
       // them apart. The record keeps the standing grant either way,
-      // deliberately; what the untick reaches is the token this device is
+      // deliberately; what the lower level reaches is the token this device is
       // issued.
       //
       // **A revoked grant contributes nothing to that merge, because the
@@ -714,7 +714,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // mints them, `POST /auth/oauth2/token` with the device grant exchanges an
   // approved one, and the plugin's own verify, approve and deny endpoints
   // move the row. Marfa fronts the pages a person meets and calls those
-  // endpoints in-process, so the consent screen, its per-scope toggles, the
+  // endpoints in-process, so the consent screen, its per-scope controls, the
   // grant projection and the audit row stay Marfa's:
   //   - GET /auth/device            — verification form (optionally pre-filled
   //                                   via ?user_code=…)
@@ -723,7 +723,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   //   - GET /auth/device/consent    — consent screen, gated on a session; the
   //                                   plugin's verify claims the code for the
   //                                   person on the way in
-  //   - POST /auth/device/consent   — approve with the ticked scopes, or deny
+  //   - POST /auth/device/consent   — approve with the chosen scopes, or deny
 
   const requireDeviceAuth = (): MarfaAuth => {
     if (!auth) {
@@ -990,7 +990,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }
 
     // Approve: upsert the system.connection projection, narrow the code to
-    // the ticked set, and approve it through the plugin.
+    // the chosen set, and approve it through the plugin.
     //
     // The upsert resolves the projection, reads it, and writes it back
     // active with this request's scopes — a read-modify-write on the same
@@ -1013,7 +1013,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     //
     // **The narrowing precedes the approval.** The plugin approves a code as
     // it was requested and issues the token for the row's scope, so the row
-    // has to read the ticked set before the status flips. A narrowing that
+    // has to read the chosen set before the status flips. A narrowing that
     // finds the row no longer pending is a race with a deny in another tab,
     // and is told it did not take effect.
     const outcome = await withConsentLock(
@@ -1097,11 +1097,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
               // Three halves, because two of them can differ in each direction
               // and none alone answers the question an operator brings to this
               // row. `scopes` is what this device asked for. The screen offers
-              // those as toggles, so `approved_scopes` is what the person actually
-              // ticked, which can be narrower. And an approval merges into the
+              // those as controls, so `approved_scopes` is what the person actually
+              // chose, which can be narrower. And an approval merges into the
               // standing grant rather than replacing it, so `resulting_scopes` is
               // the record afterwards, which can be wider than either. On a
-              // first-time approval where nothing was unticked, all three are the
+              // first-time approval where nothing was lowered, all three are the
               // same list.
               scopes: requestedScopes,
               approved_scopes: approvedScopes,
