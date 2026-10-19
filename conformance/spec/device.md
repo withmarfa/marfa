@@ -2286,7 +2286,7 @@ If a listener calls a hydration or a catch-up while a device tells it a change, 
 
 **Reason:** the call would wait for the thread that is calling it.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-reentry.test.ts › refuses hydration and catch-up from its own callback`.
 
 ### `device/watch-drains-owed`
 

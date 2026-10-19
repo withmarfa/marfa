@@ -341,6 +341,23 @@ follows.
   [`src/device/binding-adapter.ts`](src/device/binding-adapter.ts) defines the
   calls and result shapes the fixtures use; the host translates them to the
   module's methods.
+- **Folders.** `Folders` provides `add`, `list`, `status`, `sync`,
+  `confirmFirstSync`, `confirm`, `restore`, `remove`, and `watch`. Calls
+  other than `watch` return promises, including while they ask a watch to let
+  a folder go. `watch` returns a subscription synchronously and throws if it
+  cannot open the folder. Watch events include `handedOver`, `takenBack`,
+  `heldElsewhere`, `removed`, and `unlisted`; its subscription ends once. Each fixture's host
+  uses an isolated registry. Debug methods retain an open folder across calls
+  (`testOpen`, `testClose`) and expose its existing `testScan`, `testPull`,
+  `testSubmitSettingsFile`, `testCatchUp`, `testHydrate`, and `testDrain`
+  operations. They let a fixture change the directory or the copy between
+  opening the folder and working it.
+- **Dispatcher callbacks.** Node delivers callbacks on its event loop. A
+  binding that calls listeners on the engine's dispatcher thread is tested
+  with `testHooks.probeReentry(core)`: a debug listener runs on that thread,
+  attempts a hydration and catch-up, and records their errors in `answers()`.
+  `stop()` unregisters it. The fixture proves both calls are refused from the
+  callback and that they can succeed outside it.
 - **`toldUnreachable`.** `follow` and `watch` take it as an optional last
   argument. It says the caller was last told `serverUnreachable` by an earlier
   one, so the first stream is told `serverReachable` and `serverUnreachable`
@@ -365,6 +382,21 @@ follows.
     and not yet the edge types, inside the transaction that replaces both. A
     reading handle that reads then must answer from the catalog before the
     refresh.
+  - `folder-give-way-read`: before a give-way read starts;
+    `folder-give-way-withdrawn`: after withdrawing local placement writes,
+    inside the transaction that replaces them with the server's placement.
+  - `folder-scan-read`: after reading a file's bytes, before recording the
+    scan; `folder-status-catalog`: between loading the item and edge catalogs
+    from the status snapshot. In debug builds, `folder-status-edge:<id>`
+    records each edge type in the loaded status catalog, so a fixture can
+    identify its revision even where both catalogs produce the same status.
+  - `folder-watch-turn`, `folder-file-changed`, `folder-pass-start`,
+    `folder-pass-ended`, `folder-full-scan`, and `folder-quick-scan`: the watch
+    loop, a filesystem change, and its pass and scan boundaries.
+  - `folder-handover-wait`, `folder-handed-over`, and
+    `folder-take-back-wait`: an asking call's wait, its acquired folder, and
+    the watch's retry before taking it back. `folders-watch-polled` observes
+    the registry supervisor's turn.
 - **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
   reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
   each reach as `testHooks.reached` does. The only point that fails is
@@ -389,8 +421,11 @@ follows.
   clock is not moved to the manual one. `testClock.manual(false)` goes back.
   The wait between held streams, the two measures of a stream's age (how
   long it has been held and how long it has been silent), and a reading
-  handle's save polling and read-failure backoff use this clock. The rest
-  stay on the system clock.
+  handle's save polling and read-failure backoff use this clock. Folder
+  watch settling, periodic scans, hydration retries, placement rereads, rename
+  grace, supervision, and handover deadlines use it too. The rename journal
+  uses a wall timestamp derived from the same manual elapsed time. Filesystem
+  events remain real; advancing the clock does not manufacture them.
 
 A release build has no `testHooks` and no `testClock`: a fixture that uses
 them fails on a module built `--release`, naming that. The module's build

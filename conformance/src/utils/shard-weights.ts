@@ -5,6 +5,7 @@
  * still run, by exactly one shard, and a stale number costs balance and never
  * a file.
  *
+ * New binding-folder weights are initial estimates until CI measures them.
  * Read the times off the per-file lines of a CI shard's log and round them to
  * 5 seconds. The five `folders` files, which were one file, are scaled from
  * a run of each on one machine to the 1,381 seconds that file took in CI.
@@ -38,6 +39,11 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/webhook-owner-standing.test.ts": 20,
   "src/suites/compliance/webhooks.test.ts": 65,
   "src/suites/compliance/write-faults.test.ts": 20,
+  "src/suites/device/binding-folders-clock.test.ts": 20,
+  "src/suites/device/binding-folders-handover.test.ts": 25,
+  "src/suites/device/binding-folders-placement.test.ts": 25,
+  "src/suites/device/binding-folders-retry.test.ts": 10,
+  "src/suites/device/binding-reentry.test.ts": 5,
   "src/suites/device/binding-watch.test.ts": 20,
   "src/suites/device/catch-up.test.ts": 65,
   "src/suites/device/classification.test.ts": 40,

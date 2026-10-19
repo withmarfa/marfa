@@ -162,6 +162,8 @@ export interface BindingDeviceOptions {
   key?: string;
   /** Opens the store another process writes, to read it only. */
   reader?: boolean;
+  /** An isolated folder registry for this host. */
+  registry?: string;
 }
 
 /** What a listener a fixture adds does besides record what it is told. */
@@ -242,10 +244,10 @@ export class StopHandle {
  * A follow or a watch the binding holds, told as it goes: every change it
  * told so far is in `changes`, and `ended` settles once with how it ended.
  */
-export class Subscription {
-  readonly changes: BindingChange[] = [];
+export class Subscription<T extends { kind: string } = BindingChange> {
+  readonly changes: T[] = [];
   /** What it was told after it had been told it ended. */
-  readonly afterEnd: BindingChange[] = [];
+  readonly afterEnd: T[] = [];
   /** How it ended: null where it was stopped, else the error. */
   readonly ended: Promise<BindingError | null>;
   /** How many times it was told it ended. */
@@ -277,7 +279,7 @@ export class Subscription {
   }
 
   /** @internal */
-  told(change: BindingChange): void {
+  told(change: T): void {
     (this.over ? this.afterEnd : this.changes).push(change);
   }
 
@@ -304,6 +306,7 @@ type Reply =
 type FromHost =
   | Reply
   | { event: "change"; name: string; change: BindingChange }
+  | { event: "folder-change"; name: string; change: BindingFolderEvent }
   | {
       event: "end";
       name: string;
@@ -319,6 +322,10 @@ export class BindingDevice {
     { resolve: (reply: Reply) => void; reject: (error: Error) => void }
   >();
   private readonly subscriptions = new Map<string, Subscription>();
+  private readonly folderSubscriptions = new Map<
+    string,
+    Subscription<BindingFolderEvent>
+  >();
   private next = 0;
   private numbered = 0;
   private errors = "";
@@ -344,7 +351,10 @@ export class BindingDevice {
           waiting.reject(this.gone);
         }
         this.pending.clear();
-        for (const subscription of this.subscriptions.values()) {
+        for (const subscription of [
+          ...this.subscriptions.values(),
+          ...this.folderSubscriptions.values(),
+        ]) {
           if (!subscription.isOver) {
             subscription.end({
               message: this.gone.message,
@@ -361,7 +371,13 @@ export class BindingDevice {
   /** Starts the binding's process and opens the working copy in it. */
   static async start(options: BindingDeviceOptions): Promise<BindingDevice> {
     const child = fork(HOST, [], {
-      env: { ...process.env, MARFA_DEVICE_MODULE: options.module },
+      env: {
+        ...process.env,
+        MARFA_DEVICE_MODULE: options.module,
+        ...(options.registry === undefined
+          ? {}
+          : { MARFA_FOLDER_REGISTRY: options.registry }),
+      },
       // Collection is how a fixture lets go of a core the binding holds.
       execArgv: ["--expose-gc"],
       stdio: ["ignore", "inherit", "pipe", "ipc"],
@@ -391,9 +407,16 @@ export class BindingDevice {
 
   private received(message: FromHost): void {
     if ("event" in message) {
-      const subscription = this.subscriptions.get(message.name);
-      if (message.event === "change") subscription?.told(message.change);
-      else subscription?.end(message.error, message.opened);
+      if (message.event === "folder-change") {
+        this.folderSubscriptions.get(message.name)?.told(message.change);
+      } else if (message.event === "change") {
+        this.subscriptions.get(message.name)?.told(message.change);
+      } else {
+        (
+          this.subscriptions.get(message.name) ??
+          this.folderSubscriptions.get(message.name)
+        )?.end(message.error, message.opened);
+      }
       return;
     }
     const waiting = this.pending.get(message.id);
@@ -432,6 +455,52 @@ export class BindingDevice {
             : { ok: false, refusal: refusalOf(reply.error) },
       ),
     );
+  }
+
+  async probeReentry(action: "start" | "answers" | "stop"): Promise<{
+    hydrationError?: string;
+    catchUpError?: string;
+  } | null> {
+    const reply = await this.request({ op: "reentry", action, handle: MAIN });
+    if (!reply.ok) throw new Error(JSON.stringify(reply.error));
+    return reply.value as {
+      hydrationError?: string;
+      catchUpError?: string;
+    } | null;
+  }
+
+  listFolders(): Call<Array<{ dir: string; folder: string }>> {
+    return this.folderCall("list");
+  }
+
+  folder(dir: string): BindingFolder {
+    return new BindingFolder(this, dir);
+  }
+
+  folderCall<T>(method: string, ...args: unknown[]): Call<T> {
+    return new Call(
+      method,
+      this.request({ op: "folder-call", method, args }).then(
+        (reply): Outcome<T> =>
+          reply.ok
+            ? { ok: true, value: reply.value as T }
+            : { ok: false, refusal: refusalOf(reply.error) },
+      ),
+    );
+  }
+
+  async folderWatch(
+    dir: string,
+  ): Promise<Outcome<Subscription<BindingFolderEvent>>> {
+    const name = `folder-${String(this.numbered++)}`;
+    const subscription = new Subscription<BindingFolderEvent>(this, name);
+    this.folderSubscriptions.set(name, subscription);
+    const started = await this.request({ op: "folder-watch", name, dir });
+    if (!started.ok) {
+      this.folderSubscriptions.delete(name);
+      return { ok: false, refusal: refusalOf(started.error) };
+    }
+    return { ok: true, value: subscription };
   }
 
   /** A stop that calls taking one can be given, and that is raised later. */
@@ -668,7 +737,10 @@ export class BindingDevice {
     }, CLOSE_WAIT_MS);
     try {
       await this.releaseHolds();
-      const subscriptions = [...this.subscriptions.values()];
+      const subscriptions = [
+        ...this.subscriptions.values(),
+        ...this.folderSubscriptions.values(),
+      ];
       await Promise.all(
         subscriptions.map(async (subscription) => {
           await subscription.stop().catch(() => null);
@@ -696,4 +768,169 @@ function refusalOf(error: BindingError): Refusal {
     code: typeof error.code === "string" ? error.code : "unclassified",
     raw: JSON.stringify(error),
   };
+}
+
+export interface BindingFolderScan {
+  created: number;
+  updated: number;
+  renamed: number;
+  unchanged: number;
+  missing: number;
+  deleted: number;
+  skipped: number;
+  movedAway: number;
+  paused: number;
+  trashed: string[];
+  rootGone?: string;
+}
+
+export interface BindingFolderPull {
+  written: number;
+  rewritten: number;
+  moved: number;
+  unchanged: number;
+  skipped: number;
+  removed: number;
+  purged: number;
+  kept: number;
+  unwritten: number;
+  absent: number;
+  unplaced: number;
+  unmatched: number;
+  paused: number;
+  rootGone?: string;
+}
+
+export interface BindingFolderPass {
+  settings: {
+    sent: boolean;
+    written: boolean;
+    flagged?: string;
+    unwritten?: string;
+  };
+  scan: BindingFolderScan;
+  drain: BindingDrainReport;
+  rebased: number;
+  gaveWay: number;
+  pull?: BindingFolderPull;
+  flagged: Array<{ path: string; flag: string; reason: string; item?: string }>;
+}
+
+export interface BindingFolderStatus {
+  files: Array<{
+    path: string;
+    itemId?: string;
+    state: string;
+    waits: string[];
+    flag?: string;
+    reason?: string;
+  }>;
+  directories: Array<{ path: string; flag: string; reason: string }>;
+  paused: { disk: number; pull: number };
+  firstSync?: { plan?: { write: number; send: number; beside: number } };
+}
+
+export type BindingFolderSync =
+  | { kind: "waiting"; plan: { write: number; send: number; beside: number } }
+  | {
+      kind: "done";
+      sync: {
+        hydrated?: BindingHydrateReport;
+        catchUpError?: BindingError;
+        pass: BindingFolderPass;
+      };
+    };
+
+export type BindingFolderEvent =
+  | { kind: "watching"; dir: string }
+  | { kind: "passed"; pass: BindingFolderPass }
+  | { kind: "retrying"; error: BindingError; waitMs: number }
+  | { kind: "unreachable" | "waiting"; reason: string }
+  | { kind: "watcherFailed"; message: string }
+  | {
+      kind:
+        | "reachable"
+        | "handedOver"
+        | "takenBack"
+        | "heldElsewhere"
+        | "removed"
+        | "unlisted";
+    };
+
+/** One folder worked through the host's Folders binding. */
+export class BindingFolder {
+  constructor(
+    readonly device: BindingDevice,
+    readonly dir: string,
+  ) {}
+
+  add(folder: string): Call<{ dir: string; folder: string }> {
+    return this.device.folderCall("add", this.dir, folder);
+  }
+  status(): Call<BindingFolderStatus> {
+    return this.device.folderCall("status", this.dir);
+  }
+  sync(): Call<BindingFolderSync> {
+    return this.device.folderCall("sync", this.dir);
+  }
+  confirmFirstSync(): Call<boolean> {
+    return this.device.folderCall("confirmFirstSync", this.dir);
+  }
+  confirm(): Call<{
+    deleted: number;
+    moved: number;
+    removed: number;
+    unsure: Array<{ path: string; reason: string }>;
+  }> {
+    return this.device.folderCall("confirm", this.dir);
+  }
+  restore(): Call<{
+    putBack: number;
+    restored: number;
+    pull: BindingFolderPull;
+  }> {
+    return this.device.folderCall("restore", this.dir);
+  }
+  remove(): Call<void> {
+    return this.device.folderCall("remove", this.dir);
+  }
+  testOpen(): Call<void> {
+    return this.device.folderCall("testOpen", this.dir);
+  }
+  testClose(): Call<void> {
+    return this.device.folderCall("testClose");
+  }
+  testPull(): Call<BindingFolderPull> {
+    return this.device.folderCall("testPull");
+  }
+  testHydrate(): Call<BindingHydrateReport> {
+    return this.device.folderCall("testHydrate");
+  }
+  testScan(): Call<BindingFolderScan> {
+    return this.device.folderCall("testScan");
+  }
+  testDrain(): Call<{
+    drain: BindingDrainReport;
+    rebased: number;
+    gaveWay: number;
+  }> {
+    return this.device.folderCall("testDrain");
+  }
+  testCatchUp(): Call<{
+    caughtUp?: BindingCatchUpReport;
+    hydrated?: BindingHydrateReport;
+  }> {
+    return this.device.folderCall("testCatchUp");
+  }
+  testSubmitSettingsFile(): Call<BindingFolderPass["settings"]> {
+    return this.device.folderCall("testSubmitSettingsFile");
+  }
+  tryWatch(): Promise<Outcome<Subscription<BindingFolderEvent>>> {
+    return this.device.folderWatch(this.dir);
+  }
+  async watch(): Promise<Subscription<BindingFolderEvent>> {
+    const started = await this.tryWatch();
+    if (!started.ok) throw new Error(JSON.stringify(started.refusal));
+    return started.value;
+  }
 }
