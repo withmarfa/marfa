@@ -1538,7 +1538,7 @@ When an otherwise valid archive carries a set of registrations accepted through 
 
 **Reason:** an exported backup remains restorable when its registrations refer to each other, including mutual compatibility declarations and display hints, links, and merge policies that name inherited fields.
 
-**Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`.
+**Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`, `› refuses a target change that breaks a reader and restores the accepted registry`.
 
 ### `search-and-filters/restore-type-conflict`
 

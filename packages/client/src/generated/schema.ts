@@ -4300,7 +4300,7 @@ export interface components {
             item_count: number;
             /** @description The types that name this one as their `parent`. */
             child_types: string[];
-            /** @description `true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it. */
+            /** @description `true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it or names it in `compatible_with`. */
             removable: boolean;
         };
         /** @description An error response. */
@@ -13006,7 +13006,7 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy. */
+            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy, or the change breaks another type's claim (`details.dependent_type_ids`). */
             422: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13087,7 +13087,7 @@ export interface operations {
     deleteType: {
         parameters: {
             query?: {
-                /** @description Delete the type even if items of it exist, in any state. It doesn't cover a type that has subtypes. */
+                /** @description Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents. */
                 force?: "true" | "false";
             };
             header?: {
@@ -13208,6 +13208,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `compatible_with_violation`: other types name this type in `compatible_with`. `details.dependent_type_ids` lists them. Remove their claims before deleting the target; `force=true` does not bypass this check. */
+            422: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -21595,7 +21610,7 @@ export interface operations {
                     "application/json": components["schemas"]["NotFoundOrTypeNotFoundRefusal"];
                 };
             };
-            /** @description `conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them). */
+            /** @description `conflict`: the type isn't one this build stopped shipping, items still carry it, another type inherits from it (`details.child_types`), or another type declares compatibility with it (`details.dependent_type_ids`). */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

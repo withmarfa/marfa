@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { listTarGzEntries, tarGz } from "../../utils/archive.js";
 import {
@@ -63,7 +63,91 @@ beforeAll(async () => {
   archive = new Uint8Array(await exported.arrayBuffer());
 }, FRESH_SERVER_TIMEOUT_MS);
 
+afterAll(async () => {
+  await source?.stop();
+});
+
 describe("compatible type archives", () => {
+  it(
+    "refuses a target change that breaks a reader and restores the accepted registry",
+    async () => {
+      const origin = await bootFreshServer("dependent-source");
+      const destination = await bootFreshServer("dependent-destination");
+      try {
+        const client = new MarfaClient({
+          baseUrl: origin.apiUrl,
+          apiKey: origin.workingKey,
+        });
+        expect(
+          (await client.registerType({ id: "user.target", ...shape })).status,
+        ).toBe(201);
+        expect(
+          (
+            await client.registerType({
+              id: "user.reader",
+              ...shape,
+              compatible_with: ["user.target"],
+            })
+          ).status,
+        ).toBe(201);
+        const refused = await client.replaceType("user.target", {
+          ...shape,
+          fields: { title: { type: "integer", required: true } },
+        });
+        expect(refused.status, JSON.stringify(refused.error)).toBe(422);
+        expect(refused.error?.error).toMatchObject({
+          code: "compatible_with_violation",
+          details: { dependent_type_ids: ["user.reader"] },
+        });
+        for (const force of [false, true]) {
+          const deleted = await client.deleteType("user.target", force);
+          expect(deleted.status).toBe(422);
+          expect(deleted.error?.error).toMatchObject({
+            code: "compatible_with_violation",
+            details: { dependent_type_ids: ["user.reader"] },
+          });
+        }
+        const exported = await fetch(`${origin.apiUrl}/export?format=archive`, {
+          headers: { Authorization: `Bearer ${origin.workingKey}` },
+        });
+        expect(exported.status).toBe(200);
+        const bytes = new Uint8Array(await exported.arrayBuffer());
+        const owner = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          ownerCookie: destination.ownerCookie,
+        });
+        const restored = await owner.restoreArchive(bytes);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        expect(restored.data).toMatchObject({ types_registered: 2 });
+        const worker = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          apiKey: destination.workingKey,
+        });
+        expect((await worker.getType("user.target")).data).toMatchObject({
+          fields: shape.fields,
+        });
+        expect((await worker.getType("user.reader")).data).toMatchObject({
+          compatible_with: ["user.target"],
+        });
+        expect((await client.replaceType("user.reader", shape)).status).toBe(
+          200,
+        );
+        expect(
+          (
+            await client.replaceType("user.target", {
+              ...shape,
+              fields: { title: { type: "integer", required: true } },
+            })
+          ).status,
+        ).toBe(200);
+      } finally {
+        await origin.stop();
+        await destination.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
   it.each([
     "missing target",
     "incompatible field",
@@ -160,6 +244,70 @@ describe("compatible type archives", () => {
         expect(restored.data).toMatchObject({
           types_registered: 4,
           imported: 4,
+        });
+      } finally {
+        await destination.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it.each([false, true])(
+    "merges compatible registrations into a non-empty store (conflict: %s)",
+    async (conflict) => {
+      const destination = await bootFreshServer("compatible-merge");
+      try {
+        const worker = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          apiKey: destination.workingKey,
+        });
+        const owner = new MarfaClient({
+          baseUrl: destination.apiUrl,
+          ownerCookie: destination.ownerCookie,
+        });
+        const existing = {
+          id: parent,
+          ...shape,
+          ...(conflict
+            ? {
+                fields: { title: { type: "integer" as const, required: true } },
+              }
+            : {}),
+        };
+        expect((await worker.registerType(existing)).status).toBe(201);
+        const reader = "user.existing_reader";
+        expect(
+          (
+            await worker.registerType({
+              id: reader,
+              fields: existing.fields,
+              compatible_with: [parent],
+            })
+          ).status,
+        ).toBe(201);
+        const restored = await owner.restoreArchive(archive);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(
+          conflict ? 409 : 200,
+        );
+        if (conflict) {
+          expect(restored.error?.error).toMatchObject({
+            code: "conflict",
+            details: { conflicting_ids: [parent] },
+          });
+          for (const type of [first, second, child])
+            expect((await worker.getType(type)).status).toBe(404);
+        } else {
+          expect(restored.data).toMatchObject({
+            types_registered: 3,
+            types_skipped: 1,
+            imported: 4,
+          });
+        }
+        expect((await worker.getType(parent)).data).toMatchObject({
+          fields: existing.fields,
+        });
+        expect((await worker.getType(reader)).data).toMatchObject({
+          compatible_with: [parent],
         });
       } finally {
         await destination.stop();

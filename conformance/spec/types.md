@@ -252,9 +252,17 @@ When a type names `compatible_with`, the server MUST take it only where the type
 
 ### `types/compatible-with-refused`
 
-If a type's `compatible_with` names a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
+If a registration or replacement declares `compatible_with` naming a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
 
 **Tests:** `compliance/type-inheritance.test.ts › rejects compatible_with target that does not exist`, `› rejects compatible_with when a required ancestor field is missing`, `› refuses a compatible_with claim whose target field the type declares in another shape, or optional where the target requires it`, `compliance/types.test.ts › refuses a replacement that breaks its compatible_with claim, as registration does`.
+
+### `types/compatible-with-preserved`
+
+If an otherwise permitted `PUT /types/{id}` or `DELETE /types/{id}` would break a registered type's `compatible_with` claim, directly or through inherited fields on either side, then the server MUST refuse the change with `422 compatible_with_violation` naming the affected claimants in `details.dependent_type_ids`, including a deletion with `force=true`.
+
+**Reason:** compatibility is a maintained promise, so accepted registrations remain valid when exported and restored under `search-and-filters/restore-compatible-types`.
+
+**Tests:** `compliance/restore-compatible-types.test.ts › refuses a target change that breaks a reader and restores the accepted registry`.
 
 ### `types/custom-lifecycle`
 
@@ -562,7 +570,7 @@ The server MUST NOT ask write on a parent that is a platform type, shipped or dr
 
 ### `types/delete`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no type names as parent, the server MUST remove it.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no other type names as parent or compatibility target, the server MUST remove it.
 
 **Tests:** `compliance/type-registry.test.ts › deletes a type with no items`.
 
@@ -580,7 +588,7 @@ If a key holding `schema.write` whose type map grants write on it sends `DELETE 
 
 ### `types/delete-force`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold, the server MUST remove the type and keep the items.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold but no other type names as parent or compatibility target, the server MUST remove the type and keep the items.
 
 **Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to a row a forced delete left, until its type is registered again`.
 
@@ -800,7 +808,7 @@ When a caller with `instance.read` or direct owner or local authority sends `GET
 
 ### `types/platform-remove`
 
-When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no type names as parent, the server MUST remove it and answer `200` with `removed: true`.
+When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no other type names as parent or compatibility target, the server MUST remove it and answer `200` with `removed: true`.
 
 **Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
 
@@ -812,9 +820,9 @@ When `DELETE /platform-types/{id}` removes a type, the server MUST record a `pla
 
 ### `types/platform-remove-refused`
 
-If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent, then the server MUST answer `409 conflict`.
+If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent or compatibility target, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`.
+**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`, `› keeps a drifted compatibility target until its reader drops the claim`.
 
 ### `types/platform-remove-missing`
 

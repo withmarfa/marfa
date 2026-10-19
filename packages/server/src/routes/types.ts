@@ -1,3 +1,4 @@
+import { assertCompatibleDependents } from "./_type-dependents.js";
 import {
   canonicalTypeDefinition,
   labelledTypeDefinition as labelled,
@@ -804,7 +805,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
+        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy, or the change breaks another type's claim (`details.dependent_type_ids`).",
     },
   },
 });
@@ -830,11 +831,20 @@ const deleteTypeRoute = createRoute({
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Delete the type even if items of it exist, in any state. It doesn't cover a type that has subtypes.",
+          "Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents.",
         ),
     }),
   },
   responses: {
+    422: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["compatible_with_violation"]),
+        },
+      },
+      description:
+        "`compatible_with_violation`: other types name this type in `compatible_with`. `details.dependent_type_ids` lists them. Remove their claims before deleting the target; `force=true` does not bypass this check.",
+    },
     200: {
       content: {
         "application/json": {
@@ -1019,7 +1029,9 @@ export function typeRoutes(storage: Storage) {
               `Type "${schema.id}" already exists`,
             );
           }
-          return await storage.types.create(schema);
+          const created = await storage.types.create(schema);
+          assertCompatibleDependents([schema.id]);
+          return created;
         },
         (created) => ({
           client_ip: c.get("clientIp") ?? null,
@@ -1073,7 +1085,9 @@ export function typeRoutes(storage: Storage) {
               maxDescendantDepth(schema.id),
             );
           }
-          return await storage.types.update(id, schema);
+          const updated = await storage.types.update(id, schema);
+          assertCompatibleDependents([id]);
+          return updated;
         },
         {
           client_ip: c.get("clientIp") ?? null,
@@ -1158,6 +1172,7 @@ export function typeRoutes(storage: Storage) {
           }
         }
         await storage.types.delete(id);
+        assertCompatibleDependents([id]);
       },
       {
         client_ip: c.get("clientIp") ?? null,

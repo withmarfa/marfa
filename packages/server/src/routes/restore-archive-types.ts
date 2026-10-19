@@ -1,3 +1,4 @@
+import { assertCompatibleDependents } from "./_type-dependents.js";
 /**
  * Registering the types an archive carries, before the restore writes
  * anything that needs them.
@@ -464,6 +465,8 @@ export async function writeArchiveTypes(
       );
     }
   }
+
+  assertCompatibleDependents([...writtenIds]);
 
   // The names were checked when the archive was read, and much has been
   // awaited since, so each is checked again where it is claimed: under the
