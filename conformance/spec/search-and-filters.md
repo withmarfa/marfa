@@ -1384,13 +1384,21 @@ When an edge is created after the headers of `GET /export?format=archive` have a
 
 **Tests:** `compliance/export.test.ts › carries an edge created before the export began, and not one created after its headers arrived`.
 
+### `search-and-filters/archive-consistent-snapshot`
+
+When `GET /export?format=archive` succeeds, the server MUST carry the selected items, their metadata and history, edges, blob references and type registrations as they stood at one point during the export's selection read.
+
+**Reason:** combining pages or registrations from different moments can lose relationships or produce an archive that cannot be restored.
+
+**Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`, `› restores a custom type retyped away and deleted between archive pages`.
+
 ### `search-and-filters/archive-restorable`
 
 When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `MARFA_MAX_BULK_REQUEST_BYTES`, without skipping any carried item or edge.
 
 **Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
-**Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`.
+**Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`, `› restores a custom type retyped away and deleted between archive pages`.
 
 ### `search-and-filters/archive-validation-retry`
 
