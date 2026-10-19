@@ -81,6 +81,25 @@ pub enum CliError {
         hash_list(.0)
     )]
     ArchiveLacksBlobs(Vec<String>),
+    /// An export to a file, written whole but for blobs no store could read,
+    /// and kept beside the path it was meant for instead of at it.
+    #[error(
+        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names, so it is kept at {}, {}",
+        .missing.len(),
+        hash_list(.missing),
+        .kept.display(),
+        if *.target_held {
+            format!("and {} still holds the file that was there before", .target.display())
+        } else {
+            format!("and nothing was written to {}, so nothing there lacks files", .target.display())
+        }
+    )]
+    ArchiveKeptApart {
+        missing: Vec<String>,
+        target: std::path::PathBuf,
+        kept: std::path::PathBuf,
+        target_held: bool,
+    },
     /// A restore that wrote what the archive carries, of an archive that
     /// lacks blobs it names.
     #[error(
@@ -279,7 +298,9 @@ own_codes! {
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
     CliError::Invalid(_) => "invalid",
-    CliError::ArchiveLacksBlobs(_) | CliError::RestoreLacksBlobs(_) => "blobs_missing",
+    CliError::ArchiveLacksBlobs(_)
+    | CliError::ArchiveKeptApart { .. }
+    | CliError::RestoreLacksBlobs(_) => "blobs_missing",
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
@@ -371,6 +392,7 @@ impl CliError {
             CliError::NotHeld(_)
             | CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
+            | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
             | CliError::DocsPageNotFound { .. }
             | CliError::ContractMismatch { .. }
@@ -901,6 +923,16 @@ mod tests {
         );
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
         assert_eq!(CliError::ArchiveLacksBlobs(vec![]).exit(), Exit::Refused);
+        assert_eq!(
+            CliError::ArchiveKeptApart {
+                missing: vec![],
+                target: std::path::PathBuf::new(),
+                kept: std::path::PathBuf::new(),
+                target_held: false,
+            }
+            .exit(),
+            Exit::Refused
+        );
         assert_eq!(CliError::RestoreLacksBlobs(vec![]).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {
