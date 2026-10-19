@@ -379,11 +379,13 @@ export async function untilNotBusy<T>(
  */
 function waitingForTheLock(url: string): {
   client: Client;
+  requestWal: () => Promise<void>;
   captureRead: CaptureRead;
   closeReads: () => Promise<void>;
 } {
   const client = createClient({ url });
-  const transactions = transactionConnections(url);
+  let concurrentSnapshots = false;
+  const transactions = transactionConnections(url, () => concurrentSnapshots);
   let tail: Promise<unknown> = Promise.resolve();
   const one = <T>(attempt: () => Promise<T>): Promise<T> => {
     const turn = tail.then(
@@ -434,6 +436,10 @@ function waitingForTheLock(url: string): {
   };
   return {
     client: wrapped,
+    requestWal: async () => {
+      const result = await wrapped.execute("PRAGMA journal_mode = WAL");
+      concurrentSnapshots = result.rows[0]?.journal_mode === "wal";
+    },
     captureRead: transactions.captureRead,
     closeReads: transactions.closeReads,
   };
@@ -493,7 +499,10 @@ type CaptureRead = <T>(
   lifetime: ReadLifetime,
 ) => Promise<{ reader: Transaction; captured: T }>;
 
-function transactionConnections(url: string): {
+function transactionConnections(
+  url: string,
+  concurrentSnapshots: () => boolean,
+): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
   close: () => void;
   captureRead: CaptureRead;
@@ -915,7 +924,12 @@ function transactionConnections(url: string): {
     readers.add(abandon);
     try {
       assertRegistryReady();
-      leave = await publicationAdmission((turn) => lifetime.wait(turn));
+      // Memory databases keep their shared-cache table locks even when WAL
+      // is requested, so their captures must wait for the writer to settle.
+      const admission = concurrentSnapshots()
+        ? publicationAdmission
+        : writerAdmission;
+      leave = await admission((turn) => lifetime.wait(turn));
       lifetime.assertAlive();
       assertRegistryReady();
       pending = begin("read", true).then((value) => {
@@ -984,7 +998,7 @@ function toLibsqlUrl(pathOrUrl: string): string {
 }
 
 /**
- * Opens a libsql connection, enables WAL mode, creates all tables
+ * Opens a libsql connection, requests WAL mode, creates all tables
  * (idempotent), and returns both the Drizzle db and the raw libsql client.
  */
 export async function createConnection(sqlitePath: string): Promise<{
@@ -1008,7 +1022,7 @@ export async function createConnection(sqlitePath: string): Promise<{
   // The wrapper rather than a `PRAGMA busy_timeout` for the same reason
   // the native option is not used, and because a pragma reaches one
   // connection while the transaction path opens its own.
-  const { client, captureRead, closeReads } = waitingForTheLock(
+  const { client, requestWal, captureRead, closeReads } = waitingForTheLock(
     toLibsqlUrl(sqlitePath),
   );
 
@@ -1102,7 +1116,7 @@ export async function createConnection(sqlitePath: string): Promise<{
 
   // WAL: readers do not block the writer, and it is what Litestream
   // replicates.
-  await client.execute("PRAGMA journal_mode = WAL");
+  await requestWal();
   await client.execute("PRAGMA foreign_keys = ON");
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS).
