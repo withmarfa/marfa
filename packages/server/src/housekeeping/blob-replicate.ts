@@ -107,7 +107,7 @@ export class BlobReplicator {
    *  and a source still has it. Answers whether the copy landed. */
   private async copy(hash: string, target: BlobStore): Promise<boolean> {
     if (!(await this.storage.blobs.get(hash))) return false;
-    await finishCopyDeletion(this.storage, target, hash);
+    await reaching(() => finishCopyDeletion(this.storage, target, hash));
     const present = (await reaching(() => target.has(hash))) !== null;
     const source = await this.sourceFor(hash, target.id);
     if (!source) return false;

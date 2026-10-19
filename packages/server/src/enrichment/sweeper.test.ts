@@ -277,6 +277,12 @@ describe("extraction", () => {
       expect((await ctx.storage.enrichment.get(other))?.error).toMatch(
         /folder is away/,
       );
+      // The attempt is given back, so a drive away for more sweeps than the
+      // budget allows does not park the file: it is offered every sweep.
+      for (let sweep = 0; sweep < 4; sweep += 1) {
+        expect(await sweeper().runOnce()).toMatchObject({ failed: 1 });
+      }
+      expect((await ctx.storage.enrichment.get(other))?.attempts).toBe(0);
       second.get = secondGet;
     } finally {
       ctx.blobs.disk.get = get;

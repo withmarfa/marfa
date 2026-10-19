@@ -8,6 +8,7 @@ import {
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
@@ -425,7 +426,12 @@ export class TextEnrichmentSweeper {
       return textError === null ? "extracted" : "failed";
     } catch (err) {
       const message = errorMessage(err);
-      await record("failed", message.slice(0, 500)).catch(() => {
+      // A store that cannot be reached says nothing of this file, so the
+      // attempt is given back: a drive away for a few sweeps must not park
+      // every offered file at its last attempt for good.
+      const counted =
+        err instanceof BlobStoreUnreachable ? attempts - 1 : attempts;
+      await record("failed", message.slice(0, 500), counted).catch(() => {
         // The item may have been deleted mid-extraction, taking the FK
         // target with it. Losing the bookkeeping row for a gone item is
         // the correct outcome.
