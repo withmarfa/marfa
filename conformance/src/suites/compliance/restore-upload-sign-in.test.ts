@@ -1,3 +1,5 @@
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import type { MarfaClient } from "../../client/api.js";
@@ -7,9 +9,10 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { clientsFor } from "../../utils/own-blob-server.js";
-import { inParts, pause, slowPost } from "../../utils/slow-body.js";
+import { blobFolder, clientsFor } from "../../utils/own-blob-server.js";
+import { inParts, slowPost } from "../../utils/slow-body.js";
 import { issuerOrigin, signIn } from "../../utils/signed-in.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * When the owner's sign-in is judged for a restore whose body takes a while
@@ -33,6 +36,12 @@ afterAll(async () => {
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
+/** What the server spools a body into while it arrives. */
+function spooled(): string[] {
+  const folder = join(blobFolder(server), "tmp");
+  return existsSync(folder) ? readdirSync(folder) : [];
+}
+
 /** A restore from `cookie`, whose body is sent in four parts. */
 function restoreFrom(cookie: string) {
   const id = uuidv7();
@@ -53,10 +62,17 @@ function restoreFrom(cookie: string) {
   return {
     id,
     upload,
-    first: async () => {
+    /**
+     * Sends the first part. Unless `refused` says the server will answer
+     * before it reads the body, waits until the part is spooled, which is
+     * after the server has judged the sign-in and begun reading.
+     */
+    first: async (refused = false) => {
       await upload.write(parts[0]!);
-      // The server reads nothing of the body before it has judged the sign-in.
-      await pause(1000);
+      if (refused) return;
+      await waitFor("the first part of the archive to be spooled", () =>
+        Promise.resolve(spooled().length > 0 ? true : undefined),
+      );
     },
     rest: async () => {
       for (const part of parts.slice(1)) await upload.write(part);
@@ -83,7 +99,7 @@ describe("a restore whose upload crosses the five minutes", () => {
     const cookie = await signIn(server, origin);
     await server.advanceClock(6 * MINUTE);
     const restore = restoreFrom(cookie);
-    await restore.first();
+    await restore.first(true);
     // The answer comes with the body unfinished: nothing waits for its end.
     const answered = await restore.upload.answered;
     expect(answered.status, answered.body).toBe(403);

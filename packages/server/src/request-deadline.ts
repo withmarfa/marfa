@@ -23,21 +23,26 @@ export function enforceRequestDeadline(server: Server, ms: number): void {
   server.requestTimeout = 0;
   server.prependListener("request", (request, response) => {
     if (request.complete) return;
+    const socket = request.socket;
     const timer = setTimeout(() => {
       if (request.complete) return;
-      const socket = request.socket;
       if (!response.headersSent && socket.writable)
         socket.write(REQUEST_TIMEOUT_RESPONSE);
       socket.destroySoon();
     }, ms);
     timer.unref();
+    // A door that answers before the body is whole leaves the request with
+    // no `end` and, once Node drops it from its list, no `close`; the
+    // connection's own close is what releases the timer and what it holds.
     const stop = () => {
       clearTimeout(timer);
+      socket.off("close", stop);
     };
     lifts.set(request, stop);
     request.once("end", stop);
+    socket.once("close", stop);
     response.once("close", () => {
-      if (request.complete || request.socket.destroyed) stop();
+      if (request.complete) stop();
     });
   });
 }
