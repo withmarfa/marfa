@@ -13,8 +13,9 @@ const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
  * reads a clone, because a door or the sign-in handler reads the request's
  * own body and a body can be read once.
  *
- * It judges the text of every body outside the doors that take none (see
- * `bodyCapFor`), whatever `Content-Type` says. The parsers here decide by
+ * It judges every body but a `GET`'s and those of the blob, restore and
+ * inbound doors (`bodyCapFor`'s `none` and `inbound`), whatever
+ * `Content-Type` says. The parsers here decide by
  * that header in different ways (`application/jsonx` and a `+json` suffix
  * reach Better Auth's, and the claim page reads any header that contains
  * `application/json`), so no header test here can be known to match them all.

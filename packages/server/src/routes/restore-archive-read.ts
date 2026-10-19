@@ -141,7 +141,7 @@ export function parseManifest(text: string): ArchiveManifest {
   const at = findLoneSurrogate(parsed);
   if (at !== null) {
     throw invalid(
-      `Invalid manifest.json: ${at} is not well-formed UTF-16 (a lone surrogate)`,
+      `Invalid manifest.json: ${at || "the manifest itself"} is not well-formed UTF-16 (a lone surrogate)`,
       { field: at },
     );
   }
