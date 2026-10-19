@@ -2,6 +2,7 @@
 /** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
 import { Icon } from "../icons.js";
+import { dataAttributes } from "./data.js";
 
 export interface TextFieldProps {
   id: string;
@@ -35,6 +36,8 @@ export interface TextFieldProps {
   code?: boolean;
   /** Takes focus when the page loads, for a field the server marked invalid. */
   autofocus?: boolean;
+  /** Read by the browser module that drives the field, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
 }
 
 interface FieldFrameProps {
@@ -121,6 +124,7 @@ export function TextField(props: TextFieldProps) {
         aria-describedby={describedBy(props)}
         data-validate-msg={props.validateMessage}
         data-required-msg={props.requiredMessage}
+        {...dataAttributes(props.data)}
       />
     </FieldFrame>
   );

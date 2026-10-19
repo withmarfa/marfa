@@ -52,10 +52,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
 
   /* Callout — the single boxed caution (unverified app). Amber so it reads
      as advisory, not error. */
-  --callout-bg: #fdf6e3;
-  --callout-border: #f3e0a3;
-  --callout-fg: #854d0e;
-  --callout-icon: #a16207;
 
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
@@ -102,11 +98,7 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --error-bg: #1f1212;
     --error-border: #3d1f1f;
     --error-fg: #fca5a5;
-    --callout-bg: #241f10;
-    --callout-border: #4a3f1c;
-    --callout-fg: #e9c46a;
-    --callout-icon: #d4a73a;
-
+        
     --shadow: none;
   }
   :root .card {
@@ -316,65 +308,6 @@ select:focus {
   border-color: var(--error-fg);
   box-shadow: 0 0 0 3px var(--error-bg);
 }
-.field__input--code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 18px;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-}
-
-/* Segmented one-time-code cells (device flow). JS-enhanced from the single
-   code input, which stays as the no-JS fallback. A filled cell takes the soft
-   tile fill (matching the device-approve code tile) rather than a hard outline,
-   so a typed code reads as soft chips, not boxed letters. */
-.otp {
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-}
-/* Scoped under .otp so these beat the base input[type="text"] rule (which
-   would otherwise force full width + the field padding and clip the glyph).
-   The cells flex to share the row and shrink on narrow cards (capped on wide),
-   so eight of them plus the dash always fit inside the card without widening it. */
-.otp .otp__cell {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 36px;
-  height: 46px;
-  padding: 0;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 19px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--fg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  transition:
-    border-color 0.12s var(--ease),
-    background 0.12s var(--ease),
-    box-shadow 0.12s var(--ease);
-}
-.otp .otp__cell--filled {
-  background: var(--tile);
-  border-color: var(--border-strong);
-}
-.otp .otp__cell:focus {
-  outline: none;
-  border-color: var(--fg);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.otp__dash {
-  align-self: center;
-  color: var(--fg-faint);
-  font-size: 18px;
-}
-.field--error .otp .otp__cell {
-  border-color: var(--error-border);
-}
-
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
@@ -422,29 +355,6 @@ select:focus {
 .btn[disabled] {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-/* Submitting state — set by submit-state.js on form submit. A small leading
-   spinner plus the swapped label keeps the button calm and on-brand; the
-   button keeps its size so the layout doesn't jump. The disabled styles above
-   handle the dimming once the script also disables the control. */
-.btn.is-loading {
-  cursor: progress;
-}
-.btn.is-loading::before {
-  content: "";
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: btn-spin 0.6s linear infinite;
-  opacity: 0.7;
-}
-@keyframes btn-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .btn--primary {
@@ -558,29 +468,6 @@ select:focus {
    up so the pair reads as one block. */
 .sub + .sub {
   margin-top: -10px;
-}
-
-/* The single boxed caution — the unverified-app warning. One warning,
-   never a second inline badge. */
-.callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 0 0 16px;
-  padding: 11px 13px;
-  background: var(--callout-bg);
-  border: 1px solid var(--callout-border);
-  border-radius: 13px;
-}
-.callout svg {
-  flex: none;
-  margin-top: 1px;
-  color: var(--callout-icon);
-}
-.callout span {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--callout-fg);
 }
 
 @media (prefers-reduced-motion: reduce) {

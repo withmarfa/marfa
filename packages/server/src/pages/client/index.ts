@@ -2,6 +2,7 @@
 import { initAccess } from "./access.js";
 import { initCommandSearch } from "./command-search.js";
 import { initCopy } from "./copy.js";
+import { initDeviceCode } from "./device-code.js";
 import { initDialogs } from "./dialog.js";
 import { initForms } from "./form.js";
 import { initPasskey } from "./passkey.js";
@@ -21,6 +22,7 @@ function start(): void {
   initSetup();
   initPasskeySignIn();
   initAccess();
+  initDeviceCode();
 }
 
 if (document.readyState === "loading")

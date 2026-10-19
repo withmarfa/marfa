@@ -173,7 +173,6 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/static/pages.css": [200],
   "GET /auth/static/pages.js": [200],
   "GET /auth/static/passkeys.js": [200],
-  "GET /auth/static/submit-state.js": [200],
   "GET /auth/owner/manage": [200, 401],
   "GET /auth/owner/restore": [200, 401],
   "GET /auth/owner/password": [200, 401],

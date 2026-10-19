@@ -250,7 +250,6 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
       "GET /auth/static/pages.css",
       "GET /auth/static/pages.js",
       "GET /auth/static/passkeys.js",
-      "GET /auth/static/submit-state.js",
     ],
   "the address or the signature in it is the credential": [
     "GET /blobs/:hash/fetch",

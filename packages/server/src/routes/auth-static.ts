@@ -4,7 +4,6 @@ import { PASSKEYS_JS } from "./auth-static/passkeys-js.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { AUTH_CSS } from "./auth-static/auth-css.js";
-import { SUBMIT_STATE_JS } from "./auth-static/submit-state-js.js";
 import { PAGE_ASSETS } from "../pages/assets.js";
 
 function makeAsset(body: string, contentType: string) {
@@ -19,10 +18,6 @@ function makeAsset(body: string, contentType: string) {
 }
 
 const CSS = makeAsset(AUTH_CSS, "text/css; charset=utf-8");
-const SUBMIT_STATE = makeAsset(
-  SUBMIT_STATE_JS,
-  "application/javascript; charset=utf-8",
-);
 
 const ASSETS = {
   "pages.css": makeAsset(
@@ -34,7 +29,6 @@ const ASSETS = {
     PAGE_ASSETS["pages.js"].contentType,
   ),
   "auth.css": CSS,
-  "submit-state.js": SUBMIT_STATE,
   "passkeys.js": makeAsset(
     PASSKEYS_JS,
     "application/javascript; charset=utf-8",

@@ -178,7 +178,6 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/static/pages.css": "the stylesheet those pages load",
   "GET /auth/static/pages.js": "a script those pages load",
   "GET /auth/static/passkeys.js": "a script those pages load",
-  "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/*":
     "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself; every other path answers 404",
   "POST /auth/*": "the same catch-all",

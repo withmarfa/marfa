@@ -2013,6 +2013,20 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who has tried too many device codes how long to wait, in whole minutes rounded up`.
 
+### `keys-and-oauth/device-code-not-right`
+
+When `GET /auth/device` carries `error=invalid_code` or `error=expired_code`, the server MUST answer a page saying the code isn't right or has ended.
+
+**Reason:** A code nobody issued and a code past its end are told apart only by someone who can look at the code, so the page says one thing for both and does not help a person guess codes.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+
+### `keys-and-oauth/device-code-lifetime`
+
+The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+
 ### `keys-and-oauth/device-lookup-instance-limit`
 
 If every address together has made a hundred counted device code lookups without direct owner browser authority in fifteen minutes, then the server MUST redirect the next lookup without that authority from any address with `error=too_many_attempts` before the code is looked up.

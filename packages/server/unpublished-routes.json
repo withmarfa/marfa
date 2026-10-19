@@ -22,7 +22,6 @@
   "GET /auth/static/auth.css": "a stylesheet those pages load",
   "GET /auth/static/pages.css": "the stylesheet the console and moment pages load",
   "GET /auth/static/pages.js": "the script the console and moment pages load",
-  "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/grants": "lists the apps the owner authorized",
   "DELETE /auth/grants/{id}": "revokes one",
   "GET /setup": "first-party owner setup page",

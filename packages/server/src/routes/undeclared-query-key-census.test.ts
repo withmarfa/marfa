@@ -98,7 +98,6 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
   "GET /auth/static/pages.css": "a stylesheet those pages load",
   "GET /auth/static/pages.js": "a script those pages load",
   "GET /auth/static/passkeys.js": "a script those pages load",
-  "GET /auth/static/submit-state.js": "a script those pages load",
   "GET /auth/grants": "the page listing the apps the owner authorized",
   "DELETE /auth/grants/:id": "its revoke",
   "GET /auth/*": "the Better Auth catch-all, which answers its own protocol",

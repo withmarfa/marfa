@@ -351,10 +351,10 @@ inBrowser("the policy, in a browser", () => {
   it("runs the pages' own scripts and applies their own styles", async () => {
     const page = await newPage();
     try {
-      // The device entry page's inline script turns one input into cells.
+      // The device code page's script writes the code as it is typed.
       await page.goto(`${origin}/auth/device`);
-      await page.waitForSelector("[data-otp] input");
-      expect(await page.locator("[data-otp] input").count()).toBe(8);
+      await page.getByLabel("Code").fill("abcd efgh9");
+      expect(await page.getByLabel("Code").inputValue()).toBe("ABCD-EFGH");
 
       // The consent page loads the shared script under its nonce, and the
       // policy runs it: the line under a row follows the control, which the

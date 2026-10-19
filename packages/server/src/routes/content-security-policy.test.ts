@@ -201,22 +201,22 @@ describe("every page the app renders", () => {
     expect(res.headers.get("content-security-policy")).toBeNull();
   });
 
-  it("names, in the policy, the nonce its inline scripts carry", async () => {
+  it("names, in the policy, the nonce its script and stylesheet carry", async () => {
     const res = await ctx.app.request("/auth/device", { headers: HTML });
     const html = await res.text();
     const nonce = /'nonce-([^']+)'/.exec(
       res.headers.get("content-security-policy") ?? "",
     )?.[1];
     expect(nonce).toBeTruthy();
-    // Every script tag, inline or by source, and the stylesheet link, carry
-    // the nonce: the policy allows nothing by origin.
+    // Every script tag and the stylesheet link carry the nonce: the policy
+    // allows nothing by origin.
     const tags = [
       ...startTagAttributes(html, "script"),
       ...startTagAttributes(html, "link"),
     ];
-    // Witness: the page has some, among them an inline script.
-    expect(tags.length).toBeGreaterThan(2);
-    expect(tags.some((attributes) => !attributes.includes("src="))).toBe(true);
+    // Witness: the page has some, a script among them.
+    expect(startTagAttributes(html, "script").length).toBeGreaterThan(0);
+    expect(tags.length).toBeGreaterThan(1);
     for (const attributes of tags) {
       expect(attributes).toContain(`nonce="${nonce ?? ""}"`);
     }
@@ -265,6 +265,7 @@ describe("the pages with scopes on them", () => {
       userCode: "ABCD1234",
     }),
     "the device decision page": renderDeviceDecisionPage({ approved: true }),
+    "the device code page": renderDevicePage({ prefilled: "" }),
   };
 
   it("uses no inline style, no style element and no inline handler", () => {
@@ -276,11 +277,10 @@ describe("the pages with scopes on them", () => {
   });
 
   it("carries no script of its own beyond the shared file, and the scan can tell a page that does", () => {
-    // The witness: the page where a code is typed has an inline script, so a
-    // scan for scripts looks at something.
+    // The witness: a page with an inline script is something the scan sees.
     expect(
-      startTagAttributes(renderDevicePage({ prefilled: "" }), "script").length,
-    ).toBeGreaterThan(0);
+      startTagAttributes('<script nonce="n">run()</script>', "script"),
+    ).toEqual([' nonce="n"']);
     const shared =
       /^ src="\/auth\/static\/pages\.js\?v=[0-9a-f]{40}" nonce="[^"]+" defer(="")?$/;
     for (const [name, html] of Object.entries(pages)) {
