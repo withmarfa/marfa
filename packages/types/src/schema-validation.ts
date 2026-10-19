@@ -197,10 +197,11 @@ export interface SchemaValidationContext {
    */
   descendantsOf?: (typeId: string) => TypeSchema[];
   /**
-   * Check declaration syntax only. A batch restore must validate again with
-   * every target present before committing the transaction.
+   * Defer checks that depend on registered schemas. A batch restore must
+   * normalize inherited required fields and validate again with the complete
+   * registry before committing the transaction.
    */
-  deferCompatibilityChecks?: boolean;
+  deferRegistryChecks?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -796,7 +797,7 @@ export function validateTypeSchema(
     ? collectAncestorFields(parentId, ctx)
     : new Map<string, { owner: string; definition: FieldDefinition }>();
 
-  if (fields) {
+  if (fields && !ctx.deferRegistryChecks) {
     for (const [name, def] of Object.entries(fields)) {
       const ancestor = ancestorFields.get(name);
       if (!ancestor) continue;
@@ -821,7 +822,7 @@ export function validateTypeSchema(
   }
 
   const descendants =
-    typeof obj.id === "string" && ctx.descendantsOf
+    !ctx.deferRegistryChecks && typeof obj.id === "string" && ctx.descendantsOf
       ? ctx.descendantsOf(obj.id)
       : [];
   if (fields) {
@@ -843,12 +844,17 @@ export function validateTypeSchema(
   ]);
 
   if (fields) {
-    validateThumbnails(fields, ancestorFields, descendants, errors);
+    validateThumbnails(
+      fields,
+      ctx.deferRegistryChecks ? new Map() : ancestorFields,
+      descendants,
+      errors,
+    );
   }
   validateDescendantMembers(obj.id, visibleFields, descendants, ctx, errors);
 
   for (const name of requiredNames) {
-    if (!visibleFields.has(name)) {
+    if (!ctx.deferRegistryChecks && !visibleFields.has(name)) {
       errors.push(
         issue({
           field: "required",
@@ -867,10 +873,18 @@ export function validateTypeSchema(
     visibleFields,
     thumbnailNames(fields, ancestorFields),
     errors,
+    ctx.deferRegistryChecks,
   );
-  validateLinkField(obj, fields, requiredNames, ancestorFields, errors);
+  validateLinkField(
+    obj,
+    fields,
+    requiredNames,
+    ancestorFields,
+    errors,
+    ctx.deferRegistryChecks,
+  );
   validateVersionPolicy(obj, errors);
-  validateMergePolicy(obj, visibleFields, errors);
+  validateMergePolicy(obj, visibleFields, errors, ctx.deferRegistryChecks);
   validateRetentionPolicy(obj, errors);
   validateCompatibleWith(
     obj,
@@ -1125,6 +1139,7 @@ function validateDisplayHints(
   visibleFields: ReadonlySet<string>,
   thumbnails: ReadonlySet<string>,
   errors: SchemaValidationIssue[],
+  deferRegistryChecks = false,
 ): void {
   if (obj.display_hints === undefined) return;
   const hints = asRecord(obj.display_hints);
@@ -1153,6 +1168,7 @@ function validateDisplayHints(
       );
       continue;
     }
+    if (deferRegistryChecks) continue;
     if (!visibleFields.has(value)) {
       errors.push(
         issue({
@@ -1183,6 +1199,7 @@ function validateLinkField(
   requiredNames: ReadonlySet<string>,
   ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
   errors: SchemaValidationIssue[],
+  deferRegistryChecks = false,
 ): void {
   if (obj.link_field === undefined) return;
   const name = obj.link_field;
@@ -1210,6 +1227,7 @@ function validateLinkField(
     );
     return;
   }
+  if (deferRegistryChecks) return;
   const definition = visibleDefinition(
     name,
     fields,
@@ -1413,6 +1431,7 @@ function validateMergePolicy(
   obj: Record<string, unknown>,
   visibleFields: ReadonlySet<string>,
   errors: SchemaValidationIssue[],
+  deferRegistryChecks = false,
 ): void {
   if (obj.merge_policy === undefined) return;
   const mp = asRecord(obj.merge_policy);
@@ -1454,7 +1473,7 @@ function validateMergePolicy(
           );
           continue;
         }
-        if (!visibleFields.has(fieldName)) {
+        if (!deferRegistryChecks && !visibleFields.has(fieldName)) {
           errors.push(
             issue({
               field: `merge_policy.fields.${fieldName}`,
@@ -1582,7 +1601,7 @@ function validateCompatibleWith(
     return;
   }
 
-  if (ctx.deferCompatibilityChecks) return;
+  if (ctx.deferRegistryChecks) return;
 
   const candidateFields = new Map<string, FieldDefinition>();
   for (const [name, inherited] of ancestorFields) {

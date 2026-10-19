@@ -1210,7 +1210,7 @@ export function validateTransition(
  */
 export function validateTypeSchema(
   input: unknown,
-  options: { deferCompatibilityChecks?: boolean } = {},
+  options: { deferRegistryChecks?: boolean } = {},
 ): TypeSchemaValidationResult {
   return validateTypeSchemaShape(input, {
     ...options,

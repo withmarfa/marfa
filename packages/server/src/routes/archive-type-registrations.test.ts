@@ -184,6 +184,51 @@ async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
 }
 
 describe("archives carry type registrations", () => {
+  it.each([false, true])(
+    "restores inherited field references into an empty store (reversed: %s)",
+    async (reversed) => {
+      const source = await newContext();
+      const parent = `user.parent_${uniqueSuffix()}`;
+      const child = `${parent}.child`;
+      for (const body of [
+        { id: parent, fields: { title: { type: "string" } } },
+        {
+          id: child,
+          parent,
+          fields: {},
+          display_hints: { title_field: "title", body_field: "title" },
+          link_field: "title",
+          merge_policy: { fields: { title: "last_writer_wins" } },
+        },
+      ]) {
+        const registered = await request(source.app, "POST", "/types", {
+          key: source.workingKey,
+          body,
+        });
+        expect(registered.status, await registered.clone().text()).toBe(201);
+      }
+      const entries = await extractArchive(await exportArchive(source));
+      const lines = entries.get("types.ndjson")!.toString().trim().split("\n");
+      if (reversed) lines.reverse();
+      const archive = await repack(entries, {
+        "types.ndjson": lines.join("\n") + "\n",
+      });
+      unregisterTypeSchema(child);
+      unregisterTypeSchema(parent);
+      const destination = await newContext();
+      const restored = await restore(destination, archive);
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      expect(await restored.json()).toMatchObject({ types_registered: 2 });
+      expect(getTypeSchema(child)).toMatchObject({
+        parent,
+        fields: {},
+        display_hints: { title_field: "title", body_field: "title" },
+        link_field: "title",
+        merge_policy: { fields: { title: "last_writer_wins" } },
+      });
+    },
+  );
+
   it.each([
     { reversed: false, inherited: false },
     { reversed: true, inherited: false },
@@ -239,6 +284,50 @@ describe("archives carry type registrations", () => {
       expect(types.find((type) => type.id === second)?.compatible_with).toEqual(
         [first],
       );
+    },
+  );
+
+  it.each([false, true])(
+    "normalizes inherited required fields after staging (reversed: %s)",
+    async (reversed) => {
+      const source = await newContext();
+      const parent = `user.required_${uniqueSuffix()}`;
+      const child = `${parent}.child`;
+      const grandchild = `${child}.leaf`;
+      const entries = await extractArchive(await exportArchive(source));
+      const types = [
+        { id: parent, fields: { title: { type: "string" } } },
+        { id: child, parent, fields: {}, required: ["title"] },
+        { id: grandchild, parent: child, fields: {}, compatible_with: [child] },
+      ];
+      if (reversed) types.reverse();
+      const archive = await repack(entries, {
+        "types.ndjson":
+          types.map((type) => JSON.stringify({ type })).join("\n") + "\n",
+      });
+      const destination = await newContext();
+      const restored = await restore(destination, archive);
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      expect(getTypeSchema(child)?.fields.title).toEqual({
+        type: "string",
+        required: true,
+      });
+      const refused = await request(destination.app, "POST", "/items", {
+        key: destination.workingKey,
+        body: { type: grandchild, properties: {} },
+      });
+      expect(refused.status).toBe(400);
+      const created = await request(destination.app, "POST", "/items", {
+        key: destination.workingKey,
+        body: { type: grandchild, properties: { title: "Present" } },
+      });
+      expect(created.status, await created.clone().text()).toBe(201);
+      const again = await restore(destination, archive);
+      expect(again.status, await again.clone().text()).toBe(200);
+      expect(await again.json()).toMatchObject({
+        types_registered: 0,
+        types_skipped: 3,
+      });
     },
   );
 
@@ -716,12 +805,6 @@ describe("archives carry type registrations", () => {
     // and nothing else asserts it, so a transposed interpolation would read
     // as the registration door's message.
     //
-    // The unknown-parent and circular phrasings this door also supplies are
-    // not reachable from an archive alone. The restore's own loop skips a
-    // schema whose immediate parent has not resolved and raises its own
-    // error when nothing more can be written, so it reports the stall first. They need
-    // the registry to already hold a chain that points at nothing, which no
-    // door produces: a type another inherits from refuses its delete.
     const source = await newContext();
     const destination = await newContext();
     await itemWrites(source.storage).create({

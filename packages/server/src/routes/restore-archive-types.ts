@@ -3,8 +3,8 @@
  * anything that needs them.
  *
  * Registrations and the rows that use them share one transaction, so an
- * invalid schema leaves neither rows nor registrations behind. Compatibility
- * checks need the complete batch because their targets can name each other.
+ * invalid schema leaves neither rows nor registrations behind. Registry-dependent
+ * checks need the complete batch, including ancestors and compatibility targets.
  */
 
 import {
@@ -47,6 +47,7 @@ export interface ArchiveTypeEntry {
 /** A type from the archive with the provenance the restore will write. */
 interface PendingType {
   schema: TypeSchema;
+  input: unknown;
   provenance: TypeProvenance;
 }
 
@@ -72,12 +73,8 @@ function assertParentChainResolves(typeId: string, parentId: string): void {
     tooDeep: (maxDepth) =>
       `Archive type "${typeId}" has an inheritance chain deeper than ${String(maxDepth)}`,
     circular: () => `Archive type "${typeId}" declares a circular parent chain`,
-    // The caller checks that the immediate parent resolves before reaching
-    // this, so the id reported here is always further up the chain and the
-    // two are never the same. A branch on that would never take its other
-    // side.
     unknownParent: (unresolved, parent) =>
-      `Archive type "${typeId}" names parent "${parent}", whose own ancestor "${unresolved}" is unknown`,
+      `Archive type "${typeId}" names parent "${parent}" with an unresolved chain at "${unresolved}"`,
   });
 }
 
@@ -96,7 +93,7 @@ function sameSchema(a: unknown, b: unknown): boolean {
  * unequal, which is the right answer: it is not the archive's schema.
  */
 function normalizeForCompare(schema: TypeSchema): TypeSchema {
-  const result = validateTypeSchema(schema);
+  const result = validateTypeSchema(schema, { deferRegistryChecks: true });
   return result.success ? result.data : schema;
 }
 
@@ -212,7 +209,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
         );
       }
       const result = validateTypeSchema(entry.type, {
-        deferCompatibilityChecks: true,
+        deferRegistryChecks: true,
       });
       if (!result.success) {
         throw new MarfaError(
@@ -223,6 +220,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
       }
       types.push({
         schema: result.data,
+        input: entry.type,
         provenance: provenanceFor(entry, raw.id),
       });
       continue;
@@ -288,7 +286,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 /** The registrations an archive adds, decided before anything is written. */
 export interface ArchiveTypePlan {
   types: PendingType[];
-  typesToValidate: TypeSchema[];
+  typesToValidate: PendingType[];
   edgeTypes: EdgeTypeSchema[];
   typesSkipped: number;
   edgeTypesSkipped: number;
@@ -296,7 +294,7 @@ export interface ArchiveTypePlan {
 
 /**
  * Validates schema shapes and decides which registrations to add.
- * Compatibility is checked against the complete batch in the write transaction.
+ * Registry-dependent checks run against the complete batch in the write transaction.
  *
  * Conflicts are decided over the whole batch so a refusal names every
  * clashing id at once, before anything has been written. An identical
@@ -360,7 +358,7 @@ export async function planArchiveTypes(
   }
   return {
     types: typesToWrite,
-    typesToValidate: types.map((entry) => entry.schema),
+    typesToValidate: types,
     edgeTypes: edgeTypesToWrite,
     typesSkipped,
     edgeTypesSkipped,
@@ -388,91 +386,80 @@ export async function writeArchiveTypes(
   plan: ArchiveTypePlan,
   actor: Pick<AuditLogEntry, "key_id" | "client_ip">,
 ): Promise<ArchiveTypeResult> {
-  // Parents before children, so a subtype's parent resolves whichever
-  // order the archive listed them in. A chain longer than the batch is
-  // caught by the depth guard rather than by looping forever.
-  const pending = [...plan.types];
-  const written: PendingType[] = [];
-  let progress = true;
-  while (pending.length > 0 && progress) {
-    progress = false;
-    for (let i = pending.length - 1; i >= 0; i -= 1) {
-      const entry = pending[i];
-      if (!entry) continue;
-      const schema = entry.schema;
-      // The parent is asked in the transaction that writes the type, as
-      // `POST /types` asks it, so a parent deleted meanwhile is not inherited
-      // from, and a delete waiting on this write finds the child.
-      const wrote = await runAuditedTransaction(
-        storage,
-        async () => {
-          if (schema.parent && !getTypeSchema(schema.parent)) return false;
-          if (schema.parent) {
-            assertParentChainResolves(schema.id, schema.parent);
-            // Checked again now its parent is registered: the first pass ran
-            // before the batch's own parents were, so it could not see what a
-            // child inherits from one of them, a second thumbnail among it.
-            const inherited = validateTypeSchema(schema, {
-              deferCompatibilityChecks: true,
-            });
-            if (!inherited.success) {
-              throw new MarfaError(
-                ErrorCode.INVALID_SCHEMA,
-                `Archive carries an invalid type schema for "${schema.id}"`,
-                { errors: inherited.errors },
-              );
-            }
-          }
-          // Provenance is passed rather than defaulted: the column defaults to
-          // `user`, the one the consent screen offers a read-and-write wildcard
-          // over, so defaulting would turn a row recorded as `unknown` into the
-          // person's own on a round trip.
-          try {
-            await storage.types.create(schema, entry.provenance);
-          } catch (err) {
-            // The plan read the rows before the restore's transaction opened.
-            if (
-              err instanceof MarfaError &&
-              err.code === ErrorCode.TYPE_ALREADY_EXISTS
-            )
-              throw registeredMeanwhile(schema.id);
-            throw err;
-          }
-          return true;
-        },
-        (wrote) =>
-          wrote
-            ? {
-                ...actor,
-                action: "restore_archive.type",
-                resource_type: "type",
-                resource_id: schema.id,
-                details: { provenance: entry.provenance },
-              }
-            : null,
-      );
-      if (!wrote) continue;
-      written.push(entry);
-      pending.splice(i, 1);
-      progress = true;
-    }
-  }
-  if (pending.length > 0) {
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Archive types name parents that do not resolve: ${pending.map((e) => e.schema.id).join(", ")}`,
+  // Storage and registry writes remain private to the restore transaction.
+  // No schema can be judged against a partial archive, even if its parent
+  // or compatibility target occurs later in the file.
+  for (const entry of plan.types) {
+    const schema = entry.schema;
+    await runAuditedTransaction(
+      storage,
+      async () => {
+        try {
+          await storage.types.create(schema, entry.provenance);
+        } catch (err) {
+          if (
+            err instanceof MarfaError &&
+            err.code === ErrorCode.TYPE_ALREADY_EXISTS
+          )
+            throw registeredMeanwhile(schema.id);
+          throw err;
+        }
+      },
+      {
+        ...actor,
+        action: "restore_archive.type",
+        resource_type: "type",
+        resource_id: schema.id,
+        details: { provenance: entry.provenance },
+      },
     );
   }
 
-  // Compatibility is structural, not an inheritance dependency. Its targets
-  // can name each other, so check the complete batch under the restore's
-  // write lock; a refusal rolls back both rows and the registry overlay.
-  for (const schema of plan.typesToValidate) {
-    const result = validateTypeSchema(schema);
+  for (const { schema } of plan.typesToValidate) {
+    if (schema.parent) assertParentChainResolves(schema.id, schema.parent);
+  }
+
+  // A hand-written archive can tighten inherited fields through `required`.
+  // Normalize ancestors first so those refinements reach every descendant
+  // before any compatibility or descendant-shape check reads them.
+  const depth = (schema: TypeSchema): number => {
+    let count = 0;
+    let parent = schema.parent;
+    while (parent) {
+      count += 1;
+      parent = getTypeSchema(parent)?.parent;
+    }
+    return count;
+  };
+  const writtenIds = new Set(plan.types.map(({ schema }) => schema.id));
+  for (const entry of [...plan.typesToValidate].sort(
+    (a, b) => depth(a.schema) - depth(b.schema),
+  )) {
+    const result = validateTypeSchema(entry.input, {
+      deferRegistryChecks: true,
+    });
     if (!result.success) {
       throw new MarfaError(
         ErrorCode.INVALID_SCHEMA,
-        `Archive carries an invalid type schema for "${schema.id}"`,
+        `Archive carries an invalid type schema for "${entry.schema.id}"`,
+        { errors: result.errors },
+      );
+    }
+    if (
+      writtenIds.has(entry.schema.id) &&
+      !sameSchema(entry.schema, result.data)
+    ) {
+      await storage.types.update(entry.schema.id, result.data);
+    }
+    entry.schema = result.data;
+  }
+
+  for (const entry of plan.typesToValidate) {
+    const result = validateTypeSchema(entry.input);
+    if (!result.success) {
+      throw new MarfaError(
+        ErrorCode.INVALID_SCHEMA,
+        `Archive carries an invalid type schema for "${entry.schema.id}"`,
         { errors: result.errors },
       );
     }
@@ -503,7 +490,7 @@ export async function writeArchiveTypes(
   }
 
   return {
-    typesRegistered: written.length,
+    typesRegistered: plan.types.length,
     typesSkipped: plan.typesSkipped,
     edgeTypesRegistered: plan.edgeTypes.length,
     edgeTypesSkipped: plan.edgeTypesSkipped,

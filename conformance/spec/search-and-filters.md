@@ -1534,11 +1534,11 @@ If an archive registers a type with a `link_field` in which two rows that a forc
 
 ### `search-and-filters/restore-compatible-types`
 
-When an otherwise valid archive carries types whose `compatible_with` declarations satisfy `types/compatible-with`, the server MUST restore those types regardless of their order in the archive, including declarations that form a cycle.
+When an otherwise valid archive carries a set of registrations accepted through the server's registration and replacement routes, the server MUST restore those registrations into an empty store regardless of their order in the archive.
 
-**Reason:** compatibility describes readable fields rather than inheritance, so types registered and replaced through the ordinary routes can name each other and their exported backup must remain restorable.
+**Reason:** an exported backup remains restorable when its registrations refer to each other, including mutual compatibility declarations and display hints, links, and merge policies that name inherited fields.
 
-**Tests:** `compliance/restore-compatible-types.test.ts › round-trips mutually compatible types into an empty store (reversed: %s)`.
+**Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`.
 
 ### `search-and-filters/restore-type-conflict`
 
