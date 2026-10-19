@@ -37,7 +37,8 @@ export const jsonBodyGuard = createMiddleware<AppEnv>(async (c, next) => {
           errors: [
             {
               path,
-              message: "Text must be well-formed UTF-16 (a lone surrogate)",
+              message:
+                "Must not contain a lone surrogate, which is not well-formed UTF-16",
             },
           ],
         });

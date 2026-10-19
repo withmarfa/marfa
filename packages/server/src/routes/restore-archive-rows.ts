@@ -47,7 +47,7 @@ function wellFormedRefusal(
   const named = toWellFormedText(String(id));
   return new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `Invalid ${kind} ${named} in ${file}.ndjson parsed row ${String(index + 1)}: ${field} is not well-formed UTF-16 (a lone surrogate)`,
+    `Invalid ${kind} ${named} in ${file}.ndjson parsed row ${String(index + 1)}: ${field} holds a lone surrogate, which is not well-formed UTF-16`,
     { [`${kind}_id`]: named, row: index + 1, field },
   );
 }
