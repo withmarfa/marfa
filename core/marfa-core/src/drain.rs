@@ -520,6 +520,26 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
     }
 }
 
+/// The server credits an upload to the credential that sent it, and refuses
+/// a file write whose bytes the writing credential neither sent nor may read
+/// (`blobs/proof-file-refused`). So each taken upload sent with another
+/// credential than the copy's current one is sent again, ahead of a write
+/// this pass sends that waits on it, where the copy still holds its bytes.
+fn send_uploads_as(core: &Core, http: &Http) -> Result<()> {
+    let mut conn = core.conn()?;
+    core.write_down_renewals(&conn)?;
+    let credential = store::credential_digest(&http.authorization());
+    let cache = core.cache().ok();
+    let tx = conn.transaction()?;
+    for (id, hash) in store::uploads_to_send_again(&tx, &credential)? {
+        if cache.is_some_and(|cache| cache.held(&hash).is_ok_and(|held| held.is_some())) {
+            store::send_upload_again(&tx, &id)?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// Whether a failed request ends the drain, as an error, rather than leaving
 /// its write for the next pass.
 fn ends_the_drain(error: &CoreError) -> bool {
@@ -609,6 +629,12 @@ pub(crate) fn would_send(core: &Core) -> Result<bool> {
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
+    // A renewal whose callback found the connection held waits in memory;
+    // written down here, it outlives a process that exits after the pass.
+    // Lost, it costs the next drain one upload sent again.
+    if let Ok(conn) = core.conn() {
+        let _ = core.write_down_renewals(&conn);
+    }
     if let Ok(report) = &result {
         core.owe_drain(report.undelivered > 0 || report.unavailable.is_some());
     }
@@ -733,6 +759,7 @@ fn send_queue(
         // since been answered.
         store::unblock_self_clearing(&conn)?;
     }
+    send_uploads_as(core, http)?;
     // Confirmed once, and only where the pass talks to the server: a pass
     // with nothing to send, read or look up sends nothing at all, and one that cannot
     // confirm the instance is a server that cannot take writes, since a
@@ -988,6 +1015,13 @@ fn send_queue(
             // reached the server, and treating it as unsent would write twice.
             let conn = core.conn()?;
             store::mark_sent(&conn, &row.id)?;
+            if row.kind == WriteKind::UploadBlob {
+                store::record_upload_sent_as(
+                    &conn,
+                    &row.id,
+                    &store::credential_digest(&http.authorization()),
+                )?;
+            }
         }
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);

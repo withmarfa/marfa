@@ -980,7 +980,7 @@ impl BlockedReason {
         BlockedReason::ConflictUnresolved,
     ];
 
-    pub fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             BlockedReason::CredentialRefused => "credential_refused",
             BlockedReason::KeySpent => "key_spent",

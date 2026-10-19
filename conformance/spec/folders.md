@@ -5224,9 +5224,43 @@ When a paused disk removal is restored and the missing files’ items still matc
 
 ### `folders/restore-disk-files-put-back-count`
 
-When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST count the missing files as `put_back`.
+When a paused disk removal is restored and the missing files’ items still match the folder’s search, a device MUST count as `put_back` each missing file the restore wrote back.
 
-**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`.
+**Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `› counts as put back only the files a restore wrote, and keeps the item of one it could not`.
+
+### `folders/restore-not-written-listed`
+
+If a paused disk removal is restored and a missing file whose item still matches the folder’s search cannot be written back, such as one whose bytes cannot be fetched, then a device MUST list that file in `not_written_back` with the reason, rather than count it as `put_back`.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`, `› does not count as put back a file somebody else's file stands in for`.
+
+### `folders/restore-written-by-binding`
+
+When a device decides whether a restore wrote a missing file back, a device MUST count the file as written if and only if the pull bound the file's item to bytes it wrote, at the file's path or at the path the item moved to.
+
+**Reason:** a file at the old path can be somebody else's, and a file the pull wrote where another device moved it is still the file put back.
+
+**Tests:** `device/folders.test.ts › does not count as put back a file somebody else's file stands in for`, `device/folders-placement.test.ts › counts as put back a file a restore wrote where another Mac moved it while the removal waited`.
+
+### `folders/restore-not-written-flag`
+
+When a device lists a file in `not_written_back`, a device MUST give it the flag and reason the pull flagged its item with, else those the pull flagged its path with while naming no item, or `unwritten` where the pull flagged neither.
+
+**Tests:** `device/folders.test.ts › does not count as put back a file somebody else's file stands in for`.
+
+### `folders/restore-not-written-kept`
+
+If a paused disk removal is restored and a missing file cannot be written back, then a device MUST NOT delete that file’s item at a later push.
+
+**Reason:** the person asked for the files back, so a file still missing is one the device has not yet written, not one the person deleted.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`.
+
+### `folders/restore-not-written-retried`
+
+When a pull after a restore can fetch the bytes of a missing file the restore could not write back, a device MUST write that file.
+
+**Tests:** `device/folders.test.ts › counts as put back only the files a restore wrote, and keeps the item of one it could not`.
 
 ### `folders/restore-departed-binding`
 

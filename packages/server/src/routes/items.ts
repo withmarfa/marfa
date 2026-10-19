@@ -370,11 +370,12 @@ const createItemRoute = createRoute({
           schema: makeErrorResponseSchema([
             "item_not_found",
             "edge_type_not_found",
+            "blob_not_found",
           ]),
         },
       },
       description:
-        "- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.",
+        "- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.\n- `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.",
     },
     409: {
       content: {
@@ -906,11 +907,12 @@ const updateItemRoute = createRoute({
             "item_not_found",
             "edge_type_not_found",
             "edge_not_found",
+            "blob_not_found",
           ]),
         },
       },
       description:
-        "- `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.",
+        "- `item_not_found`: no item you can read has this ID or an edge target's ID. For a trashed item, `details.trashed` is `true` if you can read its type.\n- `edge_type_not_found`: an edge names an edge type that doesn't exist.\n- `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can't read now.\n- `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.",
     },
     409: {
       content: {

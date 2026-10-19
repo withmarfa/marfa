@@ -210,6 +210,52 @@ describe("where a file sits", () => {
     expect(existsSync(join(second.dir, "Projects", "Plan.md"))).toBe(false);
   });
 
+  it("counts as put back a file a restore wrote where another Mac moved it while the removal waited", async () => {
+    const notes = [0, 1, 2, 3, 4, 5].map((n) => ({
+      id: `01a00000-0000-7000-8000-0000000016c${String(n)}`,
+      title: `Note ${String(n)}`,
+      path: `Note ${String(n)}.md`,
+    }));
+    const placed = await placedHarness("placement-restore-moved", notes, {
+      search: { types: ["core.note"] },
+      defaults: { type: "core.note" },
+      removal_threshold: { files: 2, fraction: 0.25 },
+    });
+    harness = placed.harness;
+    second = await anotherMac(harness, "placement-restore-moved-second");
+    for (const mac of [harness, second]) {
+      expect((await mac.folder.pull()).ok).toBe(true);
+    }
+    for (let n = 0; n < 3; n += 1) {
+      rmSync(join(harness.dir, `Note ${String(n)}.md`));
+    }
+    const paused = await harness.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(3);
+
+    mkdirSync(join(second.dir, "Archive"));
+    renameSync(
+      join(second.dir, "Note 0.md"),
+      join(second.dir, "Archive", "Note 0.md"),
+    );
+    expect((await second.folder.push()).ok).toBe(true);
+    expect(placed.edges.placements(harness.settings.id).get(notes[0]!.id)).toBe(
+      "Archive/Note 0.md",
+    );
+
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const restored = await harness.folder.restore();
+    expect(restored.ok, JSON.stringify(restored)).toBe(true);
+    if (!restored.ok) return;
+    // The witness: the restore wrote the file where it now sits.
+    expect(existsSync(join(harness.dir, "Archive", "Note 0.md"))).toBe(true);
+    expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+    expect(
+      restored.value.not_written_back,
+      "a file the restore wrote where its item now sits was listed as not written back",
+    ).toEqual([]);
+    expect(restored.value.put_back).toBe(3);
+  });
+
   it("places a new item from elsewhere under its type's first placement", async () => {
     const note = "01a00000-0000-7000-8000-0000000016b1";
     const bookmark = "01a00000-0000-7000-8000-0000000016b2";

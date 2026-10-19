@@ -32,6 +32,7 @@ import {
   wireItem,
   wireType,
   typeCatalog,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import {
   KEY,
@@ -4569,6 +4570,118 @@ describe("large removals, status and size", () => {
     await grace();
     expect((await harness.folder.push()).ok).toBe(true);
     expect(deletes(harness), "a removal put back was still sent").toEqual([]);
+  });
+
+  it("counts as put back only the files a restore wrote, and keeps the item of one it could not", async () => {
+    const files = [0, 1, 2, 3, 4, 5].map((n) =>
+      Buffer.from(`the bytes of file ${String(n)}\n`),
+    );
+    const name = (n: number) => `file-${String(n)}.txt`;
+    harness = await folderHarness("folder-removal-restore-unfetched", {
+      settings: {
+        search: { types: ["core.file"] },
+        defaults: { type: "core.file" },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      rows: {
+        "core.file": files.map((bytes, n) => ({
+          item: {
+            id: `01a00000-0000-7000-8000-0000000005${String(n).padStart(2, "0")}`,
+            type: "core.file",
+            properties: {
+              title: name(n),
+              blob_ref: hashOf(bytes),
+              mime_type: "text/plain",
+            },
+          },
+        })),
+      },
+    });
+    scriptFolderWrites(harness);
+    // The first file's bytes are served until it is removed from the disk,
+    // and refused after, as the server refuses bytes nobody may read.
+    let refused = false;
+    const [lost, ...served] = files;
+    const lostHash = hashOf(lost!);
+    const lostHex = lostHash.slice("sha256:".length);
+    const server = harness.server;
+    server.copyAnswer("GET", `/blobs/${lostHash}/url`, () =>
+      refused
+        ? refusal(404, "blob_not_found", "Blob not found")
+        : writeAnswers.link(`${server.url}/links/${lostHex}`),
+    );
+    server.copyAnswer("GET", `/links/${lostHex}`, () =>
+      refused
+        ? refusal(404, "blob_not_found", "Blob not found")
+        : { kind: "bytes", status: 200, body: lost! },
+    );
+    for (const bytes of served) scriptBlob(server, bytes);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok && pulled.value.written).toBe(6);
+
+    for (const n of [0, 1, 2]) rmSync(join(harness.dir, name(n)));
+    refused = true;
+    const paused = await harness.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(3);
+    const restored = await harness.folder.restore();
+    expect(restored.ok, JSON.stringify(restored)).toBe(true);
+    if (!restored.ok) return;
+    // The witness: the other two files came back.
+    expect(existsSync(join(harness.dir, name(1)))).toBe(true);
+    expect(existsSync(join(harness.dir, name(2)))).toBe(true);
+    expect(existsSync(join(harness.dir, name(0)))).toBe(false);
+    expect(
+      restored.value.put_back,
+      "a file the restore could not write was counted as written back",
+    ).toBe(2);
+    expect(restored.value.not_written_back.map((file) => file.path)).toEqual([
+      name(0),
+    ]);
+
+    await grace();
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      deletes(harness),
+      "the item of a file the restore could not write was sent to the bin",
+    ).toEqual([]);
+
+    // Once its bytes can be fetched again, a pull writes the file.
+    refused = false;
+    const again = await harness.folder.pull();
+    expect(again.ok).toBe(true);
+    expect(readFileSync(join(harness.dir, name(0)))).toEqual(lost);
+  });
+
+  it("does not count as put back a file somebody else's file stands in for", async () => {
+    harness = await folderHarness("folder-removal-restore-foreign", {
+      rows: { "core.note": [0, 1, 2, 3, 4, 5].map(noteRow) },
+      settings: tight,
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    for (let n = 0; n < 3; n += 1) {
+      rmSync(join(harness.dir, `Note ${String(n)}.md`));
+    }
+    const paused = await harness.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(3);
+    // Another file arrives at one of the three paths while the removal waits.
+    const foreign = "---\ntitle: Something else\n---\nnot the note\n";
+    put(harness, "Note 0.md", foreign);
+    const restored = await harness.folder.restore();
+    expect(restored.ok, JSON.stringify(restored)).toBe(true);
+    if (!restored.ok) return;
+    // The witness: the two other files came back.
+    for (const n of [1, 2]) {
+      expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
+    }
+    expect(read(harness, "Note 0.md")).toBe(foreign);
+    expect(
+      restored.value.put_back,
+      "a file the restore did not write was counted as put back",
+    ).toBe(2);
+    expect(
+      restored.value.not_written_back.map((file) => [file.path, file.flag]),
+    ).toEqual([["Note 0.md", "unwritten"]]);
   });
 
   it("pauses a large removal from another device", async () => {

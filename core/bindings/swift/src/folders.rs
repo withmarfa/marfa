@@ -276,6 +276,10 @@ pub struct ConfirmedRemoval {
 pub struct RestoredRemoval {
     /// Files gone from the disk, written back.
     pub put_back: u64,
+    /// Files gone from the disk that could not be written back, such as one
+    /// whose bytes could not be fetched, each with why. Every later sync
+    /// tries each again.
+    pub not_written_back: Vec<FlaggedFile>,
     /// Items that left elsewhere, restored at the next sync.
     pub restored: u64,
     pub pull: FolderPull,
@@ -490,6 +494,11 @@ impl Folders {
         let restored = working(&dir, self.server.clone())?.restore()?;
         Ok(RestoredRemoval {
             put_back: restored.put_back as u64,
+            not_written_back: restored
+                .not_written_back
+                .into_iter()
+                .map(flagged_file)
+                .collect(),
             restored: restored.restored as u64,
             pull: pull_of(restored.pull),
         })
