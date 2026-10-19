@@ -1443,7 +1443,7 @@ export interface paths {
         put?: never;
         /**
          * Claim the instance
-         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup. A claim from the instance's own origin, which is what the setup page sends, also signs the owner in: the answer sets the same session cookie as a password sign-in. A claim with no `Origin` header, such as a script's, and a refused claim set no cookie.
+         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. A claimed instance never reopens setup. A claim from the instance's own origin, which the setup page sends, also signs the owner in with a session cookie.
          */
         post: operations["createOwner"];
         delete?: never;
@@ -21911,7 +21911,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new owner can sign in. */
+            /** @description The new owner can sign in. A claim from the instance's own origin also sets the owner session cookie, unless the sign-in that follows the claim fails. A claim with no `Origin` header, such as a script's, sets none. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

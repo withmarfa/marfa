@@ -693,6 +693,50 @@ describe("signing the owner in at the claim", () => {
   );
 });
 
+describe("a claim whose sign-in fails", () => {
+  it(
+    "keeps the owner and sets no session when the sign-in that follows the claim is refused",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const origin = instance.url;
+        const address = { "x-conformance-client": "192.0.2.230" };
+        const signIn = (password: string, headers: Record<string, string>) =>
+          fetch(`${instance.url}/auth/sign-in/email`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin, ...headers },
+            body: JSON.stringify({ ...OWNER, password }),
+          });
+        // An address that has spent its password attempts is refused its next sign-in.
+        for (let i = 0; i < 10; i++)
+          expect(
+            (await signIn("incorrect owner password", address)).status,
+          ).toBe(401);
+        expect((await signIn(OWNER.password, address)).status).toBe(429);
+
+        const claimed = await fetch(`${instance.url}/owner`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin,
+            ...address,
+          },
+          body: JSON.stringify({ ...OWNER, code: await instance.code() }),
+        });
+        expect(claimed.status).toBe(201);
+        expect(sessionCookies(claimed)).toEqual([]);
+
+        // The witness: the owner exists and the same password signs in from an address that is not locked.
+        const elsewhere = await signIn(OWNER.password, {
+          "x-conformance-client": "192.0.2.231",
+        });
+        expect(elsewhere.status).toBe(200);
+        expect(sessionCookies(elsewhere)).toHaveLength(1);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
 describe("claiming through the private socket", () => {
   it(
     "answers the setup routes in snake_case and the claim as the public claim does",
