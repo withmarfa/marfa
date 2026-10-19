@@ -10,6 +10,8 @@ import {
   faultProblem,
   faultsArmed,
   freeFault,
+  holdArmed,
+  holdAt,
   POINTS,
   setFault,
 } from "./faults.js";
@@ -252,5 +254,69 @@ describe("a free fault", () => {
       expect(arm("free:blobs", arg), arg).toMatch(/whole number/);
     }
     expect(activeFaults()).toEqual([]);
+  });
+});
+
+describe("a hold on a stream point", () => {
+  it("is armed for its own point and for no other, and is not armed by another kind of fault", () => {
+    expect(holdArmed("stream-drain")).toBe(false);
+    arm("fail:stream-credential");
+    expect(holdArmed("stream-drain")).toBe(false);
+    arm("hold:stream-drain");
+    expect(holdArmed("stream-drain")).toBe(true);
+    expect(holdArmed("stream-replay")).toBe(false);
+    clearFaults("hold:stream-drain");
+    expect(holdArmed("stream-drain")).toBe(false);
+  });
+
+  it("holds every caller that reaches it until it is cleared, and counts them", async () => {
+    arm("hold:stream-head");
+    const released: string[] = [];
+    const callers = ["one", "two"].map(async (name) => {
+      await holdAt("stream-head");
+      released.push(name);
+    });
+    await Promise.resolve();
+    expect(activeFaults()).toEqual([
+      { name: "hold:stream-head", arg: null, waiting: 2, fired: 0 },
+    ]);
+    expect(released).toEqual([]);
+    clearFaults("hold:stream-head");
+    await Promise.all(callers);
+    expect(released.sort()).toEqual(["one", "two"]);
+  });
+
+  it("takes no argument", () => {
+    for (const point of [
+      "stream-open",
+      "stream-head",
+      "stream-replay",
+      "stream-drain",
+      "announce",
+      "read-snapshot",
+    ]) {
+      expect(arm(`hold:${point}`, "1"), point).toMatch(/no argument/);
+    }
+  });
+});
+
+describe("a fail fault on an event point", () => {
+  it("acts on the nth reach and takes only a count", () => {
+    for (const point of [
+      "stream-head",
+      "stream-replay",
+      "stream-credential",
+      "stream-replay-row",
+      "edge-source-type",
+    ]) {
+      expect(arm(`fail:${point}`, "2"), point).toBeUndefined();
+      expect([failAt(point), failAt(point), failAt(point)]).toEqual([
+        false,
+        true,
+        false,
+      ]);
+      expect(arm(`fail:${point}`, "items.bulk"), point).toMatch(/from 1/);
+      clearFaults();
+    }
   });
 });

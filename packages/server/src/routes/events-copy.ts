@@ -35,6 +35,8 @@ import {
   type EventRoutesOptions,
 } from "./events.js";
 import * as clock from "../clock.js";
+import { faultsArmed, holdArmed, holdAt } from "../control/faults.js";
+import { failRead } from "../storage/sqlite/injected-failure.js";
 
 const BATCH_SIZE = EVENT_LIMITS.replayBatchSize;
 const MAX_HELD_FRAMES = BATCH_SIZE;
@@ -275,6 +277,7 @@ export async function buildCopyStream(
       try {
         const value = await storage.runInReadSnapshot(
           async (pin) => {
+            if (faultsArmed()) failRead("stream-credential");
             const authority = await readViewAuthority(
               storage,
               bound,
@@ -387,6 +390,10 @@ export async function buildCopyStream(
           expected,
         );
         checkReachesSomeType(authority.key);
+        if (faultsArmed()) {
+          await holdAt("stream-head");
+          failRead("stream-head");
+        }
         const [head, min] = await Promise.all([
           storage.eventLog.getMaxId(),
           storage.eventLog.getMinRetainedId(),
@@ -419,9 +426,14 @@ export async function buildCopyStream(
     state.replayReach = head;
     let carriers: PersistedEvent[] = [];
     while (!isClosed()) {
+      if (holdArmed("stream-replay")) {
+        await holdAt("stream-replay");
+        if (isClosed()) return;
+      }
       if (!(await paced())) return;
       await decide(
         async (authority) => {
+          if (faultsArmed()) failRead("stream-replay");
           const min = await storage.eventLog.getMinRetainedId();
           const batch = carriers.length
             ? carriers
@@ -470,6 +482,7 @@ export async function buildCopyStream(
     state.replayReach = null;
   };
   const release = async (): Promise<void> => {
+    if (holdArmed("stream-drain")) await holdAt("stream-drain");
     for (;;) {
       if (isClosed() || !(await paced())) return;
       await decide(

@@ -592,7 +592,7 @@ When the server is stopped, the server MUST end an open copy stream, `GET /event
 
 When the server is stopped, the server MUST answer an event stream that is opened after the stop has begun with a terminal `stream_incomplete` frame.
 
-**Tests:** waiting on #2072.
+**Tests:** `compliance/stream-late-stop.test.ts › is answered with stream_incomplete and server_stopping, and closed`, `› is answered the same way when it is a copy stream`.
 
 ### `instance/stop-stream-reason`
 

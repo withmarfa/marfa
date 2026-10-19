@@ -51,6 +51,12 @@ import { readInstanceConfig } from "../storage/instance-config.js";
 import { errorMessage } from "../error-text.js";
 import type { StreamIncompleteReason } from "./_stream-incomplete.js";
 import * as clock from "../clock.js";
+import { faultsArmed, holdArmed, holdAt } from "../control/faults.js";
+import { failRead } from "../storage/sqlite/injected-failure.js";
+import {
+  createFaultedHeadRead,
+  replayRowsUnderFaults,
+} from "../control/event-faults.js";
 
 /** How often an idle stream pings, and re-reads its credential. */
 const KEEPALIVE_INTERVAL_MS = EVENT_LIMITS.keepAliveMs;
@@ -468,6 +474,7 @@ export function eventRoutes(
 
   // GET /events — Server-Sent Events stream with replay support
   const copyMode: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (holdArmed("stream-open")) await holdAt("stream-open");
     if (c.req.query("copy") !== undefined) {
       requireAuth(c);
       try {
@@ -688,6 +695,7 @@ export function eventRoutes(
               /** False when the credential no longer stands, having ended the
                *  stream and said so. */
               const refreshReach = async (): Promise<boolean> => {
+                if (faultsArmed()) failRead("stream-credential");
                 const [live, instanceConfig] = await Promise.all([
                   resolveLiveCredential(storage, apiKey.id, {
                     tokenOutlivesExpiry: false,
@@ -1175,11 +1183,18 @@ export function eventRoutes(
                     // Paced by the reader: the next page is read only once
                     // there is room for it, and each row below waits too, since
                     // the log can wait and memory should not.
+                    if (holdArmed("stream-replay")) {
+                      await holdAt("stream-replay");
+                      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by cleanup() across the hold above; TS narrows it to `false` but at runtime it can flip to true.
+                      if (state.closed) return false;
+                    }
                     if (!(await paced("a replay"))) return false;
-                    const batch = await storage.eventLog.getAfter(
+                    if (faultsArmed()) failRead("stream-replay");
+                    let batch = await storage.eventLog.getAfter(
                       lastReplayedId,
                       REPLAY_BATCH_SIZE,
                     );
+                    if (faultsArmed()) batch = replayRowsUnderFaults(batch);
 
                     if (batch.length === 0) {
                       if (lastReplayedId >= replayReach) break;
@@ -1447,6 +1462,7 @@ export function eventRoutes(
                 // length, and the buffer must not be reported as overflowing
                 // while it drains.
                 try {
+                  if (holdArmed("stream-drain")) await holdAt("stream-drain");
                   for (;;) {
                     if (state.closed) return;
                     if (heldFrames.length === 0) break;
@@ -1502,7 +1518,9 @@ export function eventRoutes(
 
               /** Read the log head this stream announces. */
               const readHeadEventId = (): Promise<bigint | null> =>
-                storage.eventLog.getMaxId();
+                faultsArmed()
+                  ? createFaultedHeadRead(storage.eventLog)()
+                  : storage.eventLog.getMaxId();
 
               /**
                * The head read, bounded.

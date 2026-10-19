@@ -160,6 +160,10 @@ describe("the fault routes", () => {
       { name: "hold:housekeeping:Not A Job" },
       { name: "hold:somewhere-else" },
       { name: "hold:version-thinning:item", arg: "5" },
+      { name: "hold:stream-drain", arg: "1" },
+      { name: "hold:stream" },
+      { name: "fail:stream-replay", arg: "items.bulk" },
+      { name: "fail:stream-credential", arg: "0" },
       { name: "hold:housekeeping:no-such-job" },
       { name: "deadline:no-such-job", arg: "100" },
       { name: "deadline:trash-purge" },
@@ -186,6 +190,9 @@ describe("the fault routes", () => {
       { name: "fail:lock", arg: "2" },
       { name: "fail:commit", arg: "items.bulk@2" },
       { name: "fail:housekeeping:trash-purge" },
+      { name: "hold:stream-drain" },
+      { name: "hold:read-snapshot" },
+      { name: "fail:stream-credential", arg: "3" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",
