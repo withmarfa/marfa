@@ -904,10 +904,14 @@ export function mayReadRow(c: Context<AppEnv>, row: { type: string }): boolean {
   return mayReadType(checkAuth(c.get("apiKey")), row.type);
 }
 
-/** Whether the credential may read a type, as a function to hand on. */
+/**
+ * Whether the credential may read a type, as a function to hand on. It asks
+ * the request's key each time it is called, so one handed into a write
+ * transaction answers for the key as it stands there.
+ */
 export function typeReader(c: Context<AppEnv>): (type: string) => boolean {
-  const key = checkAuth(c.get("apiKey"));
-  return (type) => mayReadType(key, type);
+  checkAuth(c.get("apiKey"));
+  return (type) => mayReadType(checkAuth(c.get("apiKey")), type);
 }
 
 /**

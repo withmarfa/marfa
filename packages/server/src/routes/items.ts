@@ -1476,16 +1476,19 @@ export function itemRoutes(storage: Storage) {
         field: "occurred_at",
       });
     }
-    const key = requireAuth(c);
+    requireAuth(c);
     // Resolving the row, every rule the write must pass, the write itself
     // and its events happen in one transaction, against the row and type as
     // they stand there. A natural key or a minted id that resolves a row is
     // decided there too, so two sends of one key land on one row. What the
     // answer reads is read inside it as well, so a write that committed is
-    // never answered with a failure.
-    const { result, hydrated, sourceFilter } = await runAuditedTransaction(
+    // never answered with a failure. The key is read there too: one read
+    // before the transaction opened is the key as it stood before a change
+    // to its grants committed.
+    const { key, result, hydrated, sourceFilter } = await runAuditedTransaction(
       storage,
       async () => {
+        const key = requireAuth(c);
         const result = await writeItem(
           storage,
           { kind: "credential", key },
@@ -1519,6 +1522,7 @@ export function itemRoutes(storage: Storage) {
           },
         );
         return {
+          key,
           result:
             result.outcome === "unchanged"
               ? {
@@ -1540,7 +1544,7 @@ export function itemRoutes(storage: Storage) {
               : undefined,
         };
       },
-      ({ result }) =>
+      ({ key, result }) =>
         result.outcome === "updated"
           ? {
               client_ip: c.get("clientIp") ?? null,
@@ -1565,6 +1569,8 @@ export function itemRoutes(storage: Storage) {
                 details: { type: result.item.type },
               }
             : null,
+      undefined,
+      "item.create",
     );
 
     switch (result.outcome) {
@@ -2064,14 +2070,15 @@ export function itemRoutes(storage: Storage) {
         "`retype` needs the `type` to move the item to",
       );
     }
-    const key = requireAuth(c);
+    requireAuth(c);
     // A `type` that matches the row is the ordinary case and passes; one
     // that disagrees is refused unless `retype` asks to move the row, which
     // needs write on the type entered as well as the one left. The edges the
-    // answer carries are read inside the write's transaction.
-    const { result, hydrated } = await runAuditedTransaction(
+    // answer carries, and the key, are read inside the write's transaction.
+    const { key, result, hydrated } = await runAuditedTransaction(
       storage,
       async () => {
+        const key = requireAuth(c);
         const result = await writeItem(
           storage,
           { kind: "credential", key },
@@ -2100,6 +2107,7 @@ export function itemRoutes(storage: Storage) {
           },
         );
         return {
+          key,
           result,
           hydrated:
             result.outcome === "updated"
@@ -2107,7 +2115,7 @@ export function itemRoutes(storage: Storage) {
               : undefined,
         };
       },
-      ({ result }) =>
+      ({ key, result }) =>
         result.outcome === "updated"
           ? {
               client_ip: c.get("clientIp") ?? null,
@@ -2159,21 +2167,21 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const key = requireAuth(c);
+    requireAuth(c);
     const { version } = c.req.valid("query");
     const result = await runAuditedTransaction(
       storage,
       () =>
         writeItem(
           storage,
-          { kind: "credential", key },
+          { kind: "credential", key: requireAuth(c) },
           { op: "delete", id, ...(version !== undefined && { version }) },
         ),
       (result) =>
         result.outcome !== "stale"
           ? {
               client_ip: c.get("clientIp") ?? null,
-              key_id: key.id,
+              key_id: requireAuth(c).id,
               action: "item.delete",
               resource_type: "item",
               resource_id: id,
@@ -2405,7 +2413,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     const { version } = c.req.valid("query");
-    const key = requireAuth(c);
+    requireAuth(c);
     // The key's type map is asked whatever state the row is in, and the
     // version, where one is named, against the row inside the purge's own
     // transaction: a check before it would let a write land between the two
@@ -2415,19 +2423,21 @@ export function itemRoutes(storage: Storage) {
       () =>
         writeItem(
           storage,
-          { kind: "credential", key },
+          { kind: "credential", key: requireAuth(c) },
           { op: "purge", id, ...(version !== undefined && { version }) },
         ),
       (result) =>
         result.outcome !== "stale"
           ? {
               client_ip: c.get("clientIp") ?? null,
-              key_id: key.id,
+              key_id: requireAuth(c).id,
               action: "item.purge",
               resource_type: "item",
               resource_id: id,
             }
           : null,
+      undefined,
+      "item.purge",
     );
     if (outcome.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this

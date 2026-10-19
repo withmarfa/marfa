@@ -29,7 +29,15 @@ export function rememberRecentAuthentication(): void {
   if (request) request.recent = true;
 }
 
-/** Called under the write lock; revocation and narrowing cannot race a write. */
+/**
+ * Called under the write lock by `storage.runInTransaction`, before its body
+ * runs. A revoked credential is refused here, and a narrowed one is read
+ * again into the request's context. A door judges the credential as it
+ * stands only by reading it from the context inside such a transaction
+ * (`requireAuth`): a key read before it opened, or inside a store's own
+ * transaction, is the key as it was before the change
+ * (`routes/item-write-live-key.test.ts`).
+ */
 export async function validateRequestAuthority(): Promise<void> {
   const request = requests.getStore();
   if (!request || validating.getStore()) return;

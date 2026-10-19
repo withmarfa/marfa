@@ -1015,6 +1015,7 @@ export function typeRoutes(storage: Storage) {
         }
         // Asked whether or not the id is held, so one key cannot take an id
         // first and leave the key it was meant for unable to register it.
+        // Asked again in the transaction, of the key as it stands there.
         requireTypeSchemaWrite(c, "register", body.id);
       }
       // Validated in the transaction that writes the type: the schema is
@@ -1025,6 +1026,8 @@ export function typeRoutes(storage: Storage) {
       const created = await runAuditedTransaction(
         storage,
         async () => {
+          if (typeof body.id === "string")
+            requireTypeSchemaWrite(c, "register", body.id);
           const result = validateTypeSchema(body);
           if (!result.success) {
             throw schemaRefusal(result.errors);
@@ -1084,6 +1087,7 @@ export function typeRoutes(storage: Storage) {
               `Type "${id}" not found`,
             );
           }
+          requireTypeSchemaWrite(c, "replace", id);
           const result = validateTypeSchema({ ...body, id });
           if (!result.success) {
             throw schemaRefusal(result.errors);

@@ -313,7 +313,10 @@ function assertSettings(settings: Settings): void {
 // Gate and lookup
 // ---------------------------------------------------------------------------
 
-/** Asks the type map alone: `checkTypeAccess` fences `system.*` writes off from every key. */
+/**
+ * Asks the type map alone: `checkTypeAccess` fences `system.*` writes off from
+ * every key. Asked at the door and again inside each write's transaction.
+ */
 function requireFolderWrite(c: Context<AppEnv>): void {
   const key = requireAuth(c);
   checkTypePermission(key, FOLDER_TYPE, "write");
@@ -528,24 +531,25 @@ export function folderRoutes(storage: Storage) {
   router.openapi(createFolderRoute, async (c) => {
     const body = c.req.valid("json");
     assertSettings(body);
-    const credential = c.get("apiKey");
     const { item, metadata } = await runAuditedTransaction(
       storage,
-      () =>
-        writeItem(
+      () => {
+        requireFolderWrite(c);
+        return writeItem(
           storage,
           { kind: "platform", by: requestWriter(c) },
           {
             op: "create",
             type: FOLDER_TYPE,
             properties: body,
-            source: itemProvenanceSource(credential),
+            source: itemProvenanceSource(c.get("apiKey")),
             blob_proof: requestBlobProof(c, storage),
           },
-        ),
+        );
+      },
       ({ item }) => ({
         client_ip: c.get("clientIp") ?? null,
-        key_id: credential?.id,
+        key_id: c.get("apiKey")?.id,
         action: "folder.create",
         resource_type: "item",
         resource_id: item.id,
@@ -554,7 +558,7 @@ export function folderRoutes(storage: Storage) {
 
     rememberItemSubject(item, "write", true);
     return c.json(
-      { item, metadata: readableMetadata(metadata, credential) },
+      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       201,
     );
   });
@@ -572,6 +576,7 @@ export function folderRoutes(storage: Storage) {
     const result = await runAuditedTransaction(
       storage,
       async () => {
+        requireFolderWrite(c);
         const folder = await requireFolder(storage, id);
         rememberItemSubject(folder, "write", true);
         refuseRevoked(folder);
@@ -621,6 +626,7 @@ export function folderRoutes(storage: Storage) {
     const { item, metadata } = await runAuditedTransaction(
       storage,
       async () => {
+        requireFolderWrite(c);
         const folder = await requireFolder(storage, id);
         rememberItemSubject(folder, "write", true);
         refuseRevoked(folder);

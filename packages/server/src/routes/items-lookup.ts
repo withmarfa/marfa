@@ -410,26 +410,32 @@ export function itemsLookupRoutes(storage: Storage) {
   });
 
   router.openapi(tombstonesRoute, async (c) => {
-    const apiKey = requireAuth(c);
+    requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, false);
     const settledAt = normalizeTimeBound(body.settled_at, "settled_at");
-    requireTypeAccess(c, type, "write");
-    if (selector.kind === "source") {
-      itemProvenanceSource(apiKey, selector.source);
-    }
-
+    const mayRun = (): void => {
+      requireTypeAccess(c, type, "write");
+      if (selector.kind === "source") {
+        itemProvenanceSource(requireAuth(c), selector.source);
+      }
+    };
+    // Asked here, so a refusal is not held up by the writer's turn, and again
+    // in the transaction, of the key as it stands there.
+    mayRun();
     const tombstones = inOrder(
       selector.values,
       await runAuditedTransaction(
         storage,
-        () =>
-          storage.items.settleTombstones(
+        () => {
+          mayRun();
+          return storage.items.settleTombstones(
             type,
             tombstoneSelector(selector),
             settledAt,
-          ),
+          );
+        },
         (tombstones) => ({
           client_ip: c.get("clientIp") ?? null,
           key_id: c.get("apiKey")?.id,

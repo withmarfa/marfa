@@ -739,7 +739,9 @@ export function blobRoutes(
 
   // POST /blobs — stream the body to the disk store, then register it
   router.openapi(uploadBlobRoute, async (c) => {
-    const uploader = requireBlobUpload(c);
+    // Asked before the body is read, so a credential refused here sends no
+    // bytes, and again in the transaction that registers them.
+    requireBlobUpload(c);
 
     const contentType =
       c.req.header("Content-Type") ?? "application/octet-stream";
@@ -800,6 +802,9 @@ export function blobRoutes(
         return await runAuditedTransaction(
           storage,
           async () => {
+            // The body took time to arrive; the credential is asked again as
+            // it stands now, and is the one the upload is credited to.
+            const uploader = requireBlobUpload(c);
             await storage.blobs.register(hash, mimeType, sizeBytes);
             await storage.blobs.recordLocation(hash, disk.id);
             await storage.blobs.recordUploader(hash, uploader);

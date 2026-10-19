@@ -888,7 +888,9 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(heartbeatRoute, async (c) => {
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, c);
-    const at = await storage.connectors.heartbeat(connector.id);
+    const at = await storage.runInTransaction(() =>
+      storage.connectors.heartbeat(connector.id),
+    );
     if (at === null) {
       throw new MarfaError(
         ErrorCode.CONNECTOR_NOT_FOUND,
@@ -912,11 +914,13 @@ export function connectorRoutes(storage: Storage) {
         "A run cannot finish before it started",
       );
     }
-    const run = await storage.connectors.recordRun(connector.id, {
-      ...body,
-      started_at,
-      finished_at,
-    });
+    const run = await storage.runInTransaction(() =>
+      storage.connectors.recordRun(connector.id, {
+        ...body,
+        started_at,
+        finished_at,
+      }),
+    );
     return c.json(run, 201);
   });
 
@@ -1057,10 +1061,8 @@ export function connectorRoutes(storage: Storage) {
     requireOwnKey(connector.key_id, c);
     refuseUnknownBodyKeys(await c.req.json(), HandledInputSchema);
     const { ids, outcome } = c.req.valid("json");
-    const marked = await storage.inbound.markHandled(
-      connector.id,
-      ids,
-      outcome,
+    const marked = await storage.runInTransaction(() =>
+      storage.inbound.markHandled(connector.id, ids, outcome),
     );
     if (marked === null) {
       throw new MarfaError(
