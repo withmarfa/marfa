@@ -207,7 +207,7 @@ The instance applies the log at start. A copy's integrity can be checked first w
 
 ## Restore a backup that is older than the bucket
 
-A machine backup or a Railway volume backup is older than the bucket's copy of the database, which is current to within a second. **If you start an older copy with the bucket's current `S3_PREFIX`, the copy becomes the bucket's newest copy of the database.** Litestream logs `detected database behind replica`, carries on, and uploads the copy's later transactions on top of the replica. A restore from the bucket then returns the copy plus the writes made after you started it. The writes made between the backup and the restore stay in the bucket only at earlier transaction points, which Litestream's own retention removes in time.
+A machine backup or a Railway volume backup is older than the bucket's copy of the database, which Litestream updates every second (`sync-interval: 1s` in `litestream.yml`). **If you start an older copy with the bucket's current `S3_PREFIX`, the copy becomes the bucket's newest copy of the database.** Litestream logs `detected database behind replica`, carries on, and uploads the copy's later transactions on top of the replica. A restore from the bucket then returns the copy plus the writes made after you started it. The writes made between the backup and the restore stay in the bucket only at earlier transaction points, which Litestream's own retention removes in time.
 
 A point-in-time restore of the bucket onto the same prefix does the same thing, because the restored file is also behind the replica.
 
@@ -235,8 +235,9 @@ Use this when you have no copy of the volume, or the moment you want is not in o
 
 ### What the steps leave behind
 
-- **The new prefix is now the instance's.** Every later recovery, including a fresh volume and [Restoring by hand](#restoring-by-hand), uses the new prefix. The instance keeps its blobs there too, and the `blob-replicate` job copies the blobs the disk holds to it.
-- **The old prefix holds the newer history, unchanged.** To read it, restore from the old prefix to a file by hand and start a second instance on that file with a prefix of its own. Do not start it on the old prefix, which would write to it again.
+- **The new prefix is now the instance's.** Every later recovery, including a fresh volume and [Restoring by hand](#restoring-by-hand), uses the new prefix. The `blob-replicate` job copies the blobs the disk holds to the new prefix. The instance lists the old prefix's object store as detached, because its configuration no longer names it.
+- **Files saved after the backup are not in the restored instance.** The restored database has no record of them, and their bytes are in the old prefix only. The server keeps a blob in the bucket as one object named `<prefix>/<sha-256 hex>`, beside a `<prefix>/.marfa-store` object that names the store, and it finds a blob through the locations recorded in its database. It never looks under another prefix, so these files do not come back by themselves. They are not lost: the old prefix holds their bytes and the database that names them.
+- **The old prefix holds the newer history.** To read it, start a second instance on an empty volume with `S3_PREFIX` set to the old prefix and its own port and address. It restores the old prefix's latest database and serves its blobs from there. Then download the files you need from it and upload them to the restored instance. This writes to the old prefix as any running instance does, so never run it at the same time as another instance on that prefix. This guide gives no step for copying objects between prefixes, because that has not been run against the server.
 - **Nothing removes the old prefix.** Delete its objects yourself, from the bucket, when you no longer need that history.
 
 ## Restoring by hand
