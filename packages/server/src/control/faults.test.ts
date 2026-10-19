@@ -353,7 +353,7 @@ describe("counted holds", () => {
       ["hold:write", "item.update@0"],
       ["hold:export-page", "1000001"],
     ])
-      expect(arm(name!, arg!)).toBeDefined();
+      expect(arm(name!, arg)).toBeDefined();
     expect(activeFaults()).toEqual([]);
     expect(arm("hold:write", "item.update@2")).toBeUndefined();
     expect(arm("hold:export-page", "2")).toBeUndefined();

@@ -678,7 +678,9 @@ it("enters the write hold only when it is armed, before work starts", async () =
   setFault("hold:write", "test.hooks@1");
   const work = vi.fn(() => ctx.storage.settings.set("hooks.off", "held"));
   const pending = runAuditedTransaction(ctx.storage, work, entry);
-  await vi.waitFor(() => expect(activeFaults()[0]?.waiting).toBe(1));
+  await vi.waitFor(() => {
+    expect(activeFaults()[0]?.waiting).toBe(1);
+  });
   expect(work).not.toHaveBeenCalled();
   clearFaults();
   await pending;
@@ -696,7 +698,9 @@ it("enters the export page hold only when it is armed", async () => {
   expect(spies.hold).not.toHaveBeenCalled();
   setFault("hold:export-page", "1");
   const pending = read();
-  await vi.waitFor(() => expect(activeFaults()[0]?.waiting).toBe(1));
+  await vi.waitFor(() => {
+    expect(activeFaults()[0]?.waiting).toBe(1);
+  });
   clearFaults();
   const exported = await pending;
   expect(exported.status).toBe(200);
