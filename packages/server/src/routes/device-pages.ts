@@ -38,8 +38,8 @@ interface DevicePageParams {
   prefilled: string;
   /** Error code from a previous attempt. */
   error?: string;
-  /** The whole seconds until the limit that refused the attempt allows
-   *  another, from the `retry_after` the server redirected with. */
+  /** The whole seconds until another attempt will be allowed, from the
+   *  `retry_after` the server redirected with. */
   retryAfter?: number;
   /** The nonce the response's content security policy names, which the
    *  inline script carries. */

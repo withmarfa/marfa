@@ -632,7 +632,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 
     // A 429 is a limit, the per-address one or the per-account one in
     // `auth/sign-in-throttle.ts`, and the password was never judged. Its
-    // `Retry-After` is the wait the limit that refused it set.
+    // `Retry-After` is the latest end among the limits that are spent.
     if (response.status === 429)
       return errorRedirect(
         "too_many_attempts",

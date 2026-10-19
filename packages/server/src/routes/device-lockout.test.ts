@@ -10,8 +10,8 @@ import {
 
 /**
  * The device code page says how long a person refused for too many lookups
- * has to wait, taken from the lane that refused them, and lets them in again
- * when that wait is over.
+ * has to wait, taken from the latest end among the lanes that are spent, and
+ * lets them in again when that wait is over.
  */
 
 let ctx: TestContext | undefined;

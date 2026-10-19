@@ -2,9 +2,9 @@
  * How a page says how long a refused person has to wait.
  *
  * The server redirects a refused sign-in or device code lookup with
- * `retry_after`, the whole seconds until the limit that refused it allows
- * another attempt. The pages show that wait in whole minutes, rounded up, so
- * nobody is told to try again before the limit has reset.
+ * `retry_after`, the whole seconds until another attempt will be allowed: the
+ * latest end among the limits that are spent. The pages show that wait in
+ * whole minutes, rounded up, so nobody is told to try again before it is over.
  */
 
 /** The longest wait a page believes. The longest limit is an hour. */

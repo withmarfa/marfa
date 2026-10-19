@@ -40,8 +40,8 @@ export interface SignInPageParams {
    */
   error?: string;
   /**
-   * The whole seconds until the limit that refused the attempt allows
-   * another, from the `retry_after` the server redirected with.
+   * The whole seconds until another attempt will be allowed, from the
+   * `retry_after` the server redirected with.
    */
   retryAfter?: number;
   /**
