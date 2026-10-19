@@ -39,7 +39,11 @@ import { parseWaitSeconds } from "../pages/lockout.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
 import { renderSignedInPage } from "./signed-in-page.js";
 import { prefersHtml } from "./http-error-page.js";
-import { KeyedThrottle, secondsUntilReset } from "../auth/keyed-throttle.js";
+import {
+  KeyedThrottle,
+  admitThroughLanes,
+  secondsUntilReset,
+} from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { webOriginsOf } from "../auth/web-origins.js";
@@ -259,13 +263,15 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 
   type CodeLookupAdmission =
     { allowed: true } | { allowed: false; retryAfter: number };
-  const ADMITTED: CodeLookupAdmission = { allowed: true };
-  const refusedUntil = (resetAt: number): CodeLookupAdmission => ({
-    allowed: false,
-    retryAfter: secondsUntilReset(resetAt),
-  });
+  const refusal = (
+    admitted: { allowed: true } | { allowed: false; resetAt: number },
+  ): CodeLookupAdmission =>
+    admitted.allowed
+      ? admitted
+      : { allowed: false, retryAfter: secondsUntilReset(admitted.resetAt) };
 
-  /** Counts a lookup, and when a lane refuses it, says when that lane resets. */
+  /** Counts a lookup, and when a lane refuses it, says when another will be
+   *  allowed: the latest end among the lanes that are spent. */
   const admitCodeLookup = async (
     c: Context<AppEnv>,
   ): Promise<CodeLookupAdmission> => {
@@ -273,21 +279,26 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     if (authority?.kind === "owner") {
       // The transaction revalidates the admitted authority under the write lock,
       // so ending a session cannot race the owner lane's counter writes.
-      return storage.runInTransaction(async () => {
-        const owner = await deviceCodePerOwner.attempt(authority.userId);
-        if (!owner.allowed) return refusedUntil(owner.resetAt);
-        const all = await deviceCodeOwnerInstance.attempt("all");
-        return all.allowed ? ADMITTED : refusedUntil(all.resetAt);
-      });
+      return storage.runInTransaction(async () =>
+        refusal(
+          await admitThroughLanes([
+            { throttle: deviceCodePerOwner, key: authority.userId },
+            { throttle: deviceCodeOwnerInstance, key: "all" },
+          ]),
+        ),
+      );
     }
     const ip = c.var.clientIp;
-    const address = await deviceCodePerAddress.attempt(
-      ip ? addressBucket(ip) : "unknown",
-    );
     // Over-cap callers cannot spend the rest of their lane's aggregate budget.
-    if (!address.allowed) return refusedUntil(address.resetAt);
-    const all = await deviceCodePerInstance.attempt("all");
-    return all.allowed ? ADMITTED : refusedUntil(all.resetAt);
+    return refusal(
+      await admitThroughLanes([
+        {
+          throttle: deviceCodePerAddress,
+          key: ip ? addressBucket(ip) : "unknown",
+        },
+        { throttle: deviceCodePerInstance, key: "all" },
+      ]),
+    );
   };
 
   /** The redirect to the code page for a lookup a lane refused. */

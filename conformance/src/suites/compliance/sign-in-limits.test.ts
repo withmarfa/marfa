@@ -140,6 +140,30 @@ describe("password sign-in", () => {
     const wait = Number(refusal.searchParams.get("retry_after"));
     expect(wait).toBeGreaterThan(15 * 60);
     expect(wait).toBeLessThanOrEqual(60 * 60);
+
+    // The first address has spent its own limit as well, for a shorter time.
+    // Both are spent, so the wait is the later end, the account's, and not
+    // the address limit's quarter hour that would only meet the account's
+    // limit again.
+    const both = await fetch(`${account.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: await issuerOrigin(account),
+        [CLIENT_HEADER]: "192.0.2.1",
+      },
+      body: new URLSearchParams({ ...OWNER, return_to: "/" }),
+      redirect: "manual",
+    });
+    expect(both.status).toBe(302);
+    const bothWait = Number(
+      new URL(
+        both.headers.get("location") ?? "",
+        account.apiUrl,
+      ).searchParams.get("retry_after"),
+    );
+    expect(bothWait).toBeGreaterThan(15 * 60);
+    expect(bothWait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
 });
 

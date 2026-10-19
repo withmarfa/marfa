@@ -1801,15 +1801,15 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
-If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after` holding the whole seconds until the limit that refused it allows another attempt, the value `Retry-After` carries on the same refusal.
+If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent, the value `Retry-After` carries on the same refusal.
 
-**Reason:** The sign-in page tells the owner how long to wait, and the address limit and the account limit wait for different lengths of time.
+**Reason:** The sign-in page tells the owner how long to wait. The address limit and the account limit end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit`.
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after` of whole seconds, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
 
 **Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
 
@@ -1857,15 +1857,15 @@ If one address has made ten device code lookups without direct owner browser aut
 
 ### `keys-and-oauth/device-lookup-wait`
 
-If a device code lookup is refused by a device lookup limit, then the server MUST redirect with `retry_after` holding the whole seconds until the window of the limit that refused it ends.
+If a device code lookup is refused by a device lookup limit, then the server MUST redirect with `retry_after` holding the whole seconds, from 1 to 86400, until another lookup will be allowed, which is the latest end among the device lookup limits that are spent.
 
-**Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, so the page can say how long to wait only if the redirect names it.
+**Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
 **Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
 
 ### `keys-and-oauth/device-lookup-page`
 
-When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of whole seconds, the server MUST answer a page that states the wait in whole minutes, rounded up.
+When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up.
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who has tried too many device codes how long to wait, in whole minutes rounded up`.
 

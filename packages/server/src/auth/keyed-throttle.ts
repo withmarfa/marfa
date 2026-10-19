@@ -46,6 +46,10 @@ export function secondsUntilReset(resetAt: number): number {
   return Math.max(1, Math.ceil((resetAt - clock.nowMs()) / 1000));
 }
 
+/** What the next attempt on a key would meet. */
+export type ThrottlePeek =
+  { allowed: true } | { allowed: false; resetAt: number };
+
 export class KeyedThrottle {
   private readonly family: string;
   private readonly limit: number;
@@ -84,4 +88,47 @@ export class KeyedThrottle {
       resetAt: new Date(row.expires_at).getTime(),
     };
   }
+
+  /**
+   * Say whether the next attempt on `key` would be refused, and when its
+   * window ends, without counting an attempt.
+   */
+  async peek(
+    key: string,
+    nowIso = clock.now().toISOString(),
+  ): Promise<ThrottlePeek> {
+    const row = await this.storage.rateLimits.peekWindow(
+      this.family,
+      key,
+      nowIso,
+    );
+    if (!row || row.count < this.limit) return { allowed: true };
+    return { allowed: false, resetAt: new Date(row.expires_at).getTime() };
+  }
+}
+
+/**
+ * Count an attempt against each lane in order, stopping at the first that
+ * refuses it, so a refused attempt spends none of the lanes after it. When a
+ * lane refuses, the lanes after it are read without counting, and the answer
+ * is the latest end among every lane that would refuse: that is when another
+ * attempt will be allowed, which is not the first refusing lane's end when a
+ * later lane stays spent longer.
+ */
+export async function admitThroughLanes(
+  lanes: readonly { throttle: KeyedThrottle; key: string }[],
+): Promise<{ allowed: true } | { allowed: false; resetAt: number }> {
+  let resetAt: number | undefined;
+  for (const { throttle, key } of lanes) {
+    if (resetAt === undefined) {
+      const attempt = await throttle.attempt(key);
+      if (!attempt.allowed) resetAt = attempt.resetAt;
+      continue;
+    }
+    const peek = await throttle.peek(key);
+    if (!peek.allowed) resetAt = Math.max(resetAt, peek.resetAt);
+  }
+  return resetAt === undefined
+    ? { allowed: true }
+    : { allowed: false, resetAt };
 }

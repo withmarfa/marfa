@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { resetClockForTests, advanceClock } from "../clock.js";
+import { resetClockForTests, advanceClock, now } from "../clock.js";
 import { visibleText } from "../pages/reading.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -28,10 +28,15 @@ function codeFor(n: number): string {
   return `AB${n.toString(36).toUpperCase().padStart(6, "2")}`;
 }
 
-async function submit(c: TestContext, code: string, peer: string) {
+async function submit(
+  c: TestContext,
+  code: string,
+  peer: string,
+  headers: Record<string, string> = {},
+) {
   const res = await request(c.app, "POST", "/auth/device", {
     form: { user_code: code },
-    headers: { origin: ORIGIN },
+    headers: { origin: ORIGIN, ...headers },
     peer,
   });
   expect(res.status).toBe(302);
@@ -85,6 +90,104 @@ describe("the device code page after too many lookups", () => {
     expect(await pageText(ctx, refused)).toMatch(
       /Try again in (14|15) minutes/,
     );
+  });
+
+  it("names the later reset when the address lane and the instance lane are both spent", async () => {
+    ctx = await createTestContext();
+    // The instance lane's window opens first and ends first.
+    await submit(ctx, codeFor(1), "198.51.100.1");
+    advanceClock(10 * 60_000);
+    // This address spends its ten in a window that ends nine minutes after
+    // the instance lane's has ended.
+    for (let i = 0; i < DEVICE_CODE_ADDRESS_LIMIT; i++)
+      await submit(ctx, codeFor(10 + i), "203.0.113.9");
+    advanceClock(6 * 60_000);
+    // The instance lane's window has ended and opens again, and ten other
+    // addresses fill its hundred.
+    for (
+      let a = 0;
+      a < DEVICE_CODE_INSTANCE_LIMIT / DEVICE_CODE_ADDRESS_LIMIT;
+      a++
+    )
+      for (let i = 0; i < DEVICE_CODE_ADDRESS_LIMIT; i++)
+        await submit(
+          ctx,
+          codeFor(a * 100 + i + 100),
+          `198.51.100.${String(a + 20)}`,
+        );
+
+    // The address lane refuses this address for nine more minutes, but the
+    // instance lane would refuse it for fifteen.
+    const refused = await submit(ctx, codeFor(5000), "203.0.113.9");
+    expect(refused.searchParams.get("error")).toBe("too_many_attempts");
+    const wait = Number(refused.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(14 * 60);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
+    expect(await pageText(ctx, refused)).toMatch(
+      /Try again in (14|15) minutes/,
+    );
+
+    // After that wait the address is let in.
+    advanceClock((wait + 1) * 1000);
+    expect(
+      (await submit(ctx, codeFor(5001), "203.0.113.9")).searchParams.get(
+        "error",
+      ),
+    ).toBe("invalid_code");
+  });
+
+  it("names the owner lane instance's wait when only that lane is spent", async () => {
+    ctx = await createTestContext();
+    // One owner cannot fill the instance lane's hundred before the owner's own
+    // ten, so the counter is seeded as the other tests of it do.
+    for (let i = 0; i < DEVICE_CODE_INSTANCE_LIMIT; i++)
+      await ctx.storage.rateLimits.incrementWindow(
+        "device-user-code-owner-instance",
+        "all",
+        15 * 60_000,
+        now().toISOString(),
+      );
+    const refused = await submit(ctx, codeFor(1), "192.0.2.1", {
+      cookie: ctx.owner.cookie,
+    });
+    expect(refused.searchParams.get("error")).toBe("too_many_attempts");
+    const wait = Number(refused.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(14 * 60);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
+    expect(await pageText(ctx, refused)).toMatch(
+      /Try again in (14|15) minutes/,
+    );
+  });
+
+  it("names the later reset when the owner lane and its instance lane are both spent", async () => {
+    ctx = await createTestContext();
+    const cookie = ctx.owner.cookie;
+    // The instance lane's window opens five minutes after the owner's own
+    // and so ends five minutes after it. The owner's ten lookups bring its
+    // count to the cap.
+    for (
+      let i = 0;
+      i < DEVICE_CODE_INSTANCE_LIMIT - DEVICE_CODE_ADDRESS_LIMIT;
+      i++
+    )
+      await ctx.storage.rateLimits.incrementWindow(
+        "device-user-code-owner-instance",
+        "all",
+        15 * 60_000,
+        new Date(now().getTime() + 5 * 60_000).toISOString(),
+      );
+    for (let i = 0; i < DEVICE_CODE_ADDRESS_LIMIT; i++)
+      expect(
+        (
+          await submit(ctx, codeFor(i), "192.0.2.1", { cookie })
+        ).searchParams.get("error"),
+      ).toBe("invalid_code");
+
+    const refused = await submit(ctx, codeFor(99), "192.0.2.1", { cookie });
+    expect(refused.searchParams.get("error")).toBe("too_many_attempts");
+    const wait = Number(refused.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(19 * 60);
+    expect(wait).toBeLessThanOrEqual(20 * 60);
   });
 
   it("takes entries again once the wait is over", async () => {

@@ -2690,6 +2690,16 @@ export interface RateLimitStore {
     nowIso: string,
   ): Promise<{ count: number; expires_at: string }>;
   /**
+   * The counter for `(family, key)` as it stands, without counting an
+   * attempt: `null` when there is no row or its `expires_at` is at or before
+   * `nowIso`, the same test `incrementWindow` uses to start a new window.
+   */
+  peekWindow(
+    family: string,
+    key: string,
+    nowIso: string,
+  ): Promise<{ count: number; expires_at: string } | null>;
+  /**
    * `incrementWindow` for several keys in ONE statement, keyed by the
    * same upsert semantics per row. Exists because the rate-limit
    * middleware consults up to three windows on every request — same

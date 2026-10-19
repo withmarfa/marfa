@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
 import { describe, it, expect, afterEach } from "vitest";
-import { KeyedThrottle } from "./keyed-throttle.js";
+import { KeyedThrottle, admitThroughLanes } from "./keyed-throttle.js";
 import type { Storage } from "../storage/interface.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -62,6 +62,63 @@ describe("KeyedThrottle", () => {
     expect(d.limit).toBe(3);
     // Counter keeps climbing past the cap — see class docstring.
     expect(d.count).toBe(4);
+  });
+
+  it("peeks without counting, and says a key at its cap would refuse the next attempt", async () => {
+    const storage = await makeStorage();
+    const t = new KeyedThrottle(storage, {
+      family: "test",
+      limit: 2,
+      windowMs: 60_000,
+    });
+    const at = (ms: number) => new Date(ms).toISOString();
+    // Nothing counted yet: a witness that an unseen key reads as open.
+    expect(await t.peek("alice", at(1_000_000))).toEqual({ allowed: true });
+    await t.attempt("alice", at(1_000_000));
+    // One of two used: the next would be allowed. Peeking again and again
+    // does not use the other one.
+    for (let i = 0; i < 5; i++)
+      expect(await t.peek("alice", at(1_000_100))).toEqual({ allowed: true });
+    await t.attempt("alice", at(1_000_200));
+    expect(await t.peek("alice", at(1_000_300))).toEqual({
+      allowed: false,
+      resetAt: 1_060_000,
+    });
+    // The peeks counted nothing: the third attempt is the first refused.
+    expect((await t.attempt("alice", at(1_000_400))).count).toBe(3);
+    // Once the window has ended the key reads as open again.
+    expect(await t.peek("alice", at(1_060_000))).toEqual({ allowed: true });
+  });
+
+  it("answers the latest end among the lanes spent, and counts nothing after a refusing lane", async () => {
+    const storage = await makeStorage();
+    const short = new KeyedThrottle(storage, {
+      family: "short",
+      limit: 1,
+      windowMs: 60_000,
+    });
+    const long = new KeyedThrottle(storage, {
+      family: "long",
+      limit: 1,
+      windowMs: 600_000,
+    });
+    const lanes = [
+      { throttle: short, key: "k" },
+      { throttle: long, key: "k" },
+    ];
+    expect(await admitThroughLanes(lanes)).toEqual({ allowed: true });
+    const refused = await admitThroughLanes(lanes);
+    expect(refused.allowed).toBe(false);
+    if (!refused.allowed) {
+      const longRow = await storage.rateLimits.peekWindow(
+        "long",
+        "k",
+        new Date().toISOString(),
+      );
+      expect(refused.resetAt).toBe(new Date(longRow!.expires_at).getTime());
+      // Only the first call counted against the long lane.
+      expect(longRow!.count).toBe(1);
+    }
   });
 
   it("resets the counter once the window has elapsed", async () => {
