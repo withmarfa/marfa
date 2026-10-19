@@ -1400,6 +1400,14 @@ When `GET /export?format=archive` selects an item that is not of a `core` or `sy
 
 **Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a platform type that this build no longer ships as an orphan`.
 
+### `search-and-filters/archive-edges-unregistered`
+
+When `GET /export?format=archive` selects an edge whose edge type is not registered, the server MUST NOT refuse the export because the edge type is not registered.
+
+**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an edge (`search-and-filters/restore-edges-unregistered`). A forced delete leaves the edges of an edge type (`edges/types-delete-force-keeps`), so an instance that refused to export them could not be backed up.
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
+
 ### `search-and-filters/archive-validation-retry`
 
 If an archive selection fails restore validation, then the server MUST restart `GET /export?format=archive` from the beginning once before sending archive bytes.
@@ -1556,11 +1564,11 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 
 ### `search-and-filters/restore-edge-skips`
 
-When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_reasons` under exactly one of these reasons: `already_present` when the instance already holds the edge, `endpoint_missing` when, once the archive's items are written, the instance holds no item under an endpoint's id, in the bin or out of it, `malformed` when the line does not give both endpoints and the edge type as strings, and otherwise the error code that `POST /edges` would answer for the edge.
+When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_reasons` under exactly one of these reasons: `already_present` when the instance already holds the edge, `endpoint_missing` when, once the archive's items are written, the instance holds no item under an endpoint's id, in the bin or out of it, `malformed` when the line does not give both endpoints and the edge type as strings, and otherwise the error code that `POST /edges` would answer for the edge, other than `edge_type_not_found`, which a restore does not give (`search-and-filters/restore-edges-unregistered`).
 
-**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
+**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin`, `search-and-filters/restore-edges-unregistered` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
 
-**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
+**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
 ### `search-and-filters/restore-items-kept`
 
@@ -1849,6 +1857,30 @@ If an archived item's `properties` are present and are not an object, then the s
 **Reason:** a restore that took them would store a row whose properties no read can return as an object.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
+
+### `search-and-filters/restore-edges-unregistered`
+
+When `POST /restore` writes an edge whose edge type is not registered once the archive's own edge types are, the server MUST store the edge under that edge type, as the archive holds it.
+
+**Reason:** a forced delete removes an edge type and keeps its edges (`edges/types-delete-force-keeps`), and an export carries them without the edge type. The edge is restored as such an edge stands: it is read like any other (`edges/orphan-read`), it neither cascades a delete nor blocks one (`edges/orphan-delete`, `edges/orphan-delete-unblocked`), and it is announced like every restored edge (`search-and-filters/restore-announced`). `POST /edges` still names a registered edge type (`edges/create-type-unknown`).
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`, `compliance/restore-archive.test.ts › counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`.
+
+### `search-and-filters/restore-edges-unregistered-judged`
+
+When `POST /restore` meets an edge whose edge type is not registered once the archive's own edge types are, the server MUST skip it, under the reason that `search-and-filters/restore-edge-skips` gives, where an endpoint is missing, an edge already holds its ID or its triple, or it runs from an item to itself.
+
+**Reason:** with no edge type there is no constraint, cardinality or property schema to hold the edge to, and every edge type with a cycle check is shipped, so these are the refusals that need no edge type. An edge whose edge type the archive registers, or that is shipped, is judged by it.
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › still holds an edge of a registered type to its constraints, and refuses an edge whose type is no identifier`, `compliance/restore-archive.test.ts › counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`.
+
+### `search-and-filters/restore-edge-type`
+
+If an archived edge's `edge_type` is a string that is not an edge-type identifier, then the server MUST answer `400 validation_error` naming the edge's ID in the message.
+
+**Reason:** a forced delete leaves an edge under an identifier an edge type was registered with (`search-and-filters/restore-edges-unregistered`), so an identifier that none could have been is an archive that no instance wrote. A line that gives the edge type as no string is skipped as `malformed` (`search-and-filters/restore-edge-skips`).
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › still holds an edge of a registered type to its constraints, and refuses an edge whose type is no identifier`.
 
 ### `search-and-filters/restore-snapshot-held`
 

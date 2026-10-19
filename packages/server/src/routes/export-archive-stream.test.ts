@@ -380,6 +380,56 @@ withReader("archive spool (%s)", (credential) => {
       await target.cleanup();
     }
   });
+
+  it("exports an edge whose type was force-deleted, which a restore then keeps", async () => {
+    await seedNotes(ctx, 2);
+    const type = "snapshot.retired-link";
+    const registered = await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: { id: type, cardinality: "many-to-many" },
+    });
+    expect(registered.status, await registered.clone().text()).toBe(201);
+    const linked = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: idAt(1), target_id: idAt(2), edge_type: type },
+    });
+    expect(linked.status, await linked.clone().text()).toBe(201);
+    const forced = await request(
+      ctx.app,
+      "DELETE",
+      `/edge-types/${type}?force=true`,
+      { key: ctx.workingKey },
+    );
+    expect(forced.status, await forced.clone().text()).toBe(200);
+
+    const res = await exportArchive(ctx, credential);
+    expect(res.status, await res.clone().text()).toBe(200);
+    const archive = Buffer.from(await res.arrayBuffer());
+    const entries = await unpack(archive);
+    expect(
+      entries.find((e) => e.name === "edges.ndjson")!.data.toString(),
+    ).toContain(`"edge_type":"${type}"`);
+    expect(
+      entries.find((e) => e.name === "types.ndjson")!.data.toString(),
+    ).not.toContain(type);
+
+    const target = await createTestContext();
+    try {
+      const restored = await restore(target, archive);
+      expect(restored.status, await restored.clone().text()).toBe(200);
+      expect(await restored.json()).toMatchObject({
+        imported: 2,
+        edges_imported: 1,
+        edges_skipped: 0,
+      });
+      const edges = await target.storage.edges.list({});
+      expect(edges.data).toMatchObject([
+        { source_id: idAt(1), target_id: idAt(2), edge_type: type },
+      ]);
+    } finally {
+      await target.cleanup();
+    }
+  });
 });
 
 /** Collects what the server logs and reports as a fault while `run` goes. */
@@ -1285,7 +1335,7 @@ withReader("archive concurrent writes (%s)", (credential) => {
     },
   );
 
-  it.each(["a duplicate", "an unregistered type", "a cycle"])(
+  it.each(["a duplicate", "a cycle"])(
     "refuses both selections whose edges carry %s before headers",
     async (kind) => {
       await seedNotes(ctx, 3);
@@ -1313,11 +1363,11 @@ withReader("archive concurrent writes (%s)", (credential) => {
                   if (kind === "a duplicate") {
                     row.edge.source_id = idAt(1);
                     row.edge.target_id = idAt(2);
-                  } else if (kind === "a cycle") {
+                  } else {
                     row.edge.edge_type = "supersedes";
                     if (row.edge.source_id === idAt(2))
                       row.edge.target_id = idAt(1);
-                  } else row.edge.edge_type = "snapshot.unregistered";
+                  }
                   return JSON.stringify(row);
                 })
                 .join("\n") + "\n";
@@ -1337,11 +1387,6 @@ withReader("archive concurrent writes (%s)", (credential) => {
                 "a duplicate": {
                   type: "references",
                   code: "edge_constraint_violation",
-                },
-                "an unregistered type": {
-                  type: "snapshot.unregistered",
-                  field: "edge_type",
-                  code: "edge_type_not_found",
                 },
                 "a cycle": {
                   type: "supersedes",

@@ -944,9 +944,14 @@ describe("what a restore answers", () => {
     expect(kept.data.edge.properties).toEqual({ label: "x", weight: "heavy" });
   });
 
-  it("counts an edge that POST /edges would refuse under the code of its refusal", async () => {
+  it("counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers", async () => {
     const [a, b] = [uuidv7(), uuidv7()];
-    const [fits, loop, unknown] = [uuidv7(), uuidv7(), uuidv7()];
+    const [fits, loop, unknown, bound] = [
+      uuidv7(),
+      uuidv7(),
+      uuidv7(),
+      uuidv7(),
+    ];
     const archive = withEntry(
       itemsArchive(
         [a, b].map((id) => ({
@@ -964,8 +969,11 @@ describe("what a restore answers", () => {
           id: unknown,
           source_id: b,
           target_id: a,
-          edge_type: `restorerefused.${ctx.runId}`,
+          edge_type: `restorekept.${ctx.runId}`,
         },
+        // A registered edge type still holds its constraints: a note is no
+        // collection.
+        { id: bound, source_id: a, target_id: b, edge_type: "in-collection" },
       ]
         .map((edge) => `${JSON.stringify({ edge })}\n`)
         .join(""),
@@ -976,16 +984,19 @@ describe("what a restore answers", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data).toMatchObject({
       imported: 2,
-      edges_imported: 1,
+      edges_imported: 2,
       edges_skipped: 2,
     });
     expect(restored.data.edges_skipped_reasons).toEqual({
       edge_cycle: 1,
-      edge_type_not_found: 1,
+      edge_constraint_violation: 1,
     });
     expect((await client.getEdge(fits)).status).toBe(200);
     expect((await client.getEdge(loop)).status).toBe(404);
-    expect((await client.getEdge(unknown)).status).toBe(404);
+    expect((await client.getEdge(bound)).status).toBe(404);
+    const kept = await client.getEdge(unknown);
+    expect(kept.status).toBe(200);
+    expect(kept.data.edge.edge_type).toBe(`restorekept.${ctx.runId}`);
   });
 
   it("refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing", async () => {

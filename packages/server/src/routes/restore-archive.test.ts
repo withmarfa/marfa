@@ -1,4 +1,9 @@
-import { PERMISSIONS, generateId, getTypeSchema } from "@withmarfa/shared";
+import {
+  PERMISSIONS,
+  generateId,
+  getEdgeTypeSchema,
+  getTypeSchema,
+} from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -1931,5 +1936,189 @@ describe("POST /restore of rows their type no longer shapes", () => {
     );
     expect(restored.status, await restored.clone().text()).toBe(200);
     expect(await restored.json()).toMatchObject({ imported: 1 });
+  });
+});
+
+describe("POST /restore of an edge whose type is not registered", () => {
+  const noteRow = (id: string): string =>
+    JSON.stringify({
+      item: { id, type: "core.note", properties: { body: `end ${id}` } },
+    });
+  const edgeRow = (edge: Record<string, unknown>): string =>
+    JSON.stringify({ edge: { properties: {}, ...edge } });
+  const restoreEdges = async (
+    items: string[],
+    edges: string[],
+    typeLines: string[] = [],
+  ): Promise<Response> =>
+    postArchive(
+      await buildArchive(
+        { ...manifestFor(), item_count: items.length },
+        items,
+        [],
+        edges,
+        typeLines,
+      ),
+    );
+
+  it("keeps it as the archive holds it, reads it as a forced delete leaves it, announces it, and cascades nothing", async () => {
+    const [source, target, edgeId] = [generateId(), generateId(), generateId()];
+    const type = `user.retired_${edgeId.slice(-8)}`;
+    expect(getEdgeTypeSchema(type)).toBeUndefined();
+
+    const controller = new AbortController();
+    const { events, done } = collectEdgeEvents(controller.signal);
+    await settle();
+    const cursor = await logCursor();
+    const res = await restoreEdges(
+      [noteRow(source), noteRow(target)],
+      [
+        edgeRow({
+          id: edgeId,
+          source_id: source,
+          target_id: target,
+          edge_type: type,
+          properties: { weight: "heavy", nested: { a: [1, 2] } },
+          version: 4,
+          created_at: "2025-01-02T03:04:05.000Z",
+          updated_at: "2025-02-03T04:05:06.000Z",
+        }),
+      ],
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({
+      imported: 2,
+      edges_imported: 1,
+      edges_skipped: 0,
+      edge_types_registered: 0,
+    });
+    await settle();
+    controller.abort();
+    await done;
+
+    // As the archive holds it, and the type still registered nowhere.
+    expect(getEdgeTypeSchema(type)).toBeUndefined();
+    expect(await ctx.storage.edges.get(edgeId)).toEqual({
+      id: edgeId,
+      source_id: source,
+      target_id: target,
+      edge_type: type,
+      properties: { weight: "heavy", nested: { a: [1, 2] } },
+      version: 4,
+      created_at: "2025-01-02T03:04:05.000Z",
+      updated_at: "2025-02-03T04:05:06.000Z",
+    });
+
+    // Read the way the edge a forced delete leaves is read.
+    const read = await request(ctx.app, "GET", `/edges/${edgeId}`, {
+      key: ctx.workingKey,
+    });
+    expect(read.status).toBe(200);
+    expect(
+      ((await read.json()) as { edge: { edge_type: string } }).edge,
+    ).toMatchObject({
+      edge_type: type,
+    });
+    const listed = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.workingKey,
+    });
+    expect(
+      ((await listed.json()) as { data: { id: string }[] }).data.map(
+        (edge) => edge.id,
+      ),
+    ).toEqual([edgeId]);
+    const filtered = await request(ctx.app, "GET", `/edges?edge_type=${type}`, {
+      key: ctx.workingKey,
+    });
+    expect(
+      ((await filtered.json()) as { data: { id: string }[] }).data.map(
+        (edge) => edge.id,
+      ),
+    ).toEqual([edgeId]);
+    const hydrated = await request(ctx.app, "GET", `/items/${source}`, {
+      key: ctx.workingKey,
+    });
+    const { item } = (await hydrated.json()) as {
+      item: { edges?: Record<string, { data: { id: string }[] }> };
+    };
+    expect(item.edges?.[type]?.data.map((edge) => edge.id)).toEqual([edgeId]);
+
+    // Announced like every restored edge, after its ends.
+    expect(
+      events.filter((e) => e.type === "edge_created" && e.edge.id === edgeId),
+    ).toHaveLength(1);
+    const rows = await logSince(cursor);
+    expect(rows.filter((r) => r.event_type === "edge_created")).toHaveLength(1);
+
+    // Nothing of the type cascades or blocks, so the bin takes the source
+    // and leaves the target and the edge.
+    const trashed = await request(ctx.app, "DELETE", `/items/${source}`, {
+      key: ctx.workingKey,
+    });
+    expect(trashed.status, await trashed.clone().text()).toBe(200);
+    const left = await request(ctx.app, "GET", `/items/${target}`, {
+      key: ctx.workingKey,
+    });
+    expect(
+      ((await left.json()) as { item: { state: string } }).item.state,
+    ).toBe("active");
+    expect(await ctx.storage.edges.get(edgeId)).not.toBeNull();
+
+    // Ordinary writes still name a registered edge type.
+    const ordinary = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: target, target_id: target, edge_type: type },
+    });
+    expect((await errorOf(ordinary)).code).toBe("edge_type_not_found");
+  });
+
+  it("holds a registered edge type to its constraints and keeps the same edge once the type is not registered", async () => {
+    const [source, target, held, kept] = [
+      generateId(),
+      generateId(),
+      generateId(),
+      generateId(),
+    ];
+    const id = `user.bound_${held.slice(-8)}`;
+    const registration = JSON.stringify({
+      edge_type: {
+        id,
+        cardinality: "many-to-many",
+        source_type_constraints: ["core.bookmark"],
+      },
+    });
+    const edge = (edgeId: string) =>
+      edgeRow({
+        id: edgeId,
+        source_id: source,
+        target_id: target,
+        edge_type: id,
+      });
+
+    const refused = await restoreEdges(
+      [noteRow(source), noteRow(target)],
+      [edge(held)],
+      [registration],
+    );
+    expect(refused.status, await refused.clone().text()).toBe(200);
+    expect(await refused.json()).toMatchObject({
+      edges_imported: 0,
+      edges_skipped_reasons: { edge_constraint_violation: 1 },
+    });
+    expect(await ctx.storage.edges.get(held)).toBeNull();
+
+    // The witness: the archive that does not register the type keeps it.
+    // The first restore registered the type here, so it goes first.
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/edge-types/${id}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const unregistered = await restoreEdges([], [edge(kept)]);
+    expect(unregistered.status, await unregistered.clone().text()).toBe(200);
+    expect(await unregistered.json()).toMatchObject({ edges_imported: 1 });
+    expect(await ctx.storage.edges.get(kept)).toMatchObject({ edge_type: id });
   });
 });

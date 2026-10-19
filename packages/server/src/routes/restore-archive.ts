@@ -21,7 +21,8 @@
  * it was archived at, with its original dates and readable item history.
  * An item that is not of a `core` or `system` type that this build ships
  * keeps the properties the archive holds, whatever shape its type has now and
- * whether or not the type is registered.
+ * whether or not the type is registered, and an edge whose edge type is not
+ * registered is kept as the archive holds it.
  *
  * Paired with GET /export?format=archive.
  */
@@ -172,7 +173,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type or edge type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
     },
     400: {
       content: {
@@ -185,7 +186,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
+        "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row (such as an edge whose `edge_type` isn't an edge-type identifier), or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
     },
     413: {
       content: {
@@ -710,6 +711,7 @@ async function restoreRows(
         }
         unlogged.push(
           await storage.edges.createRaw({
+            as_archived: true,
             ...dates,
             ...(edgeId !== undefined && { id: edgeId }),
             // Same rule as the item path above. Both doors move
