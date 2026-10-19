@@ -35,6 +35,10 @@ describe("clock", () => {
   });
 
   it("leaves the monotonic reading where it was when the clock moves", () => {
+    // `nowMs()` and `Date.now()` are two reads of the system clock, which can
+    // fall either side of a millisecond tick. Holding `Date` still makes them
+    // the same instant; `performance.now()` stays real.
+    vi.useFakeTimers({ toFake: ["Date"] });
     const before = monotonicMs();
     advanceClock(3_600_000);
     expect(monotonicMs() - before).toBeLessThan(1_000);
