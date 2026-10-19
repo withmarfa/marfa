@@ -121,6 +121,35 @@ describe("KeyedThrottle", () => {
     }
   });
 
+  it("counts a lane this attempt brought to its cap among the spent ones", async () => {
+    const storage = await makeStorage();
+    const first = new KeyedThrottle(storage, {
+      family: "first",
+      limit: 1,
+      windowMs: 600_000,
+    });
+    const second = new KeyedThrottle(storage, {
+      family: "second",
+      limit: 1,
+      windowMs: 60_000,
+    });
+    await second.attempt("k");
+    const refused = await admitThroughLanes([
+      { throttle: first, key: "k" },
+      { throttle: second, key: "k" },
+    ]);
+    expect(refused.allowed).toBe(false);
+    if (!refused.allowed) {
+      const firstRow = await storage.rateLimits.peekWindow(
+        "first",
+        "k",
+        new Date().toISOString(),
+      );
+      expect(firstRow!.count).toBe(1);
+      expect(refused.resetAt).toBe(new Date(firstRow!.expires_at).getTime());
+    }
+  });
+
   it("resets the counter once the window has elapsed", async () => {
     const storage = await makeStorage();
     const t = new KeyedThrottle(storage, {

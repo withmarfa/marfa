@@ -111,18 +111,21 @@ export class KeyedThrottle {
  * Count an attempt against each lane in order, stopping at the first that
  * refuses it, so a refused attempt spends none of the lanes after it. When a
  * lane refuses, the lanes after it are read without counting, and the answer
- * is the latest end among every lane that would refuse: that is when another
- * attempt will be allowed, which is not the first refusing lane's end when a
- * later lane stays spent longer.
+ * is the latest end among every lane that would refuse the next attempt,
+ * including a lane before it that this attempt brought to its cap: that is
+ * when another attempt will be allowed.
  */
 export async function admitThroughLanes(
   lanes: readonly { throttle: KeyedThrottle; key: string }[],
 ): Promise<{ allowed: true } | { allowed: false; resetAt: number }> {
   let resetAt: number | undefined;
+  let spentEnd = 0;
   for (const { throttle, key } of lanes) {
     if (resetAt === undefined) {
       const attempt = await throttle.attempt(key);
-      if (!attempt.allowed) resetAt = attempt.resetAt;
+      if (!attempt.allowed) resetAt = Math.max(attempt.resetAt, spentEnd);
+      else if (attempt.count >= attempt.limit)
+        spentEnd = Math.max(spentEnd, attempt.resetAt);
       continue;
     }
     const peek = await throttle.peek(key);
