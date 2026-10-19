@@ -79,7 +79,7 @@ docker exec -it marfa marfa --socket /data/control/marfa.sock setup claim --emai
 
 The password prompt is hidden. For automation, use `docker exec -i` with `setup claim --stdin` and supply a JSON object containing `email`, `password` and optional `name` through standard input. Never put passwords or setup codes in command-line arguments. `setup code` replaces the setup code and invalidates earlier setup sessions; a process restart also replaces it while the instance is unclaimed.
 
-After signing in, open `/auth/owner/manage` for key, app, connector and maintenance controls. `/auth/owner/restore` is the owner's archive restore form. Key creation, key changes and archive restore require a password sign-in within the last five minutes. The private socket provides the same machine authority without an API key. Ordinary keys and OAuth tokens use explicit [permissions](../GLOSSARY.md#permissions); even a credential with all twelve permissions cannot claim machine authority or recover the owner.
+After signing in, open `/auth/owner/manage` for key, app, connector and maintenance controls. `/auth/owner/restore` is the owner's archive restore form. Creating, changing, or revoking a key, disconnecting an app, approving an app for anything beyond reading, and restoring an archive require a sign-in within the last five minutes. The private socket provides the same machine authority without an API key. Ordinary keys and OAuth tokens use explicit [permissions](../GLOSSARY.md#permissions); even a credential with all twelve permissions cannot claim machine authority or recover the owner.
 
 ## Recovering the owner
 
