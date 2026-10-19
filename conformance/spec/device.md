@@ -606,7 +606,7 @@ When a folder whose search names no type hydrates its copy, a device MUST read t
 
 When a hydration or a catch-up reads a row whose text holds a surrogate pair, in a property value, a property name or a list, a device MUST hold the text unchanged.
 
-**Reason:** the server refuses text that is not well-formed UTF-16 (`items/json-text-well-formed`), so a pair is the only text outside the Basic Multilingual Plane that a row holds, and a copy that could not read it would stop syncing.
+**Reason:** the server holds a character outside the Basic Multilingual Plane only as a surrogate pair (`items/json-text-well-formed`).
 
 **Tests:** `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
 
