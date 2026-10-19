@@ -26,7 +26,7 @@ impl EdgeTypes {
     #[cfg(debug_assertions)]
     pub(super) fn observe_status_types(&self) {
         for edge in &self.types {
-            crate::fault::hold(&format!("folder-status-edge:{}", edge.id));
+            crate::fault::hold(|| format!("folder-status-edge:{}", edge.id));
         }
     }
 

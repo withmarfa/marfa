@@ -42,6 +42,8 @@ if (modulePath === undefined || modulePath === "") {
   throw new Error("MARFA_DEVICE_MODULE is unset");
 }
 const binding = createRequire(import.meta.url)(modulePath);
+// Counters are opt-in so ordinary debug clients never pay to record them.
+binding.testHooks?.observe(true);
 
 const cores = new Map();
 let folders;

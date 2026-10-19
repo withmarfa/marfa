@@ -268,7 +268,8 @@ impl Folder {
             if asked.load(Ordering::SeqCst) {
                 return Ok(WatchEnd::HandedOver);
             }
-            crate::fault::hold("folder-watch-turn");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-watch-turn");
             match crate::clock::recv_timeout(events, stop, TICK) {
                 Ok(Wake::File(Ok(event))) => {
                     // `Access` is an open or the close after a write, which has
@@ -281,7 +282,8 @@ impl Folder {
                         });
                     if !passed_over {
                         gate.changed(crate::clock::now());
-                        crate::fault::hold("folder-file-changed");
+                        #[cfg(debug_assertions)]
+                        crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
                     } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
@@ -323,7 +325,8 @@ impl Folder {
             if full {
                 last_full = Some(crate::clock::now());
             }
-            crate::fault::hold("folder-pass-start");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-pass-start");
             let passed = self.pass(full, asked, &mut telling, tell, health);
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 self.health_observe(false, full, None, Some(error), false);
@@ -342,7 +345,8 @@ impl Folder {
             }
             telling.settled();
             gate.passed(crate::clock::now());
-            crate::fault::hold("folder-pass-ended");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-pass-ended");
             lists = self.settings().and_then(|settings| settings.lists()).ok();
         }
         Ok(WatchEnd::Stopped)
@@ -364,10 +368,13 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
-        crate::fault::hold(if full {
-            "folder-full-scan"
-        } else {
-            "folder-quick-scan"
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| {
+            if full {
+                "folder-full-scan"
+            } else {
+                "folder-quick-scan"
+            }
         });
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where

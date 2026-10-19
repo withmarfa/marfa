@@ -789,8 +789,9 @@ impl Core {
                     Err(_) => return Err(one_at_a_time()),
                 },
                 Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => {
+                    #[cfg(debug_assertions)]
                     if !waited {
-                        fault::hold("follow-waiting");
+                        fault::hold(|| "follow-waiting");
                     }
                     waited = true;
                 }
@@ -833,7 +834,8 @@ impl Core {
 
     /// Moves each time another process saves to this store.
     pub fn data_version(&self) -> Result<i64> {
-        if fault::fails("data-version") {
+        #[cfg(debug_assertions)]
+        if fault::fails(|| "data-version") {
             return Err(CoreError::Store("the data version cannot be read".into()));
         }
         store::data_version(&*self.conn()?)
@@ -1177,7 +1179,8 @@ impl Core {
     /// a drain: whatever held the queue meanwhile may have done it. `None`
     /// where none is left.
     pub(crate) fn drain_what_remains(&self, stop: &AtomicBool) -> Option<Result<DrainReport>> {
-        fault::hold("recovery-drain-asked");
+        #[cfg(debug_assertions)]
+        fault::hold(|| "recovery-drain-asked");
         let _one = match self.wait_to_drain(stop) {
             Ok(one) => one,
             Err(error) => return Some(Err(error)),
@@ -1185,7 +1188,8 @@ impl Core {
         match drain::would_send(self) {
             Ok(false) => {
                 self.owe_drain(false);
-                fault::hold("recovery-drain-found-none");
+                #[cfg(debug_assertions)]
+                fault::hold(|| "recovery-drain-found-none");
                 None
             }
             Ok(true) => Some(drain::drain(self, stop)),
@@ -1202,7 +1206,8 @@ impl Core {
                     return Ok(poisoned.into_inner());
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
-                    fault::hold("drain-waiting");
+                    #[cfg(debug_assertions)]
+                    fault::hold(|| "drain-waiting");
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }

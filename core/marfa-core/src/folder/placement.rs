@@ -461,7 +461,8 @@ impl Folder {
             held: held.map(Box::new),
             before,
         };
-        crate::fault::hold("folder-give-way-read");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-give-way-read");
         let result = (|| {
             let mut reads = Vec::new();
             let mut cursor: Option<String> = None;
@@ -495,7 +496,8 @@ impl Folder {
                 return Ok(None);
             }
             let withdrawn = store::withdraw_edge_writes(&tx, edge_id, through)?;
-            crate::fault::hold("folder-give-way-withdrawn");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folder-give-way-withdrawn");
             for read in &reads {
                 crate::drain::apply_read_back(&tx, read)?;
             }

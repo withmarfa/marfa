@@ -687,7 +687,7 @@ export class BindingDevice {
     release: async (point: string): Promise<void> => {
       await this.control("hook", "release", point);
     },
-    /** How many times the engine has reached `point`, held or not. */
+    /** How many times the engine has reached `point` since the host armed observation. */
     reached: async (point: string): Promise<number> =>
       (await this.control("hook", "reached", point)) as number,
     /** How many calls wait at `point` now. */

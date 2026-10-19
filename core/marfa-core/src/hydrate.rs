@@ -111,7 +111,8 @@ fn hydrate_inner(
         store::replace_catalog(&tx, &catalog_rows)?;
         tx.commit()?;
     }
-    crate::fault::hold("hydration-replacing");
+    #[cfg(debug_assertions)]
+    crate::fault::hold(|| "hydration-replacing");
     let context = crate::read_view::Context::capture_build(&*core.conn()?)?;
     let result = (|| {
         let catalog = {

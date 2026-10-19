@@ -145,8 +145,13 @@ mod manual {
 
     /// The manual clock, while one is set.
     static SET: RwLock<Option<Arc<Manual>>> = RwLock::new(None);
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
 
+    #[inline]
     pub(super) fn set() -> Option<Arc<Manual>> {
+        if !ACTIVE.load(Ordering::Acquire) {
+            return None;
+        }
         SET.read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
@@ -158,10 +163,12 @@ mod manual {
     /// moved to the other.
     pub fn set_manual(on: bool) {
         let next = on.then(|| Arc::new(Manual::new()));
-        let before = std::mem::replace(
-            &mut *SET.write().unwrap_or_else(|poisoned| poisoned.into_inner()),
-            next,
-        );
+        let before = {
+            let mut held = SET.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let before = std::mem::replace(&mut *held, next);
+            ACTIVE.store(on, Ordering::Release);
+            before
+        };
         if let Some(before) = before {
             before.close();
         }

@@ -1171,7 +1171,8 @@ impl Captured {
         }
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
-        crate::fault::hold("folder-scan-read");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-scan-read");
         Ok(Some(bytes))
     }
 

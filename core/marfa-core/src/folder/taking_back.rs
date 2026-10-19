@@ -96,7 +96,8 @@ fn taking_back<E>(
     let mut asked_at = crate::clock::now();
     let mut held = false;
     loop {
-        crate::fault::hold("folder-take-back-wait");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-take-back-wait");
         crate::clock::wait(stop, timing.retry, POLL.min(timing.retry));
         if stop.load(Ordering::SeqCst) {
             return Ok(TakeBack::Stopped);

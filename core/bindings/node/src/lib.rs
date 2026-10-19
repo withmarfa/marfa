@@ -2565,7 +2565,13 @@ pub mod test_controls {
         marfa_core::fault::release(&point);
     }
 
-    /// How many times the engine has reached `point`, held or not.
+    /// Enables or disables reach counters, without resetting their values.
+    #[napi(namespace = "testHooks")]
+    pub fn observe(on: bool) {
+        marfa_core::fault::observe(on);
+    }
+
+    /// How many times the engine has reached `point` while observing.
     #[napi(namespace = "testHooks")]
     pub fn reached(point: String) -> u32 {
         u32::try_from(marfa_core::fault::reached(&point)).unwrap_or(u32::MAX)

@@ -84,7 +84,8 @@ pub(crate) fn claim_asking(
                 None => CoreError::ReadingHandle,
             });
         }
-        crate::fault::hold("folder-handover-wait");
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-handover-wait");
         crate::clock::wait(&std::sync::atomic::AtomicBool::new(false), POLL, POLL);
     }
 }
@@ -125,7 +126,8 @@ fn unasked(root: &Path, error: CoreError) -> CoreError {
 /// Holds a folder opened by asking until a fixture releases its gate, or for
 /// the milliseconds the fault names, to observe the watch while it is let go.
 pub(crate) fn hold_if_asked() {
-    crate::fault::hold("folder-handed-over");
+    #[cfg(debug_assertions)]
+    crate::fault::hold(|| "folder-handed-over");
     #[cfg(debug_assertions)]
     if let Some(gate) = crate::fault::named("gate-handed-folder") {
         std::fs::write(format!("{gate}.ready"), b"").expect("write handover gate readiness");

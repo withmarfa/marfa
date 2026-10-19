@@ -468,7 +468,8 @@ fn supervise<S: Supervised>(
             if let Err(error) = start_due(scope, &mut entries, every, record, timing) {
                 break Err(error);
             }
-            crate::fault::hold("folders-watch-polled");
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "folders-watch-polled");
             crate::clock::wait(stop, timing.poll, timing.poll);
         };
         // Every watch is stopped before any is waited for, so they wind down

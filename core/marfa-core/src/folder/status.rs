@@ -91,7 +91,8 @@ impl Folder {
             let conn = self.core.conn()?;
             crate::store::catalog_scope(&conn, |conn| {
                 let catalog = Catalog::load(conn)?;
-                crate::fault::hold("folder-status-catalog");
+                #[cfg(debug_assertions)]
+                crate::fault::hold(|| "folder-status-catalog");
                 let edge_types = EdgeTypes::load(conn)?;
                 #[cfg(debug_assertions)]
                 edge_types.observe_status_types();

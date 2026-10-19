@@ -365,8 +365,11 @@ follows.
 - **Holds.** The engine reaches named points, and a fixture arms one so that
   the engine waits there until the fixture releases it. `testHooks.hold(point)`
   arms a point, `testHooks.release(point)` lets go of what waits at it and
-  disarms it, `testHooks.reached(point)` counts the times the engine has
-  reached it, armed or not, and `testHooks.waiting(point)` counts the calls
+  disarms it. `testHooks.observe(true)` enables reach counters;
+  `testHooks.observe(false)` disables them without resetting their values.
+  The binding fixture host enables observation when it loads the module.
+  `testHooks.reached(point)` counts the times the engine has reached it while
+  observation is enabled, and `testHooks.waiting(point)` counts the calls
   held at it now. A point is reached by a call on the engine's own thread, so
   a fixture waits for `waiting` before it acts on a held call.
   - `hydration-replacing`: after a hydration has begun to replace the copy,

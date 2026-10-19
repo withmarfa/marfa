@@ -22,28 +22,28 @@ pub fn named(_fault: &str) -> Option<String> {
     None
 }
 
-/// Called by the engine where a fixture may hold it. A debug build counts
-/// the call, armed or not, and makes the caller wait until `release` where
-/// the fixture has armed the point. A release build does nothing.
-pub fn hold(point: &str) {
-    #[cfg(debug_assertions)]
-    holds::reach(point);
-    #[cfg(not(debug_assertions))]
-    let _ = point;
+/// Holds an armed point until `release`, counting it only while observing.
+/// The name is evaluated only while a fixture has enabled a hook.
+#[cfg(debug_assertions)]
+#[inline]
+pub fn hold<S: AsRef<str>>(point: impl FnOnce() -> S) {
+    if holds::active() {
+        holds::reach(point().as_ref());
+    }
 }
 
 /// Whether the fixture has made `point` fail, for the engine to answer with
-/// the error that point's failure is. A debug build counts the call, as
-/// `hold` does, so a fixture can wait for a failing read to have been made.
-/// A release build never fails.
+/// the error that point's failure is. Counts the call only while observing.
 #[cfg(debug_assertions)]
-pub fn fails(point: &str) -> bool {
-    holds::fails(point)
+#[inline]
+pub fn fails<S: AsRef<str>>(point: impl FnOnce() -> S) -> bool {
+    holds::active() && holds::fails(point().as_ref())
 }
 
-#[cfg(not(debug_assertions))]
-pub fn fails(_point: &str) -> bool {
-    false
+/// Enables or disables reach counters without resetting their values.
+#[cfg(debug_assertions)]
+pub fn observe(on: bool) {
+    holds::observe(on);
 }
 
 /// Makes the next calls of `hold(point)` wait. A debug build only.
@@ -65,7 +65,7 @@ pub fn release(point: &str) {
     holds::release(point);
 }
 
-/// How many times the engine has called `hold(point)`. A debug build only.
+/// How many times a point was reached while observing. A debug build only.
 #[cfg(debug_assertions)]
 pub fn reached(point: &str) -> usize {
     holds::reached(point)
@@ -80,6 +80,7 @@ pub fn waiting(point: &str) -> usize {
 #[cfg(debug_assertions)]
 mod holds {
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Condvar, Mutex, MutexGuard};
 
     #[derive(Default)]
@@ -93,25 +94,71 @@ mod holds {
         released: u64,
     }
 
-    static POINTS: Mutex<Option<HashMap<String, Point>>> = Mutex::new(None);
+    #[derive(Default)]
+    struct Registry {
+        points: HashMap<String, Point>,
+        observing: bool,
+    }
+
+    static ACTIVE: AtomicBool = AtomicBool::new(false);
+    static POINTS: Mutex<Option<Registry>> = Mutex::new(None);
     static CHANGED: Condvar = Condvar::new();
 
-    fn points() -> MutexGuard<'static, Option<HashMap<String, Point>>> {
+    #[inline]
+    pub(super) fn active() -> bool {
+        ACTIVE.load(Ordering::Acquire)
+    }
+
+    fn points() -> MutexGuard<'static, Option<Registry>> {
         POINTS
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn point<'a>(held: &'a mut Option<HashMap<String, Point>>, name: &str) -> &'a mut Point {
-        held.get_or_insert_with(HashMap::new)
+    fn point<'a>(held: &'a mut Option<Registry>, name: &str) -> &'a mut Point {
+        held.get_or_insert_with(Registry::default)
+            .points
             .entry(name.to_string())
             .or_default()
     }
 
+    // Publish while holding POINTS so a concurrent disarm cannot overwrite
+    // the flag of a later arm.
+    fn publish(held: &Option<Registry>) {
+        ACTIVE.store(
+            held.as_ref().is_some_and(|registry| {
+                registry.observing
+                    || registry
+                        .points
+                        .values()
+                        .any(|point| point.armed || point.failing)
+            }),
+            Ordering::Release,
+        );
+    }
+
+    fn visit<'a>(held: &'a mut Option<Registry>, name: &str) -> Option<&'a mut Point> {
+        let registry = held.as_mut()?;
+        if registry.observing {
+            let point = registry.points.entry(name.to_string()).or_default();
+            point.reached += 1;
+            Some(point)
+        } else {
+            registry.points.get_mut(name)
+        }
+    }
+
+    pub(super) fn observe(on: bool) {
+        let mut held = points();
+        held.get_or_insert_with(Registry::default).observing = on;
+        publish(&held);
+    }
+
     pub(super) fn reach(name: &str) {
         let mut held = points();
-        let here = point(&mut held, name);
-        here.reached += 1;
+        let Some(here) = visit(&mut held, name) else {
+            return;
+        };
         if !here.armed {
             return;
         }
@@ -128,18 +175,19 @@ mod holds {
     }
 
     pub(super) fn fails(name: &str) -> bool {
-        let mut held = points();
-        let here = point(&mut held, name);
-        here.reached += 1;
-        here.failing
+        visit(&mut points(), name).is_some_and(|here| here.failing)
     }
 
     pub(super) fn set_failing(name: &str, on: bool) {
-        point(&mut points(), name).failing = on;
+        let mut held = points();
+        point(&mut held, name).failing = on;
+        publish(&held);
     }
 
     pub(super) fn arm(name: &str) {
-        point(&mut points(), name).armed = true;
+        let mut held = points();
+        point(&mut held, name).armed = true;
+        publish(&held);
     }
 
     pub(super) fn release(name: &str) {
@@ -147,24 +195,89 @@ mod holds {
         let here = point(&mut held, name);
         here.armed = false;
         here.released += 1;
+        publish(&held);
         CHANGED.notify_all();
     }
 
     pub(super) fn reached(name: &str) -> usize {
-        point(&mut points(), name).reached
+        points()
+            .as_ref()
+            .and_then(|held| held.points.get(name))
+            .map_or(0, |here| here.reached)
     }
 
     pub(super) fn waiting(name: &str) -> usize {
-        point(&mut points(), name).waiting
+        points()
+            .as_ref()
+            .and_then(|held| held.points.get(name))
+            .map_or(0, |here| here.waiting)
     }
 
     #[cfg(test)]
     mod tests {
-        use super::super::{arm, fails, hold, reached, release, set_failing, waiting};
+        use super::super::{arm, fails, hold, observe, reached, release, set_failing, waiting};
         use std::sync::Arc;
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::thread;
         use std::time::{Duration, Instant};
+
+        static ALONE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+        struct Observing {
+            _alone: std::sync::MutexGuard<'static, ()>,
+        }
+
+        impl Drop for Observing {
+            fn drop(&mut self) {
+                observe(false);
+            }
+        }
+
+        fn alone() -> Observing {
+            let alone = ALONE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            observe(true);
+            Observing { _alone: alone }
+        }
+
+        #[test]
+        fn disabled_hooks_neither_evaluate_names_nor_access_the_registry() {
+            let _alone = alone();
+            let calls = std::cell::Cell::new(0);
+            let enabled = std::cell::Cell::new(true);
+            let name = || {
+                assert!(enabled.get(), "a disabled hook evaluated its name");
+                calls.set(calls.get() + 1);
+                format!("holds-test-lazy-{}", 1)
+            };
+            hold(name);
+            assert!(!fails(name));
+            assert_eq!(calls.get(), 2);
+            assert_eq!(reached("holds-test-lazy-1"), 2);
+
+            observe(false);
+            enabled.set(false);
+            assert!(!super::active());
+            // Owning the registry also proves disabled hooks never lock it.
+            let held = super::points();
+            hold(name);
+            assert!(!fails(name));
+            assert_eq!(calls.get(), 2);
+            drop(held);
+            assert_eq!(reached("holds-test-lazy-1"), 2);
+
+            enabled.set(true);
+            set_failing("holds-test-lazy-1", true);
+            assert!(fails(name));
+            set_failing("holds-test-lazy-1", false);
+            assert!(!super::active());
+            arm("holds-test-lazy-1");
+            assert!(super::active());
+            release("holds-test-lazy-1");
+            assert!(!super::active());
+            assert_eq!(reached("holds-test-lazy-1"), 2);
+        }
 
         fn until(what: &str, mut done: impl FnMut() -> bool) {
             let hung = Instant::now() + Duration::from_secs(10);
@@ -175,22 +288,25 @@ mod holds {
         }
 
         #[test]
-        fn a_point_nobody_armed_is_counted_and_does_not_wait() {
-            hold("holds-test-unarmed");
-            hold("holds-test-unarmed");
-            assert_eq!(reached("holds-test-unarmed"), 2);
+        fn a_point_nobody_armed_is_not_counted_and_does_not_wait() {
+            let _alone = alone();
+            observe(false);
+            hold(|| "holds-test-unarmed");
+            hold(|| "holds-test-unarmed");
+            assert_eq!(reached("holds-test-unarmed"), 0);
             assert_eq!(waiting("holds-test-unarmed"), 0);
         }
 
         #[test]
         fn an_armed_point_holds_each_caller_until_it_is_released() {
+            let _alone = alone();
             arm("holds-test-armed");
             let passed = Arc::new(AtomicBool::new(false));
             let callers: Vec<_> = (0..2)
                 .map(|_| {
                     let passed = Arc::clone(&passed);
                     thread::spawn(move || {
-                        hold("holds-test-armed");
+                        hold(|| "holds-test-armed");
                         passed.store(true, Ordering::SeqCst);
                     })
                 })
@@ -210,38 +326,44 @@ mod holds {
             }
             assert_eq!(waiting("holds-test-armed"), 0);
             // Released, it holds nothing until it is armed again.
-            hold("holds-test-armed");
+            hold(|| "holds-test-armed");
             assert_eq!(reached("holds-test-armed"), 3);
         }
 
         #[test]
         fn a_release_before_the_engine_arrives_holds_nobody_and_a_new_arming_holds_again() {
+            let _alone = alone();
+            observe(false);
             arm("holds-test-early");
             release("holds-test-early");
-            hold("holds-test-early");
+            hold(|| "holds-test-early");
             arm("holds-test-early");
-            let caller = thread::spawn(|| hold("holds-test-early"));
+            let caller = thread::spawn(|| hold(|| "holds-test-early"));
             until("the second arming did not hold", || {
                 waiting("holds-test-early") == 1
             });
             release("holds-test-early");
             caller.join().unwrap();
+            assert_eq!(reached("holds-test-early"), 0);
+            assert!(!super::active());
         }
 
         #[test]
         fn a_point_made_to_fail_fails_until_it_is_made_not_to_and_counts_each_ask() {
-            assert!(!fails("holds-test-failing"));
+            let _alone = alone();
+            assert!(!fails(|| "holds-test-failing"));
             set_failing("holds-test-failing", true);
-            assert!(fails("holds-test-failing"));
+            assert!(fails(|| "holds-test-failing"));
             set_failing("holds-test-failing", false);
-            assert!(!fails("holds-test-failing"));
+            assert!(!fails(|| "holds-test-failing"));
             assert_eq!(reached("holds-test-failing"), 3);
         }
 
         #[test]
         fn points_are_held_apart_by_name() {
+            let _alone = alone();
             arm("holds-test-one");
-            hold("holds-test-two");
+            hold(|| "holds-test-two");
             assert_eq!(reached("holds-test-two"), 1);
             assert_eq!(reached("holds-test-one"), 0);
             release("holds-test-one");
