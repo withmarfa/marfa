@@ -375,7 +375,11 @@ describe("the pages a person reads at sign-in", () => {
     expect(real).toContain(
       `Try again in ${String(minutes)} ${minutes === 1 ? "minute" : "minutes"}`,
     );
-    expect(real).toContain("passkey");
+    // The sentence itself: every sign-in page holds the word "passkey" in the
+    // passkey button, so the word alone proves nothing.
+    expect(real).toMatch(
+      /Try again in \d+ minutes?, or sign in with a passkey/,
+    );
 
     // Whole minutes, rounded up, for waits either side of a minute.
     for (const [retryAfter, said] of [

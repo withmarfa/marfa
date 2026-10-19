@@ -227,8 +227,9 @@ describe("the per-account sign-in throttle", () => {
 
     const page = await request(ctx.app, "GET", location);
     const text = visibleText(await page.text());
-    expect(text).toMatch(/Try again in (14|15) minutes/);
-    expect(text).toContain("passkey");
+    expect(text).toMatch(
+      /Try again in (14|15) minutes, or sign in with a passkey/,
+    );
     expect(text).not.toContain("That email or password is wrong");
   });
 
