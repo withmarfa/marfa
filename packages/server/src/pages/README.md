@@ -20,8 +20,11 @@ There is no client framework and no client-side rendering.
 ## The parts
 
 - **Shell:** `PageShell` writes the document: doctype, language, viewport,
-  title, the stylesheet and script with the response's nonce, and a one-line
-  `<noscript>` notice.
+  title, and the stylesheet with the response's nonce. Unless the page sets
+  `needsScript={false}`, it also loads the script with the nonce and writes a
+  one-line `<noscript>` notice. A page that works in full without script (the
+  signed-out and problem pages) sets it to false, so it loads no script and
+  does not say it needs one.
 - **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader` and `Section`.
 - **Rows:** `RowGroup`, `Row` and `ClosingAction`.
 - **Controls and fields:** `Button`, `Select`, `Switch`, `TextField`,
@@ -101,6 +104,16 @@ it registers one. The picker and the command search read only registered
 pages, so an unbuilt page is not rendered at all, not even as disabled text, and
 a group with no registered page is left out. A registered address must be a path
 on this server.
+
+### Addresses
+
+Every address a part renders goes through `localHref` in `href.ts`, and a bad
+one throws at render, as a bad nonce does. An address is `/`, or `/` followed
+by a character that is not `/` or `\\`, with no control character anywhere.
+The check exists because a URL parser drops tab, carriage return and line feed,
+so `/\t/evil.example` would otherwise read as a link to another host. `Button`,
+`Tabs` and `Pager` also take a same-page form: an empty string, or a query or
+fragment alone.
 
 ### Untrusted text
 

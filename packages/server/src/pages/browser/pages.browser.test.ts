@@ -534,6 +534,42 @@ describe("keyboard", () => {
   );
 
   inBrowser(
+    "keeps a dialog open, and what was typed, when a drag from inside it ends on the backdrop",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${origin}/fixture`);
+        await page
+          .locator("[data-picker-button]")
+          .waitFor({ state: "visible" });
+        await page.locator('.group [data-dialog-open="confirm"]').click();
+        const field = page.locator("#confirm-note");
+        await field.fill("a note worth keeping");
+        const box = (await field.boundingBox())!;
+        await page.mouse.move(box.x + 20, box.y + 10);
+        await page.mouse.down();
+        await page.mouse.move(4, 4);
+        await page.mouse.up();
+        expect(
+          await page
+            .locator("dialog#confirm")
+            .evaluate((d) => (d as BrowserElement).open),
+        ).toBe(true);
+        expect(await field.inputValue()).toBe("a note worth keeping");
+        // Witness: a press and release that both land on the backdrop still close it.
+        await page.mouse.click(4, 4);
+        expect(
+          await page
+            .locator("dialog#confirm")
+            .evaluate((d) => (d as BrowserElement).open),
+        ).toBe(false);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "filters the command search as you type, moves with the arrow keys, goes on Enter and closes on Escape",
     async () => {
       const { page, context } = await open();
@@ -781,7 +817,7 @@ describe("the witness pages", () => {
           .waitFor();
         expect(
           await page
-            .getByRole("link", { name: "Sign in" })
+            .getByRole("link", { name: "Sign in to Marfa" })
             .getAttribute("href"),
         ).toBe("/auth/sign-in");
         for (const [status, title] of [

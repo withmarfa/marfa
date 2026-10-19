@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
 
 export type ButtonKind =
@@ -32,7 +33,7 @@ export function Button(props: ButtonProps) {
     return (
       <a
         class={className}
-        href={props.href}
+        href={localHref(props.href, { relative: true })}
         aria-label={props.label}
         title={props.kind === "icon-only" ? props.label : undefined}
       >

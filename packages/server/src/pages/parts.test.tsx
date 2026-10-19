@@ -821,3 +821,100 @@ describe("the fixture page", () => {
     expect(out.match(/<h1/g)).toHaveLength(1);
   });
 });
+
+describe("every address a part renders is a path on this server", () => {
+  const bad = [
+    "/\t/evil.com",
+    "//evil.com",
+    "/\\evil.com",
+    "javascript:alert(1)",
+    "https://evil.com/",
+  ];
+
+  it.each(bad)("refuses %j in a button, a row, a tab and the pager", (href) => {
+    expect(() => html(<Button href={href}>x</Button>)).toThrow(/address/i);
+    expect(() => html(<Row title="t" href={href} />)).toThrow(/address/i);
+    expect(() =>
+      html(<Tabs label="k" tabs={[{ label: "a", href, current: true }]} />),
+    ).toThrow(/address/i);
+    expect(() =>
+      html(
+        <Pager pagination={paginate(42, 2)} noun="keys" href={() => href} />,
+      ),
+    ).toThrow(/address/i);
+  });
+
+  it.each(bad)(
+    "refuses %j in the breadcrumb, its picker items and the home link",
+    (href) => {
+      const crumb = (extra: Partial<Parameters<typeof Breadcrumb>[0]>) =>
+        html(
+          <Breadcrumb
+            home={{ label: "Marfa", href: "/" }}
+            trail={[
+              { label: "API keys", href: "/fixture/keys" },
+              { label: "Key" },
+            ]}
+            registry={fixtureRegistry()}
+            pageId="keys"
+            {...extra}
+          />,
+        );
+      expect(() => crumb({ home: { label: "Marfa", href } })).toThrow(
+        /address/i,
+      );
+      expect(() =>
+        crumb({ trail: [{ label: "API keys", href }, { label: "Key" }] }),
+      ).toThrow(/address/i);
+      expect(() => crumb({ items: { keys: [{ title: "k", href }] } })).toThrow(
+        /address/i,
+      );
+      expect(() => crumb({ currentItemHref: href })).not.toThrow();
+    },
+  );
+
+  it("refuses one in the command search's Home", () => {
+    expect(() =>
+      html(
+        <CommandSearch
+          registry={fixtureRegistry()}
+          home={{ href: "//evil.com" }}
+        />,
+      ),
+    ).toThrow(/address/i);
+  });
+
+  it("still takes a good path everywhere, and the same-page forms where a part allows them", () => {
+    expect(html(<Button href="/ok">x</Button>)).toContain('href="/ok"');
+    expect(html(<Button href="">x</Button>)).toContain('href=""');
+    expect(html(<Row title="t" href="/ok" />)).toContain('href="/ok"');
+    expect(
+      html(
+        <Tabs label="k" tabs={[{ label: "a", href: "?k=1", current: true }]} />,
+      ),
+    ).toContain('href="?k=1"');
+  });
+});
+
+describe("the noscript line", () => {
+  const page = (needsScript?: boolean) =>
+    renderDocument(
+      <PageShell title="T" nonce="abc123" needsScript={needsScript} />,
+    );
+
+  it("is on a page that needs the script, and the script is loaded", () => {
+    const out = page(true);
+    expect(out).toContain("<noscript>");
+    expect(out).toContain("<script ");
+  });
+
+  it("is not on a page that works without it, and neither is the script", () => {
+    const out = page(false);
+    expect(out).not.toContain("noscript");
+    expect(out).not.toContain("<script ");
+  });
+
+  it("is on by default, so a page must say it does not need the script", () => {
+    expect(page()).toContain("<noscript>");
+  });
+});

@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
 import type { Pagination } from "../navigation.js";
 
@@ -51,7 +52,7 @@ export function Pager(props: PagerProps) {
         {p.hasPrevious ? (
           <a
             class="btn icon-only"
-            href={props.href(p.page - 1)}
+            href={localHref(props.href(p.page - 1), { relative: true })}
             rel="prev"
             aria-label="Previous page"
             title="Previous page"
@@ -71,7 +72,7 @@ export function Pager(props: PagerProps) {
         {p.hasNext ? (
           <a
             class="btn icon-only"
-            href={props.href(p.page + 1)}
+            href={localHref(props.href(p.page + 1), { relative: true })}
             rel="next"
             aria-label="Next page"
             title="Next page"
@@ -111,7 +112,7 @@ export function Tabs(props: TabsProps) {
       {props.tabs.map((tab) => (
         <a
           class="tab"
-          href={tab.href}
+          href={localHref(tab.href, { relative: true })}
           aria-current={tab.current ? "true" : undefined}
         >
           {tab.label}

@@ -78,9 +78,9 @@ describe("the rendered page", () => {
     expect(html).toContain(
       `<link rel="stylesheet" href="${pageAssetUrl("pages.css")}" nonce="test-nonce"`,
     );
-    expect(html).toContain(
-      `src="${pageAssetUrl("pages.js")}" nonce="test-nonce"`,
-    );
+    // It works without a script, so it loads none and does not say it needs one.
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("noscript");
     expect(html).toContain("<title>That page isn&#39;t here</title>");
     expect(links(html)).toEqual([{ href: "/", text: "Go to Home" }]);
     expect(html).toContain("Error 404");
@@ -191,9 +191,6 @@ describe("content negotiation end to end", () => {
     const html = await res.text();
     expect(html).toContain(
       `href="${pageAssetUrl("pages.css")}" nonce="${nonce!}"`,
-    );
-    expect(html).toContain(
-      `src="${pageAssetUrl("pages.js")}" nonce="${nonce!}"`,
     );
   });
 

@@ -1,3 +1,4 @@
+import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
 import { PAGE_SIZE } from "../navigation.js";
 import type { PageRegistry, RegistryItem } from "../registry.js";
@@ -56,7 +57,7 @@ function PickerPanel(props: {
           <a
             class="menu-item"
             role="menuitem"
-            href={item.href}
+            href={localHref(item.href)}
             aria-current={
               item.href === props.currentItemHref ? "page" : undefined
             }
@@ -97,7 +98,7 @@ export function Breadcrumb(props: BreadcrumbProps) {
       <ol class="crumb-list">
         <li>
           {props.trail.length > 0 ? (
-            <a href={props.home.href}>{props.home.label}</a>
+            <a href={localHref(props.home.href)}>{props.home.label}</a>
           ) : (
             <span class="here" aria-current="page">
               {props.home.label}
@@ -112,7 +113,13 @@ export function Breadcrumb(props: BreadcrumbProps) {
               {crumb.label}
             </span>
           ) : (
-            <a href={crumb.href}>{crumb.label}</a>
+            <a
+              href={
+                crumb.href === undefined ? undefined : localHref(crumb.href)
+              }
+            >
+              {crumb.label}
+            </a>
           );
           return (
             <li class={index === 0 && withMenu ? "crumb-has-menu" : undefined}>

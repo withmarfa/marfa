@@ -115,6 +115,10 @@ describe("register", () => {
       "//evil.example",
       "https://evil.example/",
       "javascript:alert(1)",
+      "/\t/evil.com",
+      "/\n/evil.com",
+      "/\r/evil.com",
+      "/\\evil.com",
     ])
       expect(() => {
         r.register("keys", { href });

@@ -1,3 +1,4 @@
+import { localHref } from "../href.js";
 import type { PageRegistry } from "../registry.js";
 
 export interface CommandSearchProps {
@@ -50,7 +51,7 @@ export function CommandSearch(props: CommandSearchProps) {
   const home: Option = {
     id: "cs-page-home",
     title: "Home",
-    href: props.home.href,
+    href: localHref(props.home.href),
     meta: "",
     haystack: "Home Everything, by section",
   };

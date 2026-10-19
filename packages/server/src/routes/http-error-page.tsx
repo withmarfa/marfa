@@ -99,7 +99,7 @@ export function renderHttpErrorPage(
     </Button>
   );
   return renderDocument(
-    <PageShell title={copy.title} nonce={nonce}>
+    <PageShell title={copy.title} nonce={nonce} needsScript={false}>
       <MomentCard
         title={copy.title}
         lede={copy.lede}

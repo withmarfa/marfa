@@ -8,6 +8,7 @@
  * link: the picker and the search read `groups()` and `search()`, which
  * return built pages only.
  */
+import { localHref } from "./href.js";
 import { matchesQuery, rankMatches } from "./navigation.js";
 
 export interface PageDefinition {
@@ -91,11 +92,6 @@ export interface PageRegistry {
   search(query: string): SearchResult;
 }
 
-/** A path on this server: one slash first, and not the start of another host. */
-function isLocalPath(href: string): boolean {
-  return href.startsWith("/") && !href.startsWith("//") && !href.includes("\\");
-}
-
 export function createPageRegistry(
   definitions: readonly GroupDefinition[],
 ): PageRegistry {
@@ -136,18 +132,11 @@ export function createPageRegistry(
       const entry = known.get(id);
       if (!entry) throw new Error(`Unknown page: ${id}`);
       if (built.has(id)) throw new Error(`Page already registered: ${id}`);
-      if (!isLocalPath(registration.href))
-        throw new Error(
-          `A page's address must be a path on this server: ${id}`,
-        );
+      localHref(registration.href);
       const settings = registration.settings ?? [];
       if (new Set(settings.map((s) => s.id)).size !== settings.length)
         throw new Error(`Duplicate setting id on page ${id}`);
-      for (const setting of settings)
-        if (!isLocalPath(setting.href))
-          throw new Error(
-            `A setting's address must be a path on this server: ${setting.id}`,
-          );
+      for (const setting of settings) localHref(setting.href);
       built.set(id, {
         ...entry.page,
         href: registration.href,

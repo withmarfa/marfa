@@ -1,4 +1,5 @@
 import type { Child } from "hono/jsx";
+import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
 
 interface RowCommon {
@@ -89,7 +90,7 @@ export function Row(props: RowProps) {
 
   if (props.href !== undefined) {
     return (
-      <a class={className} href={props.href} id={props.id}>
+      <a class={className} href={localHref(props.href)} id={props.id}>
         <div class="grow">{text}</div>
         {value}
         {chevron}

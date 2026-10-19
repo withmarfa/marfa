@@ -24,14 +24,14 @@ const TITLE = "You're signed out";
 /** Renders the end-of-logout page as a full HTML document. */
 export function renderSignedOutPage(nonce: string): string {
   return renderDocument(
-    <PageShell title={TITLE} nonce={nonce}>
+    <PageShell title={TITLE} nonce={nonce} needsScript={false}>
       <MomentCard
         title={TITLE}
-        lede="Your session on this device has ended. Sign in again to carry on."
+        lede="Your session on this device has ended. Sign in again from the app you were using."
         ledeRole="status"
       >
-        <Button kind="primary" wide href="/auth/sign-in">
-          Sign in
+        <Button kind="outline" wide href="/auth/sign-in">
+          Sign in to Marfa
         </Button>
       </MomentCard>
     </PageShell>,

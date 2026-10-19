@@ -106,6 +106,9 @@ describe("GET /auth/oauth2/end-session", () => {
     const html = renderSignedOutPage();
     expect(html).toContain("You&#39;re signed out");
     expect(html).toContain("Your session on this device has ended");
+    expect(html).toContain("Sign in again from the app you were using");
+    expect(html).toContain(">Sign in to Marfa</a>");
+    expect(html).not.toContain("noscript");
     expect(html).not.toContain("—");
   });
 });

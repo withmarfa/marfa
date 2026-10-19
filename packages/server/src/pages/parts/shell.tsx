@@ -9,6 +9,12 @@ export interface PageShellProps {
   title: string;
   /** The nonce this response's content security policy names. */
   nonce: string;
+  /**
+   * Whether the page does anything with the script. Defaults to true. A page
+   * that works in full without it sets this to false and then neither loads
+   * the script nor tells a reader it needs one.
+   */
+  needsScript?: boolean;
   children?: Child;
 }
 
@@ -26,6 +32,7 @@ export function PageShell(props: PageShellProps) {
     throw new Error(
       "PageShell needs the nonce the response's content security policy names",
     );
+  const needsScript = props.needsScript ?? true;
   return (
     <html lang="en">
       <head>
@@ -46,13 +53,17 @@ export function PageShell(props: PageShellProps) {
         <a class="skip" href="#main">
           Skip to content
         </a>
-        <noscript>
-          <p class="noscript">
-            This page needs JavaScript. Turn it on to continue.
-          </p>
-        </noscript>
+        {needsScript && (
+          <noscript>
+            <p class="noscript">
+              This page needs JavaScript. Turn it on to continue.
+            </p>
+          </noscript>
+        )}
         {props.children}
-        <script src={pageAssetUrl("pages.js")} nonce={props.nonce} defer />
+        {needsScript && (
+          <script src={pageAssetUrl("pages.js")} nonce={props.nonce} defer />
+        )}
       </body>
     </html>
   );
