@@ -1,4 +1,4 @@
-import type { BlobStore } from "../storage/blob-store.js";
+import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
@@ -77,13 +77,18 @@ export class BlobReplicator {
             this.copy(blob.hash, target),
           );
         } catch (err) {
-          if (!(err instanceof StoreUnreachable)) throw err;
+          const unreachable =
+            err instanceof StoreUnreachable ||
+            err instanceof BlobStoreUnreachable;
+          if (!unreachable) throw err;
           // A store that cannot be reached fails every copy into it, so the
           // run moves on to the next store rather than ending.
           log("error", "blob.replicate_failed", {
             hash: blob.hash,
             to: target.id,
-            error: errorMessage(err.cause),
+            error: errorMessage(
+              err instanceof StoreUnreachable ? err.cause : err,
+            ),
           });
           break;
         }
@@ -107,7 +112,7 @@ export class BlobReplicator {
    *  and a source still has it. Answers whether the copy landed. */
   private async copy(hash: string, target: BlobStore): Promise<boolean> {
     if (!(await this.storage.blobs.get(hash))) return false;
-    await reaching(() => finishCopyDeletion(this.storage, target, hash));
+    await finishCopyDeletion(this.storage, target, hash);
     const present = (await reaching(() => target.has(hash))) !== null;
     const source = await this.sourceFor(hash, target.id);
     if (!source) return false;
