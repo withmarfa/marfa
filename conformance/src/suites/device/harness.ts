@@ -43,9 +43,9 @@ import {
 /**
  * A device and the server it talks to, both under the fixture's control.
  *
- * The device is the `marfa` binary. There is no second implementation here
- * and there is not meant to be: a fixture that agreed with a reference device
- * would be two of this suite's own opinions agreeing with each other.
+ * Fixtures drive the engine through the `marfa` binary or the Node binding.
+ * A separate reference implementation would only compare two implementations
+ * owned by this suite.
  */
 
 export const KEY = "device-fixture-key";
@@ -223,6 +223,11 @@ export async function startHarness(label: string): Promise<Harness> {
 export interface BindingHarness {
   server: ScriptedServer;
   device: BindingDevice;
+  /**
+   * Another binding, in a process of its own, that opens the same store to
+   * read it only. It is closed with the harness.
+   */
+  reader: () => Promise<BindingDevice>;
   stop: () => Promise<void>;
 }
 
@@ -233,22 +238,33 @@ export interface BindingHarness {
  */
 export async function startBindingHarness(
   label: string,
+  options: { server?: boolean } = {},
 ): Promise<BindingHarness> {
   const module = requireModule();
   const server = await ScriptedServer.start();
+  const readers: BindingDevice[] = [];
   const device = await BindingDevice.start({
     module,
     store: newStore(label),
-    url: server.url,
-    key: KEY,
+    ...(options.server === false ? {} : { url: server.url, key: KEY }),
   });
   return {
     server,
     device,
+    reader: async () => {
+      const reading = await BindingDevice.start({
+        module,
+        store: device.store,
+        reader: true,
+      });
+      readers.push(reading);
+      return reading;
+    },
     stop: async () => {
       const unscripted = [...server.unmatchedRequests];
       // The device first: it may hold a stream or a request the server would
       // otherwise wait on.
+      await Promise.all(readers.map((reading) => reading.close()));
       await device.close();
       await server.stop();
       if (unscripted.length > 0) {

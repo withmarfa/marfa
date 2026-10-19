@@ -79,12 +79,26 @@ export interface BindingQueuedWrite {
   dependsOn: string[];
   follows?: string;
   /** Absent while the server has not answered it. */
-  verdict?: string;
+  verdict?: { verdict: string; reason?: string; [field: string]: unknown };
   /** Held behind a write that has no answer yet. */
   waiting: boolean;
   body: Record<string, unknown>;
   answer?: string;
   refusals: number;
+}
+
+export interface BindingItemType {
+  id: string;
+  label?: string;
+  parent?: string;
+  version: number;
+  fields: Array<{ name: string; type: string; declaredBy: string }>;
+}
+
+export interface BindingEdgeType {
+  id: string;
+  label?: string;
+  cardinality: string;
 }
 
 export interface BindingStatus {
@@ -143,8 +157,33 @@ export interface BindingDeviceOptions {
   /** The built Node module; a debug build where a fixture holds or moves the clock. */
   module: string;
   store: string;
+  /** Without a server, only local reads and writes work. */
   url?: string;
   key?: string;
+  /** Opens the store another process writes, to read it only. */
+  reader?: boolean;
+}
+
+/** What a listener a fixture adds does besides record what it is told. */
+export interface ListenerOptions {
+  /** Says the listener was last told `serverUnreachable`. */
+  toldUnreachable?: boolean;
+  /** Takes this many milliseconds to return from each change. */
+  slowMs?: number;
+  /** Throws from the change it is told with this number, counting from 0. */
+  throwAt?: number;
+  /** Opens this store as a writer would the moment it is told it ended. */
+  openOnEnd?: { path: string; url?: string; key?: string };
+}
+
+/**
+ * The result of opening a store. If another handle holds the writer's role,
+ * the new handle opens as a reader.
+ */
+export interface OpenAttempt {
+  opened: boolean;
+  handle?: "writer" | "reader";
+  error?: BindingError;
 }
 
 /** The handle the host opens the fixture's working copy as. */
@@ -205,8 +244,14 @@ export class StopHandle {
  */
 export class Subscription {
   readonly changes: BindingChange[] = [];
+  /** What it was told after it had been told it ended. */
+  readonly afterEnd: BindingChange[] = [];
   /** How it ended: null where it was stopped, else the error. */
   readonly ended: Promise<BindingError | null>;
+  /** How many times it was told it ended. */
+  endings = 0;
+  /** What came of opening the store as it was told it ended, where asked. */
+  openedOnEnd: OpenAttempt | undefined;
   private resolveEnded: (error: BindingError | null) => void = () => {};
   private over = false;
 
@@ -233,11 +278,13 @@ export class Subscription {
 
   /** @internal */
   told(change: BindingChange): void {
-    this.changes.push(change);
+    (this.over ? this.afterEnd : this.changes).push(change);
   }
 
   /** @internal */
-  end(error: BindingError | null): void {
+  end(error: BindingError | null, opened?: OpenAttempt): void {
+    this.endings += 1;
+    this.openedOnEnd ??= opened;
     this.resolveEnded(error);
   }
 
@@ -257,7 +304,12 @@ type Reply =
 type FromHost =
   | Reply
   | { event: "change"; name: string; change: BindingChange }
-  | { event: "end"; name: string; error: BindingError | null };
+  | {
+      event: "end";
+      name: string;
+      error: BindingError | null;
+      opened?: OpenAttempt;
+    };
 
 const CLOSE_WAIT_MS = 5_000;
 
@@ -293,7 +345,12 @@ export class BindingDevice {
         }
         this.pending.clear();
         for (const subscription of this.subscriptions.values()) {
-          subscription.end({ message: this.gone.message, code: "host_ended" });
+          if (!subscription.isOver) {
+            subscription.end({
+              message: this.gone.message,
+              code: "host_ended",
+            });
+          }
         }
         this.subscriptions.clear();
         resolve();
@@ -305,7 +362,8 @@ export class BindingDevice {
   static async start(options: BindingDeviceOptions): Promise<BindingDevice> {
     const child = fork(HOST, [], {
       env: { ...process.env, MARFA_DEVICE_MODULE: options.module },
-      execArgv: [],
+      // Collection is how a fixture lets go of a core the binding holds.
+      execArgv: ["--expose-gc"],
       stdio: ["ignore", "inherit", "pipe", "ipc"],
     });
     const device = new BindingDevice(child, options.store);
@@ -315,6 +373,7 @@ export class BindingDevice {
       path: options.store,
       url: options.url,
       key: options.key,
+      reader: options.reader,
     });
     if (!opened.ok) {
       await device.close();
@@ -334,10 +393,7 @@ export class BindingDevice {
     if ("event" in message) {
       const subscription = this.subscriptions.get(message.name);
       if (message.event === "change") subscription?.told(message.change);
-      else {
-        this.subscriptions.delete(message.name);
-        subscription?.end(message.error);
-      }
+      else subscription?.end(message.error, message.opened);
       return;
     }
     const waiting = this.pending.get(message.id);
@@ -385,10 +441,10 @@ export class BindingDevice {
     return new StopHandle(this, name);
   }
 
-  private async subscribe(
+  private async start(
     kind: "follow" | "watch",
-    options: { toldUnreachable?: boolean },
-  ): Promise<Subscription> {
+    options: ListenerOptions,
+  ): Promise<Outcome<Subscription>> {
     const name = `${kind}-${String(this.numbered++)}`;
     const subscription = new Subscription(this, name);
     this.subscriptions.set(name, subscription);
@@ -397,15 +453,26 @@ export class BindingDevice {
       handle: MAIN,
       name,
       kind,
-      toldUnreachable: options.toldUnreachable,
+      ...options,
     });
     if (!started.ok) {
       this.subscriptions.delete(name);
+      return { ok: false, refusal: refusalOf(started.error) };
+    }
+    return { ok: true, value: subscription };
+  }
+
+  private async subscribe(
+    kind: "follow" | "watch",
+    options: ListenerOptions,
+  ): Promise<Subscription> {
+    const started = await this.start(kind, options);
+    if (!started.ok) {
       throw new Error(
-        `${kind} did not start: ${JSON.stringify(started.error)}`,
+        `${kind} did not start: ${JSON.stringify(started.refusal)}`,
       );
     }
-    return subscription;
+    return started.value;
   }
 
   /**
@@ -418,8 +485,33 @@ export class BindingDevice {
   }
 
   /** Adds a listener to the store's watch. */
-  watch(options: { toldUnreachable?: boolean } = {}): Promise<Subscription> {
+  watch(options: ListenerOptions = {}): Promise<Subscription> {
     return this.subscribe("watch", options);
+  }
+
+  /** Adds a listener to the store's watch, or answers why it could not. */
+  tryWatch(options: ListenerOptions = {}): Promise<Outcome<Subscription>> {
+    return this.start("watch", options);
+  }
+
+  /**
+   * Lets go of the core the binding opened, so that the only hold on the
+   * store left is what the engine itself keeps: a watch with listeners.
+   */
+  async forget(): Promise<void> {
+    await this.request({ op: "forget", handle: MAIN });
+  }
+
+  /** Opens the store as a writer would, and says the role it was given. */
+  async tryOpen(url?: string, key?: string): Promise<OpenAttempt> {
+    const reply = await this.request({
+      op: "try-open",
+      path: this.store,
+      url,
+      key,
+    });
+    if (!reply.ok) throw new Error(JSON.stringify(reply.error));
+    return reply.value as OpenAttempt;
   }
 
   hydrate(
@@ -461,12 +553,36 @@ export class BindingDevice {
     return this.call("get", id);
   }
 
+  /** A number that moves each time another process saves to the store. */
+  dataVersion(): Call<number> {
+    return this.call("dataVersion");
+  }
+
+  itemTypes(): Call<BindingItemType[]> {
+    return this.call("itemTypes");
+  }
+
+  edgeTypes(): Call<BindingEdgeType[]> {
+    return this.call("edgeTypes");
+  }
+
+  updateItem(
+    id: string,
+    edit: { properties: Record<string, unknown>; baseVersion?: number },
+  ): Call<BindingQueuedWrite> {
+    return this.call("updateItem", id, edit);
+  }
+
   pin(id: string): Call<{ pinned: boolean; wasPinned: boolean }> {
     return this.call("pin", id);
   }
 
   createItem(draft: BindingDraft): Call<BindingQueuedWrite> {
     return this.call("createItem", draft);
+  }
+
+  deleteItem(id: string): Call<BindingQueuedWrite> {
+    return this.call("deleteItem", id);
   }
 
   release(id: string): Call<boolean> {
@@ -490,6 +606,13 @@ export class BindingDevice {
     hold: async (point: string): Promise<void> => {
       this.armed.add(point);
       await this.control("hook", "hold", point);
+    },
+    /**
+     * Makes the engine fail where it reaches `point`, until `fail(point,
+     * false)`. Only the points the engine names can fail.
+     */
+    fail: async (point: string, on = true): Promise<void> => {
+      await this.control("hook", "fail", point, on);
     },
     /** Lets go of what waits at `point`, and stops holding it. */
     release: async (point: string): Promise<void> => {
@@ -522,10 +645,11 @@ export class BindingDevice {
     op: "hook" | "clock",
     name: string,
     argument?: unknown,
+    second?: unknown,
   ): Promise<unknown> {
     const reply = await this.request(
       op === "hook"
-        ? { op, name, point: argument }
+        ? { op, name, point: argument, arg: second }
         : { op, name, arg: argument },
     );
     if (!reply.ok) {

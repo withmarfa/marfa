@@ -831,6 +831,9 @@ impl Core {
 
     /// Moves each time another process saves to this store.
     pub fn data_version(&self) -> Result<i64> {
+        if fault::fails("data-version") {
+            return Err(CoreError::Store("the data version cannot be read".into()));
+        }
         store::data_version(&*self.conn()?)
     }
 
@@ -1197,6 +1200,7 @@ impl Core {
                     return Ok(poisoned.into_inner());
                 }
                 Err(std::sync::TryLockError::WouldBlock) => {
+                    fault::hold("drain-waiting");
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }

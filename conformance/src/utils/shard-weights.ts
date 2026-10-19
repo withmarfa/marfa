@@ -35,6 +35,7 @@ export const SHARD_SECONDS: Readonly<Record<string, number>> = {
   "src/suites/compliance/webhook-owner-standing.test.ts": 20,
   "src/suites/compliance/webhooks.test.ts": 65,
   "src/suites/compliance/write-faults.test.ts": 20,
+  "src/suites/device/binding-watch.test.ts": 20,
   "src/suites/device/catch-up.test.ts": 65,
   "src/suites/device/classification.test.ts": 40,
   "src/suites/device/contract.test.ts": 25,

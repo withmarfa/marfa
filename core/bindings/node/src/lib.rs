@@ -2503,6 +2503,13 @@ pub mod test_controls {
         marfa_core::fault::arm(&point);
     }
 
+    /// Makes the engine fail at `point` each time it reaches it, until
+    /// `fail` is called with false. Only the points the engine names fail.
+    #[napi(namespace = "testHooks")]
+    pub fn fail(point: String, on: Option<bool>) {
+        marfa_core::fault::set_failing(&point, on.unwrap_or(true));
+    }
+
     /// Lets go of what waits at `point`, and stops holding it.
     #[napi(namespace = "testHooks")]
     pub fn release(point: String) {

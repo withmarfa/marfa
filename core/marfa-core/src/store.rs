@@ -1891,6 +1891,7 @@ fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
 pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool, CoreError> {
     catalog_scope(conn, |conn| {
         let types = replace_types(conn, &catalog.types)?;
+        crate::fault::hold("catalog-replacing");
         let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
         // A server's catalog replaces the copy's own, which is a change
         // whether or not the rows differ.

@@ -2186,19 +2186,19 @@ While a working copy has listeners watching it, a device MUST hold one stream fo
 
 **Reason:** a stream for each listener would move the one cursor once for each, and ask the server for as many streams.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › holds one stream for every listener, and tells each of them each change in the order the stream carried it`.
 
 ### `device/watch-from-join`
 
 When a listener joins a watch, a device MUST tell it each change made after it joined and none made before.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener each change made after it joined and none made before`.
 
 ### `device/watch-join-outage`
 
 When a listener joins a watch while the server is unreachable, a device MUST tell it `server.unreachable`, with why, before any later change.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener that joins while the server is unreachable so, with why, before any later change`.
 
 ### `device/watch-join-reachable`
 
@@ -2206,13 +2206,13 @@ When a listener joins a watch whose stream is held, and its caller says it was l
 
 **Reason:** a caller that restarts its watch around a new key would leave its listener showing an outage that is over.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener that joins a held stream, and says it was last told the server was unreachable, that the server is reachable`.
 
 ### `device/watch-join-failed`
 
 When a listener joins a watch that failed, a device MUST tell it `watch.failed`, with the error, before any later change.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener that joins a watch that failed so, with the error, before any later change`.
 
 ### `device/watch-reach-once`
 
@@ -2232,13 +2232,13 @@ If a watch's stream ends on the server's own answer while a listener was last to
 
 When a hydration or a catch-up succeeds on a working copy whose watch has a listener last told `server.unreachable`, a device MUST tell that listener `server.reachable`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › tells a listener that was last told the server was unreachable that it is reachable when %s succeeds`.
 
 ### `device/watch-drain-clears`
 
 When a drain a caller started answers a write on a working copy whose watch has a listener last told `server.unreachable`, a device MUST tell that listener `server.reachable`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › tells a listener that was last told the server was unreachable that it is reachable when a drain answers a write, and not when it answers none`.
 
 ### `device/watch-failed-told`
 
@@ -2250,7 +2250,7 @@ If a watch's stream ends on an error, then a device MUST tell each listener `wat
 
 While a watch has failed, a device MUST NOT hold a stream for it until a hydration or a catch-up has ended.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › holds no stream for a failed watch until a catch-up has ended, and holds one then`.
 
 ### `device/command-watch-failed`
 
@@ -2266,19 +2266,19 @@ When a hydration or a catch-up is called on a working copy that has a watch, a d
 
 **Reason:** an app that had to stop its watch around each hydration would carry the state machine that does so.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › takes the stream from the watch for %s without its caller stopping the watch, and holds it again from the cursor the call left`.
 
 ### `device/watch-takeover-listeners`
 
 While a hydration or a catch-up holds the stream of a watch, a device MUST NOT end a listener of the watch.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › takes the stream from the watch for %s without its caller stopping the watch, and holds it again from the cursor the call left`.
 
 ### `device/watch-takeover-returns`
 
 When a hydration or a catch-up that took the stream from a watch ends, however it ends, a device MUST hold the watch's stream again from the cursor the call left.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch-calls.test.ts › takes the stream from the watch for %s without its caller stopping the watch, and holds it again from the cursor the call left`, `device/binding-watch-calls.test.ts › holds the stream of the watch again from the cursor the call left where a catch-up ends on %s`.
 
 ### `device/watch-no-reentry`
 
@@ -2336,7 +2336,7 @@ While a store is opened to read, when a caller runs `device watch` before a firs
 
 If a watch of a store opened to read cannot read the store's data version, then a device MUST tell each listener `watch.failed` once.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells every listener once that the watch failed where it cannot read the store's data version`.
 
 ### `device/watch-reads-mended`
 
@@ -2344,19 +2344,19 @@ When a watch of a store opened to read reads the data version after a read faile
 
 **Reason:** a save may have been made while reads failed.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells every listener a save when the watch reads the data version again after a read failed, though no save was made`.
 
 ### `device/watch-listener-ends`
 
 When a listener stops watching, a device MUST tell it that it ended, once.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener it ended once when it stops, and nothing after, while the others go on`.
 
 ### `device/watch-ended-last`
 
 While a listener has been told that it ended, a device MUST NOT tell it a change.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells a listener it ended once when it stops, and nothing after, while the others go on`.
 
 ### `device/watch-store-released`
 
@@ -2364,31 +2364,31 @@ When a device tells the last listener of a watch that it ended, a device MUST ha
 
 **Reason:** a caller that opens the store again on being told must find the writer's role free.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › lets go of the working copy's store before it tells the last listener of a watch that it ended`.
 
 ### `device/watch-slow-listener`
 
 While a listener takes long to return from a change, a device MUST tell every listener every change, in order, losing none.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › tells every listener every change in order, losing none, while one of them takes long to return from each`.
 
 ### `device/watch-faulting-listener`
 
 If a listener faults while a device tells it a change, then a device MUST end that listener with the fault.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › ends a listener that faults with the fault, and tells every other listener the change it faulted on`.
 
 ### `device/watch-fault-contained`
 
 If a listener faults while a device tells it a change, then a device MUST tell every other listener that change.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › ends a listener that faults with the fault, and tells every other listener the change it faulted on`.
 
 ### `device/watch-no-server`
 
 If a caller watches a working copy that has no server and was not opened to read, then a device MUST refuse it `no_server`.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-watch.test.ts › refuses a watch of it no_server`.
 
 ## A store opened to read
 
@@ -2588,7 +2588,7 @@ A device MUST answer an edge type as `GET /edge-types` lists it (`edges/types-li
 
 When a device reads the catalog while a refresh replaces it, a device MUST answer from one catalog, wholly before or wholly after the refresh.
 
-**Tests:** waiting on #1890.
+**Tests:** `device/binding-catalog.test.ts › answers from the catalog before the refresh while it is held inside its transaction, and from the catalog after it once it ends, never from a mixture`.
 
 ### `device/catalog-replace-whole`
 
