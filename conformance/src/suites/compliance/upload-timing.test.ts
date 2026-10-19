@@ -25,9 +25,10 @@ import { waitFor } from "../../utils/wait.js";
  * for longer than its fixed request deadline, 30 seconds, without waiting for
  * the public listener's 300.
  *
- * Node checks its request deadline every 30 seconds, so a request that the
- * old limit would cut is cut at the second check, which is a minute in. The
- * long case therefore runs for 66 seconds, a part every 2 seconds.
+ * A server that keeps a 30-second request deadline checked every 30 seconds,
+ * as Node's own is, cuts the body at the second check, a minute in. The long
+ * case therefore runs for 66 seconds, a part every 2 seconds, so a server
+ * that still cuts it fails here.
  *
  * The server is booted with an idle limit of 3 seconds, so each part comes
  * well inside it and a stall is ended quickly.

@@ -1914,7 +1914,7 @@ If the owner's browser session signed in more than five minutes before a `POST /
 
 If the owner's browser session signed in within five minutes before a `POST /restore` started, then the server MUST NOT refuse the request because more than five minutes have passed since the sign-in when the body finishes arriving.
 
-**Reason:** the sign-in is judged once, when the request starts, and again at the same moment when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
+**Reason:** the sign-in is judged at the moment the request starts, both before the body is read and when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
 
 **Tests:** `compliance/restore-upload-sign-in.test.ts › restores an archive from an owner who signed in four minutes before the request started and whose body finished arriving two minutes later`.
 
