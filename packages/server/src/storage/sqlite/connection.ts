@@ -1,4 +1,5 @@
 import { ReadLifetime, ReadSnapshotUnavailable } from "./read-lifetime.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   advanceStructuralGeneration,
   loadStructuralGeneration,
@@ -267,6 +268,13 @@ const BUSY_BUDGET_MS = 5_000;
  */
 let busyBudgetMs = BUSY_BUDGET_MS;
 
+const writeWaitBudget = new AsyncLocalStorage<number>();
+
+/** Observational writes yield to a busy writer instead of joining its wait. */
+export function withoutWriteWait<T>(work: () => T): T {
+  return writeWaitBudget.run(0, work);
+}
+
 export function setBusyBudgetMs(ms: number | undefined): void {
   // `undefined` leaves the default standing rather than overwriting it
   // with a second copy of the same number, so `BUSY_BUDGET_MS` above is
@@ -325,12 +333,12 @@ function contention(budgetMs: number): MarfaError {
 
 /** The refusal a write that never got the lock is answered with, as one whose retries ran out. */
 export function lockNotFree(): MarfaError {
-  return contention(busyBudgetMs);
+  return contention(writeWaitBudget.getStore() ?? busyBudgetMs);
 }
 
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
-  budgetMs = busyBudgetMs,
+  budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs,
 ): Promise<T> {
   const deadline = clock.monotonicMs() + budgetMs;
   let wait = BUSY_RETRY_MIN_MS;
@@ -511,7 +519,7 @@ function transactionConnections(
   const idle: Client[] = [];
   let shut = false;
   const awaitTurn = async (turn: Promise<void>): Promise<void> => {
-    const budgetMs = busyBudgetMs;
+    const budgetMs = writeWaitBudget.getStore() ?? busyBudgetMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([

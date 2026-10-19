@@ -831,7 +831,7 @@ export const KEY_FIELD_TEXT = {
   expires_at:
     "When the key stops working, in UTC, or `null` if it doesn't expire.",
   last_used_at:
-    "When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour.",
+    "When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record.",
 } as const;
 
 /** An API key as the create route answers it. */

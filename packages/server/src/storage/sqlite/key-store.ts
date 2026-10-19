@@ -338,12 +338,14 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   /**
-   * Debounced in the database rather than in the caller: the conditional
-   * WHERE is what makes this safe to call unconditionally from the auth
-   * middleware, from any number of processes, without a write storm.
+   * The conditional UPDATE coalesces usage from independent processes. A queued
+   * stamp carries the observed use time, so it cannot advance a newer stamp.
    */
-  async updateLastUsed(id: string): Promise<void> {
-    const now = clock.now();
+  async updateLastUsed(
+    id: string,
+    usedAt = clock.now().toISOString(),
+  ): Promise<void> {
+    const now = new Date(usedAt);
     const cutoff = new Date(
       now.getTime() - LAST_USED_DEBOUNCE_MS,
     ).toISOString();

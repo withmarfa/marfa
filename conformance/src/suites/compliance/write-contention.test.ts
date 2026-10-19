@@ -256,80 +256,68 @@ describe("contention on the write lock", () => {
     expect(served.ok, JSON.stringify(served.error)).toBe(true);
   }, 120_000);
 
-  it("refuses a read too, because the credential gate stamps a key's first use", async () => {
-    // Every credentialed door can meet the lock: the gate records when a
-    // key was last used, once per key per hour, before the handler runs.
-    // A key minted here has never been used, so its first read writes.
-    const minted = await fetch(`${impatient!.apiUrl}/keys`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${impatient!.workingKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ label: "first-use", source: "first-use" }),
-    });
-    expect(minted.status).toBe(201);
-    const { id, key, last_used_at } = (await minted.json()) as {
-      id: string;
-      key: string;
-      last_used_at: string | null;
-    };
-    expect(last_used_at).toBeNull();
-
-    const read = () =>
-      fetch(`${impatient!.apiUrl}/items`, {
-        headers: { Authorization: `Bearer ${key}` },
+  it.each(["impatient", "patient"] as const)(
+    "serves cold and warm key reads promptly while another writer is held (%s)",
+    async (mode) => {
+      const server = mode === "impatient" ? impatient! : patient!;
+      const operator = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: server.managementKey,
       });
-    const operator = new MarfaClient({
-      baseUrl: impatient!.apiUrl,
-      apiKey: impatient!.managementKey,
-    });
-    const readStamp = async () => {
-      const listed = await operator.listKeys();
-      expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
-      const found = listed.data.data.find((row) => row.id === id);
-      expect(found).toBeDefined();
-      return found!.last_used_at;
-    };
-    // Prime the observer's own credential stamp before holding the writer.
-    expect(await readStamp()).toBeNull();
-
-    const lock = await HeldLock.take(impatient!.sqlitePath);
-    try {
-      await expectWriteLocked(impatient!.sqlitePath);
-      for (let attempt = 1; attempt <= 2; attempt++) {
-        const refused = await read();
-        expect(refused.status, `read attempt ${String(attempt)}`).toBe(503);
-        const body = (await refused.json()) as { error?: { code?: string } };
-        expect(body.error?.code).toBe("write_contention");
+      const minted = await clientFor(server).createKey({
+        label: "first-use",
+        source: "first-use",
+        type_permissions: { "*": "read" },
+      });
+      expect(minted.status).toBe(201);
+      expect(minted.data.last_used_at).toBeNull();
+      const read = async () => {
+        const response = await fetch(`${server.apiUrl}/items`, {
+          headers: { Authorization: `Bearer ${minted.data.key}` },
+          signal: AbortSignal.timeout(1000),
+        });
+        await response.body?.cancel();
+        return response.status;
+      };
+      const readStamp = async () => {
+        const listed = await operator.listKeys();
+        expect(listed.status).toBe(200);
+        return listed.data.data.find((row) => row.id === minted.data.id)!
+          .last_used_at;
+      };
+      expect(await readStamp()).toBeNull();
+      const lock = await HeldLock.take(server.sqlitePath);
+      try {
+        await expectWriteLocked(server.sqlitePath);
+        expect(await read()).toBe(200);
+        expect(await read()).toBe(200);
         expect(await readStamp()).toBeNull();
+        await expectWriteLocked(server.sqlitePath);
+      } finally {
+        await lock.release();
       }
-      await expectWriteLocked(impatient!.sqlitePath);
-    } finally {
-      await lock.release();
-    }
-
-    await witnessWriteAdmission(impatient!.sqlitePath);
-    const served = await read();
-    expect(served.status).toBe(200);
-    await served.json();
-    const stamp = await readStamp();
-    expect(stamp).toEqual(expect.any(String));
-
-    // Only a completed stamp skips the next write. Holding the lock again
-    // makes that skip observable rather than relying on equal timestamps.
-    const heldAgain = await HeldLock.take(impatient!.sqlitePath);
-    try {
-      await expectWriteLocked(impatient!.sqlitePath);
-      const debounced = await read();
-      expect(debounced.status).toBe(200);
-      await debounced.json();
-      expect(await readStamp()).toBe(stamp);
-      await expectWriteLocked(impatient!.sqlitePath);
-    } finally {
-      await heldAgain.release();
-    }
-  }, 120_000);
+      // A fresh use retries a dropped stamp after the failure throttle.
+      await expect
+        .poll(
+          async () => {
+            expect(await read()).toBe(200);
+            return readStamp();
+          },
+          { timeout: 10_000 },
+        )
+        .toEqual(expect.any(String));
+      const stamp = await readStamp();
+      const heldAgain = await HeldLock.take(server.sqlitePath);
+      try {
+        expect(await read()).toBe(200);
+        expect(await readStamp()).toBe(stamp);
+        await expectWriteLocked(server.sqlitePath);
+      } finally {
+        await heldAgain.release();
+      }
+    },
+    120_000,
+  );
 
   it("refuses a client registration, which the sign-in library writes", async () => {
     // The registration door is the sign-in library's own, answered by its
@@ -544,3 +532,43 @@ describe("contention on the write lock", () => {
     expect(await exportRuns()).toBe(before + 1);
   }, 120_000);
 });
+
+it("serves a session read without waiting for renewal and keeps its durable idle expiry", async () => {
+  const server = await bootFreshServer("session-use-contention", {
+    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+  });
+  const read = () =>
+    fetch(`${server.apiUrl}/owner/sign-ins`, {
+      headers: { cookie: server.ownerCookie },
+      signal: AbortSignal.timeout(1000),
+    });
+  type SignIn = { current: boolean; last_used_at: string; expires_at: string };
+  const current = async (response: Response) => {
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { data: SignIn[] }).data.find(
+      (row) => row.current,
+    )!;
+  };
+  const before = await current(await read());
+  await server.advanceClock(61_000);
+  const lock = await HeldLock.take(server.sqlitePath);
+  try {
+    const response = await read();
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await current(response)).toEqual(before);
+    await expectWriteLocked(server.sqlitePath);
+  } finally {
+    await lock.release();
+  }
+  const renewed = await current(await read());
+  expect(Date.parse(renewed.last_used_at)).toBeGreaterThan(
+    Date.parse(before.last_used_at),
+  );
+  expect(
+    Date.parse(renewed.expires_at) - Date.parse(renewed.last_used_at),
+  ).toBe((7 * 86400 + 60) * 1000);
+  await server.advanceClock((7 * 86400 + 120) * 1000);
+  const expired = await read();
+  expect(expired.status).toBe(401);
+  await expired.body?.cancel();
+}, 120_000);

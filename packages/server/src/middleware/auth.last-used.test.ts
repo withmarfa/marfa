@@ -1,3 +1,13 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import {
+  withRequestAuthority,
+  validateRequestAuthority,
+} from "../auth/request-authority.js";
+import {
+  TransactionControl,
+  transactionControl,
+} from "../storage/sqlite/transaction-control.js";
+import { drainKeyUsage } from "../storage/key-usage.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +95,7 @@ function credentialApp(
     });
   return {
     storage,
+    drain: () => drainKeyUsage(storage),
     validate,
     accepted,
     request,
@@ -115,21 +126,28 @@ describe("in-process last-used windows", () => {
   it("stamps an API key at monotonic zero and waits until after the elapsed boundary", async () => {
     const c = credentialApp();
     expect((await c.request()).status).toBe(200);
-    expect(c.updateLastUsed).toHaveBeenCalledExactlyOnceWith("key");
+    await c.drain();
+    expect(c.updateLastUsed).toHaveBeenCalledExactlyOnceWith(
+      "key",
+      new Date(wall).toISOString(),
+    );
     wall += WINDOW * 100;
     elapsed = WINDOW - 1;
     await c.request();
+    await c.drain();
     expect(c.updateLastUsed).toHaveBeenCalledTimes(1);
     elapsed = WINDOW;
     await c.request();
+    await c.drain();
     expect(c.updateLastUsed).toHaveBeenCalledTimes(1);
     elapsed += 1;
     await c.request();
+    await c.drain();
     expect(c.updateLastUsed).toHaveBeenCalledTimes(2);
   });
 
   it.each(["success", "failure"] as const)(
-    "makes all pending API-key callers await the same %s before answering",
+    "answers every API-key caller before the shared usage write's %s",
     async (outcome) => {
       const pending = deferred();
       const update = vi
@@ -137,60 +155,112 @@ describe("in-process last-used windows", () => {
         .mockReturnValueOnce(pending.promise)
         .mockResolvedValue(undefined);
       const c = credentialApp(update);
-      const first = c.request();
-      await vi.waitFor(() => {
+      try {
+        expect((await c.request()).status).toBe(200);
+        await vi.waitFor(() => {
+          expect(update).toHaveBeenCalledTimes(1);
+        });
+        expect((await c.request()).status).toBe(200);
+        expect(c.accepted).toHaveBeenCalledTimes(2);
         expect(update).toHaveBeenCalledTimes(1);
-      });
-      const second = c.request();
-      await vi.waitFor(() => {
-        expect(c.validate).toHaveBeenCalledTimes(2);
-      });
-      const earlyAnswers = c.accepted.mock.calls.length;
-      if (outcome === "success") pending.resolve();
-      else pending.reject(new Error("unavailable"));
-      const responses = await Promise.all([first, second]);
-      expect(earlyAnswers).toBe(0);
-      expect(responses.map((response) => response.status)).toEqual(
-        outcome === "success" ? [200, 200] : [500, 500],
-      );
-      expect(update).toHaveBeenCalledTimes(1);
+      } finally {
+        if (outcome === "success") pending.resolve();
+        else pending.reject(new Error("unavailable"));
+        await c.drain();
+      }
       expect((await c.request()).status).toBe(200);
+      await c.drain();
+      expect(update).toHaveBeenCalledTimes(1);
+      elapsed = 1001;
+      expect((await c.request()).status).toBe(200);
+      await c.drain();
       expect(update).toHaveBeenCalledTimes(outcome === "success" ? 1 : 2);
-      expect(c.accepted).toHaveBeenCalledTimes(outcome === "success" ? 3 : 1);
     },
   );
 
-  it("shares an expired pending API-key stamp while other keys continue independently", async () => {
+  it("bounds queued usage across keys while all requests continue", async () => {
     const pending = deferred();
     const update = vi
       .fn<Storage["keys"]["updateLastUsed"]>()
       .mockReturnValueOnce(pending.promise)
       .mockResolvedValue(undefined);
     const c = credentialApp(update);
-    const originalKey = (await c.validate("hash"))!;
-    c.validate.mockClear();
-    const first = c.request();
-    await vi.waitFor(() => {
+    const original = (await c.validate("hash"))!;
+    try {
+      expect((await c.request()).status).toBe(200);
+      await vi.waitFor(() => {
+        expect(update).toHaveBeenCalledTimes(1);
+      });
+      for (let i = 1; i <= 130; i++) {
+        c.validate.mockResolvedValue({ ...original, id: `key-${String(i)}` });
+        expect((await c.request()).status).toBe(200);
+      }
       expect(update).toHaveBeenCalledTimes(1);
-    });
-    elapsed = WINDOW + 1;
-    const second = c.request();
-    await vi.waitFor(() => {
-      expect(c.validate).toHaveBeenCalledTimes(2);
-    });
-    c.validate.mockResolvedValue({ ...originalKey, id: "other-key" });
-    const other = await c.request("marfa_k1_other");
-    const earlyAnswers = c.accepted.mock.calls.length;
-    const pendingCalls = update.mock.calls.map((args) => args[0]);
-    pending.resolve();
-    const responses = await Promise.all([first, second]);
-    expect(other.status).toBe(200);
-    expect(earlyAnswers).toBe(1);
-    expect(pendingCalls).toEqual(["key", "other-key"]);
-    expect(responses.map((response) => response.status)).toEqual([200, 200]);
-    c.validate.mockResolvedValue(originalKey);
+    } finally {
+      pending.resolve();
+      await c.drain();
+    }
+    expect(update).toHaveBeenCalledTimes(128);
     expect((await c.request()).status).toBe(200);
-    expect(update).toHaveBeenCalledTimes(3);
+    await c.drain();
+    expect(update).toHaveBeenCalledTimes(129);
+    expect(update.mock.calls.at(-1)?.[0]).toBe("key-130");
+  });
+
+  it("does not share a usage cache between stores or advance time while queued", async () => {
+    const first = credentialApp();
+    const second = credentialApp();
+    expect((await first.request()).status).toBe(200);
+    const observed = new Date(wall).toISOString();
+    wall += WINDOW;
+    expect((await second.request()).status).toBe(200);
+    await first.drain();
+    await second.drain();
+    expect(first.updateLastUsed).toHaveBeenCalledExactlyOnceWith(
+      "key",
+      observed,
+    );
+    expect(second.updateLastUsed).toHaveBeenCalledExactlyOnceWith(
+      "key",
+      new Date(wall).toISOString(),
+    );
+  });
+
+  it("runs usage without request authority or a retained transaction and drains before closing", async () => {
+    const requestScope = new AsyncLocalStorage<string>();
+    const control = new TransactionControl();
+    control.invalidate(new Error("closed writer"), "ended", "committed");
+    const observed: unknown[] = [];
+    let completed = false;
+    const update = vi
+      .fn<Storage["keys"]["updateLastUsed"]>()
+      .mockImplementation(async () => {
+        observed.push([requestScope.getStore(), transactionControl.getStore()]);
+        await validateRequestAuthority();
+        completed = true;
+      });
+    const c = credentialApp(update);
+    await requestScope.run("caller", () =>
+      transactionControl.run(control, () =>
+        withRequestAuthority(
+          () => Promise.reject(new Error("revoked caller")),
+          async () => {
+            await expect(validateRequestAuthority()).rejects.toThrow(
+              "revoked caller",
+            );
+            expect(transactionControl.getStore()).toBe(control);
+            expect((await c.request()).status).toBe(200);
+          },
+        ),
+      ),
+    );
+    await drainKeyUsage(c.storage, true);
+    expect(observed).toEqual([[undefined, undefined]]);
+    expect(completed).toBe(true);
+    elapsed = WINDOW + 1;
+    expect((await c.request()).status).toBe(200);
+    await c.drain();
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
   it.each(["grant key", "bearer"] as const)(
@@ -290,6 +360,7 @@ describe("in-process last-used windows", () => {
               headers: { Authorization: `Bearer ${raw}` },
             });
             expect(response.status).toBe(200);
+            await drainKeyUsage(storage);
           };
           recorded = async () => (await storage.keys.get(key.id))?.last_used_at;
         } else {
@@ -339,4 +410,52 @@ describe("in-process last-used windows", () => {
       }
     },
   );
+});
+
+it("answers a cold-key read promptly while a real writer is held", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "marfa-cold-key-writer-"));
+  const storage = await createSqliteStorage(join(directory, "test.db"));
+  const entered = deferred();
+  const release = deferred();
+  let writer: Promise<unknown> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reading: Promise<Response> | undefined;
+  try {
+    const raw = "marfa_k1_cold_writer";
+    const key = await storage.keys.create(
+      { label: "cold", source: "cold" },
+      hashApiKey(raw, "test-salt"),
+    );
+    const app = new Hono<AppEnv>();
+    app.use("*", authMiddleware(storage, "test-salt"));
+    app.get("/", (c) => c.json({ authenticated: !!c.get("apiKey") }));
+    writer = storage.runInTransaction(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    await entered.promise;
+    reading = Promise.resolve(
+      app.request("/", { headers: { authorization: `Bearer ${raw}` } }),
+    );
+    const response = await Promise.race([
+      reading,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("cold-key read waited for usage bookkeeping"));
+        }, 1000);
+        timer.unref();
+      }),
+    ]);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ authenticated: true });
+    await drainKeyUsage(storage);
+    expect((await storage.keys.get(key.id))?.last_used_at).toBeNull();
+  } finally {
+    clearTimeout(timer);
+    release.resolve();
+    await writer;
+    await reading;
+    await storage.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

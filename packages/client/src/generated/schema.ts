@@ -4117,7 +4117,7 @@ export interface components {
             created_at: string;
             /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
             expires_at: string | null;
-            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
+            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
             last_used_at: string | null;
         };
         /**
@@ -4174,7 +4174,7 @@ export interface components {
             created_at: string;
             /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
             expires_at: string | null;
-            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
+            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
             last_used_at: string | null;
         };
         /** @description An error response. */
@@ -4380,7 +4380,7 @@ export interface components {
              */
             created_at: string;
             /**
-             * @description When the sign-in last made a request, in UTC, or `null` if it hasn't. Marfa records a browser's use at most once a minute and an app's or key's at most once an hour.
+             * @description When a recorded use occurred, in UTC, or `null` if none is recorded. Uses are recorded at most once a minute for browsers and once an hour for apps or keys. Failed recording leaves the previous value.
              * @example 2026-10-05T14:12:08.000Z
              */
             last_used_at: string | null;

@@ -369,7 +369,9 @@ When a key is minted, the server MUST answer its `last_used_at` as `null`.
 
 ### `keys-and-oauth/last-used-set`
 
-When a key has authenticated a request, the server MUST answer its `last_used_at` on `GET /keys` as an ISO 8601 instant in UTC.
+When a key's authenticated use has been recorded, the server MUST answer its `last_used_at` on `GET /keys` as the observed request time in ISO 8601 UTC.
+
+**Reason:** Usage is recorded asynchronously and coalesced for one hour. Contention, storage failure or a full bounded queue can leave the previous timestamp or `null`; a later use retries recording without deciding whether authentication succeeds.
 
 **Tests:** `compliance/key-last-used.test.ts › last_used_at is set after first use`, `› last_used_at is a valid ISO 8601 timestamp`, `› last_used_at appears in list response`.
 
@@ -2025,7 +2027,7 @@ When `GET /owner/sign-ins` lists a key that an app minted while that app is a li
 
 ### `keys-and-oauth/sign-ins-last-used`
 
-When `GET /owner/sign-ins` lists an app or a key that has made a request, the server MUST give it the time of a recorded use as its `last_used_at`.
+When `GET /owner/sign-ins` lists an app or a key with a recorded use, the server MUST give it the time of a recorded use as its `last_used_at`.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every app and key beside the browsers, each with a name, a kind and its last use`.
 
@@ -2225,11 +2227,13 @@ If the browser session asking `PATCH /owner/sign-ins/{id}` signed in more than f
 
 ## A browser session's idle week
 
-A browser session lasts seven days from its last use. A use is recorded at most once a minute, so a session lasts seven days and one minute from its last recorded use. A session signed in to be remembered keeps a cookie that lasts longer, and one signed in not to be remembered keeps a cookie that ends with the browser. The stored session is what ends either.
+A browser session expires seven days and one minute after its last recorded use. A use is recorded at most once a minute; a use that storage refuses does not renew the expiry. A session signed in to be remembered keeps a cookie that lasts longer, and one signed in not to be remembered keeps a cookie that ends with the browser. The stored session is what ends either.
 
 ### `keys-and-oauth/session-use-recorded`
 
-When the server admits a request on a browser session whose last recorded use is a minute old or older, the server MUST record that request's time as the session's `last_used_at`.
+When the server admits a request on a browser session whose last recorded use is a minute old or older and storage accepts its renewal, the server MUST record that request's time as the session's `last_used_at`.
+
+**Reason:** Renewal also changes the session's authority deadline, so its live-session check and expiry update remain atomic. A refused renewal admits a read without extending the stored expiry, which remains seven days and one minute after the last recorded use.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`, `› does not record a use within a minute of the last one`.
 
@@ -2281,7 +2285,7 @@ If the storage is full, read-only or held by another writer when the server reco
 
 ### `keys-and-oauth/session-idle-kept`
 
-While a browser session that nothing has ended was last used less than seven days ago, the server MUST admit a request on it.
+While a browser session that nothing has ended has a recorded use less than seven days ago, the server MUST admit a request on it.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › admits a session last used just under a week ago`.
 

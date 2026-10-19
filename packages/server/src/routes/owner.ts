@@ -184,7 +184,7 @@ const SignInSchema = z
       .string()
       .nullable()
       .describe(
-        "When the sign-in last made a request, in UTC, or `null` if it hasn't. Marfa records a browser's use at most once a minute and an app's or key's at most once an hour.",
+        "When a recorded use occurred, in UTC, or `null` if none is recorded. Uses are recorded at most once a minute for browsers and once an hour for apps or keys. Failed recording leaves the previous value.",
       )
       .openapi({ example: "2026-10-05T14:12:08.000Z" }),
     expires_at: z

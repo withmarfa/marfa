@@ -1,3 +1,4 @@
+import { withoutWriteWait } from "../storage/sqlite/connection.js";
 import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
 import {
@@ -318,11 +319,10 @@ export interface MarfaAuth {
     options?: { readOnly?: boolean },
   ) => Promise<MarfaAuthSession | null>;
   /**
-   * Admit a request on the session its cookie names, and count it as a use:
-   * unless a use was recorded within {@link BROWSER_SESSION_USE_INTERVAL_SECONDS},
-   * the session's expiry moves to {@link BROWSER_SESSION_LIFETIME_SECONDS}
-   * after now. `session` is what a read-only `getSession` found for these
-   * headers. `null` when the session ended or expired since that lookup.
+   * `session` must come from a read-only `getSession` for these headers.
+   * Renewal checks it again under the writer; a storage refusal keeps the
+   * existing expiry and cookie so reads can continue. Each later write
+   * still revalidates the session's authority.
    */
   useSession: (
     headers: Headers,
@@ -1018,32 +1018,34 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const storage = requireStorage();
     let recorded: { wrote: boolean } | null;
     try {
-      recorded = await withCredentialRequest(
-        { path: "/use-session", clientIp: null, recordsSessionUse: true },
-        () =>
-          runAuditedTransaction(
-            storage,
-            async (): Promise<{ wrote: boolean } | null> => {
-              // Read again under the write lock: a session that ended or
-              // expired since the lookup stays ended, rather than renewed
-              // back.
-              const current = await ctx.internalAdapter.findSession(token);
-              if (
-                current?.session.userId !== userId ||
-                !live(current.session, now)
-              )
-                return null;
-              if (!due(current.session)) return { wrote: false };
-              const updated = await ctx.internalAdapter.updateSession(token, {
-                expiresAt: new Date(
-                  now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
-                ),
-                updatedAt: now,
-              });
-              return updated ? { wrote: true } : null;
-            },
-            () => null,
-          ),
+      recorded = await withoutWriteWait(() =>
+        withCredentialRequest(
+          { path: "/use-session", clientIp: null, recordsSessionUse: true },
+          () =>
+            runAuditedTransaction(
+              storage,
+              async (): Promise<{ wrote: boolean } | null> => {
+                // Read again under the write lock: a session that ended or
+                // expired since the lookup stays ended, rather than renewed
+                // back.
+                const current = await ctx.internalAdapter.findSession(token);
+                if (
+                  current?.session.userId !== userId ||
+                  !live(current.session, now)
+                )
+                  return null;
+                if (!due(current.session)) return { wrote: false };
+                const updated = await ctx.internalAdapter.updateSession(token, {
+                  expiresAt: new Date(
+                    now.getTime() + BROWSER_SESSION_LIFETIME_SECONDS * 1000,
+                  ),
+                  updatedAt: now,
+                });
+                return updated ? { wrote: true } : null;
+              },
+              () => null,
+            ),
+        ),
       );
     } catch (err) {
       // The lookup found the session live, so a use the storage cannot take,
