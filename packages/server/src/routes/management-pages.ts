@@ -117,7 +117,7 @@ refresh().catch(error => {status.textContent = error.message;});
         nonce: c.var.cspNonce,
         title: "Restore an archive",
         bodyHtml: `<h1>Restore an archive</h1><p>Restore a Marfa archive into this instance. Existing items stay as they are. The archive can also restore server-managed records.</p>
-<p>You must have signed in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Frestore">Sign in again</a></p>
+<p>You must have signed in within the five minutes before you start the restore. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Frestore">Sign in again</a></p>
 <form id="restore"><label for="archive">Marfa archive</label><input id="archive" type="file" accept=".gz,.tgz,application/gzip" required><button>Restore archive</button></form>
 <p id="result" role="status"></p><a href="/auth/owner/manage">Back to settings</a>
 <script nonce="${escapeHtml(c.var.cspNonce)}">

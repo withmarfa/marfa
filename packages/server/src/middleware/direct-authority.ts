@@ -8,7 +8,7 @@ import { resolveBoundCredential } from "../auth/live-credential.js";
 import { withRequestAuthority } from "../auth/request-authority.js";
 import {
   holdsPermission,
-  requireRecentOwnerAuthentication,
+  refuseUnlessRecentOwnerAuthentication,
   type AppEnv,
 } from "./auth.js";
 
@@ -108,7 +108,7 @@ export function directAuthorityMiddleware(
             { required_scope: permission },
           );
       }
-      if (recent) requireRecentOwnerAuthentication(c);
+      if (recent) refuseUnlessRecentOwnerAuthentication(c, recent.at);
     }, next);
     // Any answer but a `401`, which means the session ended while the request
     // was in flight: a refused or failed request still moved the expiry.

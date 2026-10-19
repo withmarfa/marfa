@@ -28,7 +28,6 @@
  */
 
 import { rm, stat } from "node:fs/promises";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, resolveEnforcement } from "@withmarfa/shared";
@@ -90,6 +89,8 @@ import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
+import * as clock from "../clock.js";
+import { uploadBody } from "../upload-body.js";
 
 function archivedRestoredAt(
   item: Record<string, unknown>,
@@ -107,7 +108,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
+    "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: {
@@ -210,7 +211,16 @@ const restoreArchiveRoute = createRoute({
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
       description:
-        "Requires direct owner or local authority and recent owner authentication.",
+        "Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes.",
+    },
+    408: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["request_timeout"]),
+        },
+      },
+      description:
+        "- `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving.",
     },
     409: {
       content: {
@@ -790,7 +800,11 @@ async function stillAbsent(
 export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  limits: { maxRowBytes: number; diskReserveBytes?: number },
+  limits: {
+    maxRowBytes: number;
+    diskReserveBytes?: number;
+    uploadIdleTimeoutMs: number;
+  },
 ) {
   const router = createOpenAPIRouter<AppEnv>();
   const reserve = new DiskReserve(
@@ -799,7 +813,11 @@ export function restoreArchiveRoutes(
   );
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    requireRecentOwnerAuthentication(c);
+    // The sign-in is judged at this moment, before a byte of the body is
+    // read, and the write transaction judges it at the same moment however
+    // long the upload took.
+    const startedAt = clock.nowMs();
+    requireRecentOwnerAuthentication(c, startedAt);
     const uploader = authorityId(c);
     const actor = {
       key_id: authorityId(c),
@@ -823,10 +841,10 @@ export function restoreArchiveRoutes(
     };
     try {
       const bodySpool = mintSpool();
-      const body = c.req.raw.body;
+      const body = uploadBody(c, limits.uploadIdleTimeoutMs);
       if (body) {
         try {
-          await pipeline(Readable.fromWeb(body), place.writer(bodySpool));
+          await pipeline(body, place.writer(bodySpool));
         } finally {
           place.close();
         }
@@ -857,7 +875,7 @@ export function restoreArchiveRoutes(
         const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
         try {
-          requireRecentOwnerAuthentication(c);
+          requireRecentOwnerAuthentication(c, startedAt);
           const result = await restoreRows(storage, blobs, {
             plan: typePlan,
             pending: archive.blobs,

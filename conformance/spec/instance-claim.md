@@ -56,17 +56,49 @@ If `POST /owner` carries a top-level body key the operation does not declare, th
 
 ### `instance-claim/setup-undeclared-key`
 
-If `POST /setup/exchange`, or `POST /setup/claim` with a JSON body, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
+If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, carries a key the setup page's request does not declare, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields` without consuming valid setup proof.
 
 **Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success.
 
-**Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare in a JSON body without consuming valid setup proof`.
+**Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof`.
 
 ### `instance-claim/owner-created`
 
 When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.
 
 **Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› answers the setup routes in snake_case and the claim as the public claim does`.
+
+### `instance-claim/claim-signs-in`
+
+When a valid claim that carries the instance's own origin in its `Origin` header creates the owner and the password sign-in that follows it succeeds, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner` with it answers `200` and the session counts as a sign-in within the last five minutes.
+
+**Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within five minutes, works without asking again.
+
+**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`, `› signs the owner in when the setup page claims through its setup session`.
+
+### `instance-claim/claim-sign-in-failure`
+
+If the password sign-in that follows a valid claim carrying the instance's own origin in its `Origin` header is refused or fails, then the server MUST keep the owner the claim created and set no owner session cookie in the answer.
+
+**Reason:** The claim has committed, and a sign-in that cannot be made, such as one from an address that has spent its password attempts, must not undo it or hide it from the person. They sign in at the page that follows.
+
+**Tests:** `compliance/owner.test.ts › keeps the owner and sets no session when the sign-in that follows the claim is refused`.
+
+### `instance-claim/claim-script-no-session`
+
+When a valid claim that carries no `Origin` header creates the owner, the server MUST NOT set an owner session cookie in the answer.
+
+**Reason:** A script that holds a setup code has no browser to keep a cookie, and a session it never asked for would be a standing credential it does not need. Only a request from the instance's own origin is a browser.
+
+**Tests:** `compliance/owner.test.ts › leaves a script that claims with a setup code without a session`.
+
+### `instance-claim/claim-refused-no-session`
+
+If a claim is refused, then the server MUST NOT set an owner session cookie in the answer.
+
+**Reason:** A wrong code, invalid details, a request from another origin and a second claim each prove nothing about who is asking, so none may leave a browser signed in.
+
+**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`.
 
 ### `instance-claim/status-fields`
 

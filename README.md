@@ -57,7 +57,7 @@ export MARFA_AUTH_SECRET="$(openssl rand -hex 32)"
 pnpm dev    # http://localhost:8600
 ```
 
-A new instance has no owner. Open <http://localhost:8600/setup>, enter the setup code printed in the server's terminal, and choose the owner's email and password. Claiming the owner closes setup permanently.
+A new instance has no owner. Open <http://localhost:8600/setup>, enter the setup code printed in the server's terminal, and choose the owner's email and password. Claiming the owner signs you in and closes setup permanently.
 
 The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it installs the CLI, makes a key, and writes and reads your first note. To work on Marfa itself, read [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 

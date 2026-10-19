@@ -1604,7 +1604,9 @@ Export the instance's data.
 
 ### marfa export
 
-An archive is written even when it lacks blobs that no store could read whole. Its manifest lists them under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming them.
+An archive is kept even when it lacks blobs that no store could read whole. Its manifest lists them under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
+
+With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output.
 
 ```text
 marfa export [OPTIONS]
@@ -1613,7 +1615,7 @@ marfa export [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--format <FORMAT>` | `ndjson` for items one per line, `archive` for the whole instance. One of `ndjson`, `archive`. |
-| `--output <PATH>` | Where to write. Omitted, the export goes to stdout. |
+| `--output <PATH>` | Where to write. Omitted, the export goes to stdout. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | One state, or `any`. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |

@@ -1542,11 +1542,75 @@ When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT w
 
 ### `search-and-filters/cli-export-lacking`
 
-When `marfa export --format archive` has written an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+When `marfa export --format archive` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
 
-**Reason:** the archive is kept, because it holds everything else, and the exit says it is not a whole backup.
+**Reason:** the exit says the archive is not a whole backup.
 
-**Tests:** `cli/archive-blobs.test.ts › writes the archive and exits 1 with blobs_missing, naming the blob`.
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-lacking-kept`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` can be replaced, then the CLI MUST keep the whole archive at `<path>.incomplete`, replacing only an earlier file of that name.
+
+**Reason:** the archive holds everything else, and may hold the only copy of a file the server has since lost, so it is kept where the person can get it back and is named as incomplete.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-refused`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` cannot be replaced, then the CLI MUST keep the whole archive in a hidden partial file beside `<path>`.
+
+**Reason:** the bytes are kept where the person can get them back, and the exit, the `blobs_missing` code and the hashes of `search-and-filters/cli-export-lacking` still reach the person.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-refused-named`
+
+When `marfa export --format archive --output <path>` has kept an archive that lacks blobs in a hidden partial file because `<path>.incomplete` cannot be replaced, the CLI MUST name that file and the reason in its message.
+
+**Reason:** the person learns from the message alone where the archive is and why it is not at the incomplete name.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-lacking-path`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST NOT write to `<path>`.
+
+**Reason:** a file at the path is the last complete backup when the command is run on a schedule, and a script that reads the path must never get an archive that lacks files. An earlier file stays byte for byte, and where none was, none is made.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-named`
+
+When `marfa export --format archive --output <path>` has kept an archive that lacks blobs at `<path>.incomplete`, the CLI MUST name `<path>` and `<path>.incomplete` in its message.
+
+**Reason:** the person learns from the message alone where the incomplete archive is.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-path-state`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST say in its message whether `<path>` still holds an earlier file or was not written.
+
+**Reason:** the person learns that the path was left alone, and whether a backup is still there.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-whole`
+
+When `marfa export --output <path>` receives an export that ends whole and, for an archive, has a readable manifest that names no blobs in `missing_blobs`, the CLI MUST replace `<path>` with it.
+
+**Reason:** the earlier backup is replaced only by one that is at least as complete.
+
+**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
+
+### `search-and-filters/cli-export-whole-clean`
+
+When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no partial file beside it.
+
+**Reason:** a file left behind would be mistaken by a later run, or a person, for a backup. An older `<path>.incomplete` is not a partial file of this run, and is left as it was.
+
+**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
 
 ### `search-and-filters/cli-restore-lacking`
 
@@ -1559,6 +1623,14 @@ When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the
 If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave the path as it was before the command and exit 3.
 
 **Reason:** a file cut short at the path would pass for a backup until a restore needed it.
+
+**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
+
+### `search-and-filters/cli-export-cut-clean`
+
+If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave no partial file beside the path.
+
+**Reason:** a file cut short, kept anywhere the person looks for backups, would pass for one. Only a process killed outright leaves its partial file, which no code can prevent.
 
 **Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
 
@@ -1911,6 +1983,58 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 **Reason:** the body streams to disk as an upload's does, so an archive that carries a blob larger than the cap restores.
 
 **Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`, `compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large`.
+
+### `search-and-filters/restore-duration`
+
+While a part of the body of `POST /restore` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+
+**Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
+
+**Tests:** `compliance/upload-timing.test.ts › restores an archive whose body takes 66 seconds to arrive, a part at a time`.
+
+### `search-and-filters/restore-idle`
+
+If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-idle-unwritten`
+
+When the server answers `POST /restore` with `408 request_timeout`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-sign-in-age`
+
+If the owner's browser session signed in more than five minutes before a `POST /restore` started, then the server MUST answer `403 forbidden` without waiting for the body to finish arriving.
+
+**Reason:** restoring can write server-managed records (`search-and-filters/restore-operator`), so it needs a recent sign-in. Judging it when the request starts refuses a stale session before the owner has sent the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › refuses with 403 forbidden an owner who signed in six minutes before the request started, as soon as the request starts`.
+
+### `search-and-filters/restore-sign-in-start`
+
+If the owner's browser session signed in within five minutes before a `POST /restore` started, then the server MUST NOT refuse the request because more than five minutes have passed since the sign-in when the body finishes arriving.
+
+**Reason:** the sign-in is judged at the moment the request starts, both before the body is read and when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › restores an archive from an owner who signed in four minutes before the request started and whose body finished arriving two minutes later`.
+
+### `search-and-filters/restore-session-ended`
+
+If the owner's browser session ends before the body of a `POST /restore` finishes arriving, then the server MUST answer `401 unauthorized`.
+
+**Reason:** judging the sign-in at the start does not extend the session. A sign-out, or a session that has expired, stops the restore however recent the sign-in was.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › answers 401 unauthorized, though the sign-in was recent when the request started`.
+
+### `search-and-filters/restore-session-unwritten`
+
+When the server answers `POST /restore` with `401 unauthorized` because the owner's browser session ended during the upload, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › writes nothing of the archive`.
 
 ### `search-and-filters/restore-blob-bytes`
 

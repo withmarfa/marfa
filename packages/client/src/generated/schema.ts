@@ -1379,7 +1379,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -1443,7 +1443,7 @@ export interface paths {
         put?: never;
         /**
          * Claim the instance
-         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.
+         * @description Creates the one owner using a machine-issued setup code or setup-only browser session. A claimed instance never reopens setup. A claim from the instance's own origin, which the setup page sends, also signs the owner in with a session cookie.
          */
         post: operations["createOwner"];
         delete?: never;
@@ -3428,6 +3428,23 @@ export interface components {
             tag: string;
             /** @description How many active items you can read carry the tag. */
             count: number;
+        };
+        /** @description An error response. */
+        RequestTimeoutRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "request_timeout";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description A page holding every orphan. */
         BlobOrphanPage: {
@@ -14010,6 +14027,21 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
+            /** @description - `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
             /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
             409: {
                 headers: {
@@ -21309,7 +21341,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires direct owner or local authority and recent owner authentication. */
+            /** @description Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21322,6 +21354,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
             /**
@@ -21911,7 +21958,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The new owner can sign in. */
+            /** @description The new owner can sign in. A claim from the instance's own origin also sets the owner session cookie, unless the sign-in that follows the claim fails. A claim with no `Origin` header, such as a script's, sets none. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

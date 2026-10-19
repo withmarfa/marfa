@@ -105,28 +105,51 @@ export function requireDirectAuthority(c: Context<AppEnv>): void {
 }
 
 /**
- * Whether the direct authority signed in within the last five minutes. The
- * private local command always counts; a request with no direct authority
- * does not.
+ * Whether the direct authority signed in within the five minutes before `at`,
+ * which is the current time unless a door that takes a long upload names the
+ * moment its request started. The private local command always counts; a
+ * request with no direct authority does not.
  */
-export function isRecentOwnerAuthentication(c: Context<AppEnv>): boolean {
+export function isRecentOwnerAuthentication(
+  c: Context<AppEnv>,
+  at: number = clock.nowMs(),
+): boolean {
   const authority = c.get("authority");
   if (!authority) return false;
   return !(
     authority.kind === "owner" &&
-    (clock.nowMs() - authority.authenticatedAt > 300_000 ||
-      authority.authenticatedAt > clock.nowMs())
+    (at - authority.authenticatedAt > 300_000 || authority.authenticatedAt > at)
   );
 }
 
 export const SIGN_IN_AGAIN_MESSAGE = "Sign in again to perform this operation";
 
-export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
+/**
+ * Refuse unless the sign-in is recent at `at`. The write transaction asks
+ * this again for the moment the door named, so the two never disagree.
+ */
+export function refuseUnlessRecentOwnerAuthentication(
+  c: Context<AppEnv>,
+  at?: number,
+): void {
   requireDirectAuthority(c);
-  if (!isRecentOwnerAuthentication(c)) {
+  if (!isRecentOwnerAuthentication(c, at)) {
     throw new MarfaError(ErrorCode.FORBIDDEN, SIGN_IN_AGAIN_MESSAGE);
   }
-  rememberRecentAuthentication();
+}
+
+/**
+ * Refuse unless the sign-in is recent, and have the write transaction ask
+ * again. Without `at` the sign-in is judged when each check runs; a door that
+ * takes a body for longer than the five minutes passes the moment its request
+ * started, which both checks then use.
+ */
+export function requireRecentOwnerAuthentication(
+  c: Context<AppEnv>,
+  at?: number,
+): void {
+  refuseUnlessRecentOwnerAuthentication(c, at);
+  rememberRecentAuthentication(at);
 }
 
 /** An attribution handle, not a stored key or a transferable credential. */
