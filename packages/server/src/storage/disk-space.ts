@@ -1,201 +1,282 @@
-import { statfs } from "node:fs/promises";
-import { Transform } from "node:stream";
+import { statSync, statfsSync } from "node:fs";
+import { open, statfs } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { Writable } from "node:stream";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import { freeFault } from "../control/faults.js";
+import { freeFault, type Volume } from "../control/faults.js";
 import { TransactionFailure } from "./sqlite/transaction-control.js";
 
-/** The bytes a writer may add to the volume that holds `path`. */
 export type AvailableBytes = (path: string) => Promise<number>;
-
-/**
- * `statfs` as Node gives it, in blocks of `f_bsize`. A filesystem whose
- * `f_bsize` is not its fragment size, which ZFS is one of, is overstated
- * here; Node does not expose `f_frsize`.
- */
 const volumeBytes: AvailableBytes = async (path) => {
   const stats = await statfs(path);
   return stats.bavail * stats.bsize;
 };
-
 let probe: AvailableBytes = volumeBytes;
 
 /** Lets a test say how much room there is. `undefined` restores the volume. */
 export function setAvailableBytesProbe(next: AvailableBytes | undefined): void {
   probe = next ?? volumeBytes;
 }
-
 export const availableBytesOn: AvailableBytes = (path) => probe(path);
 
-/**
- * How much a stream writes between two looks at the volume. A look is a
- * system call, so it is not made per chunk. Bodies in flight can each be
- * this far ahead of their last look, so each is counted at this much
- * against the room.
- */
-export const RESERVE_CHECK_EVERY_BYTES = 4 * 1024 * 1024;
-
-/** The finest a look is made, however small the reserve. */
-const LEAST_LOOK_EVERY_BYTES = 64 * 1024;
-
-/**
- * The room an instance keeps free on the volume its uploads and restores
- * write into, so that one body cannot take the last of it.
- *
- * The database sits on that volume in the shipped image. A write that finds
- * none left fails, and so does the next one, whatever it is. The reserve is
- * what the rest of the instance keeps writing with while an oversized body
- * is refused.
- *
- * Bodies arrive together, and each would find the same free space, so the
- * reserve counts what the bodies it has admitted have yet to write.
- */
-export class DiskReserve {
-  /** Bytes admitted bodies declared and have not yet written. */
-  private owed = 0;
-  /** Bodies admitted and not yet closed. */
-  private open = 0;
-  /** Admissions waiting their turn. */
+class VolumeLedger {
+  owed = 0;
   private line: Promise<void> = Promise.resolve();
 
+  async acquire(): Promise<() => void> {
+    const before = this.line;
+    let release!: () => void;
+    this.line = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await before;
+    return release;
+  }
+}
+
+const volumes = new Map<number, VolumeLedger>();
+
+/** Resolve the actual device, including symlinks and paths not created yet. */
+function volumeAt(path: string) {
+  let parent = resolve(path);
+  for (;;) {
+    try {
+      const device = statSync(parent).dev;
+      let ledger = volumes.get(device);
+      if (!ledger) {
+        ledger = new VolumeLedger();
+        volumes.set(device, ledger);
+      }
+      return { ledger, path: parent, block: statfsSync(parent).bsize };
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "ENOENT" ||
+        dirname(parent) === parent
+      )
+        throw error;
+      parent = dirname(parent);
+    }
+  }
+}
+
+/** Every reserve user on a device shares one ledger, including paths on different mounts of it. */
+export class DiskReserve {
+  private readonly volume;
   constructor(
-    private readonly volume: string,
+    path: string,
     readonly bytes: number,
     private readonly available: AvailableBytes = availableBytesOn,
-  ) {}
+    private readonly kind: Volume = "blobs",
+  ) {
+    this.volume = volumeAt(path);
+  }
 
-  /** The room on the volume now: what a harness set, else what the volume reports. */
   private free(): Promise<number> {
-    const set = freeFault("blobs");
+    const set = freeFault(this.kind);
     return set === undefined
-      ? this.available(this.volume)
+      ? this.available(this.volume.path)
       : Promise.resolve(set);
-  }
-
-  private get lookEvery(): number {
-    return Math.max(
-      LEAST_LOOK_EVERY_BYTES,
-      Math.min(RESERVE_CHECK_EVERY_BYTES, Math.floor(this.bytes / 2)),
-    );
-  }
-
-  /**
-   * Refuses unless `declared` more bytes, and what the bodies already
-   * admitted have yet to write, leave the reserve free. A body that knows
-   * how many bytes are coming says so before the first is written; one that
-   * does not says `0`, which refuses only a volume already inside the
-   * reserve. Close what it returns when the body has been written or has
-   * failed.
-   */
-  admit(declared = 0): Promise<Admission> {
-    // One at a time, because each reads the room and then takes some of it:
-    // two reading together would each find the same room.
-    const turn = this.line.then(async () => {
-      if (this.bytes > 0) {
-        const free = await this.free();
-        if (free - this.room(declared, 1) < this.bytes) {
-          throw this.refusal(free);
-        }
-      }
-      this.owed += declared;
-      this.open += 1;
-      return new Admission(this, declared);
-    });
-    this.line = turn.then(
-      () => undefined,
-      () => undefined,
-    );
-    return turn;
-  }
-
-  /** What is spoken for ahead of the next byte written. */
-  private room(declared: number, joining: number): number {
-    return this.owed + declared + (this.open + joining) * this.lookEvery;
-  }
-
-  /** @internal What the admitted bodies still owe, for an admission to pay down. */
-  pay(bytes: number): void {
-    this.owed = Math.max(0, this.owed - bytes);
-  }
-
-  /** @internal */
-  leave(): void {
-    this.open = Math.max(0, this.open - 1);
-  }
-
-  /** @internal */
-  get interval(): number {
-    return this.lookEvery;
-  }
-
-  /** @internal */
-  async look(): Promise<void> {
-    if (this.bytes === 0) return;
-    const free = await this.free();
-    // What the volume shows already includes what has been written, so only
-    // what is still owed, and the slack of every body in flight, comes off.
-    if (free - this.room(0, 0) < this.bytes) throw this.refusal(free);
   }
 
   private refusal(free: number): MarfaError {
     return new MarfaError(
       ErrorCode.INSUFFICIENT_STORAGE,
-      "The disk that holds this instance's data has no room for this request and the reserve the instance keeps free. Nothing was kept.",
+      "The disk has no room for this write and the configured reserve.",
       { reserve_bytes: this.bytes, available_bytes: free },
     );
   }
-}
 
-/** One body's place against the reserve. */
-export class Admission {
-  private owes: number;
-  private closed = false;
-
-  constructor(
-    private readonly reserve: DiskReserve,
-    declared: number,
-  ) {
-    this.owes = declared;
+  round(bytes: number): number {
+    return Math.ceil(bytes / this.volume.block) * this.volume.block;
   }
 
-  /**
-   * A pass-through that looks at the volume as the bytes go by and fails the
-   * stream when what is left falls inside the reserve. Placed in front of
-   * the file the bytes are written to, so a body that has no length at all,
-   * or that a decompressor inflates as it goes, is stopped on the way and
-   * not when the volume is full.
-   */
-  guard(): Transform {
-    let sinceLook = 0;
-    return new Transform({
-      transform: (chunk: Buffer, _encoding, callback) => {
-        const paid = Math.min(chunk.length, this.owes);
-        this.owes -= paid;
-        this.reserve.pay(paid);
-        sinceLook += chunk.length;
-        if (this.reserve.bytes === 0 || sinceLook < this.reserve.interval) {
-          callback(null, chunk);
-          return;
+  async admit(declared = 0): Promise<Admission> {
+    if (!Number.isSafeInteger(declared) || declared < 0) declared = 0;
+    const release = await this.volume.ledger.acquire();
+    try {
+      const bytes = this.bytes === 0 ? 0 : this.round(declared);
+      await this.check(bytes);
+      this.volume.ledger.owed += bytes;
+      return new Admission(this, bytes);
+    } finally {
+      release();
+    }
+  }
+
+  private async check(extra: number): Promise<void> {
+    if (this.bytes === 0) return;
+    const free = await this.free();
+    if (free - this.volume.ledger.owed - extra < this.bytes)
+      throw this.refusal(free);
+  }
+
+  async look(): Promise<void> {
+    const release = await this.volume.ledger.acquire();
+    try {
+      await this.check(0);
+    } finally {
+      release();
+    }
+  }
+
+  /** The OS write and its payment settle before another writer samples free space. */
+  async write(
+    held: number,
+    bytes: number,
+    write: () => Promise<void>,
+  ): Promise<number> {
+    const release = await this.volume.ledger.acquire();
+    try {
+      await this.check(Math.max(0, bytes - held));
+      await write();
+      const paid = Math.min(held, bytes);
+      this.pay(paid);
+      return paid;
+    } finally {
+      release();
+    }
+  }
+
+  pay(bytes: number): void {
+    this.volume.ledger.owed -= bytes;
+  }
+
+  scratch(): ScratchBudget {
+    let held = 0;
+    let release: (() => void) | undefined;
+    let closed = false;
+    const isClosed = () => closed;
+    return {
+      acquire: async () => {
+        const unlock = await this.volume.ledger.acquire();
+        if (isClosed()) {
+          unlock();
+          throw new Error("Scratch budget is closed");
         }
-        sinceLook = 0;
-        this.reserve.look().then(
+        release = unlock;
+        try {
+          if (this.bytes === 0) return Number.MAX_SAFE_INTEGER;
+          const free = await this.free();
+          if (isClosed()) throw new Error("Scratch budget is closed");
+          const room =
+            Math.floor(
+              Math.max(
+                0,
+                free - this.bytes - (this.volume.ledger.owed - held),
+              ) / this.volume.block,
+            ) * this.volume.block;
+          // An operation holds the remaining growth capacity only until it settles.
+          this.volume.ledger.owed += room - held;
+          held = room;
+          return room;
+        } catch (error) {
+          release = undefined;
+          unlock();
+          throw error;
+        }
+      },
+      settle: (pending) => {
+        if (isClosed()) return;
+        const next = this.bytes === 0 ? 0 : this.round(pending);
+        this.volume.ledger.owed += next - held;
+        held = next;
+        release?.();
+        release = undefined;
+      },
+      close: () => {
+        closed = true;
+        this.pay(held);
+        held = 0;
+        release?.();
+        release = undefined;
+      },
+    };
+  }
+}
+
+/** SQLite keeps dirty pages in memory until commit; they still owe disk space. */
+export interface ScratchBudget {
+  acquire(): Promise<number>;
+  settle(pending: number): void;
+  close(): void;
+}
+
+export class Admission {
+  private closed = false;
+  private written = 0;
+  constructor(
+    private readonly reserve: DiskReserve,
+    private owes: number,
+  ) {}
+
+  async write(bytes: number, write: () => Promise<void>): Promise<void> {
+    if (this.closed) throw new Error("Disk admission is closed");
+    const growth =
+      this.reserve.round(this.written + bytes) -
+      this.reserve.round(this.written);
+    const paid = await this.reserve.write(this.owes, growth, write);
+    this.owes -= paid;
+    this.written += bytes;
+  }
+
+  /** Payment follows the file write, never the upstream stream's delivery. */
+  writer(path: string): Writable {
+    const file = open(path, "wx");
+    let position = 0;
+    const writer = new Writable({
+      write: (chunk: Buffer, _encoding, callback) => {
+        this.write(chunk.length, async () => {
+          const handle = await file;
+          let offset = 0;
+          while (offset < chunk.length) {
+            const { bytesWritten } = await handle.write(
+              chunk,
+              offset,
+              chunk.length - offset,
+              position,
+            );
+            if (bytesWritten === 0)
+              throw new Error("Spool write made no progress");
+            offset += bytesWritten;
+            position += bytesWritten;
+          }
+        }).then(
           () => {
-            callback(null, chunk);
+            callback();
           },
-          (err: unknown) => {
-            callback(err instanceof Error ? err : new Error(String(err)));
+          (error: unknown) => {
+            callback(error instanceof Error ? error : new Error(String(error)));
           },
         );
       },
+      destroy: (error, callback) => {
+        file
+          .then((handle) => handle.close())
+          .then(
+            () => {
+              callback(error);
+            },
+            (failure: unknown) => {
+              callback(
+                error ??
+                  (failure instanceof Error
+                    ? failure
+                    : new Error(String(failure))),
+              );
+            },
+          );
+      },
     });
+    // The writes and `destroy` answer a failed open.
+    file.catch(() => undefined);
+    return writer;
   }
 
-  /** Gives back what was admitted and not written. Safe to call twice. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     this.reserve.pay(this.owes);
     this.owes = 0;
-    this.reserve.leave();
   }
 }
 

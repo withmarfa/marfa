@@ -213,6 +213,26 @@ export enum ErrorCode {
    */
   WRITE_CONTENTION = "write_contention",
   /**
+   * An archive export read its selection twice and a restore would refuse
+   * or skip a row each time, but not the same unchanged row: writes
+   * changed the refused row or its type's registration between the reads,
+   * or the second read refused a different row. No archive bytes were
+   * sent. Another try reads the row after the writes have finished with
+   * it, so it is a `503` a client retries. Writes to other rows do not
+   * cause it.
+   */
+  EXPORT_UNRESTORABLE = "export_unrestorable",
+  /**
+   * An archive export read the same rows twice and they failed restore
+   * validation the same way both times: the instance holds a row a restore
+   * would refuse or skip, such as one a type's replacement schema no longer
+   * takes. No archive bytes were sent. `details.row` names the row.
+   *
+   * `409` and not `503`: retrying reads the same rows again, and only a
+   * change to the row or its type lets the export pass.
+   */
+  EXPORT_ROWS_UNRESTORABLE = "export_rows_unrestorable",
+  /**
    * The volume the instance writes to has no room for this write: the disk
    * is full, or the write would leave less free than the instance's
    * reserve. Nothing of the request was kept, unless the volume turned away
@@ -641,6 +661,16 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 503,
     summary:
       "A write could not get the store's write lock within the busy budget. Retry it unchanged.",
+  },
+  [ErrorCode.EXPORT_UNRESTORABLE]: {
+    status: 503,
+    summary:
+      "Writes changed the row an archive export refused, or its type, between two reads. No archive bytes were sent. Retry the export.",
+  },
+  [ErrorCode.EXPORT_ROWS_UNRESTORABLE]: {
+    status: 409,
+    summary:
+      "Both reads of an archive export refused the same unchanged row. No archive bytes were sent. `details.row` names the row.",
   },
   [ErrorCode.INSUFFICIENT_STORAGE]: {
     status: 507,

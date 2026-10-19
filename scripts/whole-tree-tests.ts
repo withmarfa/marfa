@@ -42,6 +42,7 @@ export const ROOT_FILTERS: readonly string[] = [
   "housekeeping/scheduler.test.ts",
   "storage/idempotency-store.test.ts",
   "test-utils-sse.test.ts",
+  "shutdown-stream.test.ts",
   // The schema and registry files under `packages/types/`, read from disk.
   "packages/types/src/",
   // Everything under `ci/` checks the workflows and manifests, not a package.

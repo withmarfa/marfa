@@ -17,8 +17,9 @@ export class ReadLifetime {
     { count: number; remove: () => void }
   >();
 
-  constructor(options?: { deadlineAt?: number; signal?: AbortSignal }) {
-    this.deadlineAt = clock.monotonicMs() + 5_000;
+  constructor(options?: { deadlineAt?: number | null; signal?: AbortSignal }) {
+    this.deadlineAt =
+      options?.deadlineAt === null ? Infinity : clock.monotonicMs() + 5_000;
     this.ended = new Promise<never>((_, reject) => {
       this.reject = reject;
     });
@@ -33,15 +34,18 @@ export class ReadLifetime {
     this.reject(new ReadSnapshotUnavailable());
   };
 
-  shorten(options?: { deadlineAt?: number; signal?: AbortSignal }): void {
-    if (options?.deadlineAt !== undefined) {
+  shorten(options?: {
+    deadlineAt?: number | null;
+    signal?: AbortSignal;
+  }): void {
+    if (options?.deadlineAt !== undefined && options.deadlineAt !== null) {
       if (!Number.isFinite(options.deadlineAt)) this.abandon();
       else this.deadlineAt = Math.min(this.deadlineAt, options.deadlineAt);
     }
     if (options?.signal?.aborted) this.abandon();
     clearTimeout(this.timer);
     if (clock.monotonicMs() >= this.deadlineAt) this.abandon();
-    else
+    else if (Number.isFinite(this.deadlineAt))
       this.timer = setTimeout(
         this.abandon,
         this.deadlineAt - clock.monotonicMs(),

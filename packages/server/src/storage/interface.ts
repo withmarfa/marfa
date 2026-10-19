@@ -3333,8 +3333,11 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
     fn: (
       pin: Readonly<{ instanceId: string; structuralGeneration: string }>,
     ) => T | Promise<T>,
-    /** `deadlineAt` is on the scale of `clock.monotonicMs()`. */
-    options?: { deadlineAt?: number; signal?: AbortSignal },
+    /** `deadlineAt` is on the scale of `clock.monotonicMs()`. A root read
+     *  with `null` lasts until its callback settles; use only for a
+     *  single local export page, without spool writes or external I/O.
+     *  Nested reads can only shorten the enclosing lifetime. */
+    options?: { deadlineAt?: number | null; signal?: AbortSignal },
   ): Promise<T>;
   close(): Promise<void>;
 }

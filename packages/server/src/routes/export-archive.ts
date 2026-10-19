@@ -5,11 +5,16 @@
  * The export reads the whole selection before it sends a byte, because the
  * manifest comes first and carries the counts and the blob list, and a tar
  * header carries each entry's size. What it reads is kept in the disk
- * store's spool (`export-spool.ts`), not in memory, and the event loop gets a
- * turn between pages, so the memory it holds and the time it holds the
- * server for are one page's, not the instance's. The tar is then written
- * from the spool with backpressure, and the spool is removed on every
- * outcome.
+ * store's spool (`export-spool.ts`). Each page reads its rows and registrations
+ * in one read snapshot, released before the page is spooled. The event
+ * loop gets a turn between pages. The spooled selection then passes the
+ * restore's own checks (`archive-validation.ts`). A selection that fails
+ * them is read once more: writes between pages can combine into rows that
+ * no single state held. If the second read holds the same rows and fails
+ * the same way, the instance's own data is at fault and the refusal names
+ * the row; otherwise writes were landing, and the caller is told to retry.
+ * The tar is then written from the spool with backpressure, and the spool
+ * is removed on every outcome.
  *
  * A blob no store can read whole is named under the manifest's
  * `missing_blobs` and left out, so one lost file costs the backup that file
@@ -18,15 +23,21 @@
  */
 
 import { createHash } from "node:crypto";
+import { createInterface } from "node:readline";
 import { PassThrough, Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import type { Context } from "hono";
 import * as tar from "tar-stream";
-import type { Item } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  type EdgeTypeSchema,
+  type Item,
+} from "@withmarfa/shared";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import type { OwnerItemRead } from "./_owner-item-read.js";
-import type { Storage, ItemFilters } from "../storage/interface.js";
+import type { Storage, ItemFilters, LoadedType } from "../storage/interface.js";
 import {
   answeringFirst,
   recordedStores,
@@ -45,9 +56,22 @@ import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
-import { withStatementFault } from "../storage/sqlite/injected-failure.js";
-import { ExportSpool, type KeySet, type TextSpool } from "./export-spool.js";
 import { readableExportEdges } from "./export-read.js";
+import { log } from "../middleware/logger.js";
+import {
+  SelectionRefusal,
+  refusalAt,
+  runArchiveValidation,
+  type RefusedRow,
+} from "./archive-validation.js";
+import type { DiskReserve } from "../storage/disk-space.js";
+import {
+  parseManifest,
+  assertArchiveTextSize,
+} from "./restore-archive-read.js";
+import { withStatementFault } from "../storage/sqlite/injected-failure.js";
+import { ExportSpool, type TextSpool } from "./export-spool.js";
+import { beginArchiveExport } from "./export-lifecycle.js";
 import * as clock from "../clock.js";
 
 /** How many edges, blob digests or history snapshots are read at once. */
@@ -219,16 +243,20 @@ interface Selection {
   items: TextSpool;
   edges: TextSpool;
   types: TextSpool;
-  /** The manifest's `blobs` entries, comma separated, without braces. */
-  blobEntries: TextSpool;
-  /** The manifest's `missing_blobs` entries, in the same form. */
-  missingEntries: TextSpool;
+  blobRecords: TextSpool;
   itemCount: number;
   edgeCount: number;
   typeCount: number;
   edgeTypeCount: number;
+}
+
+interface BlobSelection {
+  /** The manifest's `blobs` entries, comma separated, without braces. */
+  blobEntries: TextSpool;
+  /** The manifest's `missing_blobs` entries, in the same form. */
+  missingEntries: TextSpool;
   blobCount: number;
-  listedBlobs: KeySet;
+  listedBlobs: TextSpool;
 }
 
 export async function handleArchiveExport(
@@ -239,45 +267,171 @@ export async function handleArchiveExport(
   instanceId: string,
   filter: ExportFilter,
   reader: OwnerItemRead,
+  reserve: DiskReserve,
+  /** The largest properties this instance's write doors, and so its
+   *  restore, take. */
+  maxRowBytes: number,
 ): Promise<Response> {
-  const clientGone = c.req.raw.signal;
-  const spool = new ExportSpool(() => blobs.disk.spoolPath());
-  // Kept from the selection to the last entry, so a store that hung once is
-  // waited for once.
-  const unanswered = new Set<string>();
-
-  let selection: Selection;
+  const active = beginArchiveExport(storage, c.req.raw.signal);
   try {
-    selection = await collectSelection({
+    const { response, finished } = await prepareArchiveExport(
+      c,
       storage,
       blobs,
-      reader,
+      instanceId,
       filter,
-      spool,
-      signal: clientGone,
-      unanswered,
-    });
+      reader,
+      reserve,
+      maxRowBytes,
+      active.signal,
+    );
+    void finished.then(
+      () => {
+        active.finish();
+      },
+      (error: unknown) => {
+        active.finish(error);
+      },
+    );
+    return response;
   } catch (error) {
-    await spool.dispose();
-    // The client has left, so there is nobody to answer.
-    if (clientGone.aborted) return new Response(null, { status: 499 });
+    active.finish();
     throw error;
   }
+}
 
+async function prepareArchiveExport(
+  c: HonoContext,
+  storage: Storage,
+  blobs: BlobLayer,
+  instanceId: string,
+  filter: ExportFilter,
+  reader: OwnerItemRead,
+  reserve: DiskReserve,
+  maxRowBytes: number,
+  clientGone: AbortSignal,
+): Promise<{ response: Response; finished: Promise<unknown> }> {
+  clientGone.throwIfAborted();
+  let spool = new ExportSpool(() => blobs.disk.spoolPath(), reserve);
+  // A store that hung once is waited for once across both attempts and streaming.
+  const unanswered = new Set<string>();
   const created = clock.now().toISOString();
-  const head = JSON.stringify({
-    version: 0,
-    format: "marfa-archive-v0",
-    created_at: created,
-    instance_id: instanceId,
-    item_count: selection.itemCount,
-    edge_count: selection.edgeCount,
-    blob_count: selection.blobCount,
-    type_count: selection.typeCount,
-    edge_type_count: selection.edgeTypeCount,
-  } satisfies Omit<ArchiveManifest, "blobs" | "missing_blobs">);
+  let selection!: Selection & BlobSelection;
+  let head!: string;
+  let first: { witness: string; row: RefusedRow } | undefined;
+  for (let attempt = 1; ; attempt++) {
+    let selected: Selection | undefined;
+    try {
+      selected = await collectSelection({
+        storage,
+        reader,
+        filter,
+        spool,
+        signal: clientGone,
+      });
+      selection = {
+        ...selected,
+        ...(await collectBlobs(
+          storage,
+          blobs,
+          spool,
+          selected.blobRecords,
+          clientGone,
+          unanswered,
+        )),
+      };
+      head = JSON.stringify({
+        version: 0,
+        format: "marfa-archive-v0",
+        created_at: created,
+        instance_id: instanceId,
+        item_count: selection.itemCount,
+        edge_count: selection.edgeCount,
+        blob_count: selection.blobCount,
+        type_count: selection.typeCount,
+        edge_type_count: selection.edgeTypeCount,
+      } satisfies Omit<ArchiveManifest, "blobs" | "missing_blobs">);
+      try {
+        // `collectBlobs` checked the blob entries a page at a time.
+        assertArchiveTextSize(
+          Buffer.byteLength(`${head.slice(0, -1)},"blobs":{`) +
+            selection.blobEntries.bytes +
+            Buffer.byteLength('},"missing_blobs":{') +
+            selection.missingEntries.bytes +
+            2,
+          "manifest.json",
+        );
+        parseManifest(`${head.slice(0, -1)},"blobs":{},"missing_blobs":{}}`);
+      } catch (error) {
+        if (error instanceof MarfaError)
+          throw refusalAt({ kind: "manifest", id: null, type: null }, error);
+        throw error;
+      }
+      await runArchiveValidation(
+        {
+          lineFiles: {
+            "items.ndjson": selection.items.path,
+            "edges.ndjson": selection.edges.path,
+            "types.ndjson": selection.types.path,
+          },
+          maxRowBytes,
+          database: await spool.database(),
+        },
+        reserve,
+        clientGone,
+      );
+      clientGone.throwIfAborted();
+      break;
+    } catch (error) {
+      // The refused row is read back from the spool before it is removed.
+      const witness =
+        error instanceof SelectionRefusal && selected
+          ? await refusalWitness(selected, error.row).catch(() => undefined)
+          : undefined;
+      await spool.dispose();
+      if (clientGone.aborted)
+        return {
+          response: new Response(null, { status: 499 }),
+          finished: Promise.resolve(),
+        };
+      if (error instanceof MarfaError) throw error;
+      if (!(error instanceof SelectionRefusal) || witness === undefined)
+        throw new Error(
+          `Archive export failed while reading or checking selection ${String(attempt)} of 2`,
+          { cause: error },
+        );
+      log("warn", "Archive export selection would not restore", {
+        request_id: c.get("requestId"),
+        selection: attempt,
+        row: error.row,
+      });
+      if (!first) {
+        first = { witness, row: error.row };
+        spool = new ExportSpool(() => blobs.disk.spoolPath(), reserve);
+        continue;
+      }
+      // The same row refused the same way twice, with its own spooled line
+      // and its type's registration unchanged between the reads, is the
+      // instance's own data, which another try reads the same again.
+      // Writes to other rows do not matter to that.
+      if (
+        first.witness === witness &&
+        JSON.stringify(first.row) === JSON.stringify(error.row)
+      )
+        throw new MarfaError(
+          ErrorCode.EXPORT_ROWS_UNRESTORABLE,
+          `No archive was sent, because a restore would refuse or skip a row this instance holds. ${error.row.message} Correct the row or its type, then export again.`,
+          { row: error.row },
+        );
+      throw new MarfaError(
+        ErrorCode.EXPORT_UNRESTORABLE,
+        "No archive was sent: writes changed the row the export refused, or the type it was checked against, between two reads. Retry the export.",
+      );
+    }
+  }
+
   // The manifest is the head's object with the blob entries inside its
-  // `blobs` member, cut open here so the entries are never held whole.
+  // `blobs` member, streamed from the same spools validation read.
   const manifestHead = Buffer.from(`${head.slice(0, -1)},"blobs":{`);
   const manifestMiddle = Buffer.from('},"missing_blobs":{');
   const manifestTail = Buffer.from("}}");
@@ -297,10 +451,13 @@ export async function handleArchiveExport(
   body.once("close", () => {
     stopped.abort();
   });
-  pipeline(pack, gzip, body).catch(() => undefined);
+  const signal = AbortSignal.any([clientGone, stopped.signal]);
+  const streamed = pipeline(pack, gzip, body, { signal }).catch(
+    () => undefined,
+  );
 
   const entry = (name: string, size: number, source: Readable) =>
-    pipeline(source, pack.entry({ name, size }), { signal: stopped.signal });
+    pipeline(source, pack.entry({ name, size }), { signal });
   const blobEntry = (
     hash: string,
     size: number,
@@ -314,13 +471,13 @@ export async function handleArchiveExport(
       // `blob-integrity` reads it, and struck only if it is still wrong.
       new VerifyingTransform(hash, size, async () => {
         await withBlobUploadLock(hash, async () => {
-          if (!(await copyIntact(store, hash, size, stopped.signal))) {
+          if (!(await copyIntact(store, hash, size, signal))) {
             await strikeCopy(storage, store, hash);
           }
         });
       }),
       pack.entry({ name: `blobs/${hash}`, size }),
-      { signal: stopped.signal },
+      { signal },
     );
 
   const write = async (): Promise<void> => {
@@ -352,39 +509,33 @@ export async function handleArchiveExport(
       await entry(name, text.bytes, text.read());
     }
 
-    let after: string | undefined;
-    for (;;) {
-      const hashes = await selection.listedBlobs.page(after, PAGE);
-      for (const hash of hashes) {
-        // The manifest listing the blob has been sent, so a blob whose
-        // record or last copy went since the selection cuts the archive
-        // short rather than leaving the entry out. A blob's record is never
-        // rewritten, so its size is the one the selection judged by.
-        const size = (await storage.blobs.get(hash))?.size_bytes;
-        if (size === undefined) throw new Error(`${hash} is not registered`);
-        const { read, store } = await readWhole(
-          storage,
-          blobs,
-          hash,
-          size,
-          unanswered,
-          stopped.signal,
-        );
-        await blobEntry(hash, size, read.stream, store);
-      }
-      after = hashes.at(-1);
-      if (hashes.length < PAGE) break;
+    for await (const line of spooledLines(selection.listedBlobs)) {
+      const { hash, size_bytes: size } = JSON.parse(line) as {
+        hash: string;
+        size_bytes: number;
+      };
+      // Content-addressed bytes cannot change with a database write. A
+      // lost copy after the manifest was sent still cuts the archive short.
+      const { read, store } = await readWhole(
+        storage,
+        blobs,
+        hash,
+        size,
+        unanswered,
+        signal,
+      );
+      await blobEntry(hash, size, read.stream, store);
     }
     pack.finalize();
   };
 
-  void write()
+  const written = write()
     .catch((error: unknown) => {
       // A client that leaves aborts the writer on purpose, which is not a
       // fault. A failure also closes the body and so also sets the signal,
       // but it rejects with the failure rather than with the abort.
       if (
-        stopped.signal.aborted &&
+        signal.aborted &&
         error instanceof Error &&
         error.name === "AbortError"
       ) {
@@ -403,41 +554,85 @@ export async function handleArchiveExport(
       );
       pack.destroy();
     })
-    .finally(() => spool.dispose())
     .catch(() => undefined);
+  const finished = Promise.all([written, streamed]).finally(() =>
+    spool.dispose(),
+  );
 
   const date = created.split("T")[0] ?? "today";
-  return withPreparedHeaders(
-    c,
-    new Response(Readable.toWeb(body) as ReadableStream, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/gzip",
-        "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
-      },
-    }),
-  );
+  return {
+    finished,
+    response: withPreparedHeaders(
+      c,
+      new Response(Readable.toWeb(body) as ReadableStream, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/gzip",
+          "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
+        },
+      }),
+    ),
+  };
 }
 
 async function collectSelection(input: {
   storage: Storage;
-  blobs: BlobLayer;
   reader: OwnerItemRead;
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
-  unanswered: Set<string>;
 }): Promise<Selection> {
-  const { storage, blobs, reader, filter, spool, signal, unanswered } = input;
+  const { storage, reader, filter, spool, signal } = input;
   const readsHistory = reader.reads;
   const items = await spool.text();
   const edges = await spool.text();
   const types = await spool.text();
-  const blobEntries = await spool.text();
-  const missingEntries = await spool.text();
-  const { itemIds, blobHashes, fileRefs, listedBlobs } = await spool.sets();
+  const blobRecords = await spool.text();
+  const { itemIds, blobHashes } = await spool.sets();
 
-  // End each page's database snapshot before spool I/O or a pacing wait.
+  const registrations = new Map<string, LoadedType>();
+  const edgeRegistrations = new Map<string, EdgeTypeSchema>();
+  const captureRegistrations = async () => {
+    // Keep removed registrations for carried rows, and replace retained
+    // definitions whenever a later page sees them. The complete selection is
+    // checked against the final registrations because schema.write also
+    // permits replacements that invalidate older rows.
+    for (const row of await storage.types.listRegisteredWithProvenance()) {
+      registrations.set(row.schema.id, row);
+    }
+    for (const schema of await storage.edgeTypes.list()) {
+      edgeRegistrations.set(schema.id, schema);
+    }
+  };
+  const captureBlobs = async (
+    hashes: Set<string>,
+    refs = new Set<string>(),
+  ) => {
+    const records: BlobRecord[] = [];
+    for (const hash of hashes) {
+      if (!(await reader.blob(storage, hash))) continue;
+      const record = await storage.blobs.get(hash);
+      if (record)
+        records.push({
+          hash,
+          mime_type: record.mime_type,
+          size_bytes: record.size_bytes,
+        });
+      else if (refs.has(hash))
+        records.push({ hash, mime_type: null, size_bytes: null });
+    }
+    return records;
+  };
+  const spoolBlobs = async (records: BlobRecord[]) => {
+    const held = await blobHashes.held(records.map((record) => record.hash));
+    const fresh = records.filter((record) => !held.has(record.hash));
+    await blobRecords.append(
+      fresh.map((record) => `${JSON.stringify(record)}\n`).join(""),
+    );
+    await blobHashes.add(fresh.map((record) => record.hash));
+  };
+  const readPage = <T>(read: () => Promise<T>) =>
+    storage.runInReadSnapshot(read, { deadlineAt: null, signal });
   const turn = async () => {
     signal.throwIfAborted();
     await yieldBulkWork();
@@ -448,80 +643,76 @@ async function collectSelection(input: {
   let cursor: string | undefined;
   do {
     await turn();
-    const { result, lines, ids, hashes, refs } =
-      await storage.runInReadSnapshot(
-        async () => {
-          const result = await withStatementFault("export-read", () =>
-            storage.items.list({
-              ...filter,
-              limit: ITEMS_PER_PAGE,
-              cursor,
-            }),
-          );
-          if (faultsArmed()) await holdAt("read-hydration");
-          const lines: string[] = [];
-          const ids: string[] = [];
-          const hashes = new Set<string>();
-          const refs = new Set<string>();
-          // Of the version each row was read at, which a write since may have
-          // moved the row past. A writer is held to the reach that holds the
-          // snapshots, so a caller that may not read the history learns none.
-          const writers = await storage.items.writersAt(
-            result.data
-              .filter((item) => readsHistory(item.type))
-              .map((item) => ({ id: item.id, version: item.version })),
-          );
-          const restoredAt = await storage.items.restoredAtOf(
-            result.data.map((item) => item.id),
-          );
-          for (const item of await reader.cascade(storage, result.data)) {
-            const metadata = reader.metadata(
-              await storage.metadata.get(item.id),
-            );
-            // Which of the row's digests lend its reach, so a restore credits
-            // those and no others. An extension namespace's are carried only for
-            // the namespaces the line carries.
-            const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
-            const lendingExtensions = Object.fromEntries(
-              Object.entries(
-                await storage.blobs.lendingHashesOfExtensions(item.id),
-              ).filter(([namespace]) => namespace in metadata.extensions),
-            );
-            const versions = await historyBelow(
-              storage,
-              item,
-              readsHistory,
-              hashes,
-            );
-            for (const row of [item, ...versions]) {
-              const ref = fileBlobRef(row);
-              if (ref) refs.add(ref);
-            }
-            lines.push(
-              JSON.stringify({
-                item,
-                metadata,
-                versions,
-                writer: writers.get(item.id) ?? null,
-                restored_at: restoredAt.get(item.id) ?? null,
-                lending_blobs: lendingBlobs,
-                lending_extensions: lendingExtensions,
-              }),
-            );
-            ids.push(item.id);
-            collectBlobHashes(item.properties, hashes);
-            collectBlobHashes(metadata.extensions, hashes);
-          }
-          return { result, lines, ids, hashes, refs };
-        },
-        { signal },
+    const { rows, ids, records, next } = await readPage(async () => {
+      const result = await withStatementFault("export-read", () =>
+        storage.items.list({
+          ...filter,
+          limit: ITEMS_PER_PAGE,
+          cursor,
+        }),
       );
-    await items.append(lines.map((line) => `${line}\n`).join(""));
+      if (faultsArmed()) await holdAt("read-hydration");
+      const rows = [];
+      const ids: string[] = [];
+      const hashes = new Set<string>();
+      const refs = new Set<string>();
+      // Writer identity has the same reach as history, so a caller that may
+      // not read the history learns no writer from it.
+      const writers = await storage.items.writersAt(
+        result.data
+          .filter((item) => readsHistory(item.type))
+          .map((item) => ({ id: item.id, version: item.version })),
+      );
+      const restoredAt = await storage.items.restoredAtOf(
+        result.data.map((item) => item.id),
+      );
+      for (const item of await reader.cascade(storage, result.data)) {
+        const metadata = reader.metadata(await storage.metadata.get(item.id));
+        // Which of the row's digests lend its reach, so a restore credits
+        // those and no others. An extension namespace's are carried only for
+        // the namespaces the line carries.
+        const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
+        const lendingExtensions = Object.fromEntries(
+          Object.entries(
+            await storage.blobs.lendingHashesOfExtensions(item.id),
+          ).filter(([namespace]) => namespace in metadata.extensions),
+        );
+        const versions = await historyBelow(
+          storage,
+          item,
+          readsHistory,
+          hashes,
+        );
+        for (const row of [item, ...versions]) {
+          const ref = fileBlobRef(row);
+          if (ref) refs.add(ref);
+        }
+        rows.push({
+          item,
+          metadata,
+          versions,
+          writer: writers.get(item.id) ?? null,
+          restored_at: restoredAt.get(item.id) ?? null,
+          lending_blobs: lendingBlobs,
+          lending_extensions: lendingExtensions,
+        });
+        ids.push(item.id);
+        collectBlobHashes(item.properties, hashes);
+        collectBlobHashes(metadata.extensions, hashes);
+      }
+      await captureRegistrations();
+      return {
+        rows,
+        ids,
+        records: await captureBlobs(hashes, refs),
+        next: result.next_cursor,
+      };
+    });
+    await items.append(rows.map((row) => `${JSON.stringify(row)}\n`).join(""));
     await itemIds.add(ids);
-    await blobHashes.add(hashes);
-    await fileRefs.add(refs);
-    itemCount += lines.length;
-    cursor = result.next_cursor ?? undefined;
+    await spoolBlobs(records);
+    itemCount += rows.length;
+    cursor = next ?? undefined;
   } while (cursor);
 
   // Same both-endpoints rule as the NDJSON path: the archive carries the
@@ -530,21 +721,21 @@ async function collectSelection(input: {
   let edgeCursor: string | undefined;
   do {
     await turn();
-    const { page, readable, lending } = await storage.runInReadSnapshot(
-      async () => {
-        const page = await storage.edges.list({
-          limit: PAGE,
-          cursor: edgeCursor,
-          source_filter: filter.source_filter,
-        });
-        const readable = await readableExportEdges(storage, reader, page.data);
-        const lending = await storage.blobs.lendingHashesOfEdges(
-          readable.map((edge) => edge.id),
-        );
-        return { page, readable, lending };
-      },
-      { signal },
-    );
+    const { page, readable, lending, records } = await readPage(async () => {
+      const page = await storage.edges.list({
+        limit: PAGE,
+        cursor: edgeCursor,
+        source_filter: filter.source_filter,
+      });
+      const readable = await readableExportEdges(storage, reader, page.data);
+      const lending = await storage.blobs.lendingHashesOfEdges(
+        readable.map((edge) => edge.id),
+      );
+      await captureRegistrations();
+      const hashes = new Set<string>();
+      for (const edge of readable) collectBlobHashes(edge.properties, hashes);
+      return { page, readable, lending, records: await captureBlobs(hashes) };
+    });
     const exported = await itemIds.held(
       readable.flatMap((edge) => [edge.source_id, edge.target_id]),
     );
@@ -560,123 +751,198 @@ async function collectSelection(input: {
       collectBlobHashes(edge.properties, hashes);
     }
     await edges.append(lines.join(""));
-    await blobHashes.add(hashes);
+    await spoolBlobs(records.filter((record) => hashes.has(record.hash)));
     edgeCount += lines.length;
     edgeCursor = page.next_cursor ?? undefined;
   } while (edgeCursor);
 
-  // The instance's own registrations, not the filtered item set's: a
-  // restore has to be able to write every item the archive carries,
-  // and an unfiltered archive is the case that matters. Carrying a
-  // type the archive happens not to use costs one line.
-  // Provenance rides beside the schema rather than inside it. The
-  // restore validates and normalizes `type` and compares the
-  // result against the stored row to decide skip-or-conflict, so a
-  // field added into the schema would read as a different registration
-  // and turn every re-restore into a conflict.
-  //
-  // It is carried at all because `origin` is not descriptive: it decides
-  // whether the consent screen offers a root read-only or
-  // read-and-write. An archive without it restores as `unknown`,
-  // read-only, so a `user` registration would come back without the
-  // wildcard it earned.
+  // Provenance belongs beside the schema: restore compares normalized schemas
+  // and uses origin separately to preserve the registration's authority.
   await turn();
   let typeCount = 0;
   let edgeTypeCount = 0;
   const typeLines: string[] = [];
-  for (const row of await storage.types.listRegisteredWithProvenance()) {
+  for (const row of registrations.values()) {
     typeLines.push(
       `${JSON.stringify({ type: row.schema, provenance: { origin: row.origin } })}\n`,
     );
     typeCount += 1;
   }
-  for (const schema of await storage.edgeTypes.list()) {
+  for (const schema of edgeRegistrations.values()) {
     typeLines.push(`${JSON.stringify({ edge_type: schema })}\n`);
     edgeTypeCount += 1;
   }
   await types.append(typeLines.join(""));
 
-  // An archive carries only bytes the blob doors would serve this
-  // caller: naming a digest in a row it may read lends nothing the
-  // door would not, wherever in the row the digest sits.
+  await Promise.all([
+    items.seal(),
+    edges.seal(),
+    types.seal(),
+    blobRecords.seal(),
+  ]);
+  signal.throwIfAborted();
+  return {
+    items,
+    edges,
+    types,
+    blobRecords,
+    itemCount,
+    edgeCount,
+    typeCount,
+    edgeTypeCount,
+  };
+}
+
+interface BlobRecord {
+  hash: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+}
+
+/** Probe physical copies after releasing the page snapshots. The spool
+ *  fixes which digests and sizes the manifest promises; copies can disappear
+ *  independently of SQLite and are verified again when their bytes stream. */
+async function collectBlobs(
+  storage: Storage,
+  blobs: BlobLayer,
+  spool: ExportSpool,
+  records: TextSpool,
+  signal: AbortSignal,
+  unanswered: Set<string>,
+): Promise<BlobSelection> {
+  const blobEntries = await spool.text();
+  const missingEntries = await spool.text();
+  const listedBlobs = await spool.text();
   let blobCount = 0;
   let missingCount = 0;
-  let after: string | undefined;
-  for (;;) {
-    await turn();
-    const page = await blobHashes.page(after, PAGE);
-    const listed: string[] = [];
-    const entries: string[] = [];
-    const missing: string[] = [];
-    const records = new Map<
-      string,
-      { mime_type: string | null; size_bytes: number | null }
-    >();
+  const page: BlobRecord[] = [];
+  const flush = async () => {
+    signal.throwIfAborted();
     const sizes = new Map<string, number>();
-    // A digest with no record is a blob only where a file's `blob_ref`
-    // names it; anywhere else it may be any run of hex.
-    const refs = await fileRefs.held(page);
-    for (const hash of page) {
-      if (!(await reader.blob(storage, hash))) continue;
-      const record = await storage.blobs.get(hash);
-      if (record) {
-        records.set(hash, record);
-        sizes.set(hash, record.size_bytes);
-      } else if (refs.has(hash)) {
-        records.set(hash, { mime_type: null, size_bytes: null });
-      }
+    for (const record of page) {
+      if (record.size_bytes !== null) sizes.set(record.hash, record.size_bytes);
     }
     const copies = await wholeCopies(storage, blobs, sizes, {
       signal,
       unanswered,
     });
-    for (const [hash, record] of records) {
-      const entry = `${JSON.stringify(hash)}:${JSON.stringify({
-        mime_type: record.mime_type,
-        size_bytes: record.size_bytes,
-      })}`;
+    const present: string[] = [];
+    const missing: string[] = [];
+    const listed: string[] = [];
+    const manifest = {
+      version: 0,
+      blobs: {} as Record<string, unknown>,
+      missing_blobs: {} as Record<string, unknown>,
+    };
+    for (const { hash, mime_type, size_bytes } of page) {
+      const entry = `${JSON.stringify(hash)}:${JSON.stringify({ mime_type, size_bytes })}`;
       if (copies.get(hash)) {
-        listed.push(hash);
-        entries.push(entry);
+        present.push(entry);
+        listed.push(`${JSON.stringify({ hash, size_bytes })}\n`);
+        manifest.blobs[hash] = { mime_type, size_bytes };
       } else {
         missing.push(entry);
+        manifest.missing_blobs[hash] = { mime_type, size_bytes };
       }
     }
+    // The restore's own reading of a manifest, asked of a page of its
+    // entries, so no part of the export holds or parses the whole of it.
+    try {
+      parseManifest(JSON.stringify(manifest));
+    } catch (error) {
+      if (error instanceof MarfaError)
+        throw refusalAt({ kind: "blob", id: null, type: null }, error);
+      throw error;
+    }
     await blobEntries.append(
-      entries.map((one, i) => (blobCount + i === 0 ? one : `,${one}`)).join(""),
+      present.map((one, i) => (blobCount + i === 0 ? one : `,${one}`)).join(""),
     );
     await missingEntries.append(
       missing
         .map((one, i) => (missingCount + i === 0 ? one : `,${one}`))
         .join(""),
     );
-    await listedBlobs.add(listed);
-    blobCount += listed.length;
+    await listedBlobs.append(listed.join(""));
+    blobCount += present.length;
     missingCount += missing.length;
-    after = page.at(-1);
-    if (page.length < PAGE) break;
+    page.length = 0;
+  };
+  for await (const line of spooledLines(records)) {
+    page.push(JSON.parse(line) as BlobRecord);
+    if (page.length === PAGE) await flush();
   }
-
+  await flush();
   await Promise.all([
-    items.seal(),
-    edges.seal(),
-    types.seal(),
     blobEntries.seal(),
     missingEntries.seal(),
+    listedBlobs.seal(),
   ]);
-  return {
-    items,
-    edges,
-    types,
-    blobEntries,
-    missingEntries,
-    itemCount,
-    edgeCount,
-    typeCount,
-    edgeTypeCount,
-    blobCount,
-    listedBlobs,
+  return { blobEntries, missingEntries, listedBlobs, blobCount };
+}
+
+/**
+ * What a refusal of `row` rests on, as the spooled selection holds it: the
+ * row's own line and the registration of its type. Two reads that refuse
+ * the same row with the same witness refuse it for what the instance holds
+ * and not for a write in flight. A refusal about a row's relation to
+ * others (a second id, an endpoint the selection lacks, a cycle) is judged
+ * by the row's line too, because the second read repeated it. A refusal
+ * that names no row line (the manifest, a blob) rests on the whole
+ * selection.
+ */
+async function refusalWitness(
+  selection: Selection,
+  row: RefusedRow,
+): Promise<string> {
+  const hashing = createHash("sha256");
+  const lineOf = async (
+    spool: TextSpool,
+    match: (parsed: Record<string, unknown>) => boolean,
+  ): Promise<string> => {
+    for await (const line of spooledLines(spool)) {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          match(parsed as Record<string, unknown>)
+        )
+          return line;
+      } catch {
+        // A line that does not parse is not the row.
+      }
+    }
+    return "";
   };
+  const field = (value: unknown, key: string) =>
+    typeof value === "object" && value !== null
+      ? (value as Record<string, unknown>)[key]
+      : undefined;
+  if ((row.kind === "item" || row.kind === "edge") && row.id !== null) {
+    const spool = row.kind === "item" ? selection.items : selection.edges;
+    const own = await lineOf(
+      spool,
+      (parsed) => field(parsed[row.kind], "id") === row.id,
+    );
+    if (own !== "" && row.type !== null) {
+      const registration = await lineOf(
+        selection.types,
+        (parsed) =>
+          field(parsed[row.kind === "item" ? "type" : "edge_type"], "id") ===
+          row.type,
+      );
+      hashing.update(own).update("\n").update(registration);
+      return hashing.digest("hex");
+    }
+  }
+  for (const file of [
+    selection.items,
+    selection.edges,
+    selection.types,
+    selection.blobRecords,
+  ])
+    hashing.update(file.digest());
+  return hashing.digest("hex");
 }
 
 /** Every stored snapshot of `item` the caller may read, strictly below the
@@ -703,4 +969,15 @@ async function historyBelow(
     historyCursor = history.next_cursor ?? undefined;
   } while (historyCursor);
   return versions;
+}
+
+async function* spooledLines(spool: TextSpool): AsyncGenerator<string> {
+  const stream = spool.read();
+  const lines = createInterface({ input: stream, crlfDelay: Infinity });
+  try {
+    for await (const line of lines) yield line;
+  } finally {
+    lines.close();
+    stream.destroy();
+  }
 }

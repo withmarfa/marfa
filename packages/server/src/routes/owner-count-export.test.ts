@@ -477,6 +477,10 @@ it("restores owner archives with history-only blobs, extensions and cascade mark
     body: Buffer.from(await archived.arrayBuffer()),
   });
   expect(restored.status, await restored.clone().text()).toBe(200);
+  expect(await restored.json()).toMatchObject({
+    edges_imported: 1,
+    edges_skipped: 0,
+  });
   expect(await destination.storage.items.getIncludingTrashed(file.id)).toEqual(
     await source.storage.items.getIncludingTrashed(file.id),
   );

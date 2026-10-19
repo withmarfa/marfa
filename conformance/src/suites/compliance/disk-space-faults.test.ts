@@ -29,8 +29,8 @@ import { waitFor } from "../../utils/wait.js";
  * setting the fault again while the body is on its way. A blob store that has
  * no room is made through `fail:blob-write`.
  *
- * The reserve is 1 MiB. The server looks at the volume every half of it while
- * a body streams, so a body of a few MiB is looked at several times.
+ * The reserve is 1 MiB. Each file write admits its growth against the room
+ * left after the reserve and the bytes other writers have reserved.
  */
 const MiB = 1024 * 1024;
 const RESERVE = MiB;

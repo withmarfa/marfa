@@ -635,6 +635,64 @@ function judgeResult(
   );
 }
 
+/**
+ * What a create refuses before it reads the database: a malformed id or
+ * `occurred_at`, a type the registry does not hold, and properties that type
+ * does not take. Answers the properties as validation coerced them.
+ */
+export function creatableItem(
+  input: Pick<
+    StoredCreateItemInput,
+    "id" | "type" | "properties" | "occurred_at"
+  >,
+): { occurred_at?: string; properties: Record<string, unknown> } {
+  const occurredAt =
+    input.occurred_at === undefined
+      ? undefined
+      : normalizeTimeBound(input.occurred_at, "occurred_at");
+  if (input.id && !isValidId(input.id)) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
+  }
+
+  // Every item must carry a registered type. An unregistered identifier has
+  // no schema to validate against, so accepting it would let typo'd or
+  // ad-hoc types persist with zero conformance checking — the opposite of a
+  // typed data layer's promise. Reject before any write. Custom types are
+  // loaded into the registry at startup and on `POST /types`, so a legitimate
+  // custom type resolves here.
+  const typeSchema = getTypeSchema(input.type);
+  if (!typeSchema) {
+    throw new MarfaError(
+      ErrorCode.UNKNOWN_TYPE,
+      `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
+      { type: input.type },
+    );
+  }
+  // Validate properties against the type schema. Runs unconditionally —
+  // an empty `{}` must still fail required-field checks (a core.note with
+  // no body is invalid whether properties is empty or partially filled).
+  // Persist the validated (coerced) properties so `null` on an optional
+  // field — which validation treats as "unset" — drops out before the write
+  // rather than landing as a stored null.
+  const validation = validateProperties(input.type, input.properties);
+  if (!validation.success) {
+    // The specific code, not the generic one. A durable client's failure
+    // classification is closed and keys on it: a schema refusal is
+    // permanent, and a code the client does not recognize falls through
+    // to transient and retries forever. The update, retype and
+    // strict-mode paths answer `invalid_properties` for the identical
+    // failure, and one failure cannot have two names and still be
+    // classified.
+    throw new MarfaError(ErrorCode.INVALID_PROPERTIES, "Invalid properties", {
+      errors: validation.errors,
+    });
+  }
+  return {
+    ...(occurredAt !== undefined && { occurred_at: occurredAt }),
+    properties: validation.data,
+  };
+}
+
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
@@ -653,55 +711,15 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async create(input: StoredCreateItemInput): Promise<Item> {
-    if (input.occurred_at !== undefined) {
-      input = {
-        ...input,
-        occurred_at: normalizeTimeBound(input.occurred_at, "occurred_at"),
-      };
-    }
+    const { occurred_at: occurredAt, properties: validated } =
+      creatableItem(input);
+    if (occurredAt !== undefined) input = { ...input, occurred_at: occurredAt };
     const id = input.id ?? generateId();
-    if (input.id && !isValidId(input.id)) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
-    }
-
-    // Every item must carry a registered type. An unregistered identifier has
-    // no schema to validate against, so accepting it would let typo'd or
-    // ad-hoc types persist with zero conformance checking — the opposite of a
-    // typed data layer's promise. Reject before any write. Custom types are
-    // loaded into the registry at startup and on `POST /types`, so a legitimate
-    // custom type resolves here.
-    const typeSchema = getTypeSchema(input.type);
-    if (!typeSchema) {
-      throw new MarfaError(
-        ErrorCode.UNKNOWN_TYPE,
-        `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
-        { type: input.type },
-      );
-    }
-    // Validate properties against the type schema. Runs unconditionally —
-    // an empty `{}` must still fail required-field checks (a core.note with
-    // no body is invalid whether properties is empty or partially filled).
-    // Persist the validated (coerced) properties so `null` on an optional
-    // field — which validation treats as "unset" — drops out before the write
-    // rather than landing as a stored null.
-    const validation = validateProperties(input.type, input.properties);
-    if (!validation.success) {
-      // The specific code, not the generic one. A durable client's failure
-      // classification is closed and keys on it: a schema refusal is
-      // permanent, and a code the client does not recognize falls through
-      // to transient and retries forever. The update, retype and
-      // strict-mode paths answer `invalid_properties` for the identical
-      // failure, and one failure cannot have two names and still be
-      // classified.
-      throw new MarfaError(ErrorCode.INVALID_PROPERTIES, "Invalid properties", {
-        errors: validation.errors,
-      });
-    }
     const declared = Object.keys(
       resolveTypeSchema(input.type, (typeId) => getTypeSchema(typeId))
         ?.fields ?? {},
     );
-    let properties = inAnswerOrder(declared, validation.data, input.properties);
+    let properties = inAnswerOrder(declared, validated, input.properties);
 
     const now = clock.now().toISOString();
     const state = input.state ?? SYSTEM_DEFAULT_STATE;

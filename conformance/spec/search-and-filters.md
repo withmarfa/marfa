@@ -1362,7 +1362,7 @@ The server MUST count in the manifest of an archive exactly the items and edges 
 
 When a row is written after the headers of `GET /export?format=archive` have arrived, the server MUST carry the row as it stood before that write.
 
-**Reason:** the archive is the selection as it stood when its headers arrived.
+**Reason:** the archive's selection is fixed before its headers arrive.
 
 **Tests:** `compliance/export.test.ts › carries a row as it stood when the export read it, whatever is written to it after the headers`.
 
@@ -1374,7 +1374,7 @@ When an item is created after the headers of `GET /export?format=archive` have a
 
 ### `search-and-filters/archive-edge-before`
 
-When an edge between two carried items exists before `GET /export?format=archive` begins, the server MUST carry the edge.
+When an edge between two carried items exists before `GET /export?format=archive` begins and remains present throughout its selection read, the server MUST carry the edge.
 
 **Tests:** `compliance/export.test.ts › carries an edge created before the export began, and not one created after its headers arrived`.
 
@@ -1386,11 +1386,35 @@ When an edge is created after the headers of `GET /export?format=archive` have a
 
 ### `search-and-filters/archive-restorable`
 
-While `GET /export?format=archive` reads its selection, the server MUST keep a write that lands between two of its pages from making the archive unrestorable.
+When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `MARFA_MAX_BULK_REQUEST_BYTES`, without skipping any carried item or edge.
 
-**Reason:** the export does not hold the server for the whole selection, so a write can land between pages.
+**Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
 **Tests:** waiting on #2074.
+
+### `search-and-filters/archive-validation-retry`
+
+If an archive selection fails restore validation, then the server MUST restart `GET /export?format=archive` from the beginning once before sending archive bytes.
+
+**Reason:** a write between pages can make their combined state invalid even when each page was valid when read.
+
+**Tests:** waiting on #2074.
+
+### `search-and-filters/archive-validation-refused`
+
+If both archive selections fail restore validation and the second selection refuses a different row than the first, or refuses the same row after that row, or the registration of its type, changed between the two reads, then the server MUST answer `503 export_unrestorable` without sending archive bytes.
+
+**Reason:** a row that changed between the reads, or a different row refused, shows that writes were landing on what failed, and a later retry can read it after the writes have finished. Returning an invalid archive would claim a backup the restore cannot read.
+
+**Tests:** waiting on #2074.
+
+### `search-and-filters/archive-rows-refused`
+
+If both archive selections fail restore validation on the same row, with the same `kind`, `id`, `type`, `field` and `code`, and that row's own archived line and the registration of its type are the same in both reads, then the server MUST answer `409 export_rows_unrestorable` without sending archive bytes, with `details.row` naming that row's `kind`, `id`, `type` and `field` and the `code` that restore refuses it with or the reason restore skips it for.
+
+**Reason:** writes to other rows between the reads do not change the answer, because the failure is in the instance's own data, such as a row that a type's replacement schema no longer accepts, so a retry reads the same row and fails again. On an instance that is written to all the time, a test that also required every other row to be unchanged would turn a lasting bad row into a retry that never ends and never names the row. Only a change to the row or its registration lets the export pass, and the owner needs the row named to make it.
+
+**Tests:** `compliance/export-rows-refused.test.ts › answers 409 naming the row, and exports once the row is corrected`.
 
 ### `search-and-filters/archive-spool-ended`
 
@@ -1402,7 +1426,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 ### `search-and-filters/archive-spool-fault`
 
-If a read fails while `GET /export?format=archive` is answering, then the server MUST leave nothing of the export on disk.
+If selection, validation or streaming fails during `GET /export?format=archive`, then the server MUST leave nothing of the export on disk.
 
 **Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`.
 

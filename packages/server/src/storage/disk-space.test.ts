@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync, symlinkSync } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,12 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { createClient } from "@libsql/client";
 import { describe, expect, it } from "vitest";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import {
-  DiskReserve,
-  type Admission,
-  RESERVE_CHECK_EVERY_BYTES,
-  diskFull,
-} from "./disk-space.js";
+import { DiskReserve, type Admission, diskFull } from "./disk-space.js";
 
 const MIB = 1024 * 1024;
 
@@ -38,127 +33,209 @@ function chunks(count: number, size = MIB): Readable {
 }
 
 async function sink(source: Readable, place: Admission): Promise<number> {
-  let bytes = 0;
-  await pipeline(source, place.guard(), async function (stream) {
-    for await (const chunk of stream) bytes += (chunk as Buffer).length;
-  });
-  return bytes;
+  const dir = mkdtempSync(join(tmpdir(), "marfa-admission-"));
+  const path = join(dir, "body");
+  try {
+    await pipeline(source, place.writer(path));
+    return statSync(path).size;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
-describe("DiskReserve.admit", () => {
-  it("admits a body that leaves exactly the reserve beside its own slack, and refuses one byte more", async () => {
+describe("the process-wide volume ledger", () => {
+  it.each([0, 1])(
+    "fails a body of %i chunks whose file cannot be opened, and pays back its admission",
+    async (count) => {
+      const dir = mkdtempSync(join(tmpdir(), "marfa-admission-"));
+      try {
+        const reserve = new DiskReserve(dir, MIB, volume(4 * MIB).available);
+        const place = await reserve.admit(MIB);
+        await expect(
+          pipeline(
+            chunks(count, 1024),
+            place.writer(join(dir, "gone", "body")),
+          ),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+        place.close();
+        (await reserve.admit(3 * MIB)).close();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("admits exactly the available capacity and refuses one byte more with 507", async () => {
     const disk = volume(100 * MIB);
     const reserve = new DiskReserve("/data", 40 * MIB, disk.available);
-    // The body itself may be one look's worth ahead of the volume's figure.
-    const fits = 60 * MIB - RESERVE_CHECK_EVERY_BYTES;
-    (await reserve.admit(fits)).close();
-    const refusal = await reserve.admit(fits + 1).catch((e: unknown) => e);
-    expect(refusal).toBeInstanceOf(MarfaError);
-    expect((refusal as MarfaError).code).toBe(ErrorCode.INSUFFICIENT_STORAGE);
-    expect((refusal as MarfaError).status).toBe(507);
-    expect((refusal as MarfaError).details).toEqual({
-      reserve_bytes: 40 * MIB,
-      available_bytes: 100 * MIB,
-    });
-  });
-
-  it("refuses a volume already inside the reserve when nothing is declared", async () => {
-    const reserve = new DiskReserve("/data", 40, volume(39).available);
-    await expect(reserve.admit()).rejects.toMatchObject({
+    (await reserve.admit(60 * MIB)).close();
+    await expect(reserve.admit(60 * MIB + 1)).rejects.toMatchObject({
       code: ErrorCode.INSUFFICIENT_STORAGE,
+      status: 507,
+      details: { reserve_bytes: 40 * MIB, available_bytes: 100 * MIB },
     });
   });
 
-  it("holds nothing back at a reserve of zero, and does not look at the volume", async () => {
+  it("refuses a volume already inside the reserve even without a declared length", async () => {
+    await expect(
+      new DiskReserve("/data", 40, volume(39).available).admit(),
+    ).rejects.toMatchObject({ code: ErrorCode.INSUFFICIENT_STORAGE });
+  });
+
+  it("holds nothing back or probes the volume at a reserve of zero", async () => {
     const disk = volume(0);
-    const reserve = new DiskReserve("/data", 0, disk.available);
-    const place = await reserve.admit(10 * MIB);
-    await sink(chunks(8), place);
-    place.close();
+    const place = await new DiskReserve("/data", 0, disk.available).admit(
+      10 * MIB,
+    );
+    try {
+      expect(await sink(chunks(8), place)).toBe(8 * MIB);
+    } finally {
+      place.close();
+    }
     expect(disk.state.looks).toBe(0);
   });
 
-  it("counts what bodies already admitted have yet to write, so bodies that arrive together cannot each take the same room", async () => {
-    const disk = volume(1000 * MIB);
-    const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
-    // Each alone fits in the 900 MiB above the reserve; together they do not.
-    const first = await reserve.admit(500 * MIB);
-    const second = await reserve.admit(300 * MIB);
-    await expect(reserve.admit(300 * MIB)).rejects.toMatchObject({
-      code: ErrorCode.INSUFFICIENT_STORAGE,
-    });
-    // The witness: the same body is taken once an earlier one is done.
-    first.close();
-    (await reserve.admit(300 * MIB)).close();
-    second.close();
-  });
-
-  it("takes bodies that arrive together one at a time, so each finds what the others left", async () => {
-    const disk = volume(100 * MIB + 10 * MIB);
-    const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
-    const answers = await Promise.allSettled(
-      Array.from({ length: 5 }, () => reserve.admit(3 * MIB)),
+  it("serializes simultaneous admissions from different users of the same device", async () => {
+    const disk = volume(110 * MIB);
+    const users = Array.from(
+      { length: 5 },
+      (_, i) =>
+        new DiskReserve(`/data/${String(i)}`, 100 * MIB, disk.available),
     );
-    expect(answers.filter((a) => a.status === "fulfilled")).toHaveLength(1);
-    expect(answers.filter((a) => a.status === "rejected")).toHaveLength(4);
+    const answers = await Promise.allSettled(
+      users.map((reserve) => reserve.admit(3 * MIB)),
+    );
+    try {
+      expect(
+        answers.filter((answer) => answer.status === "fulfilled"),
+      ).toHaveLength(3);
+      expect(
+        answers.filter((answer) => answer.status === "rejected"),
+      ).toHaveLength(2);
+    } finally {
+      for (const answer of answers)
+        if (answer.status === "fulfilled") answer.value.close();
+    }
+    (await users[0]!.admit(10 * MIB)).close();
   });
 
-  it("counts a body in flight at the slack it may be ahead of its last look, even when it declared nothing", async () => {
-    const disk = volume(100 * MIB + 3 * RESERVE_CHECK_EVERY_BYTES);
+  it("finds a shared volume through distinct directories and a symlink", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marfa-volume-"));
+    const disk = volume(102 * MIB);
+    symlinkSync(dir, join(dir, "alias"));
+    const database = new DiskReserve(
+      join(dir, "database"),
+      100 * MIB,
+      disk.available,
+      "database",
+    );
+    const blobs = new DiskReserve(
+      join(dir, "alias", "blobs"),
+      100 * MIB,
+      disk.available,
+    );
+    const held = await database.admit(2 * MIB);
+    try {
+      await expect(blobs.admit(1)).rejects.toMatchObject({
+        code: "insufficient_storage",
+      });
+    } finally {
+      held.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("pays down a declared body after each completed write while keeping its unwritten bytes reserved", async () => {
+    const disk = volume(110 * MIB);
     const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
-    const held = [];
-    for (let i = 0; i < 3; i++) held.push(await reserve.admit());
-    await expect(reserve.admit()).rejects.toMatchObject({
-      code: ErrorCode.INSUFFICIENT_STORAGE,
+    const place = await reserve.admit(8 * MIB);
+    try {
+      await place.write(4 * MIB, () => {
+        disk.state.free -= 4 * MIB;
+        return Promise.resolve();
+      });
+      const concurrent = await reserve.admit(2 * MIB);
+      try {
+        await expect(reserve.admit(1)).rejects.toMatchObject({
+          code: "insufficient_storage",
+        });
+      } finally {
+        concurrent.close();
+      }
+    } finally {
+      place.close();
+    }
+    (await reserve.admit(6 * MIB)).close();
+  });
+
+  it("keeps an unwritten chunk reserved until its write acknowledges completion", async () => {
+    const disk = volume(102 * MIB);
+    const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
+    const place = await reserve.admit();
+    let complete!: () => void;
+    let entered!: () => void;
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
     });
-    for (const place of held) place.close();
-    (await reserve.admit()).close();
+    const finished = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    const first = place.write(2 * MIB, async () => {
+      entered();
+      await finished;
+      disk.state.free -= 2 * MIB;
+    });
+    await writing;
+    const next = reserve.admit(1).catch((error: unknown) => error);
+    complete();
+    try {
+      await first;
+      expect(await next).toMatchObject({ code: "insufficient_storage" });
+    } finally {
+      place.close();
+    }
   });
 });
 
-describe("Admission.guard", () => {
-  it("passes every byte while the volume keeps its reserve", async () => {
-    const disk = volume(1000 * MIB);
-    const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
-    const place = await reserve.admit();
-    expect(await sink(chunks(20), place)).toBe(20 * MIB);
-    place.close();
-    // One look to admit, then one for each stretch of the stream.
-    expect(disk.state.looks).toBe(
-      1 + Math.floor((20 * MIB) / RESERVE_CHECK_EVERY_BYTES),
-    );
+describe("admitted file writes", () => {
+  it("passes every byte while space remains", async () => {
+    const place = await new DiskReserve(
+      "/data",
+      100 * MIB,
+      volume(1000 * MIB).available,
+    ).admit();
+    try {
+      expect(await sink(chunks(20), place)).toBe(20 * MIB);
+    } finally {
+      place.close();
+    }
   });
 
-  it("stops a stream as the volume falls inside the reserve, not before", async () => {
-    const disk = volume(1000 * MIB);
-    const reserve = new DiskReserve("/data", 100 * MIB, disk.available);
-    const place = await reserve.admit();
-    let seen = 0;
-    const source = Readable.from(
-      (function* () {
-        for (let i = 0; i < 64; i++) {
-          seen++;
-          // What the stream has written so far is what the volume has lost.
-          disk.state.free = 1000 * MIB - i * MIB * 16;
-          yield Buffer.alloc(MIB);
-        }
-      })(),
-    );
-    const outcome = await sink(source, place).catch((e: unknown) => e);
-    place.close();
-    expect(outcome).toBeInstanceOf(MarfaError);
-    expect((outcome as MarfaError).code).toBe(ErrorCode.INSUFFICIENT_STORAGE);
-    expect(seen).toBeLessThan(64);
-    expect(seen).toBeGreaterThan(RESERVE_CHECK_EVERY_BYTES / MIB);
+  it("refuses a single oversized chunk before writing it, including undeclared growth", async () => {
+    const place = await new DiskReserve(
+      "/data",
+      MIB,
+      volume(2 * MIB).available,
+    ).admit();
+    try {
+      await expect(sink(chunks(1, 2 * MIB), place)).rejects.toMatchObject({
+        code: "insufficient_storage",
+      });
+    } finally {
+      place.close();
+    }
   });
 
-  it("looks as often as a small reserve needs, not as seldom as a large one", async () => {
-    const disk = volume(1000 * MIB);
-    const reserve = new DiskReserve("/data", 1 * MIB, disk.available);
-    const place = await reserve.admit();
-    await sink(chunks(8), place);
-    place.close();
-    expect(disk.state.looks).toBeGreaterThan(4);
+  it("contains a lying declared length by admitting growth before writing it", async () => {
+    const disk = volume(3 * MIB);
+    const place = await new DiskReserve("/data", MIB, disk.available).admit(1);
+    try {
+      await expect(sink(chunks(1, 3 * MIB), place)).rejects.toMatchObject({
+        code: "insufficient_storage",
+      });
+    } finally {
+      place.close();
+    }
   });
 });
 
@@ -224,4 +301,20 @@ describe("diskFull", () => {
     loop.cause = loop;
     expect(diskFull(loop)).toBeUndefined();
   });
+});
+
+it.runIf(
+  existsSync("/dev/shm") && statSync("/dev/shm").dev !== statSync(tmpdir()).dev,
+)("keeps reservations on distinct devices independent", async () => {
+  const first = mkdtempSync(join(tmpdir(), "marfa-device-first-"));
+  const second = mkdtempSync("/dev/shm/marfa-device-second-");
+  const disk = volume(2 * MIB);
+  const place = await new DiskReserve(first, MIB, disk.available).admit(MIB);
+  try {
+    (await new DiskReserve(second, MIB, disk.available).admit(MIB)).close();
+  } finally {
+    place.close();
+    rmSync(first, { recursive: true, force: true });
+    rmSync(second, { recursive: true, force: true });
+  }
 });

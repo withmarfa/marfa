@@ -5,7 +5,7 @@ import {
   satisfiesEdgeConstraint,
   validateDeclaredProperties,
 } from "@withmarfa/shared";
-import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
+import type { Edge, EdgeTypeSchema, Item } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
 import type { Storage } from "./interface.js";
 
@@ -16,7 +16,7 @@ import type { Storage } from "./interface.js";
  * or unordered. A self-loop is the exception and is refused on all of them,
  * because one edge closing on itself needs no walk to find.
  */
-const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
+export const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
 
 /**
  * Collection membership is a flat relation on purpose: a container holds
@@ -204,6 +204,33 @@ export async function assertEdgesCanBeCreated(
   opts: { replay?: boolean; replacing?: Edge } = {},
 ): Promise<EdgeTypeSchema[]> {
   storage.assertInWriteTransaction();
+  return assertEdgesFitGraph(storage, proposals, mayRead, opts);
+}
+
+/** The reads `assertEdgesFitGraph` makes of the graph it judges. */
+export interface EdgeGraph {
+  items: {
+    getMany(
+      ids: string[],
+      opts: { includeTrashed: boolean },
+    ): Promise<ReadonlyMap<string, Pick<Item, "type" | "state">>>;
+  };
+  edges: Pick<
+    Storage["edges"],
+    | "existsExactBatch"
+    | "countsBySourceBatch"
+    | "countsByTargetBatch"
+    | "wouldCreateCycle"
+  >;
+}
+
+/** `assertEdgesCanBeCreated` over any graph, such as an archive's own rows. */
+export async function assertEdgesFitGraph(
+  storage: EdgeGraph,
+  proposals: EdgeProposal[],
+  mayRead: (type: string) => boolean,
+  opts: { replay?: boolean; replacing?: Edge } = {},
+): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
   const { edges: edgeStore, items: itemStore } = storage;
 

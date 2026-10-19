@@ -219,8 +219,8 @@ export interface AppConfig {
   blobMinCopies?: number;
   /** Idle lifetime of a blob read before its file or socket is closed. */
   blobReadIdleTimeoutMs?: number;
-  /** The free bytes an upload or a restore must leave on the disk store's
-   *  volume. A non-negative integer; default 134_217_728 (128 MiB); env
+  /** The free bytes uploads, restores, and archive exports must leave on
+   *  the disk store's volume. A non-negative integer; default 134_217_728 (128 MiB); env
    *  override `MARFA_DISK_RESERVE_BYTES`. */
   diskReserveBytes?: number;
   /** Cadence (ms) for `blob-replicate`, which gives every attached store
@@ -1028,7 +1028,7 @@ const settingsShape = {
   ),
   MARFA_DISK_RESERVE_BYTES: count(
     128 * 1024 * 1024,
-    "The free space on the disk store's volume that an upload or a restore must leave. A body that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
+    "The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
     { min: 0, unit: "bytes" },
   ),
   MARFA_MAX_REQUEST_BYTES: count(

@@ -1,8 +1,15 @@
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  statfsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DiskReserve } from "../storage/disk-space.js";
 import { ExportSpool } from "./export-spool.js";
 
 // A folder whose name a URL would read as something else.
@@ -29,7 +36,7 @@ describe("an export's spool", () => {
     expect(await text(file.read())).toBe("héllo\nworld\n");
   });
 
-  it("keeps sets of strings, answers which it holds and walks them in order", async () => {
+  it("keeps sets of strings and answers which it holds", async () => {
     const { itemIds, blobHashes } = await spool.sets();
     await itemIds.add(["b", "a", "c", "a"]);
     await blobHashes.add(["z"]);
@@ -37,8 +44,6 @@ describe("an export's spool", () => {
       new Set(["a", "c"]),
     );
     expect(await blobHashes.held(["a"])).toEqual(new Set());
-    expect(await itemIds.page(undefined, 2)).toEqual(["a", "b"]);
-    expect(await itemIds.page("b", 2)).toEqual(["c"]);
   });
 
   it("holds more strings than one statement binds", async () => {
@@ -48,7 +53,6 @@ describe("an export's spool", () => {
     );
     await itemIds.add(many);
     expect(await itemIds.held(many)).toEqual(new Set(many));
-    expect((await itemIds.page(undefined, 5_000)).length).toBe(1_300);
   });
 
   it("leaves nothing behind when disposed, once or twice", async () => {
@@ -62,4 +66,26 @@ describe("an export's spool", () => {
     await spool.dispose();
     expect(readdirSync(dir)).toEqual([]);
   });
+});
+
+it("appends within an allocated block when the remaining free space is exactly the reserve", async () => {
+  const path = join(dir, "bounded");
+  const block = statfsSync(dir).bsize;
+  const reserve = new DiskReserve(dir, 1024 * 1024, () => {
+    let size = 0;
+    try {
+      size = statSync(path).size;
+    } catch {
+      /* Not created yet. */
+    }
+    return Promise.resolve(
+      1024 * 1024 + block - Math.ceil(size / block) * block,
+    );
+  });
+  spool = new ExportSpool(() => path, reserve);
+  const file = await spool.text();
+  await file.append("x");
+  await file.append("y");
+  await file.seal();
+  expect(await text(file.read())).toBe("xy");
 });

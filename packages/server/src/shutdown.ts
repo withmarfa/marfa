@@ -32,6 +32,8 @@ export interface ShutdownParts {
   /** Stops polling; settles once every run in flight has ended, the
    *  webhook deliveries among them. */
   housekeeping: { stop(): Promise<void> };
+  /** Cancels archive exports and settles once their temporary files are gone. */
+  archiveExports?: { stop(): Promise<void> };
   /** Ends each open event stream with its closing frame. */
   streams: { endAll(): number };
   server: {
@@ -82,6 +84,8 @@ export async function shutdownInOrder(
   log("info", "Shutting down...");
   const bulkActionsStopped = parts.bulkActionWorker.stop();
   const housekeepingStopped = parts.housekeeping.stop();
+  const archiveExportsStopped =
+    parts.archiveExports?.stop() ?? Promise.resolve();
 
   let streamsEnded = 0;
   try {
@@ -108,6 +112,14 @@ export async function shutdownInOrder(
     exitCode = 1;
   });
   const inFlightEnded = Promise.all([
+    withTimeout(archiveExportsStopped, bounds.serverCloseTimeoutMs).catch(
+      (error: unknown) => {
+        log("warn", "Graceful shutdown: archive exports did not stop in time", {
+          error: serializeError(error),
+        });
+        exitCode = 1;
+      },
+    ),
     withTimeout(bulkActionsStopped, bounds.inFlightWorkTimeoutMs).catch(
       (error: unknown) => {
         log("warn", "Graceful shutdown: a bulk action did not finish in time", {

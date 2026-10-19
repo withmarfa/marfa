@@ -43,4 +43,38 @@ describe("a read lifetime", () => {
       lifetime.dispose();
     }
   });
+
+  it("lets a local page read omit a deadline while retaining cancellation", () => {
+    const abort = new AbortController();
+    const lifetime = new ReadLifetime({
+      deadlineAt: null,
+      signal: abort.signal,
+    });
+    try {
+      expect(lifetime.deadlineAt).toBe(Infinity);
+      lifetime.assertAlive();
+      abort.abort();
+      expect(() => {
+        lifetime.assertAlive();
+      }).toThrow(ReadSnapshotUnavailable);
+    } finally {
+      lifetime.dispose();
+    }
+  });
+
+  it("does not let a nested page read remove an enclosing deadline", () => {
+    const lifetime = new ReadLifetime();
+    try {
+      const deadline = lifetime.deadlineAt;
+      lifetime.shorten({ deadlineAt: null });
+      expect(lifetime.deadlineAt).toBe(deadline);
+      lifetime.shorten({ deadlineAt: monotonicMs() - 1 });
+      lifetime.shorten({ deadlineAt: null });
+      expect(() => {
+        lifetime.assertAlive();
+      }).toThrow(ReadSnapshotUnavailable);
+    } finally {
+      lifetime.dispose();
+    }
+  });
 });

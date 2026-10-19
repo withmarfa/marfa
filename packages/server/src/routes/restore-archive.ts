@@ -23,20 +23,11 @@
  * Paired with GET /export?format=archive.
  */
 
-import { createWriteStream } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  MarfaError,
-  ErrorCode,
-  isTier,
-  TIERS,
-  resolveEnforcement,
-  validateTransition,
-  SYSTEM_DEFAULT_STATE,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, resolveEnforcement } from "@withmarfa/shared";
 import {
   announceFromLog,
   announcedSource,
@@ -47,7 +38,6 @@ import type { Edge, Item } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  reservedCredentialSourcePrefix,
   directAuthorityOnly,
   requireRecentOwnerAuthentication,
   authorityId,
@@ -60,14 +50,8 @@ import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { wholeCopies, type BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import {
-  planArchiveTypes,
-  writeArchiveTypes,
-} from "./restore-archive-types.js";
-import type {
-  ArchiveTypeEntry,
-  ArchiveTypePlan,
-} from "./restore-archive-types.js";
+import { writeArchiveTypes } from "./restore-archive-types.js";
+import type { ArchiveTypePlan } from "./restore-archive-types.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
@@ -80,7 +64,19 @@ import {
   archiveVersions,
   archiveWriter,
 } from "./restore-archive-history.js";
-import { archiveLines, readArchive } from "./restore-archive-read.js";
+import { readArchive } from "./restore-archive-read.js";
+import {
+  archiveExtensions,
+  archiveTags,
+  edgeLines,
+  isRecord,
+  itemLines,
+  prepareArchive,
+  restoredProperties,
+  restoredSource,
+  type ArchivedEdgeLine,
+  type ArchivedItemLine,
+} from "./restore-archive-rows.js";
 import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
@@ -93,73 +89,6 @@ function archivedRestoredAt(
 ): { restored_at?: string } {
   const value = archiveRestoredAt(item, restoredAt, index);
   return value === undefined ? {} : { restored_at: value };
-}
-
-function archiveScalarRefusal(
-  kind: "item" | "edge",
-  row: Record<string, unknown>,
-  index: number,
-): MarfaError | null {
-  let field: "version" | "tier";
-  let expected: string;
-  if (
-    Object.hasOwn(row, "version") &&
-    !(
-      typeof row.version === "number" &&
-      Number.isSafeInteger(row.version) &&
-      row.version > 0
-    )
-  ) {
-    field = "version";
-    expected = "a positive safe integer";
-  } else if (
-    kind === "item" &&
-    Object.hasOwn(row, "tier") &&
-    !isTier(row.tier)
-  ) {
-    field = "tier";
-    expected = `one of ${TIERS.join(", ")}`;
-  } else {
-    return null;
-  }
-  return new MarfaError(
-    ErrorCode.VALIDATION_ERROR,
-    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson parsed row ${String(index + 1)}: ${field} must be ${expected}`,
-    {
-      [kind === "item" ? "item_id" : "edge_id"]: row.id,
-      row: index + 1,
-      field,
-    },
-  );
-}
-
-/** Tags off an archived `{item, metadata}` line, defensively parsed. */
-function archiveTags(meta: unknown): string[] | undefined {
-  if (typeof meta !== "object" || meta === null) return undefined;
-  const tags = (meta as Record<string, unknown>).tags;
-  if (!Array.isArray(tags)) return undefined;
-  const strings = tags.filter((t): t is string => typeof t === "string");
-  return strings.length > 0 ? strings : undefined;
-}
-
-/** Extensions off an archived `{item, metadata}` line, defensively parsed. */
-function archiveExtensions(
-  meta: unknown,
-): Record<string, Record<string, unknown>> {
-  if (typeof meta !== "object" || meta === null) return {};
-  const extensions = (meta as Record<string, unknown>).extensions;
-  if (typeof extensions !== "object" || extensions === null) return {};
-  const out: Record<string, Record<string, unknown>> = {};
-  for (const [namespace, data] of Object.entries(extensions)) {
-    // Only a restore can bring in an empty namespace: every other write takes
-    // it from a route segment, which is never empty. No operation can then
-    // address or delete it, so it is dropped rather than restored.
-    if (namespace === "") continue;
-    if (typeof data === "object" && data !== null && !Array.isArray(data)) {
-      out[namespace] = data as Record<string, unknown>;
-    }
-  }
-  return out;
 }
 
 const restoreArchiveRoute = createRoute({
@@ -305,25 +234,8 @@ const restoreArchiveRoute = createRoute({
  * between turns is one in which nothing else in the process answers, so a
  * large row gets a turn of its own.
  */
-const RESTORE_BATCH_LINES = 100;
-const RESTORE_BATCH_BYTES = 4 * 1024 * 1024;
-
-/** An `items.ndjson` line, which the restore reads defensively. */
-interface ArchivedItemLine {
-  item: Record<string, unknown>;
-  metadata?: unknown;
-  lending_blobs?: unknown;
-  lending_extensions?: unknown;
-  versions?: unknown;
-  writer?: unknown;
-  restored_at?: unknown;
-}
-
-/** An `edges.ndjson` line. */
-interface ArchivedEdgeLine {
-  edge: Record<string, unknown>;
-  lending_blobs?: unknown;
-}
+export const RESTORE_BATCH_LINES = 100;
+export const RESTORE_BATCH_BYTES = 4 * 1024 * 1024;
 
 /** The digests a line says lent, which are the strings of the list it
  *  names. A line naming none, or a value that is no list, lends nothing. */
@@ -348,162 +260,6 @@ function archivedExtensionProofs(
 ): (namespace: string) => (hash: string) => Promise<boolean> {
   const byNamespace = isRecord(listed) ? listed : {};
   return (namespace) => archivedProof(byNamespace[namespace]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** One line of a line file, parsed, with its length for pacing. `value` is
- *  null for a line that does not parse or has the wrong shape, which is
- *  skipped: the exporter always emits valid JSON, so a bad line means the
- *  archive was edited by hand. */
-interface ArchiveLine<T> {
-  value: T | null;
-  bytes: number;
-}
-
-async function* parsedLines<T>(
-  path: string | undefined,
-  pick: (parsed: unknown) => T | null,
-): AsyncGenerator<ArchiveLine<T>> {
-  for await (const line of archiveLines(path)) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      yield { value: null, bytes: Buffer.byteLength(line) };
-      continue;
-    }
-    yield { value: pick(parsed), bytes: Buffer.byteLength(line) };
-  }
-}
-
-function itemLines(path: string | undefined) {
-  return parsedLines(path, (parsed) =>
-    isRecord(parsed) && isRecord(parsed.item)
-      ? (parsed as unknown as ArchivedItemLine)
-      : null,
-  );
-}
-
-function edgeLines(path: string | undefined) {
-  return parsedLines(path, (parsed) =>
-    isRecord(parsed) && isRecord(parsed.edge)
-      ? (parsed as unknown as ArchivedEdgeLine)
-      : null,
-  );
-}
-
-/**
- * The refusal for properties larger than any write door takes
- * (`bulkBodyCap`), answered as a write door answers a body that large. A
- * restore is not a way to plant a row the write doors would refuse.
- */
-function oversizedProperties(
-  kind: "item" | "edge",
-  row: Record<string, unknown>,
-  index: number,
-  field: string,
-  properties: unknown,
-  maxRowBytes: number,
-): MarfaError | null {
-  if (properties === undefined) return null;
-  const bytes = Buffer.byteLength(JSON.stringify(properties));
-  if (bytes <= maxRowBytes) return null;
-  return new MarfaError(
-    ErrorCode.REQUEST_TOO_LARGE,
-    `Invalid ${kind} ${String(row.id)} in ${kind}s.ndjson parsed row ${String(index + 1)}: ${field} is ${String(bytes)} bytes, more than the ${String(maxRowBytes)} a write door accepts`,
-    {
-      [kind === "item" ? "item_id" : "edge_id"]: row.id,
-      row: index + 1,
-      field,
-      limit_bytes: maxRowBytes,
-    },
-  );
-}
-
-function restoredSource(source: unknown): string | undefined {
-  if (typeof source !== "string") return undefined;
-  return reservedCredentialSourcePrefix(source) === "oauth:"
-    ? `restored:${source}`
-    : source;
-}
-
-function restoredProperties(
-  item: Record<string, unknown>,
-): Record<string, unknown> {
-  const properties = (item.properties ?? {}) as Record<string, unknown>;
-  return item.type === "system.connection" && properties.kind === "app"
-    ? { ...properties, status: "revoked" }
-    : properties;
-}
-
-/**
- * The refusals that need nothing from the database, asked of one item line.
- *
- * Asked of every line before anything is written, so a refusal is never
- * half a restore and never leaves blob bytes to take back.
- */
-function itemRefusal(
-  entry: ArchivedItemLine,
-  index: number,
-  seenSnapshotIds: Set<string>,
-  maxRowBytes: number,
-): MarfaError | null {
-  const { item } = entry;
-  archiveDates("item", item, index);
-  archiveRestoredAt(item, entry.restored_at, index);
-  archiveWriter(item, entry.writer, index);
-  const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
-  const scalar = archiveScalarRefusal("item", item, index);
-  if (scalar) return scalar;
-  const oversized =
-    oversizedProperties(
-      "item",
-      item,
-      index,
-      "properties",
-      item.properties,
-      maxRowBytes,
-    ) ??
-    history
-      .map((snapshot, at) =>
-        oversizedProperties(
-          "item",
-          item,
-          index,
-          `versions.${String(at)}.properties`,
-          snapshot.properties,
-          maxRowBytes,
-        ),
-      )
-      .find((refusal) => refusal !== null) ??
-    null;
-  if (oversized) return oversized;
-
-  // A row in a state its type's lifecycle cannot produce is refused, the
-  // question `POST /items` asks of a caller: `trashed` is a state, and not
-  // one a `system.*` row can be in, and a restore that wrote it would land a
-  // row nothing can purge, restore or move. Only an absent state (the
-  // default) and the default itself pass without the question, since the
-  // store would write whatever else the line carried. The lifecycle a type
-  // has follows from its namespace, so the archive's own registrations do
-  // not change the answer.
-  const state = item.state;
-  if (state === undefined || state === null || state === SYSTEM_DEFAULT_STATE)
-    return null;
-  const error = validateTransition(
-    String(item.type),
-    SYSTEM_DEFAULT_STATE,
-    state as ItemState,
-  );
-  return error
-    ? new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Item ${String(item.id)} of type ${String(item.type)} is recorded in a state its lifecycle cannot produce: ${error}`,
-      )
-    : null;
 }
 
 /**
@@ -1013,7 +769,7 @@ export function restoreArchiveRoutes(
 ) {
   const router = createOpenAPIRouter<AppEnv>();
   const reserve = new DiskReserve(
-    blobs.disk.locator,
+    blobs.disk.spoolDir,
     limits.diskReserveBytes ?? 0,
   );
 
@@ -1045,11 +801,7 @@ export function restoreArchiveRoutes(
       const body = c.req.raw.body;
       if (body) {
         try {
-          await pipeline(
-            Readable.fromWeb(body),
-            place.guard(),
-            createWriteStream(bodySpool),
-          );
+          await pipeline(Readable.fromWeb(body), place.writer(bodySpool));
         } finally {
           place.close();
         }
@@ -1066,49 +818,11 @@ export function restoreArchiveRoutes(
       await rm(bodySpool, { force: true });
       const paths = archive.lineFiles;
 
-      // Everything that can refuse without writing is asked first, over the
-      // whole archive, so a refused archive leaves nothing behind.
-      let totalItems = 0;
-      const seenSnapshotIds = new Set<string>();
-      for await (const { value: entry } of itemLines(paths["items.ndjson"])) {
-        if (entry === null) continue;
-        const refusal = itemRefusal(
-          entry,
-          totalItems,
-          seenSnapshotIds,
-          limits.maxRowBytes,
-        );
-        if (refusal) throw refusal;
-        totalItems++;
-      }
-      seenSnapshotIds.clear();
-      let totalEdges = 0;
-      for await (const { value: line } of edgeLines(paths["edges.ndjson"])) {
-        if (line === null) continue;
-        const { edge } = line;
-        archiveDates("edge", edge, totalEdges);
-        const refusal =
-          archiveScalarRefusal("edge", edge, totalEdges) ??
-          oversizedProperties(
-            "edge",
-            edge,
-            totalEdges,
-            "properties",
-            edge.properties,
-            limits.maxRowBytes,
-          );
-        if (refusal) throw refusal;
-        totalEdges++;
-      }
-      const typeEntries: ArchiveTypeEntry[] = [];
-      for await (const line of archiveLines(paths["types.ndjson"])) {
-        try {
-          typeEntries.push(JSON.parse(line) as ArchiveTypeEntry);
-        } catch {
-          // Same rule as item and edge lines.
-        }
-      }
-      const typePlan = await planArchiveTypes(storage, typeEntries);
+      const { totalItems, totalEdges, typePlan } = await prepareArchive(
+        storage,
+        paths,
+        limits.maxRowBytes,
+      );
 
       const releaseBlobs = await holdBlobUploadLocks([
         ...archive.blobs.map((blob) => blob.hash),

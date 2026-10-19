@@ -26,7 +26,7 @@ export function readSnapshotRunner(captureRead: CaptureRead) {
     fn: (
       pin: Readonly<{ instanceId: string; structuralGeneration: string }>,
     ) => T | Promise<T>,
-    options?: { deadlineAt?: number; signal?: AbortSignal },
+    options?: { deadlineAt?: number | null; signal?: AbortSignal },
   ): Promise<T> {
     const parent = sqliteRequestContext.getStore();
     if (
