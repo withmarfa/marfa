@@ -493,6 +493,120 @@ describe("what the approval pages offer an app that holds a read and asks for th
   });
 });
 
+describe("what an approval with everything newly asked turned off does for an app that already holds access", () => {
+  const booted = bootFor("approval-returning");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const HELD = "core.note:read";
+  const ASKED = "core.note:read core.task:read";
+
+  /** An app that holds read of notes and is registered to ask for tasks too. */
+  async function holder(): Promise<App> {
+    const app = await register(ASKED);
+    const screen = await consentScreen(app, HELD);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      defaultSubmission(screen.html, "scopes"),
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+    return app;
+  }
+
+  /** What the page posts when Tasks is set to no access and the rest is left. */
+  function tasksOff(html: string): string[] {
+    const posted = defaultSubmission(html, "scopes").filter(
+      (v) => v !== "core.task:read",
+    );
+    // What the page carries, and nothing newly asked.
+    expect(posted).toEqual(["core.note:read"]);
+    return posted;
+  }
+
+  it("answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen", async () => {
+    const app = await holder();
+    const screen = await consentScreen(app, ASKED);
+    const denied = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      false,
+      [],
+    );
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      tasksOff(screen.html),
+    );
+    expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
+    expect(sent?.searchParams.get("error")).toBe("access_denied");
+    expect(sent?.searchParams.get("state")).toBe(
+      denied?.searchParams.get("state"),
+    );
+    expect(sent?.searchParams.get("code")).toBeNull();
+    // Nothing was granted: the app is asked again for what it asked.
+    const again = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, ASKED, pkce()),
+        cookie,
+      ),
+    );
+    expect(again?.pathname).toBe("/auth/authorize");
+    // The witness: the same page with Tasks left on is a code.
+    const approved = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      defaultSubmission(screen.html, "scopes"),
+    );
+    expect(approved?.searchParams.get("code")).toBeTruthy();
+  });
+
+  it("denies a device code approved with everything newly asked turned off by an app that already holds access, on the device approval page", async () => {
+    const app = await holder();
+    const screen = await deviceScreen(app, ASKED);
+    const answered = await decideDevice(
+      screen,
+      "approve",
+      tasksOff(screen.html),
+    );
+    expect(answered.status).toBe(200);
+    await answered.body?.cancel();
+    const polled = await poll(app, screen);
+    expect(polled.status).toBe(400);
+    expect(polled.body.error).toBe("access_denied");
+    // The witness: the same page with Tasks left on is a token.
+    const again = await deviceScreen(app, ASKED);
+    expect(
+      (
+        await decideDevice(
+          again,
+          "approve",
+          defaultSubmission(again.html, "scopes"),
+        )
+      ).status,
+    ).toBe(200);
+    const issued = await poll(app, again);
+    expect(issued.status).toBe(200);
+    expect(issued.body.scope?.split(" ").sort()).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+});
+
 describe("what an approval posted to the approval pages grants", () => {
   const booted = bootFor("approval-posts");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);

@@ -22,7 +22,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import { createTestContext, request, storedDeviceCode } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { offeredValues, visibleText } from "../test-html.js";
+import { defaultSubmission, offeredValues, visibleText } from "../test-html.js";
 
 // Every case boots a server, registers a client, signs a person up and in
 // and drives a device flow before it asserts anything.
@@ -682,6 +682,63 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(await grants(c)).toHaveLength(0);
     const polled = await poll(c, init.device_code, clientId);
     expect(polled.body.error).toBe("access_denied");
+  });
+
+  it("denies a code approved with everything newly asked turned off by an app that already holds access, and keeps what it holds", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const cookie = await signInUser(c);
+    const first = await initiate(c, clientId, "core.note:read");
+    expect((await openConsent(c, first.user_code, cookie)).status).toBe(200);
+    expect(
+      (await decide(c, first.user_code, cookie, "approve", ["core.note:read"]))
+        .status,
+    ).toBe(200);
+    expect((await poll(c, first.device_code, clientId)).status).toBe(200);
+
+    // The screen for a second code, with Tasks set to No access: what the app
+    // holds is carried, and nothing newly asked is on.
+    const asked = "core.note:read core.task:read";
+    const second = await initiate(c, clientId, asked);
+    const screen = await openConsent(c, second.user_code, cookie);
+    expect(screen.status).toBe(200);
+    const posted = defaultSubmission(await screen.text(), "scopes").filter(
+      (v) => v !== "core.task:read",
+    );
+    expect(posted).toEqual(["core.note:read"]);
+    const answered = await decide(
+      c,
+      second.user_code,
+      cookie,
+      "approve",
+      posted,
+    );
+    expect(answered.status).toBe(200);
+    expect(visibleText(await answered.text())).toContain(
+      "You didn't approve access",
+    );
+    expect((await poll(c, second.device_code, clientId)).body.error).toBe(
+      "access_denied",
+    );
+    const projected = await grants(c);
+    expect(projected).toHaveLength(1);
+    expect(projected[0]!.properties.scopes).toEqual(["core.note:read"]);
+
+    // The witness: the same screen with Tasks left on is a token.
+    const third = await initiate(c, clientId, asked);
+    expect((await openConsent(c, third.user_code, cookie)).status).toBe(200);
+    expect(
+      (
+        await decide(c, third.user_code, cookie, "approve", [
+          ...posted,
+          "core.task:read",
+        ])
+      ).status,
+    ).toBe(200);
+    expect((await poll(c, third.device_code, clientId)).body.scope).toBe(
+      "core.note:read core.task:read",
+    );
   });
 
   it("the verification form refuses a code nobody issued and forwards a live one", async () => {

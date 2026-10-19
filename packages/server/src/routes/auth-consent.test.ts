@@ -663,16 +663,162 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       return [res.status, res.headers.get("location")];
     };
     const denied = await answer({ accept: "false" });
-    // The witness: the same request, approved with something, is a code.
-    expect(
-      (await answer({ accept: "true", scopes: ["core.note:read"] }))[1],
-    ).toContain("code=");
     expect(await answer({ accept: "true" })).toEqual(denied);
     // Nothing but the mechanisms is nothing: they grant no access.
     expect(await answer({ accept: "true", scopes: ["openid"] })).toEqual(
       denied,
     );
     expect(await answer({ accept: "true", scopes: ["", ""] })).toEqual(denied);
+    // The witness: the same request, approved with something, is a code.
+    expect(
+      (await answer({ accept: "true", scopes: ["core.note:read"] }))[1],
+    ).toContain("code=");
+  });
+
+  describe("an app that already holds access", () => {
+    /** The decision a person's post makes on the screen for `scope`. */
+    async function postDecision(
+      c: TestContext,
+      cookie: string,
+      clientId: string,
+      scope: string,
+      scopes: string[],
+    ): Promise<{ location: URL; query: string }> {
+      const query = await buildSignedOauthQuery(clientId, scope);
+      const res = await request(c.app, "POST", "/auth/authorize/decision", {
+        form: {
+          accept: "true",
+          oauth_query: query,
+          client_id: clientId,
+          scopes,
+        },
+        headers: { cookie, origin: ORIGIN },
+      });
+      expect(res.status).toBe(302);
+      return { location: new URL(res.headers.get("location") ?? ""), query };
+    }
+
+    const grantedScopes = async (c: TestContext): Promise<string[]> => {
+      const grants = await c.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      return (grants.data[0]?.properties.scopes as string[] | undefined) ?? [];
+    };
+
+    it("denies an approval with everything newly asked turned off, as Deny is answered, and keeps what it holds", async () => {
+      ctx = await createTestContext({});
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(ctx);
+      const held = await postDecision(
+        ctx,
+        cookie,
+        clientId,
+        "openid core.note:read",
+        ["openid", "core.note:read"],
+      );
+      expect(held.location.searchParams.get("code")).toBeTruthy();
+
+      // The screen for the second request, with Tasks set to No access: what
+      // the app holds is carried, and nothing newly asked is on.
+      const asked = "openid core.note:read core.task:read";
+      const screen = await request(
+        ctx.app,
+        "GET",
+        `/auth/authorize?${await buildSignedOauthQuery(clientId, asked)}`,
+        { headers: { cookie } },
+      );
+      expect(screen.status).toBe(200);
+      const posted = defaultSubmission(await screen.text(), "scopes").filter(
+        (v) => v !== "core.task:read",
+      );
+      expect(posted).toEqual(["openid", "core.note:read"]);
+      const audits = (
+        await ctx.storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        })
+      ).data.length;
+
+      const denied = await postDecision(ctx, cookie, clientId, asked, posted);
+      expect(denied.location.searchParams.get("error")).toBe("access_denied");
+      expect(denied.location.searchParams.get("code")).toBeNull();
+      expect(await grantedScopes(ctx)).toEqual(["openid", "core.note:read"]);
+      expect(
+        (
+          await ctx.storage.audit.list({
+            action: "auth.grant.created",
+            limit: 10,
+          })
+        ).data.length,
+      ).toBe(audits);
+
+      // The witness: the same screen with Tasks left on is a code.
+      const approved = await postDecision(ctx, cookie, clientId, asked, [
+        ...posted,
+        "core.task:read",
+      ]);
+      expect(approved.location.searchParams.get("code")).toBeTruthy();
+      expect((await grantedScopes(ctx)).sort()).toEqual([
+        "core.note:read",
+        "core.task:read",
+        "openid",
+      ]);
+    });
+
+    it("denies an approval that turns off every power it is newly asked for, though it holds another", async () => {
+      ctx = await createTestContext({});
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(ctx);
+      await postDecision(ctx, cookie, clientId, "openid keys.mint", [
+        "openid",
+        "keys.mint",
+      ]);
+      const asked = "openid keys.mint webhooks.manage";
+      const denied = await postDecision(ctx, cookie, clientId, asked, [
+        "openid",
+        "keys.mint",
+      ]);
+      expect(denied.location.searchParams.get("error")).toBe("access_denied");
+      const approved = await postDecision(ctx, cookie, clientId, asked, [
+        "openid",
+        "keys.mint",
+        "webhooks.manage",
+      ]);
+      expect(approved.location.searchParams.get("code")).toBeTruthy();
+    });
+
+    it.each([
+      [
+        "names that level's read",
+        "openid core.note:read core.note:write",
+        "core.note:read",
+      ],
+      ["names only the write", "openid core.note:write", ""],
+    ])(
+      "denies an approval that only keeps the level the app holds, where the request %s",
+      async (_case, asked, kept) => {
+        ctx = await createTestContext({});
+        const clientId = await seedClient(ctx);
+        const cookie = await signInUser(ctx);
+        await postDecision(ctx, cookie, clientId, "openid core.note:read", [
+          "openid",
+          "core.note:read",
+        ]);
+        const denied = await postDecision(ctx, cookie, clientId, asked, [
+          "openid",
+          kept,
+        ]);
+        expect(denied.location.searchParams.get("error")).toBe("access_denied");
+        expect(await grantedScopes(ctx)).toEqual(["openid", "core.note:read"]);
+        // The witness: choosing the write is a code.
+        const approved = await postDecision(ctx, cookie, clientId, asked, [
+          "openid",
+          "core.note:write",
+        ]);
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+      },
+    );
   });
 
   it.each(["forged", "expired"] as const)(

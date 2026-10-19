@@ -644,31 +644,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text(`Unknown client: ${clientId}`, 404);
     }
 
-    // What the person chose is the request narrowed: every value must be a
-    // literal the signed request named. A submission naming anything else is
-    // a form edited to ask for more than the screen showed, and nothing from
-    // it is granted. A deny reads no choice at all.
-    //
-    // Nothing chosen is a denial, answered exactly as Deny is. The
-    // mechanisms the screen carries without a control (`openid`,
-    // `offline_access`) are not a choice: approving them alone grants no
-    // access, and the plugin would otherwise issue a code for them.
-    const selection = accept
-      ? resolveSelection(
-          [...signedScopes],
-          form
-            .getAll("scopes")
-            .filter((v): v is string => typeof v === "string"),
-        )
-      : null;
-    if (selection && !selection.ok)
-      return c.text("The decision names a scope the request did not", 400);
-    const approving = selection?.ok === true && selection.chosen;
-    const formScopes = approving ? selection.scopes : [];
-
     requireDirectAuthority(c);
-    const scopeStr = formScopes.join(" ");
     const auth = deps.auth;
+    const submitted = form
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string");
 
     // The proxy and the record it produces are one operation on the same
     // (client, user) grant the silent path also writes, so they share its
@@ -679,12 +659,33 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return runAuditedTransaction(
         deps.storage,
         async () => {
-          const prior = approving
-            ? ((await deps.storage.oauthProvider?.getPriorConsent(
-                clientId,
-                session.user.id,
-              )) ?? [])
-            : [];
+          const prior =
+            (await deps.storage.oauthProvider?.getPriorConsent(
+              clientId,
+              session.user.id,
+            )) ?? [];
+          // What the person chose is the request narrowed: every value must
+          // be a literal the signed request named. A submission naming
+          // anything else is a form edited to ask for more than the screen
+          // showed, and nothing from it is granted. A deny reads no choice.
+          //
+          // Nothing newly chosen is a denial, answered exactly as Deny is.
+          // What the screen carries without a control, the mechanisms
+          // (`openid`, `offline_access`) and what the app already holds in
+          // full, is not a choice: approving it alone grants nothing new, and
+          // the plugin would otherwise issue a code for it. The choice is read
+          // on the consent the commit sees.
+          const selection = accept
+            ? resolveSelection([...signedScopes], submitted, prior)
+            : null;
+          if (selection && !selection.ok)
+            return c.text(
+              "The decision names a scope the request did not",
+              400,
+            );
+          const approving = selection?.ok === true && selection.chosen;
+          const formScopes = approving ? selection.scopes : [];
+          const scopeStr = formScopes.join(" ");
           if (approving && needsRecentSignIn(formScopes, prior))
             requireRecentOwnerAuthentication(c);
           const proxyResp = await proxyConsentDecision(

@@ -140,6 +140,15 @@ const isLevelKind = (scope: ParsedScope): boolean =>
   scope.kind === "profile";
 
 /**
+ * Whether the page carries a literal without a choice: a mechanism, or
+ * something the app already holds. Approving one is not a choice a person
+ * made, though it rides in the token.
+ */
+function isCarried(literal: string, held: readonly string[]): boolean {
+  return isMechanism(literal) || grantCoversScope(held, literal);
+}
+
+/**
  * The title a row carries, and the line under it where one adds something.
  *
  * A curated name is the title. Without one the sentence that explains the
@@ -363,18 +372,26 @@ export type Selection =
   { ok: true; scopes: string[]; chosen: boolean } | { ok: false };
 
 /**
- * Read a submission back against the request it answers.
+ * Read a submission back against the request it answers and what the app
+ * holds.
  *
  * Every submitted value must be a literal the request named: anything else is
  * a form edited to ask for more than the screen showed, and nothing from it
  * is granted. A write that the request also named the read of brings that
  * read, so "Read and edit" is the same grant a person had before a level was
- * one control. `chosen` is false when the request offers a choice beyond the
- * mechanisms and nothing but mechanisms is selected, which is a denial.
+ * one control.
+ *
+ * `chosen` is whether the person chose anything new. A mechanism, or a
+ * scope the app already holds, is never a choice. Where the request names
+ * something else, so the page offered a control, approving with none of them
+ * on is a denial and `chosen` is false. Where it names nothing else (an app
+ * confirming what it holds, or asking only to know who the person is)
+ * approving is a yes.
  */
 export function resolveSelection(
   requested: readonly string[],
   submitted: readonly string[],
+  held: readonly string[],
 ): Selection {
   const named = new Set(requested);
   const picked = [...new Set(submitted.filter((v) => v !== ""))];
@@ -386,11 +403,9 @@ export function resolveSelection(
     const read = `${scope.typePattern}:read`;
     if (named.has(read) && grantCoversScope([literal], read)) scopes.add(read);
   }
-  // A request that names nothing but mechanisms (an app asking only to know
-  // who the person is) offers no choice to turn off, so approving it is a yes.
-  const offersChoice = requested.some((v) => !isMechanism(v));
-  const chosen =
-    scopes.size > 0 &&
-    (!offersChoice || [...scopes].some((v) => !isMechanism(v)));
+  const offersChoice = requested.some((v) => !isCarried(v, held));
+  const chosen = offersChoice
+    ? picked.some((v) => !isCarried(v, held))
+    : scopes.size > 0;
   return { ok: true, scopes: [...scopes], chosen };
 }

@@ -1133,11 +1133,11 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `openid` and `offline_access`, when a person approves on the consent screen with none of those others chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
-**Reason:** Approving with everything turned off is declining, so the app is told what Deny tells it, and no consent is recorded for an app that can do nothing with it. `openid` and `offline_access` ride with the form without a control, so they are not a choice. A request that names only those two offers nothing to turn off, and approving it is a yes.
+**Reason:** Approving with everything turned off is declining, so the app is told what Deny tells it, and no consent is recorded for an app that can do nothing with it. What the form carries without a control is not a choice: `openid` and `offline_access`, and every scope the app already holds. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
-**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as Deny is answered`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as Deny is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
 
 ### `keys-and-oauth/consent-ticked`
 
@@ -1783,11 +1783,11 @@ When a client polls with a device code the person denied, the server MUST answer
 
 ### `keys-and-oauth/device-nothing-denies`
 
-Where a device code names a scope other than `openid` and `offline_access`, when a person approves it with none of those others chosen, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
+Where a device code names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
 
 **Reason:** The same rule as `keys-and-oauth/consent-nothing-denies`, so a request is answered the same way on either page.
 
-**Tests:** `compliance/approval-screens.test.ts › denies a device code approved with nothing chosen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+**Tests:** `compliance/approval-screens.test.ts › denies a device code approved with nothing chosen`, `› denies a device code approved with everything newly asked turned off by an app that already holds access, on the device approval page`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
 
 ### `keys-and-oauth/device-expired`
 

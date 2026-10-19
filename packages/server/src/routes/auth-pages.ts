@@ -950,29 +950,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     )
       return c.text("Invalid scope: profile.email:write", 400);
 
-    // What the person chose is what the device asked for, narrowed: a value
-    // the code did not carry is a form edited to ask for more than the screen
-    // showed, and nothing from it is granted. Nothing chosen is a denial, the
-    // same rule the authorize screen applies, because a grant of nothing
-    // leaves a projection and a consent row standing for a device that can do
-    // nothing with them. A denial reads no choice.
-    const selection =
-      decision === "approve"
-        ? resolveSelection(
-            requestedScopes,
-            formData
-              .getAll("scopes")
-              .filter((v): v is string => typeof v === "string"),
-          )
-        : null;
-    if (selection && !selection.ok)
-      return c.text(
-        "The decision names a scope the device did not ask for",
-        400,
-      );
-    const approvedScopes = selection?.ok ? selection.scopes : [];
-
-    if (!selection?.ok || !selection.chosen) {
+    // A denial reads no choice. An approval is read against what the device
+    // asked for and what the app holds, inside the consent lock below.
+    if (decision === "deny") {
       const denied = await deviceAuth.deviceDeny(userCode, c.req.raw.headers);
       if (!denied.ok) {
         return c.redirect(
@@ -988,6 +968,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         }),
       );
     }
+    const submitted = formData
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string");
 
     // Approve: upsert the system.connection projection, narrow the code to
     // the chosen set, and approve it through the plugin.
@@ -1029,6 +1012,21 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 clientId,
                 sessionResult.session.user.id,
               )) ?? [];
+            // What the person chose is what the device asked for, narrowed,
+            // and read on the consent the commit sees: a value the code did
+            // not carry is a form edited to ask for more than the screen
+            // showed, and nothing from it is granted. Nothing newly chosen is
+            // a denial, the same rule the authorize screen applies, because a
+            // grant of nothing leaves a projection and a consent row standing
+            // for a device that can do nothing with them.
+            const selection = resolveSelection(
+              requestedScopes,
+              submitted,
+              prior,
+            );
+            if (!selection.ok) return { kind: "refused" } as const;
+            if (!selection.chosen) return { kind: "nothing" } as const;
+            const approvedScopes = selection.scopes;
             if (needsRecentSignIn(approvedScopes, prior))
               requireRecentOwnerAuthentication(c);
             // The write the device's initiation could not make: nobody was
@@ -1084,39 +1082,48 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 scopes: created.scopes,
               });
             }
-            return { grant: created, ok: true };
+            return {
+              kind: "approved",
+              grant: created,
+              approvedScopes,
+            } as const;
           },
-          ({ grant }) => ({
-            action: "auth.grant.created",
-            resource_type: "oauth_grant",
-            resource_id: clientId,
-            client_ip: c.var.clientIp ?? null,
-            details: {
-              client_id: clientId,
-              user_id: sessionResult.session.user.id,
-              // Three halves, because two of them can differ in each direction
-              // and none alone answers the question an operator brings to this
-              // row. `scopes` is what this device asked for. The screen offers
-              // those as controls, so `approved_scopes` is what the person actually
-              // chose, which can be narrower. And an approval merges into the
-              // standing grant rather than replacing it, so `resulting_scopes` is
-              // the record afterwards, which can be wider than either. On a
-              // first-time approval where nothing was lowered, all three are the
-              // same list.
-              scopes: requestedScopes,
-              approved_scopes: approvedScopes,
-              resulting_scopes: grant.scopes,
-              grant_item_id: grant.id,
-              source: "device",
-              // `created: false` means re-consent (item already existed) —
-              // useful for the operator trail to distinguish first-time
-              // approvals from re-approvals of an existing grant.
-              created: grant.created,
-            },
-          }),
+          (result) => {
+            if (result.kind !== "approved") return null;
+            const { grant, approvedScopes } = result;
+            return {
+              action: "auth.grant.created",
+              resource_type: "oauth_grant",
+              resource_id: clientId,
+              client_ip: c.var.clientIp ?? null,
+              details: {
+                client_id: clientId,
+                user_id: sessionResult.session.user.id,
+                // Three halves, because two of them can differ in each direction
+                // and none alone answers the question an operator brings to this
+                // row. `scopes` is what this device asked for. The screen offers
+                // those as controls, so `approved_scopes` is what the person actually
+                // chose, which can be narrower. And an approval merges into the
+                // standing grant rather than replacing it, so `resulting_scopes` is
+                // the record afterwards, which can be wider than either. On a
+                // first-time approval where nothing was lowered, all three are the
+                // same list.
+                scopes: requestedScopes,
+                approved_scopes: approvedScopes,
+                resulting_scopes: grant.scopes,
+                grant_item_id: grant.id,
+                source: "device",
+                // `created: false` means re-consent (item already existed) —
+                // useful for the operator trail to distinguish first-time
+                // approvals from re-approvals of an existing grant.
+                created: grant.created,
+              },
+            };
+          },
         ),
     ).catch((error: unknown) => {
-      if (error instanceof DeviceApprovalRefused) return { ok: false };
+      if (error instanceof DeviceApprovalRefused)
+        return { kind: "raced" } as const;
       return answerSignInAgain(
         c,
         error,
@@ -1124,8 +1131,28 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       );
     });
     if (outcome instanceof Response) return outcome;
-    const { ok } = outcome;
-    if (!ok) {
+    if (outcome.kind === "refused")
+      return c.text(
+        "The decision names a scope the device did not ask for",
+        400,
+      );
+    if (outcome.kind === "nothing") {
+      const denied = await deviceAuth.deviceDeny(userCode, c.req.raw.headers);
+      if (!denied.ok) {
+        return c.redirect(
+          `/auth/device?error=${pageErrorFor(denied.reason)}&user_code=${encodeURIComponent(userCode)}`,
+          302,
+        );
+      }
+      setNoStore(c);
+      return c.html(
+        renderDeviceDecisionPage({
+          approved: false,
+          nonce: c.var.cspNonce,
+        }),
+      );
+    }
+    if (outcome.kind === "raced") {
       // Race: someone else flipped it in between. Surface as already-resolved.
       return c.redirect(
         `/auth/device?error=already_resolved&user_code=${encodeURIComponent(userCode)}`,
