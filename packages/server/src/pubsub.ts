@@ -326,7 +326,7 @@ function inAnnouncementOrder(task: () => void | Promise<void>): void {
 }
 
 function emitInOrder(emit: () => void): void {
-  if (announcementsPending > 0 || holdArmed("announce"))
+  if (announcementsPending > 0 || (faultsArmed() && holdArmed("announce")))
     inAnnouncementOrder(emit);
   else emit();
 }
