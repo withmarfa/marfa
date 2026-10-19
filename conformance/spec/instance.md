@@ -104,7 +104,7 @@ If a write names an `X-Marfa-Instance-Id` that is empty, repeated, or not one lo
 
 ### `instance/write-instance-order`
 
-When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`, or `400` before it to a body nested more than 64 levels; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels and an answer recorded under its `Idempotency-Key` among them.
+When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`, or `400` before it to a body nested more than 64 levels or holding text that is not well-formed UTF-16; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels, a body holding text that is not well-formed UTF-16 and an answer recorded under its `Idempotency-Key` among them.
 
 **Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the rows it names or the credential's reach there.
 

@@ -190,7 +190,7 @@ If a request to an operation under `/connectors/{id}` whose body and query fit t
 
 ### `connectors/no-credential`
 
-If a request to an operation under `/connectors` carries no credential and no body over the operation's cap or nested more than 64 levels, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and no body over the operation's cap, nested more than 64 levels or holding text that is not well-formed UTF-16, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -284,7 +284,7 @@ When a key is revoked, the server MUST keep the runs its connector reported, and
 
 ### `connectors/revoked-unauthorized`
 
-If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap or nested more than 64 levels, then the server MUST answer `401 unauthorized`.
+If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap, nested more than 64 levels or holding text that is not well-formed UTF-16, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`, `compliance/connectors.test.ts › keeps a registration whose key was revoked, until the manager removes it`.
 
@@ -1208,7 +1208,7 @@ If a request to an operation under `/connectors` carries a JSON body nested more
 
 ### `connectors/order-credential-before-body`
 
-If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse for anything but the body's size or nesting, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse for anything but the body's size, nesting or text (`items/json-text-before-credential`), then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a missing credential 401 before a body the door would refuse`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 

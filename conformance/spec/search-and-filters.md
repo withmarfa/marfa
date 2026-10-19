@@ -1680,6 +1680,14 @@ If an archive records a `version` of an item or an edge that is not a positive s
 
 **Tests:** `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`.
 
+### `search-and-filters/restore-text`
+
+If a line of an archive's `items.ndjson`, `edges.ndjson` or `types.ndjson` holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` naming the row and the JSON pointer of the text, and write nothing.
+
+**Reason:** a restore is not a way to plant text the write doors refuse (`items/json-text-well-formed`).
+
+**Tests:** `compliance/well-formed-text.test.ts › refuses a %s that is not well-formed UTF-16, naming the row and where, and takes a pair there`.
+
 ### `search-and-filters/restore-scalars-held`
 
 When an archive records an invalid `version` or `tier` for a row that the instance already holds, or for an edge whose endpoint is missing, the server MUST still refuse the archive.

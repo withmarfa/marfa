@@ -1974,6 +1974,34 @@ If a JSON request body, other than one posted to an inbound webhook endpoint, ne
 
 **Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`.
 
+### `items/json-text-well-formed`
+
+If a JSON request body, other than one posted to an inbound webhook endpoint, holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` with `details.errors[].path` naming the first by its JSON pointer.
+
+**Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. A client that decodes strictly cannot read a row that holds one, so a device could not sync.
+
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
+
+### `items/json-text-pointer`
+
+When the server names text that is not well-formed UTF-16 in a refusal, the server MUST write its JSON pointer as RFC 6901 does, `~0` for each `~` and `~1` for each `/`, and with U+FFFD for each lone surrogate in a key.
+
+**Reason:** the pointer goes back in the answer, which a strict decoder must be able to read.
+
+**Tests:** `compliance/well-formed-text.test.ts › escapes a slash and a tilde in the pointer it names`, `› refuses $name, naming where, and takes a surrogate pair there`.
+
+### `items/json-text-before-credential`
+
+If a request to an operation that requires a credential carries no credential and a JSON body that holds text that is not well-formed UTF-16, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
+
+**Tests:** `compliance/well-formed-text.test.ts › answers it before a missing credential, as it answers a body nested too deep`, `› refuses it on every published operation that takes a JSON body, before any credential`.
+
+### `items/json-text-after-depth`
+
+If a JSON request body nests more than 64 levels and holds text that is not well-formed UTF-16, then the server MUST answer as `items/json-depth` says.
+
+**Tests:** `compliance/well-formed-text.test.ts › names the nesting before the text when a body is both too deep and not well-formed`.
+
 ### `items/search-nul`
 
 If a `GET /search` query contains a NUL character, then the server MUST answer `400 validation_error`.

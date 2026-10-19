@@ -180,6 +180,23 @@ describe("a write that names an instance", () => {
       expect(await codeOf(res)).toBe("validation_error");
     }
 
+    // The same for text that is not well-formed UTF-16.
+    const lone = { type: "core.note", properties: { body: "lone \ud83d" } };
+    const loneElsewhere = await send("/items", {
+      body: lone,
+      headers: { [HEADER]: OTHER },
+    });
+    expect(loneElsewhere.status).toBe(409);
+    expect(await codeOf(loneElsewhere)).toBe("instance_changed");
+    for (const [headers, credential] of [
+      [{ [HEADER]: own }, true],
+      [{ [HEADER]: OTHER }, false],
+    ] as const) {
+      const res = await send("/items", { body: lone, headers, credential });
+      expect(res.status, JSON.stringify({ credential })).toBe(400);
+      expect(await codeOf(res)).toBe("validation_error");
+    }
+
     // The witnesses: without the header each is refused for itself.
     expect(
       (await send("/items", { body: { properties: { body: "no type" } } }))
