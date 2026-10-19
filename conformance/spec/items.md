@@ -674,6 +674,22 @@ When two writes to one item race, the server MUST judge each against the item an
 
 **Tests:** `compliance/write-order.test.ts › judges an item update after a trash against the trashed row`, `› judges an exact item update after a move against the current version`, `› judges an item update after retyping against the current type`.
 
+### `items/write-race-key-narrowed`
+
+When a change to a key's grants that removes its write grant on a type commits before an item write bearing that key begins to write, the server MUST refuse the write `403 type_not_permitted`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition`, `POST /items/{id}/purge` or `POST /items/bulk`.
+
+**Reason:** a key is judged as it stands when the write commits, not as it stood when the request was admitted, so a narrowing the owner has saved never lets one more write through.
+
+**Tests:** waiting on #2074.
+
+### `items/write-race-key-revoked`
+
+When the revocation of a key commits before an item write bearing that key begins to write, the server MUST refuse the write `401 unauthorized`, for a write through any of the operations `items/write-race-key-narrowed` names.
+
+**Reason:** `keys-and-oauth/revoke-immediate` holds for a request already admitted when the key is revoked.
+
+**Tests:** waiting on #2074.
+
 ## Idempotency keys
 
 ### `items/idempotency-operations`
