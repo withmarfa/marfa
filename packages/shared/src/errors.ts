@@ -506,7 +506,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: {
     status: 422,
     summary:
-      "A `compatible_with` declaration names a target that does not exist, or leaves out a field the target requires.",
+      "A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.",
   },
   [ErrorCode.REQUEST_TOO_LARGE]: {
     status: 413,
