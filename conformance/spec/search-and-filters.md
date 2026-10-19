@@ -1388,9 +1388,17 @@ When an edge is created after the headers of `GET /export?format=archive` have a
 
 When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `MARFA_MAX_BULK_REQUEST_BYTES`, without skipping any carried item or edge.
 
-**Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
+**Reason:** pages can observe different committed states, and `schema.write` permits replacements that leave an earlier row that a restore refuses, such as a type that becomes an event while a row holds a rule no calendar read can unfold (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
 **Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`, `› restores a custom type retyped away and deleted between archive pages`.
+
+### `search-and-filters/archive-rows-shape-free`
+
+When `GET /export?format=archive` selects an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse the export because the item lacks a field its type requires, holds a value its type's field does not accept, or is of a type that is not registered.
+
+**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a platform type that this build no longer ships as an orphan`.
 
 ### `search-and-filters/archive-validation-retry`
 
@@ -1445,6 +1453,38 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 **Reason:** the status and headers are sent before the first byte, so the failure shows only as a connection cut short and a gzip stream with no end, which is an archive that nobody mistakes for a complete one.
 
 **Tests:** `compliance/export-faults.test.ts › ends the response with an error, so the archive is cut short and cannot be taken for a whole one, and leaves nothing on disk`.
+
+### `search-and-filters/export-credential-ended`
+
+When the key or signed-in app that a `GET /export` request was admitted on is revoked, passes its expiry or is disconnected while the response is open, the server MUST end the response with an error and not with a clean end, in both formats and while an archive sends a blob.
+
+**Reason:** what a key holds open ends with it (`keys-and-oauth/revoke-immediate`), and a response that ended cleanly after its credential ended would read as a whole copy.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is revoked`, `› ends with an error when its key passes its expiry`, `› ends with an error when the app that opened it is disconnected`, `› ends with an error when its key is revoked while a blob is being sent`.
+
+### `search-and-filters/export-credential-narrowed`
+
+If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export has still to send, then the server MUST end the response with an error and not with a clean end, in both formats.
+
+**Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its rows and blobs in its manifest.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is narrowed to types the export does not carry`.
+
+### `search-and-filters/export-narrowed-reaches`
+
+When the credential that a `GET /export` request was admitted on is narrowed while the response is open, and it still reads everything the export has still to send, the server MUST send the rest of the export, in both formats.
+
+**Reason:** a narrowing that takes away nothing the export has still to send changes nothing the export has promised.
+
+**Tests:** `compliance/export-credential.test.ts › arrives whole when its credential stands, which is the witness for the cases below`, `› arrives whole when its key is narrowed to what the export still carries`.
+
+### `search-and-filters/archive-selection-key`
+
+If the key that a `GET /export?format=archive` request was admitted on is revoked before the response begins, then the server MUST answer `401 unauthorized` without sending archive bytes.
+
+**Reason:** the export reads and checks the whole selection before its first byte, and the answer is the one the next request on the key gets.
+
+**Tests:** `compliance/export-credential.test.ts › is refused 401 when its key is revoked while the selection is read`.
 
 ## Restore
 
@@ -1670,7 +1710,7 @@ If an archive registers a type with a key `types/unknown-key` refuses, or an edg
 
 When `POST /restore` takes an archive that carries no row, the server MUST answer `200` with `imported` of 0.
 
-**Reason:** an archive of nothing is not an empty body.
+**Reason:** an archive of nothing is not an empty body, and its members are present and empty, which `search-and-filters/restore-members` tells from missing.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
 
@@ -1679,6 +1719,14 @@ When `POST /restore` takes an archive that carries no row, the server MUST answe
 If the body of `POST /restore` is empty, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
+
+### `search-and-filters/restore-members`
+
+If an archive lacks `manifest.json`, `items.ndjson`, `edges.ndjson` or `types.ndjson`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
+
+**Reason:** an export writes all four even when it holds no row (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a gzip-compressed tar that is no archive, naming every member it lacks`.
 
 ### `search-and-filters/restore-not-archive`
 
@@ -1825,6 +1873,54 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 **Reason:** changing a type's schema does not rewrite the past.
 
 **Tests:** `compliance/archive-history.test.ts › restores a snapshot the type's current shape would refuse, as it was`.
+
+### `search-and-filters/restore-rows-shape-free`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
+
+**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/drift`); a restore takes those as archived, as it takes an item of any type that is not one the build ships, whether or not the instance still carries the type's row (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+
+### `search-and-filters/restore-rows-properties-kept`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST store its properties as the archive holds them.
+
+**Reason:** the properties are the person's own, and a restore that rewrote them to a shape the type has now would change the backup it restores.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+
+### `search-and-filters/restore-schema-version-kept`
+
+When `POST /restore` writes an item, the server MUST store the `schema_version` that the archive records for it.
+
+**Reason:** `schema_version` is the `version` the item's type had when the item was created, and Marfa never changes it. Stamping the type's present version on a row written under an earlier one would say the row has a field it lacks.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+
+### `search-and-filters/restore-rows-orphan`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships and whose type is not registered once the archive's own types are, the server MUST store the item under that type.
+
+**Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item of a platform type that this build no longer ships as an orphan`.
+
+### `search-and-filters/restore-item-type`
+
+If an archived item's `type` is missing or is not a type identifier, then the server MUST answer `400 validation_error` naming the item's ID in the message.
+
+**Reason:** a forced delete leaves an item under an identifier a type was registered with (`search-and-filters/restore-rows-orphan`), so an identifier that none could have been is an archive that no instance wrote.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
+
+### `search-and-filters/restore-item-properties`
+
+If an archived item's `properties` are present and are not an object, then the server MUST answer `400 invalid_properties` naming the item's ID in the message.
+
+**Reason:** a restore that took them would store a row whose properties no read can return as an object.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
 
 ### `search-and-filters/restore-snapshot-held`
 

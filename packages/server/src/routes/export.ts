@@ -12,10 +12,15 @@ import type { BlobLayer } from "../storage/blob-layer.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
+import { log } from "../middleware/logger.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
 import { withStatementFault } from "../storage/sqlite/injected-failure.js";
 import { handleArchiveExport } from "./export-archive.js";
 import { readableExportEdges } from "./export-read.js";
+import {
+  ExportCredentialEnded,
+  holdExportAuthority,
+} from "./export-authority.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
 import {
@@ -104,7 +109,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items with the history you can read, the edges, the type registrations and the blobs they reference that you can read. If an archive fails partway, the connection ends early and the file won't unpack.",
+        "With `format=ndjson`, one JSON object per line: `item` and `metadata` for each item, then `edge` for each edge between them whose type you can read. With `format=archive`, a `.tar.gz` of the items, history, edges, type registrations and blobs you can read. If the export fails partway or your credential ends or narrows below it, the connection ends early and an archive won't unpack.",
     },
     400: {
       content: {
@@ -177,6 +182,7 @@ export function exportRoutes(
 
   router.openapi(exportRoute, async (c) => {
     const reader = ownerItemRead(c);
+    const authority = holdExportAuthority(c, storage);
 
     const query = c.req.valid("query");
 
@@ -254,6 +260,7 @@ export function exportRoutes(
           source_filter: sourceFilter,
         },
         reader,
+        authority,
         reserve,
         maxRowBytes,
       );
@@ -261,7 +268,13 @@ export function exportRoutes(
 
     const encoder = new TextEncoder();
 
-    async function* records(): AsyncGenerator<string> {
+    /** Lines read together, with the check that holds before they are sent. */
+    interface Batch {
+      lines: string[];
+      holds: () => Promise<void>;
+    }
+
+    async function* records(): AsyncGenerator<Batch> {
       // Ids of every item this export emits. Edges are filtered against it
       // below: an export carries the relationships among the items it
       // contains, so a filtered export never references an item the output
@@ -296,6 +309,8 @@ export function exportRoutes(
               );
               data.push({
                 id: item.id,
+                item,
+                metadata,
                 line: JSON.stringify({ item, metadata }) + "\n",
               });
             }
@@ -305,10 +320,11 @@ export function exportRoutes(
         );
         pageLimit = LINES_PER_TURN;
 
-        for (const record of result.data) {
-          exportedIds.add(record.id);
-          yield record.line;
-        }
+        for (const record of result.data) exportedIds.add(record.id);
+        yield {
+          lines: result.data.map((record) => record.line),
+          holds: () => authority.rows(result.data),
+        };
 
         cursor = result.next_cursor ?? undefined;
       } while (cursor);
@@ -333,31 +349,32 @@ export function exportRoutes(
           },
           { signal: c.req.raw.signal },
         );
-        for (const edge of page.data) {
-          // Membership keeps the exported graph closed; the page snapshot
-          // separately checks its source's current readability.
-          if (
-            exportedIds.has(edge.source_id) &&
-            exportedIds.has(edge.target_id)
-          ) {
-            yield JSON.stringify({ edge }) + "\n";
-          }
-        }
+        // Membership keeps the exported graph closed; the page snapshot
+        // separately checks its source's current readability.
+        const edges = page.data.filter(
+          (edge) =>
+            exportedIds.has(edge.source_id) && exportedIds.has(edge.target_id),
+        );
+        yield {
+          lines: edges.map((edge) => JSON.stringify({ edge }) + "\n"),
+          holds: () => authority.edges(edges),
+        };
         edgeCursor = page.next_cursor ?? undefined;
       } while (edgeCursor);
     }
 
-    const lines = records();
+    const batches = records();
     // Each pull waits a turn of the event loop. The store answers without
     // waiting on I/O, so an export read in one go runs entirely in
     // microtasks, and the response's headers and first bytes, which reach
     // the socket in a later phase, would wait for the last line. Later
-    // pulls take a few lines rather than one, since a turn per line costs a
-    // large export a good share of its throughput; the first takes one, so
-    // the client sees the export begin as soon as it can. Pulling also
-    // holds the read to what the client has taken, so a large export is
-    // never held in memory whole.
-    let linesThisTurn = 1;
+    // pulls take a page of lines rather than one, since a turn per line
+    // costs a large export a good share of its throughput; the first takes
+    // one, so the client sees the export begin as soon as it can. Pulling
+    // also holds the read to what the client has taken, so a large export
+    // is never held in memory whole. A page is sent only after the
+    // credential has been asked again, and with no wait between that answer
+    // and the page being queued.
     // A client that leaves cancels the stream while a pull is still reading,
     // and that pull's enqueue then throws. Leaving is not a fault.
     let cancelled = false;
@@ -365,19 +382,31 @@ export function exportRoutes(
       async pull(controller) {
         try {
           await yieldBulkWork();
-          const limit = linesThisTurn;
-          linesThisTurn = LINES_PER_TURN;
-          for (let taken = 0; taken < limit; taken++) {
-            const next = await lines.next();
+          for (;;) {
+            const next = await batches.next();
             if (next.done) {
               controller.close();
               return;
             }
-            controller.enqueue(encoder.encode(next.value));
-            if ((controller.desiredSize ?? 0) <= 0) return;
+            // A page the export read but does not carry sends nothing, and
+            // a pull that sends nothing is not asked again.
+            if (next.value.lines.length === 0) continue;
+            await next.value.holds();
+            for (const line of next.value.lines)
+              controller.enqueue(encoder.encode(line));
+            return;
           }
         } catch (err) {
           if (cancelled) return;
+          if (err instanceof ExportCredentialEnded) {
+            const { reason } = err;
+            log("info", "Export ended with its credential", {
+              request_id: c.get("requestId"),
+              reason,
+            });
+            controller.error(new ExportCredentialEnded(reason));
+            return;
+          }
           controller.error(
             streamFailure("Export stream failed", err, {
               request_id: c.get("requestId"),
@@ -388,7 +417,7 @@ export function exportRoutes(
       },
       async cancel() {
         cancelled = true;
-        await lines.return(undefined);
+        await batches.return(undefined);
       },
     });
 

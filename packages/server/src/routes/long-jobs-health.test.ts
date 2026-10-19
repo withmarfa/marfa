@@ -33,12 +33,15 @@ import { healthRoutes } from "./health.js";
  * clock is used once, in the witness's favor: `/health` has to be answered at
  * all while the job runs.
  *
- * The bound is two seconds of processor time. A job that hands the loop over
- * between units of work spends one unit between turns: at most about 65 ms
- * for the archive export, 310 ms for a restore batch and 460 ms for a
- * bulk-action chunk on a laptop, so the bound is more than four times the
- * largest. A bulk action that does not hand the loop over spent 7 seconds at
- * this size on the same laptop, and spends more the larger the instance.
+ * The bound is three seconds of processor time. A job that hands the loop
+ * over between units of work spends one unit between turns: at most about
+ * 60 ms for the archive export, 170 ms for a restore batch, 225 ms for a
+ * bulk-action chunk and 155 ms for a page of version thinning on a laptop. A
+ * hosted runner spends from four to ten times as much processor time on a
+ * unit as the laptop does, so the bound leaves room for the largest unit on
+ * the slowest of them. A bulk action that does not hand the loop over spent
+ * 8 seconds at this size on the same laptop, and spends more the larger the
+ * instance.
  *
  * The archive export and the archive restore pass without their explicit
  * turns too, because the files and streams they write to hand the loop over
@@ -47,9 +50,9 @@ import { healthRoutes } from "./health.js";
  * do. Every other job here fails its test when its turn is removed, and the
  * tighter bounds below are what make it fail. On the same laptop, in
  * milliseconds of processor time between two turns of the loop, with the
- * turns and without them: the NDJSON export 27 and 1,770; the blob orphan
- * sweep 31 and 800; version thinning over 6,100 items 280 and 5,900; the
- * retirement of 400 inactive grants 56 and 730.
+ * turns and without them: the NDJSON export 35 and 1,770; the blob orphan
+ * sweep 35 and 800; version thinning over 6,100 items 155 and 8,200; the
+ * retirement of 400 inactive grants 25 and 730.
  *
  * The enrichment sweep is not tested here: it reads one batch, at most
  * `MARFA_ENRICHMENT_BATCH_SIZE` candidates (8 by default), which does not
@@ -57,15 +60,15 @@ import { healthRoutes } from "./health.js";
  * The retirement of grants is capped at 500 a run, which is still 700 ms
  * without its turns, so it is tested.
  */
-const CPU_BOUND_MS = 2_000;
+const CPU_BOUND_MS = 3_000;
 
 /**
  * Jobs that walk the instance in pages, or retire grants one by one, are held
  * to a tighter bound, set between the stretch of one unit and the stretch of
  * the whole run, so that the test fails when its job stops handing the loop
- * over. Against the two seconds above they would pass without it. A hosted
- * runner spends about four times the laptop's processor time on one unit,
- * so the bound leaves that much room. Version thinning keeps the two seconds:
+ * over. Against the three seconds above they would pass without it. A hosted
+ * runner spends up to ten times the laptop's processor time on one unit, so
+ * the bound leaves that much room. Version thinning keeps the three seconds:
  * its corpus is large enough that the whole run exceeds them.
  */
 const PAGED_BOUND_MS = 500;
@@ -193,30 +196,43 @@ function spin(ms: number) {
 }
 
 /**
- * The most processor time the process spent between two consecutive answers
- * of `/health` while `job` ran, with how many answers there were. The first
- * request commits the write probe before the job begins, so it is not the one
- * that meets a lock the job holds.
+ * The most processor time the process spent between two turns of the event
+ * loop while `job` ran, with how many answers `/health` gave in that time.
+ * A timer due every 5 ms marks a turn, and asks `/health` without waiting
+ * for the answer, so the stretch is the loop's and not the answer's: an
+ * answer takes one turn for each file operation or other wait it makes, and
+ * the job spends a unit between turns, so a measure taken from answer to
+ * answer grows with how many waits `/health` makes and not with how long
+ * the job holds the loop. The first request commits the write probe before
+ * the job begins, so it is not the one that meets a lock the job holds.
  */
 async function longestStretch<T>(
   server: Hono<AppEnv>,
   job: () => Promise<T>,
 ): Promise<{ worstCpuMs: number; asked: number; result: T }> {
   await server.request("/health");
-  const state = { running: true };
+  const state = { running: true, asked: 0 };
+  const failures: string[] = [];
+  const answers: Promise<void>[] = [];
   let worstCpuMs = 0;
-  let asked = 0;
   let last = cpuMs();
-  const sampler = (async () => {
+  const ask = async () => {
+    try {
+      const res = await server.request("/health");
+      if (res.status !== 200) failures.push(`status ${String(res.status)}`);
+      state.asked++;
+      await res.arrayBuffer();
+    } catch (err) {
+      failures.push(String(err));
+    }
+  };
+  const ticker = (async () => {
     while (state.running) {
       await new Promise((resolve) => setTimeout(resolve, 5));
-      const res = await server.request("/health");
       const now = cpuMs();
       worstCpuMs = Math.max(worstCpuMs, now - last);
       last = now;
-      asked++;
-      expect(res.status).toBe(200);
-      await res.arrayBuffer();
+      answers.push(ask());
     }
   })();
   let result: T;
@@ -225,10 +241,14 @@ async function longestStretch<T>(
   } finally {
     state.running = false;
   }
-  // The request in flight when the job ended is the one a held loop delays
-  // most, so it is counted before the worst is read.
-  await sampler;
+  // The stretch in progress when the job ended is the one a held loop
+  // lengthens most, so it is counted before the worst is read. An answer
+  // given after the job ended does not witness anything about the job.
+  const asked = state.asked;
+  await ticker;
   worstCpuMs = Math.max(worstCpuMs, cpuMs() - last);
+  await Promise.all(answers);
+  expect(failures).toEqual([]);
   return { worstCpuMs, asked, result };
 }
 
@@ -273,7 +293,7 @@ describe("GET /health while a long job runs", () => {
   it("sees a loop held across the job, which is what the others are held against", async () => {
     const { worstCpuMs } = await longestStretch(health, async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
-      spin(2_600);
+      spin(CPU_BOUND_MS + 600);
     });
     expect(worstCpuMs).toBeGreaterThan(CPU_BOUND_MS);
   });

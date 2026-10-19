@@ -7,10 +7,12 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * An archive export of a row that a restore would refuse. A replacement of a
- * type is allowed to leave the rows already stored under it as they were, so
- * a row the new schema no longer accepts is the instance's own, and the way
- * to make one through the HTTP API alone.
+ * An archive export of a row a restore would refuse. A replacement of a type
+ * is allowed to leave the rows already stored under it as they were, and one
+ * that makes a type an event leaves a row whose rule no calendar read can
+ * unfold: the way to make such a row through the HTTP API alone. The shape of
+ * a type is no such way, because a restore does not hold a row to it
+ * (`search-and-filters/restore-rows-shape-free`).
  */
 let server: FreshServer | undefined;
 let working: MarfaClient;
@@ -43,22 +45,38 @@ async function archive(): Promise<Response> {
 
 describe("an archive export of a row a restore would refuse", () => {
   it("answers 409 naming the row, and exports once the row is corrected", async () => {
+    const fields = {
+      title: { type: "string" as const, required: true },
+      starts_at: { type: "string" as const, format: "datetime" as const },
+      recurrence: { type: "array" as const, items_type: "string" as const },
+    };
     const registered = await working.registerType({
       id: TYPE,
       version: 1,
-      fields: { value: { type: "string", required: true } },
+      fields,
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     const created = await working.createItem({
       type: TYPE,
-      properties: { value: "original" },
+      properties: {
+        title: "the series",
+        starts_at: "2041-01-15T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"],
+      },
     });
     expect(created.ok, JSON.stringify(created.error)).toBe(true);
     const id = created.data.item.id;
 
+    // The witness: while the type is no event nothing reads the rule, and
+    // the instance exports.
+    const witness = await archive();
+    expect(witness.status).toBe(200);
+    await witness.arrayBuffer();
+
     const replaced = await working.replaceType(TYPE, {
       version: 2,
-      fields: { value: { type: "number", required: true } },
+      parent: "core.event",
+      fields,
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
 
@@ -73,7 +91,7 @@ describe("an archive export of a row a restore would refuse", () => {
             kind: "item",
             id,
             type: TYPE,
-            field: "properties.value",
+            field: "properties.recurrence",
             code: "invalid_properties",
           },
         },
@@ -82,7 +100,7 @@ describe("an archive export of a row a restore would refuse", () => {
 
     const corrected = await working.updateItem(id, {
       version: created.data.item.version,
-      properties: { value: 42 },
+      properties: { recurrence: ["RRULE:FREQ=YEARLY"] },
     });
     expect(corrected.ok, JSON.stringify(corrected.error)).toBe(true);
 

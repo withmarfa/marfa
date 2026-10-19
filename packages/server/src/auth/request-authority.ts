@@ -45,3 +45,20 @@ export async function validateRequestAuthority(): Promise<void> {
     request.validate(request.permissions, request.recent),
   );
 }
+
+/**
+ * Asks again, later, what the request was admitted on, for work that
+ * outlives its response's headers: it answers as the next request on the
+ * same credential would. A credential that ended is refused `401`, and one
+ * that no longer holds what the request needed `403`. A key or token still
+ * standing refreshes the context's credential to its stored maps, so what
+ * the request reads afterwards is what the credential holds now.
+ */
+export function recheckRequestAuthority(): () => Promise<void> {
+  const request = requests.getStore();
+  if (!request) throw new Error("No request authority to ask again");
+  return () =>
+    validating.run(true, () =>
+      request.validate(request.permissions, request.recent),
+    );
+}

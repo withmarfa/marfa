@@ -19,6 +19,9 @@
  * items. Edges restore in a second pass, only where both endpoints
  * resolve in the target database. A row comes back at the version
  * it was archived at, with its original dates and readable item history.
+ * An item that is not of a `core` or `system` type that this build ships
+ * keeps the properties the archive holds, whatever shape its type has now and
+ * whether or not the type is registered.
  *
  * Paired with GET /export?format=archive.
  */
@@ -110,7 +113,7 @@ const restoreArchiveRoute = createRoute({
     body: {
       required: true,
       description:
-        "The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it.",
+        "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it.",
       content: {
         "application/gzip": {
           // The archive is a gzipped tarball: bytes, as 3.1 spells them.
@@ -169,7 +172,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
     },
     400: {
       content: {
@@ -182,7 +185,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.\n- `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.",
+        "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
     },
     413: {
       content: {
@@ -529,6 +532,7 @@ async function restoreRows(
             { kind: "platform", by: writer },
             {
               op: "create",
+              as_archived: true,
               // A digest lends here exactly where it lent in the
               // instance the archive was taken from, and a line naming
               // none lends nothing.
@@ -541,6 +545,11 @@ async function restoreRows(
               ...(typeof item.version === "number" && {
                 version: item.version,
               }),
+              ...(typeof item.schema_version === "number" &&
+                Number.isSafeInteger(item.schema_version) &&
+                item.schema_version >= 0 && {
+                  schema_version: item.schema_version,
+                }),
               type: item.type as string,
               properties: restoredProperties(item),
               state: item.state as ItemState | undefined,
