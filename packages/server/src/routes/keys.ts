@@ -435,7 +435,7 @@ const revokeKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission.",
+        "- `forbidden`: you hold neither `keys.manage` nor `keys.mint` and aren't the owner or local command, or you're the owner and your browser session signed in more than five minutes ago. `details.required_scope` names a missing permission.",
     },
     404: {
       content: {
