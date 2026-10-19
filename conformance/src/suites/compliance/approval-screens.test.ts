@@ -213,6 +213,10 @@ describe("what the approval pages offer", () => {
     for (const [page, html] of await bothPages("core.note:read")) {
       expect(visibleText(html), page).not.toContain(line);
     }
+    // A definition's level to edit registers and changes types and deletes no item.
+    for (const [page, html] of await bothPages("metadata.types:write")) {
+      expect(visibleText(html), page).not.toContain(line);
+    }
   });
 
   it("offers no level above the one the request names, on both pages", async () => {

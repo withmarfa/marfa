@@ -377,6 +377,37 @@ describe("buildAccess", () => {
     ]);
   });
 
+  describe("offersEdit", () => {
+    const offers = (...literals: string[]): boolean =>
+      buildAccess({ scopes: literals.map(scope), held: undefined, bundles })
+        .offersEdit;
+
+    it("is true where a level to edit an item type or the content is offered", () => {
+      expect(offers("core.note:read", "core.note:write")).toBe(true);
+      expect(offers("content:write")).toBe(true);
+      expect(offers("*:write")).toBe(true);
+    });
+
+    it("is false where the only level to edit is not about items", () => {
+      // The witness above shows each of these rows offers a level to edit.
+      expect(
+        buildAccess({
+          scopes: [scope("metadata.types:write")],
+          held: undefined,
+          bundles,
+        }).data[0]?.options.map((o) => o.label),
+      ).toContain("Read and edit");
+      expect(offers("metadata.types:write")).toBe(false);
+      expect(offers("metadata:read", "metadata:write")).toBe(false);
+      expect(offers("edge.parent-of:write")).toBe(false);
+      expect(offers("profile:write")).toBe(false);
+    });
+
+    it("is false where editing is not offered", () => {
+      expect(offers("core.note:read")).toBe(false);
+    });
+  });
+
   it("treats an app that holds only the mechanisms as new, with nothing marked New", () => {
     const model = buildAccess({
       scopes: [scope("core.note:read"), scope("keys.mint")],

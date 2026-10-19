@@ -105,7 +105,11 @@ export interface AccessModel {
   mechanisms: string[];
   /** Whether the app already holds some access. */
   returning: boolean;
-  /** Whether a data control offers the level to edit. */
+  /**
+   * Whether a control offers the level to edit an item type or the content,
+   * which adds, changes and deletes items. Editing a definition, a link type
+   * or the profile does not, so those never set it.
+   */
   offersEdit: boolean;
 }
 
@@ -268,11 +272,16 @@ export function buildAccess(input: AccessInput): AccessModel {
   const data: LevelRow[] = [];
   const profile: (LevelRow | SwitchRow)[] = [];
   const patternOf = new Map<string, string>();
+  let offersEdit = false;
   for (const ask of asks.values()) {
     const row = rowFor(ask);
     if (!row) continue;
     patternOf.set(row.id, ask.scope.typePattern);
-
+    if (
+      (ask.scope.kind === "type" || ask.scope.kind === "content") &&
+      row.options.some((option) => option.label === LEVEL_LABELS.write)
+    )
+      offersEdit = true;
     if (ask.scope.kind === "profile") profile.push(row);
     else data.push(row);
   }
@@ -339,9 +348,7 @@ export function buildAccess(input: AccessInput): AccessModel {
     held: heldRows(held, input),
     mechanisms,
     returning,
-    offersEdit: data.some((row) =>
-      row.options.some((option) => option.label === LEVEL_LABELS.write),
-    ),
+    offersEdit,
   };
 }
 

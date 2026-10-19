@@ -156,6 +156,8 @@ describe("renderConsentScreen: one control for each thing asked for", () => {
     ).toContain(line);
     // Where nothing can be edited the line has nothing to explain.
     expect(visibleText(render(["core.note:read"]))).not.toContain(line);
+    // Editing a definition registers and changes types: it deletes no item.
+    expect(visibleText(render(["metadata.types:write"]))).not.toContain(line);
   });
 
   it("offers no level above the one asked for", () => {

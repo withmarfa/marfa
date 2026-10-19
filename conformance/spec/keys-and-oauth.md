@@ -1261,9 +1261,9 @@ While an app holds no access to an item type, where a request names both the rea
 
 ### `keys-and-oauth/approval-edit-words`
 
-Where the consent screen or the device approval page offers the choice read and edit, the server MUST say beside the choices for data that edit includes adding and deleting items.
+Where the consent screen or the device approval page offers the choice read and edit for an item type or for content, the server MUST say beside the choices for data that edit includes adding and deleting items.
 
-**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers on its own.
+**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers on its own. Editing a definition, a link type or the profile adds and deletes no item, so those choices do not bring the line: `metadata.types:write` registers and changes types, and deleting one takes `schema.write`.
 
 **Tests:** `compliance/approval-screens.test.ts › says that editing includes adding and deleting items, where a level to edit is offered, on both pages`.
 

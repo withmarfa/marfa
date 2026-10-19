@@ -105,6 +105,8 @@ describe("renderDeviceConsentScreen", () => {
       );
     expect(text(["core.note:read", "core.note:write"])).toContain(line);
     expect(text(["core.note:read"])).not.toContain(line);
+    // Editing a definition registers and changes types: it deletes no item.
+    expect(text(["metadata.types:write"])).not.toContain(line);
   });
 
   it("starts each type at the level asked for, and a power off", () => {
