@@ -132,6 +132,7 @@ import {
   blobLending,
   digestsIn,
   edgeBlobLending,
+  fileBytes,
   syncBlobReferences,
   syncEdgeBlobReferences,
 } from "./blob-references.js";
@@ -252,6 +253,7 @@ async function insertConflictedSibling(
     now: string;
     properties: Record<string, unknown>;
     proof: BlobProof;
+    refuseUnprovenFile: boolean;
     /** The digests the losing write sent that its base version lacked. */
     carried: ReadonlySet<string>;
     /** The sign-in the losing write came from, which wrote the copy. */
@@ -301,6 +303,9 @@ async function insertConflictedSibling(
   await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
     carried: args.carried,
     inherited,
+    bytes: args.refuseUnprovenFile
+      ? fileBytes(row.type, properties)
+      : undefined,
   });
   properties = await keepFileSize(tx, {
     id: siblingId,
@@ -785,6 +790,9 @@ export class SqliteItemStore implements ItemStore {
         tx,
         { id, properties },
         input.blob_proof ?? null,
+        input.refuse_unproven_file === true
+          ? { bytes: fileBytes(input.type, properties) }
+          : {},
       );
       properties = await keepFileSize(
         tx,
@@ -968,9 +976,15 @@ export class SqliteItemStore implements ItemStore {
     sourceId: string | undefined,
     proof: BlobProof,
     carried: ReadonlySet<string>,
+    refuseUnprovenFile: boolean,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
-    await syncBlobReferences(tx, after, proof, { carried });
+    await syncBlobReferences(tx, after, proof, {
+      carried,
+      bytes: refuseUnprovenFile
+        ? fileBytes(after.type, after.properties)
+        : undefined,
+    });
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }
@@ -1326,6 +1340,7 @@ export class SqliteItemStore implements ItemStore {
           input.source_id,
           input.blob_proof ?? null,
           digestsIn(incomingProps ?? {}),
+          input.refuse_unproven_file === true,
         );
         merged = await keepFileSize(tx, {
           id,
@@ -1538,6 +1553,7 @@ export class SqliteItemStore implements ItemStore {
             row,
             now,
             proof: input.blob_proof ?? null,
+            refuseUnprovenFile: input.refuse_unproven_file === true,
             carried: staleCarried,
             writer: input.writer ?? null,
             properties: conflictedSiblingProperties({
@@ -1620,6 +1636,7 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields.source_id ?? undefined,
         input.blob_proof ?? null,
         staleCarried,
+        input.refuse_unproven_file === true,
       );
       resolvedProperties = await keepFileSize(tx, {
         id,

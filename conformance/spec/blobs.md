@@ -576,6 +576,48 @@ When a working key or an app's access token writes an item through `POST /items`
 
 **Tests:** `compliance/blob-reach.test.ts › lends a digest named by a new item only when its writer sent the bytes`, `› lends a digest named by an upsert onto a natural key only when its writer sent the bytes`, `› lends a digest named by a patch at the current version only when its writer sent the bytes`, `› lends a digest new to the base of a stale merge only when its writer sent the bytes`, `› lends a digest named by a keep-both write only when its writer sent the bytes`, `› lends a digest named by a retype only when its writer sent the bytes`, `› lends a digest named by a bulk create only when its writer sent the bytes`, `› lends a digest named by a bulk update only when its writer sent the bytes`, `› lends a digest named by a bulk action only when its writer sent the bytes`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › are credited to its grant, so a digest it names after a refresh lends`.
 
+### `blobs/proof-file-refused`
+
+If a working key or an app's access token writes an item of `core.file`, or of a type that inherits from it, through `POST /items` or `PATCH /items/{id}` as a plain update, a stale merge, a keep-both write or a retype, an upsert onto a natural key included, and the write names as `blob_ref` a whole `sha256:` hash that the item did not name before and, for a write made against an earlier version, that version did not name, and the credential had neither uploaded the bytes nor could read the blob as it wrote, then the server MUST answer `404 blob_not_found`.
+
+**Reason:** a file item stands for its bytes. Taken, the write would leave a file whose bytes no credential lacking `blobs.manage` may download, its writer and the bytes' uploader included, which its owner meets as a lost file, while the `201` told the writer that it worked. The way forward is to upload the bytes under the writing credential, which `blobs/upload-repeat` takes for bytes the instance already holds, and write again. A digest anywhere else in a row's properties, such as an embed in a note's body, is text: the write is taken and the digest lends nothing (`blobs/proof-item`).
+
+**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› is refused once the uploader is revoked, while a row the uploader wrote keeps lending`, `› refuses a create`, `› refuses an upsert onto a natural key`, `› refuses a patch at the current version`, `› refuses a stale merge naming bytes its base lacked`, `› refuses a keep-both write`, `› refuses a retype into a file type`.
+
+### `blobs/proof-file-refused-bulk`
+
+If an entry of `POST /items/bulk`, or a row of `POST /items/bulk-actions` with `update_properties`, writes a file item's `blob_ref` as `blobs/proof-file-refused` describes, then the server MUST refuse that entry or row with `blob_not_found`.
+
+**Tests:** `compliance/file-blob-proof.test.ts › refuses a bulk create's entry`, `› refuses a bulk update's entry`, `› refuses a bulk action's row`.
+
+### `blobs/proof-file-refused-nothing`
+
+When the server refuses a write under `blobs/proof-file-refused` or `blobs/proof-file-refused-bulk`, the server MUST NOT store the hash in any row, the item, a keep-both copy and a bulk entry's row included.
+
+**Tests:** `compliance/file-blob-proof.test.ts › is refused when another key uploaded the bytes, and taken once its writer uploads them too`, `› answers bytes another key holds exactly as it answers a hash nothing holds`, `› refuses a create`, `› refuses a keep-both write`, `› refuses a bulk create's entry`, `› refuses a bulk action's row`.
+
+### `blobs/proof-file-refused-as-unknown`
+
+When the server refuses a write under `blobs/proof-file-refused`, the server MUST answer with the same body whether or not it holds the bytes the hash names.
+
+**Reason:** a refusal that differed would tell a credential that may not read a blob whether the instance holds it, as `blobs/read-unreadable` keeps the reading doors from doing.
+
+**Tests:** `compliance/file-blob-proof.test.ts › answers bytes another key holds exactly as it answers a hash nothing holds`.
+
+### `blobs/proof-file-text`
+
+When a working key or an app's access token writes a file item whose properties name, anywhere but `blob_ref`, a digest the credential had neither uploaded nor could read, the server MUST take the write as `blobs/proof-item` describes.
+
+**Tests:** `compliance/file-blob-proof.test.ts › takes a hash in any other property, which lends nothing to a key that only knows it`.
+
+### `blobs/proof-file-stale-base`
+
+When a write made against an earlier version of a file item carries the `blob_ref` that version named, and the item names other bytes now, the server MUST NOT refuse the write under `blobs/proof-file-refused`, whoever makes it.
+
+**Reason:** a client sends back the properties it read, and the digest its base held was put there by whoever wrote it, so it is not the writer's to prove (`blobs/proof-stale`).
+
+**Tests:** `compliance/file-blob-proof.test.ts › takes a stale write from another key that carries back the blob_ref its base named`.
+
 ### `blobs/proof-folder`
 
 When a working key or an app's access token writes a digest a folder's settings did not name before through `POST /folders` or `PATCH /folders/{id}`, the server MUST make the reference lend if and only if the credential had uploaded the bytes or could read the blob as it wrote.

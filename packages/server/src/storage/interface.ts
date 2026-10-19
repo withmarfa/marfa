@@ -646,6 +646,12 @@ export type BlobProof = ((hash: string) => Promise<boolean>) | null;
 
 export interface BlobProofInput {
   blob_proof?: NonNullable<BlobProof>;
+  /**
+   * Refuse a file whose `blob_ref` enters without `blob_proof`'s proof,
+   * rather than take it lending nothing (`blobs/proof-file-refused`). Set for
+   * a credential's write; a restore puts a row back as it stood.
+   */
+  refuse_unproven_file?: boolean;
 }
 
 /**

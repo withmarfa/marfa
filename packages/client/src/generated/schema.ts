@@ -2288,14 +2288,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        EdgeTypeNotFoundOrItemNotFoundRefusal: {
+        BlobNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_type_not_found" | "item_not_found";
+                code: "blob_not_found" | "edge_type_not_found" | "item_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2472,14 +2472,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
+        BlobNotFoundOrEdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
+                code: "blob_not_found" | "edge_not_found" | "edge_type_not_found" | "item_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2848,6 +2848,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        EdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_type_not_found" | "item_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         IdReusedRefusal: {
             /** @description What went wrong. */
             error: {
@@ -2873,6 +2890,23 @@ export interface components {
                  * @enum {string}
                  */
                 code: "edge_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -5288,6 +5322,7 @@ export interface operations {
             /**
              * @description - `edge_type_not_found`: an edge names an edge type that doesn't exist.
              *     - `item_not_found`: an edge's target doesn't exist, or its type is one you can't read.
+             *     - `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.
              */
             404: {
                 headers: {
@@ -5301,7 +5336,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
+                    "application/json": components["schemas"]["BlobNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /**
@@ -6121,9 +6156,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item has this ID, its type is one you can't read, or an edge target doesn't exist or has a type you can't read. For an item in the trash, `details.trashed` is `true` if you can read its type.
+             * @description - `item_not_found`: no item you can read has this ID or an edge target's ID. For a trashed item, `details.trashed` is `true` if you can read its type.
              *     - `edge_type_not_found`: an edge names an edge type that doesn't exist.
-             *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can no longer read.
+             *     - `edge_not_found`: a repeat under the `Idempotency-Key` would show an edge you can't read now.
+             *     - `blob_not_found`: `blob_ref` names bytes you didn't upload and can't read.
              */
             404: {
                 headers: {
@@ -6137,7 +6173,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"];
+                    "application/json": components["schemas"]["BlobNotFoundOrEdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /**

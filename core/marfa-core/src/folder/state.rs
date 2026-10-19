@@ -427,6 +427,10 @@ pub fn bound_with_identity(conn: &Connection, identity: &str) -> Result<Vec<Boun
     bound_where(conn, "WHERE identity = ?1", [identity])
 }
 
+pub fn every_bound_to_item(conn: &Connection, item_id: &str) -> Result<Vec<Bound>, CoreError> {
+    bound_where(conn, "WHERE item_id = ?1", [item_id])
+}
+
 pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "WHERE content_hash = ?1", [content_hash])
 }

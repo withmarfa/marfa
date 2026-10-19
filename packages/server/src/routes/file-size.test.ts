@@ -84,6 +84,26 @@ async function create(
   return item;
 }
 
+/**
+ * A file whose `blob_ref` lends nothing. A file write naming bytes its writer
+ * cannot prove is refused (`blobs/proof-file-refused`), so the digest enters
+ * on a bookmark and a retype into `core.file` keeps it as it stood.
+ */
+async function planted(
+  key: string,
+  properties: Record<string, unknown>,
+): Promise<Row> {
+  const bookmark = await create(key, "core.bookmark", {
+    url: "https://example.com/planted",
+    ...properties,
+  });
+  return patch(key, bookmark, {
+    type: "core.file",
+    retype: true,
+    properties: {},
+  });
+}
+
 async function patch(
   key: string,
   row: Row,
@@ -419,14 +439,12 @@ describe("a file item carries the size of the bytes it names", () => {
 describe("an archive restore", () => {
   it("brings a file back with the size of the bytes it carries, and none where they did not lend", async () => {
     const other = await mintWorkingKey(ctx, {
-      type_permissions: { "core.file": "write" },
+      type_permissions: { "core.file": "write", "core.bookmark": "write" },
     });
     const blob = await upload(ctx.workingKey, 91);
     // Named before any row lends the bytes, so `other` could not read them.
-    const planted = await create(other, "core.file", {
-      blob_ref: blob.hash,
-    });
-    expect(planted.properties.size_bytes).toBeUndefined();
+    const plantedRow = await planted(other, { blob_ref: blob.hash });
+    expect(plantedRow.properties.size_bytes).toBeUndefined();
     const lent = await create(ctx.workingKey, "core.file", {
       blob_ref: blob.hash,
     });
@@ -437,7 +455,7 @@ describe("an archive restore", () => {
     };
     await raw.__sqliteRun(
       "UPDATE items SET properties = jsonb_set(properties, '$.size_bytes', ?) WHERE id IN (?, ?)",
-      [3, lent.id, planted.id],
+      [3, lent.id, plantedRow.id],
     );
     const exported = await request(
       ctx.app,
@@ -470,7 +488,7 @@ describe("an archive restore", () => {
           )
         ).item.properties.size_bytes;
       expect(await sizeOn(lent.id)).toBe(blob.size);
-      expect(await sizeOn(planted.id)).toBeUndefined();
+      expect(await sizeOn(plantedRow.id)).toBeUndefined();
     } finally {
       initEventLog(ctx.storage.eventLog);
       await target.cleanup();
@@ -481,15 +499,15 @@ describe("an archive restore", () => {
 describe("a file item names no size its writer could not read", () => {
   it("carries none where the writer never sent the bytes, which a writer that did is told", async () => {
     const other = await mintWorkingKey(ctx, {
-      type_permissions: { "core.file": "write" },
+      type_permissions: { "core.file": "write", "core.bookmark": "write" },
     });
     const blob = await upload(ctx.workingKey, 64);
-    const planted = await create(other, "core.file", {
+    const plantedRow = await planted(other, {
       blob_ref: blob.hash,
       size_bytes: 123,
     });
-    expect(planted.properties.size_bytes).toBeUndefined();
-    expect((await read(planted.id)).properties.size_bytes).toBeUndefined();
+    expect(plantedRow.properties.size_bytes).toBeUndefined();
+    expect((await read(plantedRow.id)).properties.size_bytes).toBeUndefined();
     // The witness: the same bytes, named by the key that sent them.
     const proved = await create(ctx.workingKey, "core.file", {
       blob_ref: blob.hash,
@@ -499,7 +517,7 @@ describe("a file item names no size its writer could not read", () => {
 
   it("carries none for bytes not yet held, and is stamped once written again with them", async () => {
     const bytes = bytesOf(80);
-    const early = await create(ctx.workingKey, "core.file", {
+    const early = await planted(ctx.workingKey, {
       blob_ref: hashOf(bytes),
       size_bytes: bytes.length,
     });

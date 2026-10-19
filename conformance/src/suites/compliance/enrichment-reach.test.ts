@@ -49,6 +49,38 @@ async function extracted(client: MarfaClient, id: string): Promise<unknown> {
   return read.data.item.properties.extracted_text;
 }
 
+/**
+ * A file whose `blob_ref` names bytes its writer never sent. A file write
+ * naming them is refused (`blobs/proof-file-refused`), so the digest enters
+ * on a bookmark, where it is text that lends nothing, and a retype into the
+ * file type keeps it as it stood (`blobs/proof-retype-as-stood`).
+ */
+async function plantedFile(
+  writer: MarfaClient,
+  type: string,
+  properties: Record<string, unknown>,
+): Promise<string> {
+  const bookmark = await writer.createItem({
+    type: "core.bookmark",
+    properties: { url: "https://example.com/planted", ...properties },
+  });
+  expect(bookmark.status, JSON.stringify(bookmark.error)).toBe(201);
+  const retyped = await writer.rawRequest<{ item: { id: string } }>(
+    `/items/${bookmark.data.item.id}`,
+    {
+      method: "PATCH",
+      body: {
+        type,
+        retype: true,
+        properties: {},
+        version: bookmark.data.item.version,
+      },
+    },
+  );
+  expect(retyped.ok, JSON.stringify(retyped.error)).toBe(true);
+  return bookmark.data.item.id;
+}
+
 describe("the enrichment sweep and a blob's reach", () => {
   it("extracts only from bytes the file's own reference lends", async () => {
     const hidden = new TextEncoder().encode("the quokka ledger, page one");
@@ -67,7 +99,7 @@ describe("the enrichment sweep and a blob's reach", () => {
     const minted = await owner.createKey({
       label: "files only",
       source: "enrichment-reach-files",
-      type_permissions: { "core.file": "write" },
+      type_permissions: { "core.file": "write", "core.bookmark": "write" },
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
     const fileWriter = new MarfaClient({
@@ -78,15 +110,11 @@ describe("the enrichment sweep and a blob's reach", () => {
       404,
     );
 
-    const named = await fileWriter.createItem({
-      type: "core.file",
-      properties: {
-        blob_ref: hiddenUpload.data.hash,
-        mime_type: "text/plain",
-        title: "named, never sent",
-      },
+    const named = await plantedFile(fileWriter, "core.file", {
+      blob_ref: hiddenUpload.data.hash,
+      mime_type: "text/plain",
+      title: "named, never sent",
     });
-    expect(named.status, JSON.stringify(named.error)).toBe(201);
     // The witness: the same sweep extracts from a file whose writer sent
     // its bytes.
     const own = await owner.createItem({
@@ -103,7 +131,7 @@ describe("the enrichment sweep and a blob's reach", () => {
     expect(await extracted(owner, own.data.item.id)).toBe(
       "the wombat ledger, page one",
     );
-    expect(await extracted(fileWriter, named.data.item.id)).toBeUndefined();
+    expect(await extracted(fileWriter, named)).toBeUndefined();
 
     // Once the file's writer has sent the bytes, a file it writes naming
     // them lends them, and the next sweep reads them; the first file's
@@ -124,7 +152,7 @@ describe("the enrichment sweep and a blob's reach", () => {
     expect(await extracted(fileWriter, proven.data.item.id)).toBe(
       "the quokka ledger, page one",
     );
-    expect(await extracted(fileWriter, named.data.item.id)).toBeUndefined();
+    expect(await extracted(fileWriter, named)).toBeUndefined();
   });
   it("keeps a digest the sweep wrote dead after a full key rewrites the file", async () => {
     const secret = new TextEncoder().encode("the numbat ledger, sealed");
@@ -249,6 +277,7 @@ describe("the enrichment sweep and a blob's reach", () => {
       type_permissions: {
         "core.file.image": "write",
         "core.file.audio": "write",
+        "core.bookmark": "write",
       },
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
@@ -272,11 +301,10 @@ describe("the enrichment sweep and a blob's reach", () => {
         properties: { body: `![it](${sent.data.hash})` },
       });
       expect(linked.status, type).toBe(201);
-      const named = await fileWriter.createItem({
-        type,
-        properties: { blob_ref: sent.data.hash, mime_type: mime },
+      const named = await plantedFile(fileWriter, type, {
+        blob_ref: sent.data.hash,
+        mime_type: mime,
       });
-      expect(named.status, JSON.stringify(named.error)).toBe(201);
       const own = await owner.createItem({
         type,
         properties: { blob_ref: sent.data.hash, mime_type: mime },
@@ -284,7 +312,7 @@ describe("the enrichment sweep and a blob's reach", () => {
       expect(own.status, JSON.stringify(own.error)).toBe(201);
       items.push({
         type,
-        named: named.data.item.id,
+        named,
         own: own.data.item.id,
       });
     }
