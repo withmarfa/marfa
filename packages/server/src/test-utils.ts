@@ -32,6 +32,7 @@ import type { EdgeEventWithId, ItemEventWithId } from "./pubsub.js";
 import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 import * as clock from "./clock.js";
+import { itemWrites } from "./storage/item-writes.js";
 
 /**
  * Replace every `$ref` in a slice of the OpenAPI document with the schema it
@@ -1191,6 +1192,33 @@ export function sweepTrashBefore(
 ): Promise<number> {
   const now = new Date(Date.parse(cutoffIso) + MS_PER_DAY);
   return new TrashPurger(storage, 1, () => now).runOnce();
+}
+
+/**
+ * `count` notes put in the bin, each stamped as having entered it at
+ * `trashedAtIso`, so a sweep with a cutoff after that instant finds all of
+ * them eligible.
+ */
+export async function seedTrashedNotes(
+  storage: Storage,
+  count: number,
+  trashedAtIso: string,
+): Promise<string[]> {
+  const ids: string[] = [];
+  for (let n = 0; n < count; n += 1) {
+    const note = await itemWrites(storage).create({
+      writer: null,
+      type: "core.note",
+      properties: { body: `trashed ${String(n)}` },
+    });
+    await itemWrites(storage).transition(note.id, "trashed");
+    ids.push(note.id);
+  }
+  await requireSqliteRun(storage)(
+    "UPDATE items SET trashed_at = ?, updated_at = ? WHERE state = 'trashed'",
+    [trashedAtIso, trashedAtIso],
+  );
+  return ids;
 }
 
 /** The revoked-grant sweep, with `cutoffIso` as its cutoff. */

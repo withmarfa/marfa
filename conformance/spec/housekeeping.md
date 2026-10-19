@@ -287,6 +287,14 @@ Where a retention is positive, the server MUST expire the eligible records older
 
 **Tests:** `compliance/housekeeping-retention.test.ts › expires the records of each kind older than it, and keeps the newer`.
 
+### `housekeeping/retention-trash-keeps-up`
+
+While items in the bin are older than the trash retention and a run of `trash-purge` has removed some of them, the server MUST run `trash-purge` again without waiting for its interval.
+
+**Reason:** a run removes a limited number of items, so a purge that ran once an interval could not keep up with an instance that bins more items in an interval than a run removes, and its backlog would grow without end.
+
+**Tests:** `compliance/housekeeping-retention.test.ts › empties it without waiting the job's interval for each batch, and audits every run`.
+
 ### `housekeeping/retention-maximum-runs`
 
 Where a retention `PUT /config` sets is at the largest value it accepts, the server MUST finish each cleanup job that reads that retention with `last_outcome` `ok`.

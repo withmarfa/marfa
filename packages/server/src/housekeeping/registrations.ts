@@ -216,7 +216,17 @@ export function registerHousekeepingJobs(
     name: HOUSEKEEPING_JOBS["trash-purge"].name,
     intervalMs: config.trashPurgeIntervalMs,
     firstRunDelayMs: 5_000,
-    run: async () => ({ deleted: await trashPurger.runOnce() }),
+    run: async () => {
+      const deleted = await trashPurger.runOnce();
+      // A run removes one batch. Rows it left behind are purged by a run at
+      // once, as replication does for its backlog, not a batch a day. A run
+      // that removed nothing waits for the cadence, so rows that cannot be
+      // purged are tried once an interval and not in a loop.
+      if (deleted > 0 && (await trashPurger.hasBacklog())) {
+        await housekeeping.wake("trash-purge");
+      }
+      return { deleted };
+    },
   });
 
   // Revoked application-grant rows, hourly. Unlike trash there is no
@@ -234,7 +244,13 @@ export function registerHousekeepingJobs(
       name: HOUSEKEEPING_JOBS["revoked-grant-purge"].name,
       intervalMs: 3_600_000,
       firstRunDelayMs: 20_000,
-      run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
+      run: async () => {
+        const deleted = await revokedGrantPurger.runOnce();
+        if (deleted > 0 && (await revokedGrantPurger.hasBacklog())) {
+          await housekeeping.wake("revoked-grant-purge");
+        }
+        return { deleted };
+      },
     });
   }
 

@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../config.js";
 import { DiskBlobStore, type BlobStore } from "../storage/blob-store.js";
+import { itemWrites } from "../storage/item-writes.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createUnclaimedTestApp,
+  seedTrashedNotes,
   type UnclaimedTestApp,
 } from "../test-utils.js";
 import { HOUSEKEEPING_JOBS } from "./metadata.js";
@@ -352,6 +354,113 @@ describe("the copy rules' wakes", () => {
     }
     // Woken from another run, so due at the wake's own instant.
     expect(await dueAt()).toBe(new Date(now).toISOString());
+    await housekeeping.stop();
+  });
+});
+
+describe("the retention purges' wakes", () => {
+  const T0 = Date.parse("2026-09-20T12:00:00.000Z");
+
+  async function started(ctx: UnclaimedTestApp, clock: { now: number }) {
+    const housekeeping = new Housekeeping(ctx.storage.housekeeping, {
+      pollIntervalMs: 3_600_000,
+      nowFn: () => new Date(clock.now),
+    });
+    registerHousekeepingJobs(housekeeping, ctx.storage, ctx.blobs, ctx.config);
+    await housekeeping.start();
+    const dueAt = async (name: string) =>
+      (await ctx.storage.housekeeping.get(name))?.next_run_at;
+    return { housekeeping, dueAt };
+  }
+
+  it("runs the trash purge again at once after a batch that left rows behind, and waits its interval after the last", async () => {
+    const ctx = await createUnclaimedTestApp();
+    contexts.push(ctx);
+    // Long past any retention the instance is configured with.
+    await seedTrashedNotes(ctx.storage, 250, "2020-01-01T00:00:00.000Z");
+    const clock = { now: T0 + 10_000 };
+    const { housekeeping, dueAt } = await started(ctx, clock);
+
+    // A wake during a run is recorded a millisecond after the run's start,
+    // so the finish can tell it from the schedule.
+    const first = await housekeeping.runNow("trash-purge");
+    expect(first).toMatchObject({
+      kind: "ran",
+      run: { result: { deleted: 200 } },
+    });
+    expect(await dueAt("trash-purge")).toBe(
+      new Date(clock.now + 1).toISOString(),
+    );
+
+    clock.now += 1_000;
+    expect(await housekeeping.runNow("trash-purge")).toMatchObject({
+      run: { result: { deleted: 50 } },
+    });
+    expect(await dueAt("trash-purge")).toBe(
+      new Date(clock.now + ctx.config.trashPurgeIntervalMs).toISOString(),
+    );
+    await housekeeping.stop();
+  });
+
+  it("runs the revoked-grant purge again at once after a batch that left rows behind", async () => {
+    const ctx = await createUnclaimedTestApp();
+    contexts.push(ctx);
+    for (let n = 0; n < 250; n += 1) {
+      await itemWrites(ctx.storage).create({
+        writer: null,
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "revoked",
+          granted_at: "2019-01-01T00:00:00.000Z",
+          revoked_at: "2020-01-01T00:00:00.000Z",
+          client_id: `client-${String(n)}`,
+        },
+      });
+    }
+    const clock = { now: T0 + 30_000 };
+    const { housekeeping, dueAt } = await started(ctx, clock);
+
+    expect(await housekeeping.runNow("revoked-grant-purge")).toMatchObject({
+      run: { result: { deleted: 200 } },
+    });
+    expect(await dueAt("revoked-grant-purge")).toBe(
+      new Date(clock.now + 1).toISOString(),
+    );
+    clock.now += 1_000;
+    expect(await housekeeping.runNow("revoked-grant-purge")).toMatchObject({
+      run: { result: { deleted: 50 } },
+    });
+    expect(await dueAt("revoked-grant-purge")).toBe(
+      new Date(clock.now + 3_600_000).toISOString(),
+    );
+    await housekeeping.stop();
+  });
+
+  it("does not run the trash purge again after a run that removed nothing", async () => {
+    const ctx = await createUnclaimedTestApp();
+    contexts.push(ctx);
+    await seedTrashedNotes(ctx.storage, 2, "2020-01-01T00:00:00.000Z");
+    const clock = { now: T0 + 10_000 };
+    const { housekeeping, dueAt } = await started(ctx, clock);
+    // Past the first-run delay, so the run sets the next one.
+    clock.now += 10_000;
+    // Rows that cannot be purged stay eligible: a purge that refuses every
+    // one removes nothing, and so does not ask to run again.
+    const items = ctx.storage.items;
+    const listed = items.listTrashedOlderThan.bind(items);
+    items.listTrashedOlderThan = async (cutoff, limit) =>
+      limit === 1 ? listed(cutoff, limit) : [];
+    try {
+      expect(await housekeeping.runNow("trash-purge")).toMatchObject({
+        run: { result: { deleted: 0 } },
+      });
+    } finally {
+      items.listTrashedOlderThan = listed;
+    }
+    expect(await dueAt("trash-purge")).toBe(
+      new Date(clock.now + ctx.config.trashPurgeIntervalMs).toISOString(),
+    );
     await housekeeping.stop();
   });
 });
