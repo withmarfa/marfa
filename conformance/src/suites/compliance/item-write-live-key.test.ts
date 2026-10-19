@@ -193,6 +193,13 @@ const narrow: Change = async (key) => {
   });
   expect(changed.status, JSON.stringify(changed.error)).toBe(200);
 };
+/** The key keeps read on tasks and loses every grant on notes. */
+const hide: Change = async (key) => {
+  const changed = await admin.updateKey(key.id, {
+    type_permissions: { "core.task": "read" },
+  });
+  expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+};
 const revoke: Change = async (key) => {
   const revoked = await admin.revokeKey(key.id);
   expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
@@ -243,6 +250,7 @@ const ROLLED_BACK = [
   "type_not_permitted",
 ] as const;
 const REVOKED = [401, "unauthorized"] as const;
+const HIDDEN = [404, "item_not_found"] as const;
 
 it("refuses a create 403 type_not_permitted when its key is narrowed to read after the write is held", async () => {
   await refusedAfter(create, narrow, ...NARROWED);
@@ -286,6 +294,26 @@ it("errors a best-effort bulk entry type_not_permitted when its key is narrowed 
   expect(results[0]?.outcome).toBe("errored");
   expect(results[0]?.error?.code).toBe("type_not_permitted");
   expect(await refused.written()).toBe(false);
+});
+
+it("refuses an update 404 item_not_found when its key loses read on the item's type after the write is held", async () => {
+  await refusedAfter(update, hide, ...HIDDEN);
+});
+
+it("refuses a delete 404 item_not_found when its key loses read on the item's type after the write is held", async () => {
+  await refusedAfter(remove, hide, ...HIDDEN);
+});
+
+it("refuses a purge 404 item_not_found when its key loses read on the item's type after the write is held", async () => {
+  await refusedAfter(purge, hide, ...HIDDEN);
+});
+
+it("refuses a restore 404 item_not_found when its key loses read on the item's type after the write is held", async () => {
+  await refusedAfter(restore, hide, ...HIDDEN);
+});
+
+it("refuses a transition 404 item_not_found when its key loses read on the item's type after the write is held", async () => {
+  await refusedAfter(transition, hide, ...HIDDEN);
 });
 
 it("refuses a create 401 when its key is revoked after the write is held", async () => {
@@ -362,4 +390,24 @@ it("errors a later best-effort bulk entry unauthorized when its key is revoked a
   expect(results[1]?.error?.code).toBe("unauthorized");
   expect(first).toBe("bulk");
   expect(second).toBeUndefined();
+});
+
+it("refuses a best-effort bulk page 401 when its key is revoked after a refused first entry and before its second", async () => {
+  const key = await writer();
+  const id = generateId();
+  await server.setFault("hold:write=items.bulk@2");
+  const pending = key.client.bulkItems({
+    atomic: false,
+    items: [
+      { type: "core.unregistered_type", properties: {} },
+      { id, type: "core.note", properties: { body: "bulk" } },
+    ],
+  });
+  await server.waitForHold("hold:write");
+  await revoke(key);
+  await server.clearFault("hold:write");
+  const answer = await pending;
+  expect(answer.status).toBe(401);
+  expect(answer.error?.error.code).toBe("unauthorized");
+  expect(await bodyOf(id)).toBeUndefined();
 });
