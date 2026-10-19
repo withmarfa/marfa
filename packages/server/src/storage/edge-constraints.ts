@@ -280,10 +280,11 @@ export async function assertEdgesFitGraph(
     if (!target || !mayRead(target.type)) {
       throw edgeTargetNotFound(p.target_id);
     }
+    // A replayed edge of an unregistered type has no constraint to meet.
+    if (schema === undefined) continue;
     // Endpoint types resolve through the registry, exactly as the edge type
     // itself did above, so a constraint naming a runtime-registered type
     // resolves like one naming a shipped type.
-    if (schema === undefined) continue;
     if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
