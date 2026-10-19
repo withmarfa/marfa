@@ -463,6 +463,11 @@ describe("when the claim is refused", () => {
           await textOf(page.locator("#password-js-err")).toBe(
             "Use at least 8 characters.",
           );
+          // The message stands in for the hint, as a server-rendered one does.
+          expect(await page.locator("#password-hint").isVisible()).toBe(false);
+          expect(await page.getAttribute("#password", "aria-describedby")).toBe(
+            "password-js-err",
+          );
           await isFocused(page.locator("#email")).toBe(true);
           expect(sent).toBe(0);
           expect(await sessionCookie(context)).toBeUndefined();

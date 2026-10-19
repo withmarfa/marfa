@@ -45,14 +45,19 @@ export function clearFieldError(control: Control): void {
   // Only a message this module made goes; one the server rendered stays.
   if (message?.dataset.jsError === "1") {
     message.remove();
-    describe(control, null);
+    const hint = field.querySelector<HTMLElement>(".hint");
+    if (hint) hint.hidden = false;
+    describe(control, hint?.id ?? null);
   }
 }
 
 function describe(control: Control, id: string | null): void {
   const ids = (control.getAttribute("aria-describedby") ?? "")
     .split(/\s+/)
-    .filter((part) => part !== "" && !part.endsWith("-js-err"));
+    .filter(
+      (part) =>
+        part !== "" && !part.endsWith("-js-err") && !part.endsWith("-hint"),
+    );
   if (id) ids.push(id);
   if (ids.length > 0) control.setAttribute("aria-describedby", ids.join(" "));
   else control.removeAttribute("aria-describedby");
@@ -74,6 +79,9 @@ export function showFieldError(control: Control, text?: string): void {
     message.setAttribute("role", "alert");
     message.dataset.jsError = "1";
     message.id = `${control.id || "field"}-js-err`;
+    // The message stands in for the hint, as a server-rendered one does.
+    const hint = field.querySelector<HTMLElement>(".hint");
+    if (hint) hint.hidden = true;
     field.append(message);
     describe(control, message.id);
   }
