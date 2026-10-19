@@ -406,10 +406,9 @@ describe("rate limit on the setup doors", () => {
     redirect: "manual",
   });
 
-  it("leaves the three doors that count guesses to their own limit", async () => {
+  it("leaves the doors that count guesses to their own limit", async () => {
     const limited = await buildCtx();
     try {
-      expect(await statuses(limited, "/setup")).not.toContain(429);
       expect(
         await statuses(limited, "/setup/exchange", form("code=WRONG")),
       ).not.toContain(429);
@@ -428,7 +427,13 @@ describe("rate limit on the setup doors", () => {
     }
   });
 
-  it("limits the owner's steps, which have no limit of their own", async () => {
+  it("limits the setup page and the owner's steps, which have no limit of their own", async () => {
+    const page = await buildCtx();
+    try {
+      expect(await statuses(page, "/setup")).toContain(429);
+    } finally {
+      await page.cleanup();
+    }
     const limited = await buildCtx();
     try {
       expect(await statuses(limited, "/setup/passkey")).toContain(429);
