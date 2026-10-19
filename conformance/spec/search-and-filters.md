@@ -1428,7 +1428,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 If selection, validation or streaming fails during `GET /export?format=archive`, then the server MUST leave nothing of the export on disk.
 
-**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`, `compliance/export-write-order.test.ts › refuses two incompatible selections with export_unrestorable and an empty spool`.
+**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`, `compliance/export-write-order.test.ts › refuses with export_unrestorable when the refused row's type is registered again between the reads`.
 
 ### `search-and-filters/archive-spool-start`
 
