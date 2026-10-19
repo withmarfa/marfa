@@ -13,8 +13,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
-async function fixture() {
-  const ctx = await createClaimTestApp(origin);
+async function fixture(settings: Record<string, string> = {}) {
+  const ctx = await createClaimTestApp(origin, settings);
   cleanups.push(ctx.cleanup);
   return ctx;
 }
@@ -402,6 +402,33 @@ describe("the owner's steps", () => {
       headers: { cookie },
     });
     expect(await connect.text()).toContain(`marfa --url ${origin} login`);
+  });
+
+  it("tell the owner where the data is kept, which depends on whether a bucket is set", async () => {
+    const backups = async (settings: Record<string, string>) => {
+      const ctx = await fixture(settings);
+      const setup = await setupSession(ctx);
+      const claimed = await ctx.app.request(
+        "/owner",
+        json(details, { origin, cookie: setup }),
+      );
+      const cookie = sessionCookies(claimed)[0]!.split(";")[0]!;
+      const page = await ctx.app.request("/setup/backups", {
+        headers: { cookie },
+      });
+      expect(page.status).toBe(200);
+      return page.text();
+    };
+    const folder = await backups({});
+    expect(folder).toContain("all its data in one folder");
+    expect(folder).not.toContain("bucket");
+    const bucket = await backups({
+      S3_BUCKET: "marfa-data",
+      S3_ACCESS_KEY_ID: "key",
+      S3_SECRET_ACCESS_KEY: "secret",
+    });
+    expect(bucket).toContain("bucket");
+    expect(bucket).not.toContain("all its data in one folder");
   });
 
   it("keep the instance's other settings when they save its name", async () => {

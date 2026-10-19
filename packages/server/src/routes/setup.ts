@@ -307,7 +307,10 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
       case "connect":
         return page(c, renderConnectPage(nonce, new URL(auth.baseURL).origin));
       case "backups":
-        return page(c, renderBackupsPage(nonce));
+        return page(
+          c,
+          renderBackupsPage(nonce, { bucket: c.var.config.s3Bucket !== "" }),
+        );
     }
   });
 

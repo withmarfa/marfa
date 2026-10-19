@@ -426,16 +426,32 @@ export function renderConnectPage(nonce: string, instanceUrl: string) {
   );
 }
 
-/** Step 6: backups. Marfa does not report on them, and says so. */
-export function renderBackupsPage(nonce: string) {
+/**
+ * Step 6: backups. Marfa does not report on them, and says so. What it says
+ * about where the data lives depends on whether an object store is attached:
+ * with a bucket, every file is copied there, and the container image streams
+ * the database there too.
+ */
+export function renderBackupsPage(nonce: string, state: { bucket: boolean }) {
   return renderDocument(
     <Step
       nonce={nonce}
       title="Backing up"
-      lede="Marfa keeps all its data in one folder on the machine that runs it. Back that folder up with your usual backup."
+      lede={
+        state.bucket
+          ? "Marfa keeps a second copy of your data in the storage bucket it is set up with."
+          : "Marfa keeps all its data in one folder on the machine that runs it. Back that folder up with your usual backup."
+      }
       current={6}
     >
       <div class="stack">
+        {state.bucket && (
+          <p class="small muted">
+            Every file you add is copied to the bucket. When Marfa runs from its
+            container image, the database is streamed there too, so the bucket
+            alone can rebuild this Marfa.
+          </p>
+        )}
         <p class="small muted">
           Marfa doesn't report on backups, so check yours now and then. You can
           also export everything at any time with <code>marfa export</code>. An
