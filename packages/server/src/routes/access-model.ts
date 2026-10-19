@@ -101,8 +101,8 @@ export interface AccessModel {
   powers: PowerSection[];
   /** What the app already holds, to show and not to change. */
   held: HeldRow[];
-  /** Submitted with the form without a control: mechanisms, and what the app already holds in full. */
-  carried: string[];
+  /** Submitted with the form without a control: the OAuth mechanisms the request names. */
+  mechanisms: string[];
   /** Whether the app already holds some access. */
   returning: boolean;
   /** Whether a data control offers the level to edit. */
@@ -208,11 +208,11 @@ export function buildAccess(input: AccessInput): AccessModel {
 
   const asks = new Map<string, Ask>();
   const switches: ParsedScope[] = [];
-  const carried: string[] = [];
+  const mechanisms: string[] = [];
   for (const scope of input.scopes) {
     const literal = scopeLiteral(scope);
     if (scope.kind === "oidc" && isMechanism(literal)) {
-      carried.push(literal);
+      mechanisms.push(literal);
     } else if (isLevelKind(scope)) {
       const key = `${scope.kind}:${scope.typePattern}`;
       const ask = asks.get(key) ?? { key, scope };
@@ -230,12 +230,9 @@ export function buildAccess(input: AccessInput): AccessModel {
   const rowFor = (ask: Ask): LevelRow | null => {
     const floor = levelHeld(held, ask.scope.typePattern);
     const top: Level = ask.write !== undefined ? "write" : "read";
-    if (RANK[floor] >= RANK[top]) {
-      // Held in full: shown, not offered, and still part of the request.
-      for (const literal of [ask.read, ask.write])
-        if (literal !== undefined) carried.push(literal);
-      return null;
-    }
+    // Held in full: shown, not offered. The server adds it to what the
+    // approval grants while the app still holds it (see `resolveSelection`).
+    if (RANK[floor] >= RANK[top]) return null;
     // The floor is none or read here: an app that holds write holds all of
     // any ask. The lowest choice adds nothing to the token. It is no access,
     // or, where the app holds a read the request does not name a literal for,
@@ -275,6 +272,7 @@ export function buildAccess(input: AccessInput): AccessModel {
     const row = rowFor(ask);
     if (!row) continue;
     patternOf.set(row.id, ask.scope.typePattern);
+
     if (ask.scope.kind === "profile") profile.push(row);
     else data.push(row);
   }
@@ -292,10 +290,7 @@ export function buildAccess(input: AccessInput): AccessModel {
   const powers = new Map<string, SwitchRow[]>();
   for (const scope of switches) {
     const literal = scopeLiteral(scope);
-    if (grantCoversScope(held, literal)) {
-      carried.push(literal);
-      continue;
-    }
+    if (grantCoversScope(held, literal)) continue;
     const permission =
       scope.kind === "permission" ? scope.permission : undefined;
     const destructive =
@@ -342,7 +337,7 @@ export function buildAccess(input: AccessInput): AccessModel {
     profile,
     powers: sections,
     held: heldRows(held, input),
-    carried,
+    mechanisms,
     returning,
     offersEdit: data.some((row) =>
       row.options.some((option) => option.label === LEVEL_LABELS.write),
@@ -375,14 +370,21 @@ export type Selection =
   { ok: true; scopes: string[]; chosen: boolean } | { ok: false };
 
 /**
- * Read a submission back against the request it answers and what the app
- * holds.
+ * Read a submission back against the request it answers and the consent the
+ * app holds when the approval commits.
  *
- * Every submitted value must be a literal the request named: anything else is
- * a form edited to ask for more than the screen showed, and nothing from it
- * is granted. A write that the request also named the read of brings that
+ * A submission carries only what the person chose and the mechanisms. Every
+ * submitted value must be a literal the request named: anything else is a
+ * form edited to ask for more than the screen showed, and nothing from it is
+ * granted. A write that the request also named the read of brings that
  * read, so "Read and edit" is the same grant a person had before a level was
  * one control.
+ *
+ * What the app holds rides along from the consent passed in, never from the
+ * submission: the scopes the request names that this consent covers are
+ * added, so a held scope stays in the token only while it is still held. A
+ * screen left open while the person ended the app's access therefore gives
+ * back nothing it showed as allowed.
  *
  * `chosen` is whether the person chose anything new. A mechanism, or a
  * scope the app already holds, is never a choice. Where the request names
@@ -400,7 +402,10 @@ export function resolveSelection(
   const picked = [...new Set(submitted.filter((v) => v !== ""))];
   if (picked.some((v) => !named.has(v))) return { ok: false };
   const scopes = new Set(picked);
-  for (const literal of picked) {
+  for (const literal of requested)
+    if (!isMechanism(literal) && grantCoversScope(held, literal))
+      scopes.add(literal);
+  for (const literal of [...scopes]) {
     const scope = parseScope(literal);
     if (scope?.operation !== "write" || !isLevelKind(scope)) continue;
     const read = `${scope.typePattern}:read`;
@@ -410,5 +415,10 @@ export function resolveSelection(
   const chosen = offersChoice
     ? picked.some((v) => !isCarried(v, held))
     : scopes.size > 0;
-  return { ok: true, scopes: [...scopes], chosen };
+  // In the request's order, whatever order the form arrived in.
+  return {
+    ok: true,
+    scopes: [...new Set(requested)].filter((v) => scopes.has(v)),
+    chosen,
+  };
 }

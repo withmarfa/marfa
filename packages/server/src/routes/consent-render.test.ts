@@ -510,16 +510,12 @@ describe("renderConsentScreen: asking again", () => {
     expect(defaultSubmission(html, "scopes")).toEqual([]);
   });
 
-  it("carries what the app holds in full, with no control, so a token still has it", () => {
+  it("shows what the app holds in full with no control, and does not post it", () => {
     const html = render(BASE, {
       priorScopes: ["core.note:read", "core.note:write"],
     });
     expect(selects(html).map((c) => c.label)).toEqual(["Tasks"]);
-    expect(defaultSubmission(html, "scopes")).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 
   it("recognizes that a wildcard held covers a type asked for", () => {
@@ -539,7 +535,8 @@ describe("renderConsentScreen: asking again", () => {
     expect(text).toContain("It already has all of this");
     expect(selects(html)).toHaveLength(0);
     expect(switches(html)).toHaveLength(0);
-    expect(defaultSubmission(html, "scopes").sort()).toEqual([...BASE].sort());
+    // Nothing is posted: the server adds what the app still holds.
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
   });
 
   it("says approving never lowers what the app holds, and where to end its access", () => {
@@ -554,7 +551,7 @@ describe("renderConsentScreen: asking again", () => {
       priorScopes: ["keys.mint"],
     });
     expect(switches(html).map((c) => c.value)).toEqual(["webhooks.manage"]);
-    expect(defaultSubmission(html, "scopes")).toEqual(["keys.mint"]);
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
     expect(visibleText(html)).toContain("Make, see, edit and revoke keys On");
   });
 });
@@ -595,11 +592,7 @@ describe("renderConsentScreen: what starts on", () => {
       bundles: [ON, OFF],
       priorScopes: ["core.note:read", "core.note:write"],
     });
-    expect(defaultSubmission(html, "scopes")).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 
   it("still offers a newly asked level off", () => {

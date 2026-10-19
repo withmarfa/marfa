@@ -694,6 +694,178 @@ describe("what an approval with everything newly asked turned off does for an ap
   });
 });
 
+describe("what an approval grants an app whose access ended while the screen was open", () => {
+  const booted = bootFor("approval-ended");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const HELD = "core.note:write keys.mint";
+  const ASKED = `${HELD} core.task:read`;
+
+  /** The app holds `HELD`, having been approved on the consent screen. */
+  async function holder(): Promise<App> {
+    const app = await register(ASKED);
+    const screen = await consentScreen(app, HELD);
+    // The permission starts off, so the person turns it on.
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      HELD.split(" "),
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+    return app;
+  }
+
+  /** The person disconnects the app from another tab. */
+  async function disconnect(app: App): Promise<void> {
+    const authorization = { authorization: `Bearer ${server.managementKey}` };
+    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      headers: authorization,
+    });
+    const grant = (
+      (await listed.json()) as { data: { id: string; client_id: string }[] }
+    ).data.find((g) => g.client_id === app.clientId);
+    expect(grant, "the app had no grant to disconnect").toBeDefined();
+    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: authorization,
+    });
+    expect(revoked.status).toBe(204);
+  }
+
+  /** The scopes the code of an approval on the consent screen exchanges for. */
+  async function exchanged(
+    app: App,
+    screen: Screen,
+    sent: URL | undefined,
+    proof: ReturnType<typeof pkce>,
+  ): Promise<string[]> {
+    expect(sent?.searchParams.get("code"), String(sent)).toBeTruthy();
+    const answer = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+    expect(screen.consent.pathname).toBe("/auth/authorize");
+    return (answer.body.scope ?? "").split(" ").sort();
+  }
+
+  /** The consent screen for `ASKED`, asked with a proof the code can be redeemed with. */
+  async function askAgain(app: App): Promise<{
+    screen: Screen;
+    proof: ReturnType<typeof pkce>;
+  }> {
+    const proof = pkce();
+    const landed = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, ASKED, proof),
+        cookie,
+      ),
+    );
+    expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+    const page = await fetch(landed!, { headers: { cookie } });
+    return { screen: { html: await page.text(), consent: landed! }, proof };
+  }
+
+  it("adds the access the app still holds to what is approved on the consent screen", async () => {
+    const app = await holder();
+    const { screen, proof } = await askAgain(app);
+    // The page posts the choices and the mechanisms, never the access held.
+    const posted = defaultSubmission(screen.html, "scopes");
+    expect(posted.sort()).toEqual(["core.task:read"]);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      posted,
+    );
+    expect(await exchanged(app, screen, sent, proof)).toEqual([
+      "core.note:write",
+      "core.task:read",
+      "keys.mint",
+    ]);
+  });
+
+  it("adds the access the app still holds to what is approved on the device approval page", async () => {
+    const app = await holder();
+    const device = await deviceScreen(app, ASKED);
+    expect(defaultSubmission(device.html, "scopes")).toEqual([
+      "core.task:read",
+    ]);
+    expect(
+      (
+        await decideDevice(
+          device,
+          "approve",
+          defaultSubmission(device.html, "scopes"),
+        )
+      ).status,
+    ).toBe(200);
+    const issued = await poll(app, device);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(issued.body.scope?.split(" ").sort()).toEqual([
+      "core.note:write",
+      "core.task:read",
+      "keys.mint",
+    ]);
+  });
+
+  it("gives back nothing the person ended, and denies where nothing new is chosen, on the consent screen", async () => {
+    const app = await holder();
+    const { screen, proof } = await askAgain(app);
+    const posted = defaultSubmission(screen.html, "scopes");
+    await disconnect(app);
+
+    const denied = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      posted.filter((v) => v !== "core.task:read"),
+    );
+    expect(denied?.searchParams.get("error")).toBe("access_denied");
+    expect(denied?.searchParams.get("code")).toBeNull();
+
+    // The witness: the tasks they chose are all they get. The notes and key
+    // making they held come back with no control shown.
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      screen.consent,
+      true,
+      posted,
+    );
+    expect(await exchanged(app, screen, sent, proof)).toEqual([
+      "core.task:read",
+    ]);
+  });
+
+  it("refuses the device code of a screen left open once the app is disconnected, and grants nothing", async () => {
+    const app = await holder();
+    const device = await deviceScreen(app, ASKED);
+    const posted = defaultSubmission(device.html, "scopes");
+    await disconnect(app);
+
+    const answered = await decideDevice(device, "approve", posted);
+    expect(answered.status).toBe(404);
+    const polled = await poll(app, device);
+    expect(polled.body.error).toBe("invalid_grant");
+    expect(polled.body.access_token).toBeUndefined();
+  });
+});
+
 describe("what an approval posted to the approval pages grants", () => {
   const booted = bootFor("approval-posts");
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);

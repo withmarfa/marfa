@@ -732,7 +732,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       const posted = defaultSubmission(await screen.text(), "scopes").filter(
         (v) => v !== "core.task:read",
       );
-      expect(posted).toEqual(["openid", "core.note:read"]);
+      expect(posted).toEqual(["openid"]);
       const audits = (
         await ctx.storage.audit.list({
           action: "auth.grant.created",
@@ -764,6 +764,115 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
         "core.task:read",
         "openid",
       ]);
+    });
+
+    describe("a screen left open while the app's access changes", () => {
+      const held = "openid core.note:write keys.mint";
+      const asked = `${held} core.task:read`;
+
+      /** The app approved for `held`, and the screen for `asked` open in a tab. */
+      async function openAskingAgain() {
+        ctx = await createTestContext({});
+        const clientId = await seedClient(ctx);
+        const cookie = await signInUser(ctx);
+        const first = await postDecision(
+          ctx,
+          cookie,
+          clientId,
+          held,
+          held.split(" "),
+        );
+        expect(first.location.searchParams.get("code")).toBeTruthy();
+        const screen = await request(
+          ctx.app,
+          "GET",
+          `/auth/authorize?${await buildSignedOauthQuery(clientId, asked)}`,
+          { headers: { cookie } },
+        );
+        expect(screen.status).toBe(200);
+        return {
+          clientId,
+          cookie,
+          posted: defaultSubmission(await screen.text(), "scopes"),
+        };
+      }
+
+      /** The app disconnected from another tab. */
+      async function disconnect(c: TestContext): Promise<void> {
+        const grants = await c.storage.items.list({
+          type: "system.connection",
+          state: "active",
+        });
+        const res = await request(
+          c.app,
+          "DELETE",
+          `/auth/grants/${grants.data[0]?.id ?? ""}`,
+          { key: c.workingKey },
+        );
+        expect(res.status).toBe(204);
+        expect(await standing(c)).toEqual([]);
+      }
+
+      /** What the app holds now: nothing once it is disconnected. */
+      async function standing(c: TestContext): Promise<string[]> {
+        const grant = (
+          await c.storage.items.list({ type: "system.connection" })
+        ).data[0];
+        return grant && grant.properties.status !== "revoked"
+          ? ((grant.properties.scopes as string[] | undefined) ?? [])
+          : [];
+      }
+
+      it("posts the choices and the mechanisms and not the access the app holds", async () => {
+        const { posted } = await openAskingAgain();
+        expect(posted.sort()).toEqual(["core.task:read", "openid"]);
+      });
+
+      it("keeps the access the app still holds when it is approved", async () => {
+        const { clientId, cookie, posted } = await openAskingAgain();
+        const approved = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted,
+        );
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+        expect((await grantedScopes(ctx!)).sort()).toEqual(
+          ["core.note:write", "core.task:read", "keys.mint", "openid"].sort(),
+        );
+      });
+
+      it("gives back nothing the person ended, and nothing at all where nothing new is chosen", async () => {
+        const { clientId, cookie, posted } = await openAskingAgain();
+        await disconnect(ctx!);
+
+        const denied = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted.filter((v) => v !== "core.task:read"),
+        );
+        expect(denied.location.searchParams.get("error")).toBe("access_denied");
+        expect(denied.location.searchParams.get("code")).toBeNull();
+        expect(await standing(ctx!)).toEqual([]);
+
+        // The witness: the tasks they did choose are all they get. The notes
+        // and key making they held come back with no control shown.
+        const approved = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted,
+        );
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+        expect((await standing(ctx!)).sort()).toEqual([
+          "core.task:read",
+          "openid",
+        ]);
+      });
     });
 
     it("denies an approval that turns off every power it is newly asked for, though it holds another", async () => {
@@ -1084,7 +1193,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(items.data.length).toBe(1);
   });
 
-  it("F4: approving a narrower choice on a later visit keeps the grant and its tokens", async () => {
+  it("F4: approving a request the app holds in full on a later visit keeps the grant and its tokens", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -1120,9 +1229,9 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       await ctx.storage.oauthProvider?.validateAccessToken(tokenHash),
     ).not.toBeNull();
 
-    // A later approval of the same request choosing less. Approving never
+    // A later approval that posts less than the app holds. Approving never
     // lowers what the app holds, so the token and the grant stand, and the
-    // code this approval makes carries what was chosen.
+    // code this approval makes carries what the app still holds.
     const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
@@ -1153,7 +1262,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       limit: 10,
     });
     const latest: Record<string, unknown> = audits.data[0]!.details;
-    expect(latest.scopes).toEqual(["openid", "core.note:read"]);
+    expect(latest.scopes).toEqual(wide);
     expect(new Set(latest.resulting_scopes as string[])).toEqual(new Set(wide));
   });
 
@@ -1655,7 +1764,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
       );
       expect(page.status).toBe(200);
       const submitted = untouchedSubmission(await page.text());
-      expect(submitted).toContain("core.task:write");
+      // What the app holds is not posted back: the server adds it.
+      expect(submitted).not.toContain("core.task:write");
 
       const second = await request(
         ctx.app,

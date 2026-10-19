@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildAccess, resolveSelection } from "./access-model.js";
-import { parseScope } from "@withmarfa/shared";
+import { grantCoversScope, parseScope } from "@withmarfa/shared";
 import type { ParsedScope } from "@withmarfa/shared";
 
 const scope = (literal: string): ParsedScope => {
@@ -173,11 +173,63 @@ describe("resolveSelection", () => {
     it("lets an app confirm what it holds in full, where no control is offered", () => {
       const asked = ["core.note:read", "keys.mint"];
       expect(
-        resolveSelection(asked, asked, ["core.note:read", "keys.mint"]),
-      ).toMatchObject({ ok: true, chosen: true });
-      expect(
         resolveSelection(asked, [], ["core.note:read", "keys.mint"]),
-      ).toMatchObject({ ok: true, chosen: false });
+      ).toEqual({ ok: true, scopes: asked, chosen: true });
+    });
+
+    it("adds the scopes the request names that the app holds now, and only those", () => {
+      const asked = [
+        "openid",
+        "core.note:write",
+        "keys.mint",
+        "core.task:read",
+      ];
+      expect(
+        resolveSelection(
+          asked,
+          ["openid", "core.task:read"],
+          ["openid", "core.note:write", "keys.mint"],
+        ),
+      ).toEqual({ ok: true, scopes: asked, chosen: true });
+      // A wildcard the app holds covers the literals the request names.
+      expect(resolveSelection(asked, ["keys.mint"], ["core.*:write"])).toEqual({
+        ok: true,
+        scopes: ["core.note:write", "keys.mint", "core.task:read"],
+        chosen: true,
+      });
+    });
+
+    it("gives back nothing once the app no longer holds it, and treats a post of nothing new as no approval", () => {
+      const asked = [
+        "openid",
+        "core.note:write",
+        "keys.mint",
+        "core.task:read",
+      ];
+      expect(resolveSelection(asked, ["openid"], [])).toEqual({
+        ok: true,
+        scopes: ["openid"],
+        chosen: false,
+      });
+      expect(resolveSelection(asked, ["openid", "core.task:read"], [])).toEqual(
+        {
+          ok: true,
+          scopes: ["openid", "core.task:read"],
+          chosen: true,
+        },
+      );
+    });
+
+    it("answers in the request's order, whatever order the form arrived in", () => {
+      expect(
+        resolveSelection(
+          ["core.note:read", "core.task:read", "keys.mint"],
+          ["keys.mint", "core.task:read"],
+          ["core.note:read"],
+        ),
+      ).toMatchObject({
+        scopes: ["core.note:read", "core.task:read", "keys.mint"],
+      });
     });
 
     it("offers a choice exactly where the screen builds a control", () => {
@@ -205,15 +257,17 @@ describe("resolveSelection", () => {
         });
         const controls =
           model.data.length + model.profile.length + model.powers.length;
-        const everyLiteralCarried = asked.every((literal) =>
-          model.carried.includes(literal),
+        const noChoiceLeft = asked.every(
+          (literal) =>
+            model.mechanisms.includes(literal) ||
+            grantCoversScope(held, literal),
         );
-        expect(everyLiteralCarried, JSON.stringify([asked, held])).toBe(
+        expect(noChoiceLeft, JSON.stringify([asked, held])).toBe(
           controls === 0,
         );
         // With a control offered, turning everything off is not approval.
         expect(
-          resolveSelection(asked, model.carried, held),
+          resolveSelection(asked, model.mechanisms, held),
           JSON.stringify([asked, held]),
         ).toMatchObject({ ok: true, chosen: controls === 0 });
       }
@@ -273,7 +327,7 @@ describe("buildAccess", () => {
       { value: "", label: "Read only" },
       { value: "core.note:write", label: "Read and edit" },
     ]);
-    expect(model.carried).toContain("core.*:read");
+    expect(model.mechanisms).toEqual([]);
   });
 
   it("offers the held level of a profile row the same way", () => {

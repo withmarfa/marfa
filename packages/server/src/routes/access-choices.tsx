@@ -82,7 +82,7 @@ export function AccessChoices(props: AccessChoicesProps) {
   const { model } = props;
   return (
     <>
-      {model.carried.map((literal) => (
+      {model.mechanisms.map((literal) => (
         <input type="hidden" name="scopes" value={literal} />
       ))}
       {model.held.length > 0 && (

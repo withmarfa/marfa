@@ -1117,7 +1117,7 @@ A signed-in person approves an app on the consent screen, and the decision ends 
 
 When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names that no standing consent covers.
 
-**Reason:** A scope the person's standing consent already covers is carried with the form and shown as held, not offered again (`keys-and-oauth/approval-held-shown`).
+**Reason:** A scope the person's standing consent already covers is shown as held and not offered again (`keys-and-oauth/approval-held-shown`). The server adds it to an approval while the consent still covers it (`keys-and-oauth/approval-held-now`).
 
 **Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`, `compliance/approval-screens.test.ts › carries a scope the app holds in full without offering it as a choice on the consent screen`.
 
@@ -1137,7 +1137,7 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
-**Reason:** Approving with everything turned off is declining, so the app is told what Deny tells it, and no consent is recorded for an app that can do nothing with it. What the form carries without a control is not a choice: `openid` and `offline_access`, and every scope the app already holds. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
+**Reason:** Approving with everything turned off is declining, so the app is told what Deny tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
 **Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as Deny is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
 
@@ -1345,9 +1345,17 @@ While an app holds the read of an item type or of the profile and a request name
 
 When a person approves on the consent screen or the device approval page, the server MUST keep every scope the app already holds.
 
-**Reason:** The page shows what is held and cannot lower it, so a submission that omits a held scope does not lower it either. The token the approval makes carries only what was chosen.
+**Reason:** The page shows what is held and cannot lower it, so a submission that omits a held scope does not lower it either. The token the approval makes carries what was chosen and the held scopes the request names.
 
 **Tests:** `compliance/approval-screens.test.ts › keeps what the app holds when a narrower choice is approved on the consent screen`, `› keeps what the app holds when a narrower choice is approved on the device approval page`.
+
+### `keys-and-oauth/approval-held-now`
+
+When a person approves on the consent screen or the device approval page, the server MUST add to the approval only the scopes the request names that the app's standing consent covers when the approval commits.
+
+**Reason:** The page posts the person's choices and the mechanisms, not the access the app holds. A screen left open while the person disconnects the app, in another tab, then gives nothing back: with the held scopes gone and nothing newly chosen the approval is a denial, and with a choice the app gets that choice and nothing it held.
+
+**Tests:** `compliance/approval-screens.test.ts › adds the access the app still holds to what is approved on the consent screen`, `› adds the access the app still holds to what is approved on the device approval page`, `› gives back nothing the person ended, and denies where nothing new is chosen, on the consent screen`, `› refuses the device code of a screen left open once the app is disconnected, and grants nothing`.
 
 ### `keys-and-oauth/approval-write-read`
 

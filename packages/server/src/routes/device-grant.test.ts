@@ -706,7 +706,7 @@ describe("the device authorization grant through the provider plugin", () => {
     const posted = defaultSubmission(await screen.text(), "scopes").filter(
       (v) => v !== "core.task:read",
     );
-    expect(posted).toEqual(["core.note:read"]);
+    expect(posted).toEqual([]);
     const answered = await decide(
       c,
       second.user_code,
@@ -739,6 +739,133 @@ describe("the device authorization grant through the provider plugin", () => {
     expect((await poll(c, third.device_code, clientId)).body.scope).toBe(
       "core.note:read core.task:read",
     );
+  });
+
+  describe("a screen left open while the app's access changes", () => {
+    const held = "core.note:write keys.mint";
+    const asked = `${held} core.task:read`;
+
+    /** The app approved for `held`, and the screen for a second code open in a tab. */
+    async function openAskingAgain(c: TestContext) {
+      const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+      const cookie = await signInUser(c);
+      const first = await initiate(c, clientId, held);
+      expect((await openConsent(c, first.user_code, cookie)).status).toBe(200);
+      expect(
+        (await decide(c, first.user_code, cookie, "approve", held.split(" ")))
+          .status,
+      ).toBe(200);
+      expect((await poll(c, first.device_code, clientId)).status).toBe(200);
+      const second = await initiate(c, clientId, asked);
+      const screen = await openConsent(c, second.user_code, cookie);
+      expect(screen.status).toBe(200);
+      return {
+        clientId,
+        cookie,
+        second,
+        posted: defaultSubmission(await screen.text(), "scopes"),
+      };
+    }
+
+    /** The app disconnected from another tab, which also ends the code. */
+    async function disconnect(c: TestContext): Promise<void> {
+      const grant = (await grants(c))[0];
+      const res = await request(
+        c.app,
+        "DELETE",
+        `/auth/grants/${grant?.id ?? ""}`,
+        { key: c.workingKey },
+      );
+      expect(res.status).toBe(204);
+    }
+
+    /** The consent the app held ended while the code is still pending. */
+    async function endConsent(c: TestContext): Promise<void> {
+      const grant = (await grants(c))[0];
+      const clientId = grant?.properties.client_id as string;
+      const userId = grant?.properties.user_id as string;
+      const ended = await c.storage.oauthProvider?.setConsentScopes(
+        clientId,
+        userId,
+        [],
+        (await c.storage.oauthProvider.getPriorConsent(clientId, userId)) ?? [],
+      );
+      expect(ended).toBe(true);
+    }
+
+    it("posts the choices and not the access the app holds", async () => {
+      ctx = await createTestContext({});
+      const { posted } = await openAskingAgain(ctx);
+      expect(posted).toEqual(["core.task:read"]);
+    });
+
+    it("keeps the access the app still holds when it is approved", async () => {
+      ctx = await createTestContext({});
+      const c = ctx;
+      const { clientId, cookie, second, posted } = await openAskingAgain(c);
+      expect(
+        (await decide(c, second.user_code, cookie, "approve", posted)).status,
+      ).toBe(200);
+      expect(
+        (await poll(c, second.device_code, clientId)).body.scope
+          ?.split(" ")
+          .sort(),
+      ).toEqual(["core.note:write", "core.task:read", "keys.mint"]);
+    });
+
+    it("gives back nothing the person ended, and denies where nothing new is chosen", async () => {
+      ctx = await createTestContext({});
+      const c = ctx;
+      const { clientId, cookie, second, posted } = await openAskingAgain(c);
+      await endConsent(c);
+
+      const denied = await decide(
+        c,
+        second.user_code,
+        cookie,
+        "approve",
+        posted.filter((v) => v !== "core.task:read"),
+      );
+      expect(visibleText(await denied.text())).toContain(
+        "You didn't approve access",
+      );
+      expect((await poll(c, second.device_code, clientId)).body.error).toBe(
+        "access_denied",
+      );
+
+      // The witness: a fresh code, the tasks chosen, and the notes and key
+      // making the app held come back with no control shown.
+      await endConsent(c);
+      const third = await initiate(c, clientId, asked);
+      expect((await openConsent(c, third.user_code, cookie)).status).toBe(200);
+      expect(
+        (await decide(c, third.user_code, cookie, "approve", posted)).status,
+      ).toBe(200);
+      expect((await poll(c, third.device_code, clientId)).body.scope).toBe(
+        "core.task:read",
+      );
+    });
+
+    it("refuses the screen's code once the app is disconnected, and grants nothing", async () => {
+      ctx = await createTestContext({});
+      const c = ctx;
+      const { clientId, cookie, second, posted } = await openAskingAgain(c);
+      await disconnect(c);
+      const answered = await decide(
+        c,
+        second.user_code,
+        cookie,
+        "approve",
+        posted,
+      );
+      expect(answered.status).toBe(404);
+      expect((await poll(c, second.device_code, clientId)).body.error).toBe(
+        "invalid_grant",
+      );
+      expect(
+        (await grants(c)).filter((g) => g.properties.status !== "revoked"),
+      ).toHaveLength(0);
+    });
   });
 
   it("the verification form refuses a code nobody issued and forwards a live one", async () => {

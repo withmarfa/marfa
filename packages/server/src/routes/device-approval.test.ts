@@ -266,7 +266,7 @@ describe("renderDeviceConsentScreen", () => {
     expect(text).toContain("To end its access, use Connected apps.");
   });
 
-  it("carries what the app holds in full without a control", () => {
+  it("shows what the app holds in full without a control and does not post it", () => {
     const html = renderDeviceConsentScreen({
       ...PARAMS,
       scopes: [scope("core.note:read"), scope("core.task:read")],
@@ -274,10 +274,7 @@ describe("renderDeviceConsentScreen", () => {
     });
     const controls = readControls(html);
     expect(controls.filter((c) => c.tag === "select")).toHaveLength(1);
-    expect(defaultSubmission(html, "scopes")).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 });
 
