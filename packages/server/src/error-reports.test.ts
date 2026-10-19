@@ -498,6 +498,8 @@ describe("a read that fails after the response has begun", () => {
 
     // An open WAL snapshot still sees a table dropped on another connection.
     // Hold the next page before capture so its real metadata query fails.
+    // A page is read in one snapshot and checked against the credential in a
+    // second, so the second page's read is the third snapshot.
     let resumeNextPage!: () => void;
     const nextPage = new Promise<void>((resolve) => {
       resumeNextPage = resolve;
@@ -506,7 +508,7 @@ describe("a read that fails after the response has begun", () => {
     let pages = 0;
     vi.spyOn(ctx.storage, "runInReadSnapshot").mockImplementation(
       async (fn, options) => {
-        if (++pages === 2) await nextPage;
+        if (++pages === 3) await nextPage;
         return snapshot(fn, options);
       },
     );
