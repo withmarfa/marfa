@@ -518,10 +518,22 @@ export class TextEnrichmentSweeper {
   }
 }
 
-/** The whole blob from the first attached store that holds it. */
+/**
+ * The whole blob from the first attached store that holds it. `null` when
+ * every store answered and none holds it; a store that could not answer
+ * says nothing of the bytes, so when none holds them and one failed, the
+ * failure is thrown.
+ */
 async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
+  let failure: { error: unknown } | undefined;
   for (const store of blobs.stores) {
-    const read = await store.get(hash);
+    let read;
+    try {
+      read = await store.get(hash);
+    } catch (error) {
+      failure ??= { error };
+      continue;
+    }
     if (!read) continue;
     const chunks: Buffer[] = [];
     for await (const chunk of read.stream as AsyncIterable<Buffer>) {
@@ -529,6 +541,7 @@ async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
     }
     return Buffer.concat(chunks);
   }
+  if (failure) throw failure.error;
   return null;
 }
 

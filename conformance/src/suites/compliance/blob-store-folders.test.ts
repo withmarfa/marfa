@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -103,6 +105,7 @@ describe("the location log on an instance with one disk store", () => {
       verified: 2,
       struck: 0,
       bytes: sizes.first + sizes.second,
+      unreachable: 0,
     });
     const afterFirst = await Promise.all(
       [hashes.first, hashes.second].map(async (hash) => locations(hash)),
@@ -152,6 +155,7 @@ describe("the location log on an instance with one disk store", () => {
       verified: 4,
       struck: 0,
       bytes: sizes.first + sizes.second + sizes.altered + sizes.missing,
+      unreachable: 0,
     });
     for (const hash of [hashes.altered, hashes.missing]) {
       expect(await locations(hash)).toHaveLength(1);
@@ -168,6 +172,7 @@ describe("the location log on an instance with one disk store", () => {
       verified: 2,
       struck: 2,
       bytes: sizes.first + sizes.second + sizes.altered + sizes.missing,
+      unreachable: 0,
     });
 
     for (const hash of [hashes.altered, hashes.missing]) {
@@ -321,5 +326,85 @@ describe("a store is its folder", () => {
       fresh.id,
     ]);
     expect(existsSync(diskPath(server!, hashes.first))).toBe(true);
+  });
+});
+
+describe("a store whose folder is away", () => {
+  const away = () => `${blobFolder(server!)}.away`;
+
+  it("strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns", async () => {
+    const bytes = bytesOf("on a drive that goes away", 120);
+    const uploaded = await working.uploadBlob(bytes, "text/plain");
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+    const hash = uploaded.data.hash;
+
+    // The witness: with the folder there, the copy is checked and the blob
+    // is served, so what follows is about the folder.
+    const sound = await runJob(operator, "blob-integrity");
+    expect(sound.result).toMatchObject({ struck: 0, unreachable: 0 });
+    expect(sound.result.verified).toBeGreaterThanOrEqual(1);
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    const recorded = await locations(hash);
+    expect(recorded).toHaveLength(1);
+
+    renameSync(blobFolder(server!), away());
+    const gone = await runJob(operator, "blob-integrity");
+    expect(gone.result).toEqual({
+      verified: 0,
+      struck: 0,
+      bytes: 0,
+      unreachable: 1,
+    });
+    expect(await locations(hash)).toEqual(recorded);
+    const refused = await operator.downloadBlob(hash);
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+    const audited = await working.listAudit({
+      action: "blob.copy_struck",
+      resource_id: hash,
+    });
+    expect(audited.data.data).toEqual([]);
+
+    renameSync(away(), blobFolder(server!));
+    const back = await operator.downloadBlob(hash);
+    expect(back.status).toBe(200);
+    expect(
+      Buffer.from(back.data as ArrayBuffer).equals(Buffer.from(bytes)),
+    ).toBe(true);
+    const again = await runJob(operator, "blob-integrity");
+    expect(again.result).toMatchObject({ struck: 0, unreachable: 0 });
+    expect((await locations(hash))[0]!.verified_at).not.toBeNull();
+  });
+
+  it("strikes nothing while an empty folder stands where the store was, as a mount point does without its drive", async () => {
+    const bytes = bytesOf("on a drive that did not mount", 130);
+    const uploaded = await working.uploadBlob(bytes, "text/plain");
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+    const hash = uploaded.data.hash;
+
+    renameSync(blobFolder(server!), away());
+    mkdirSync(blobFolder(server!));
+    const empty = await runJob(operator, "blob-integrity");
+    expect(empty.result).toMatchObject({ struck: 0, unreachable: 1 });
+    expect(await locations(hash)).toHaveLength(1);
+    expect((await operator.downloadBlob(hash)).status).toBe(503);
+
+    rmSync(blobFolder(server!), { recursive: true });
+    renameSync(away(), blobFolder(server!));
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("still strikes a copy missing from a folder that is there", async () => {
+    const uploaded = await working.uploadBlob(
+      bytesOf("removed from a folder that is present", 140),
+      "text/plain",
+    );
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+    const hash = uploaded.data.hash;
+
+    unlinkSync(diskPath(server!, hash));
+    const run = await runJob(operator, "blob-integrity");
+    expect(run.result).toMatchObject({ struck: 1, unreachable: 0 });
+    expect(await locations(hash)).toEqual([]);
   });
 });

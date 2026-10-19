@@ -5,7 +5,8 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, withSecondStore } from "../test-utils.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import type { TestContext } from "../test-utils.js";
 import {
   TextEnrichmentSweeper,
@@ -235,6 +236,56 @@ describe("extraction", () => {
     expect(props.title).toBe("a title the user set");
     expect(props.blob_ref).toBe(ref);
     expect(String(props.extracted_text)).toContain("quokkatxt");
+  });
+
+  it("reads a blob from another store when the disk cannot be reached, and fails the attempt when none can answer", async () => {
+    const bytes = await fixture("sample.txt");
+    const ref = await seedBlob(bytes, "text/plain");
+    const id = await createFileItem(ref, "text/plain");
+    const { second } = await withSecondStore(ctx);
+    await second.put(ref, {
+      stream: Readable.from([bytes]),
+      size_bytes: bytes.length,
+    });
+    const unreachable = () =>
+      Promise.reject(new BlobStoreUnreachable("the folder is away"));
+    const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+    ctx.blobs.disk.get = unreachable;
+    try {
+      expect(await sweeper().runOnce()).toEqual({
+        extracted: 1,
+        skipped: 0,
+        failed: 0,
+      });
+      expect(String((await readItem(id)).extracted_text)).toContain(
+        "quokkatxt",
+      );
+
+      // Nothing answers: the attempt fails with the cause, as a store that
+      // cannot be asked says nothing of the bytes.
+      const other = await createFileItem(
+        await seedBlob(Buffer.from("held only by the disk"), "text/plain"),
+        "text/plain",
+      );
+      const secondGet = second.get.bind(second);
+      second.get = unreachable;
+      expect(await sweeper().runOnce()).toEqual({
+        extracted: 0,
+        skipped: 0,
+        failed: 1,
+      });
+      expect((await ctx.storage.enrichment.get(other))?.error).toMatch(
+        /folder is away/,
+      );
+      second.get = secondGet;
+    } finally {
+      ctx.blobs.disk.get = get;
+    }
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
   });
 
   it("does nothing on a second pass", async () => {

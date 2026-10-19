@@ -5,7 +5,7 @@
  * disk is, by re-hashing; the object store's own check, by name and size,
  * is driven through a stub of that kind.
  */
-import { writeFile, rm } from "node:fs/promises";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -509,5 +509,146 @@ describe("BlobIntegrityChecker.runOnce", () => {
     }
     expect(struck).toMatchObject({ struck: 1 });
     expect(deletes).toEqual([hash]);
+  });
+});
+
+describe("BlobIntegrityChecker.runOnce on a store that cannot be reached", () => {
+  const bounds = { maxRows: 100, maxBytes: 1024 * 1024 };
+
+  async function download(c: TestContext, hash: string): Promise<Response> {
+    return c.app.request(`/blobs/${hash}`, {
+      headers: { Authorization: `Bearer ${c.managementKey}` },
+    });
+  }
+
+  /** Runs the check with the process's log lines held back. */
+  async function check(checker: BlobIntegrityChecker) {
+    const silenced = quiet();
+    try {
+      return { result: await checker.runOnce(), lines: silenced.lines() };
+    } finally {
+      silenced.restore();
+    }
+  }
+
+  it("strikes nothing while the folder is gone, and the blob reads again when it returns", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "on a drive that is unplugged");
+    const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, bounds);
+    expect((await check(checker)).result).toMatchObject({
+      verified: 1,
+      struck: 0,
+      unreachable: 0,
+    });
+
+    const folder = ctx.blobs.disk.locator;
+    await rename(folder, `${folder}.away`);
+    const during = await check(checker);
+    expect(during.result).toEqual({
+      verified: 0,
+      struck: 0,
+      bytes: 0,
+      unreachable: 1,
+    });
+    expect(
+      during.lines
+        .filter((line) => line.message === "blob.store_unreachable")
+        .map((line) => line.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    expect(
+      during.lines.filter((line) => line.message === "blob.copy_struck"),
+    ).toEqual([]);
+    // The record stands, and the read says the store did not answer, not
+    // that the blob is gone.
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(
+      (await ctx.storage.audit.list({ action: "blob.copy_struck", limit: 10 }))
+        .data,
+    ).toEqual([]);
+    const refused = await download(ctx, hash);
+    expect(refused.status).toBe(503);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("blob_store_unavailable");
+
+    await rename(`${folder}.away`, folder);
+    const read = await download(ctx, hash);
+    expect(read.status).toBe(200);
+    expect(await read.text()).toBe("on a drive that is unplugged");
+    expect((await check(checker)).result).toMatchObject({
+      verified: 1,
+      struck: 0,
+      unreachable: 0,
+    });
+  });
+
+  it("strikes nothing from a mount point left empty, with no marker", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "on a drive that did not mount");
+    const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, bounds);
+
+    const folder = ctx.blobs.disk.locator;
+    await rename(folder, `${folder}.away`);
+    await mkdir(folder);
+    expect((await check(checker)).result).toMatchObject({
+      struck: 0,
+      unreachable: 1,
+    });
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+
+    await rm(folder, { recursive: true });
+    await rename(`${folder}.away`, folder);
+    expect((await download(ctx, hash)).status).toBe(200);
+  });
+
+  it("strikes a copy missing from a store that is present, which is what the unreachable store is spared", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "removed from a disk that is there");
+    const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, bounds);
+    await rm(diskPath(ctx.blobs.disk.locator, hash));
+
+    const { result } = await check(checker);
+    expect(result).toMatchObject({ struck: 1, unreachable: 0 });
+    expect(await ctx.storage.blobs.listLocations(hash)).toEqual([]);
+  });
+
+  it("goes on to the other stores, and does not let the unreachable one fill the run's rows", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hashes = [
+      await upload(ctx, "one of three"),
+      await upload(ctx, "two of three"),
+      await upload(ctx, "three of three"),
+    ];
+    await new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    }).runOnce();
+
+    const folder = ctx.blobs.disk.locator;
+    await rename(folder, `${folder}.away`);
+    // Six copies, three rows a run: if the disk's copies took the rows, the
+    // second store would be left with fewer than its three.
+    const { result } = await check(
+      new BlobIntegrityChecker(ctx.storage, stores, {
+        maxRows: 3,
+        maxBytes: 1024 * 1024,
+      }),
+    );
+    expect(result).toMatchObject({ verified: 3, struck: 0, unreachable: 1 });
+    for (const hash of hashes) {
+      const locations = await ctx.storage.blobs.listLocations(hash);
+      expect(locations).toHaveLength(2);
+      expect(
+        locations.find((location) => location.store_id === second.id)
+          ?.verified_at,
+      ).not.toBeNull();
+      expect(
+        locations.find((location) => location.store_id === ctx!.blobs.disk.id)
+          ?.verified_at,
+      ).toBeNull();
+    }
+    // Served from the store that answers while the disk is away.
+    expect((await download(ctx, hashes[0]!)).status).toBe(200);
   });
 });
