@@ -82,6 +82,14 @@ function narrow(key: Minted, body: object): () => Promise<void> {
   };
 }
 
+/** `DELETE /keys/{id}`, as the owner makes it. */
+function revokeKey(key: Minted): () => Promise<void> {
+  return async () => {
+    const res = await ctx.ownerRequest(`/keys/${key.id}`, { method: "DELETE" });
+    expect(res.status).toBe(200);
+  };
+}
+
 const CHANGES = {
   narrowed: {
     status: 403,
@@ -374,7 +382,11 @@ describe("the doors beside the item writes are judged by the key as it stands", 
     expect(await ctx.storage.blobs.get(hash)).toBeNull();
   });
 
-  for (const door of ["POST /folders", "PATCH /folders/{id}"] as const) {
+  for (const door of [
+    "POST /folders",
+    "PATCH /folders/{id}",
+    "POST /folders/{id}/revoke",
+  ] as const) {
     it(`${door} after the folder type is narrowed`, async () => {
       const key = await mint({
         type_permissions: { "system.folder": "write" },
@@ -389,19 +401,22 @@ describe("the doors beside the item writes are judged by the key as it stands", 
       const call = () =>
         door === "POST /folders"
           ? send(key, "POST", "/folders", { title: "After" })
-          : send(key, "PATCH", `/folders/${folder.id}`, {
-              title: "After",
-              version: folder.version,
-            });
+          : door === "PATCH /folders/{id}"
+            ? send(key, "PATCH", `/folders/${folder.id}`, {
+                title: "After",
+                version: folder.version,
+              })
+            : send(key, "POST", `/folders/${folder.id}/revoke`);
       const res = await raced(
         narrow(key, { type_permissions: { "system.folder": "read" } }),
         call,
       );
       expect(res.status).toBe(403);
-      if (door === "PATCH /folders/{id}") {
-        const row = await ctx.storage.items.getIncludingTrashed(folder.id);
+      const row = await ctx.storage.items.getIncludingTrashed(folder.id);
+      if (door === "PATCH /folders/{id}")
         expect(row?.properties.title).toBe("Before");
-      }
+      if (door === "POST /folders/{id}/revoke")
+        expect(row?.state).toBe("active");
     });
   }
 
@@ -476,4 +491,55 @@ describe("the doors beside the item writes are judged by the key as it stands", 
     expect(results[0]?.outcome).toBe("errored");
     expect(results[0]?.error?.code).toBe("item_not_found");
   });
+
+  async function connectorKey(): Promise<{ key: Minted; id: string }> {
+    const key = await mint({
+      type_permissions: { "core.note": "read" },
+    });
+    const registered = await send(key, "POST", "/connectors", {
+      name: key.source,
+    });
+    expect(registered.status).toBe(201);
+    const { id } = (await registered.json()) as { id: string };
+    const held = await send(key, "POST", `/connectors/${id}/hold`, {
+      process: "p",
+    });
+    expect(held.status).toBe(200);
+    return { key, id };
+  }
+
+  it("POST /connectors/{id}/agreements skips a row the key can no longer read", async () => {
+    const { key, id } = await connectorKey();
+    const row = await seedNote(await mint(), "agreed");
+    const write = () =>
+      send(key, "POST", `/connectors/${id}/agreements`, {
+        process: "p",
+        set: [{ item_id: row.id, waiting: false, record: {} }],
+      });
+    const witness = await write();
+    expect(witness.status).toBe(200);
+    expect(await witness.json()).toMatchObject({ written: 1, skipped: [] });
+    const res = await raced(
+      narrow(key, { type_permissions: { "core.task": "read" } }),
+      write,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      written: 0,
+      skipped: [row.id],
+    });
+  });
+
+  for (const [door, path, body] of [
+    ["POST /connectors/{id}/hold", "hold", { process: "p" }],
+    ["POST /connectors/{id}/heartbeat", "heartbeat", undefined],
+  ] as const) {
+    it(`${door} after the connector's key is revoked`, async () => {
+      const { key, id } = await connectorKey();
+      const call = () => send(key, "POST", `/connectors/${id}/${path}`, body);
+      expect((await call()).status).toBeLessThan(300);
+      const res = await raced(revokeKey(key), call);
+      expect(res.status).toBe(401);
+    });
+  }
 });
