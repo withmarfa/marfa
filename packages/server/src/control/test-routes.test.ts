@@ -8,7 +8,12 @@ import {
   vi,
 } from "vitest";
 import { createApp } from "../app.js";
-import { clockOffsetMs, resetClockForTests } from "../clock.js";
+import {
+  clockOffsetMs,
+  installDateShim,
+  resetClockForTests,
+  withRealTime,
+} from "../clock.js";
 import { ensureInstanceId } from "../storage/instance-id.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
 import {
@@ -127,6 +132,40 @@ describe("the clock route", () => {
       expect(
         Date.parse(((await resumed.json()) as { now: string }).now),
       ).toBeGreaterThanOrEqual(real + 61_000);
+    } finally {
+      wall.mockRestore();
+    }
+  });
+
+  it("pauses the Date shim with the stated clock while external time keeps running", async () => {
+    const systemDate = Date;
+    installDateShim();
+    const app = appFor(true, true);
+    const post = (body: unknown) =>
+      app.request("/_control/test/clock", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    await post({ advance_ms: 86_400_000 });
+    const paused = await post({ paused: true });
+    const instant = Date.parse(((await paused.json()) as { now: string }).now);
+    expect(Date.now()).toBe(instant);
+    const wall = vi.spyOn(systemDate, "now").mockReturnValue(instant + 60_000);
+    try {
+      expect(Date.now()).toBe(instant);
+      expect(new Date().getTime()).toBe(instant);
+      expect(
+        await withRealTime(async () => {
+          await Promise.resolve();
+          return Date.now();
+        }),
+      ).toBe(instant + 60_000);
+      await post({ advance_ms: 1000 });
+      expect(Date.now()).toBe(instant + 1000);
+      await post({ paused: true });
+      expect(Date.now()).toBe(instant + 1000);
+      await post({ paused: false });
+      expect(Date.now()).toBe(instant + 60_000 + 86_401_000);
     } finally {
       wall.mockRestore();
     }

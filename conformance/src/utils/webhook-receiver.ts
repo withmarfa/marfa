@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import { expect } from "vitest";
 
 export interface Received {
-  /** When the receiver took the delivery, on the harness's own clock. */
+  /** When the receiver took the delivery, on the receiver's stated clock. */
   at: number;
   method: string;
   path: string;
@@ -43,6 +43,8 @@ export type ReceiverStatus = number | ((received: Received) => number);
 export async function startReceiver(
   options: {
     status?: ReceiverStatus;
+    /** The target clock when the fixture moves or pauses it. */
+    now?: () => number;
     /** Headers to answer a delivery with, chosen by the delivery's own turn. */
     headers?: (received: Received) => Record<string, string>;
   } = {},
@@ -55,7 +57,7 @@ export async function startReceiver(
     });
     req.on("end", () => {
       const arrived: Received = {
-        at: Date.now(),
+        at: (options.now ?? Date.now)(),
         method: req.method ?? "",
         path: req.url ?? "",
         headers: req.headers,

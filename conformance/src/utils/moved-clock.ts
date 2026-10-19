@@ -104,7 +104,7 @@ export async function jobs(
 
 /**
  * Tracks the server's clock for a fixture that has moved it, so the fixture
- * can say what time the server reads. The offset is the sum of the steps;
+ * can say what time the server reads. The offset includes the boot offset and subsequent steps;
  * it is exact to the milliseconds the two clocks differ by, which on one
  * machine is none. While paused, `now` is the exact instant the target returned.
  */
@@ -114,15 +114,13 @@ export function movedClock(server: FreshServer): {
   pause(): Promise<void>;
   resume(): Promise<void>;
 } {
-  let offset = 0;
   let pausedNow: number | undefined;
   return {
     async advance(ms) {
       await server.advanceClock(ms);
-      offset += ms;
       if (pausedNow !== undefined) pausedNow += ms;
     },
-    now: () => pausedNow ?? Date.now() + offset,
+    now: () => pausedNow ?? Date.now() + server.clockOffsetMs,
     async pause() {
       pausedNow = await server.pauseClock(true);
     },

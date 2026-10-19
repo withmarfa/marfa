@@ -187,9 +187,9 @@ value passed for one replaces its own:
 
 ### The clock
 
-`clock pause` stops the system-time component at its current instant; `clock advance` still moves that paused clock by exactly the requested step. Timers and monotonic deadlines continue on real time. `clock resume` and a restart catch up with the system clock while retaining the accumulated offset. Both pause and resume print a JSON object with `now` and `offset_ms`. Pause is process-local and is not restored on restart. The private `POST /_control/test/clock` hook accepts either `{ "advance_ms": <ms> }` or `{ "paused": <boolean> }`.
+`clock pause` stops the system-time component at its current instant; `clock advance` still moves that paused clock by exactly the requested step. The process's `Date` follows the paused clock too; work wrapped in `withRealTime` remains on real time. Timers and monotonic deadlines continue on real time. `clock resume` and a restart catch up with the system clock while retaining the accumulated offset. Both pause and resume print a JSON object with `now` and `offset_ms`. Pause is process-local and is not restored on restart. The private `POST /_control/test/clock` hook accepts either `{ "advance_ms": <ms> }` or `{ "paused": <boolean> }`.
 
-Retry fixtures pause before sending any delivery. A poll one millisecond before the retry deadline must send nothing; a poll at the deadline must complete the next attempt. A delayed fixture or automatic poll cannot make another retry due, because only an explicit advance changes the paused time. The fixture waits for the recorded outcome before advancing again.
+Retry fixtures pause before sending any delivery. A poll one millisecond before the retry deadline must send nothing; a poll at the deadline must complete the next attempt. A delayed fixture or automatic poll cannot make another retry due, because only an explicit advance changes the paused time. The fixture waits for the recorded outcome before advancing again. Its receiver uses `movedClock.now()` for arrival times and absolute `Retry-After` dates, so both sides share the paused clock.
 
 `clock advance` adds to an offset. The clock only moves forward, because ids,
 versions and cursors assume time does not go back. The adapter keeps the offset
@@ -270,8 +270,8 @@ the answer stored for a repeated request.
 
 A fault is named for where it acts, lives in the target's memory, and is gone
 when the target starts. `FreshServer.stop()` clears the faults a fixture set.
-A name is `hold:<point>`, `fail:<point>`, `deadline:<job>`, `free:<volume>` or
-`resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
+A name is `hold:<point>`, `fail:<point>`, `deadline:<job>`, `free:<volume>`,
+`unfold-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
 not take, and a job it has not registered. A refused fault is never armed, so a
 typo cannot pass for one. A fault set again under the same name starts again.
 

@@ -54,6 +54,7 @@ beforeAll(async () => {
   clock = movedClock(server);
   await clock.pause();
   receiver = await startReceiver({
+    now: clock.now,
     status: (received) => answerFor(received).status,
     headers: (received) => {
       const retryAfter = answerFor(received).retryAfter;
@@ -152,6 +153,12 @@ async function waitOut(
     60_000,
   );
   expect(arrivals(label)).toHaveLength(n + 1);
+  const arrived = arrivals(label)[n]!;
+  expect(arrived.at).toBe(clock.now());
+  const timestamp = Number(
+    /^t=(\d+),/.exec(String(arrived.headers["x-marfa-signature"]))?.[1],
+  );
+  expect(timestamp).toBe(Math.floor(arrived.at / SECOND));
 }
 
 /** A Retry-After date `ms` ahead of the server's clock. */
@@ -269,7 +276,7 @@ describe("webhook retry waits", () => {
         const arrived = arrivals(label)[0]!;
         await server.restart({ signal });
         await runJob(server, "webhook-poll");
-        if (Date.now() - arrived.at < 120 * SECOND) {
+        if (clock.now() - arrived.at < 120 * SECOND) {
           expect(
             arrivals(label),
             "the restart attempted the delivery before its wait ended",
