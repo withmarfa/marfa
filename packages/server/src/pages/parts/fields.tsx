@@ -111,7 +111,10 @@ export function TextField(props: TextFieldProps) {
 export type PasswordFieldProps = Omit<
   TextFieldProps,
   "type" | "value" | "placeholder" | "readonly" | "maxlength"
->;
+> & {
+  /** Fewest characters; the form module says so when a typed value falls short. */
+  minlength?: number;
+};
 
 /** A password never comes back to the page, so it takes no value. */
 export function PasswordField(props: PasswordFieldProps) {
@@ -125,6 +128,7 @@ export function PasswordField(props: PasswordFieldProps) {
           type="password"
           autocomplete={props.autocomplete}
           required={props.required}
+          minlength={props.minlength}
           autofocus={props.autofocus}
           aria-invalid={props.error !== undefined ? "true" : undefined}
           aria-describedby={describedBy(props)}

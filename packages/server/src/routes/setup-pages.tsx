@@ -243,6 +243,7 @@ export function renderDetailsPage(nonce: string, state: DetailsPageState = {}) {
           required
           autocomplete="new-password"
           requiredMessage={SETUP_WORDS.password}
+          minlength={8}
           hint="8 to 128 characters."
           error={errors.password}
           autofocus={firstInvalid === "password"}

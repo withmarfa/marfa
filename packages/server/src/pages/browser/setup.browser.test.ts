@@ -443,20 +443,52 @@ describe("when the claim is refused", () => {
   );
 
   inBrowser(
-    "shows a bad password under its field, and signs nobody in",
+    "shows each field's refusal at once before sending anything, and signs nobody in",
     async () => {
       await withInstance(async ({ origin, ctx }) => {
         const { context, page } = await open();
         try {
           const { code } = await issueSetupCode(ctx.storage);
           await toDetails(page, origin, code);
-          await page.fill("#email", OWNER.email);
+          let sent = 0;
+          page.on("request", (request) => {
+            if (request.url().endsWith("/owner")) sent++;
+          });
+          await page.fill("#email", "not an email");
           await page.fill("#password", "short");
           await page.click("#owner-form button[type=submit]");
-          await textOf(page.locator("#password-js-err")).toBe(
-            "Password must contain 8 to 128 characters.",
+          await textOf(page.locator("#email-js-err")).toBe(
+            "Enter a valid email address.",
           );
-          await isFocused(page.locator("#password")).toBe(true);
+          await textOf(page.locator("#password-js-err")).toBe(
+            "Use at least 8 characters.",
+          );
+          await isFocused(page.locator("#email")).toBe(true);
+          expect(sent).toBe(0);
+          expect(await sessionCookie(context)).toBeUndefined();
+        } finally {
+          await context.close();
+        }
+      });
+    },
+  );
+
+  inBrowser(
+    "shows the server's refusal of an address the browser accepts under its field",
+    async () => {
+      await withInstance(async ({ origin, ctx }) => {
+        const { context, page } = await open();
+        try {
+          const { code } = await issueSetupCode(ctx.storage);
+          await toDetails(page, origin, code);
+          await page.fill("#email", "owner@localhost");
+          await page.fill("#password", OWNER.password);
+          await page.click("#owner-form button[type=submit]");
+          await attributeOf(page.locator("#email"), "aria-invalid").toBe(
+            "true",
+          );
+          await textOf(page.locator("#email-js-err")).toMatch(/email/i);
+          await isFocused(page.locator("#email")).toBe(true);
           await valueOf(page.locator("#password")).toBe("");
           expect(await sessionCookie(context)).toBeUndefined();
         } finally {
