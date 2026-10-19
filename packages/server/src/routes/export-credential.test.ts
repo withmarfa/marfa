@@ -492,6 +492,64 @@ describe.each(FORMATS)("an %s export's edges", (format) => {
   });
 });
 
+describe("an ndjson export narrowed after rows have gone out", () => {
+  const TASKS = 16;
+
+  /** Sixty notes, then tasks created later so they list first, each with an
+   *  edge to a note. */
+  async function seedTasksWithEdges() {
+    await seedNotes(60);
+    await rawSql(
+      `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < ?)
+       INSERT INTO items (id, type, properties, created_at, updated_at, occurred_at)
+       SELECT printf('01912346-0000-7000-8000-%012x', v), 'core.task',
+         jsonb(json_object('title', 'task ' || v)),
+         '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z', '2025-01-01T00:00:00.000Z' FROM n`,
+      [TASKS],
+    );
+    await rawSql(
+      `WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v + 1 FROM n WHERE v < ?)
+       INSERT INTO edges (id, source_id, target_id, edge_type, properties, created_at, updated_at)
+       SELECT printf('01912347-0000-7000-8000-%012x', v),
+         printf('01912346-0000-7000-8000-%012x', v),
+         printf('01912345-0000-7000-8000-%012x', v),
+         'references', '{}', '2025-01-02T00:00:00.000Z', '2025-01-02T00:00:00.000Z' FROM n`,
+      [TASKS],
+    );
+  }
+
+  const edgeLines = (bytes: Buffer) =>
+    lines(bytes).filter((line) => line.startsWith('{"edge"')).length;
+
+  it("ends with an error instead of leaving out the edges of rows already sent", async () => {
+    await seedTasksWithEdges();
+    const raw = await readsNotesAndTasks();
+    const id = await keyId(raw);
+    const open = () =>
+      request(ctx.app, "GET", "/export?format=ndjson", { key: raw });
+
+    // The witness: unnarrowed, the same export carries every task's edge.
+    const control = await drain(await open(), undefined, Infinity);
+    expect(control.failure).toBeUndefined();
+    expect(edgeLines(control.bytes)).toBe(TASKS);
+
+    // Past the twentieth line: all the tasks and a few notes have gone out.
+    const offset = lines(control.bytes)
+      .slice(0, 20)
+      .reduce((total, line) => total + Buffer.byteLength(line) + 1, 0);
+    const drained = await drain(
+      await open(),
+      () => narrow(id, { "core.note": "read" }),
+      offset,
+    );
+    expect(drained.changed).toBe(true);
+    expect(
+      drained.failure,
+      "the export ended cleanly after its key was narrowed below what it carries",
+    ).toBeDefined();
+  });
+});
+
 describe("an archive export answers to its credential before and after its bytes", () => {
   beforeEach(async () => {
     await seedNotes(NOTES);
@@ -606,6 +664,31 @@ describe("an archive's blobs", () => {
     expect(drained.failure).toBeDefined();
     expect(drained.bytes.length).toBeLessThan(control.bytes.length / 2);
     await untilSpoolEmpty();
+  });
+
+  it("goes on when a write takes the lending away between the checks of one blob", async () => {
+    const bytes = randomBytes(100 * 1024);
+    await attachBlob(bytes);
+    const raw = await readsFiles();
+    const outside = AsyncLocalStorage.snapshot();
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Called with its receiver below.
+    const readableThrough = ctx.storage.blobs.readableThrough;
+    let calls = 0;
+    vi.spyOn(ctx.storage.blobs, "readableThrough").mockImplementation(
+      async (...args) => {
+        const answer = await readableThrough.apply(ctx.storage.blobs, args);
+        // The first call is the selection's. The second and third are the
+        // send's check of the one blob, under the credential it was admitted
+        // on and under the credential as it stands.
+        if (++calls === 2)
+          await outside(() => rawSql("DELETE FROM item_blob_references"));
+        return answer;
+      },
+    );
+    const drained = await drain(await openFiles(raw), undefined, Infinity);
+    expect(calls).toBe(3);
+    expect(drained.failure).toBeUndefined();
+    expect(drained.bytes.length).toBeGreaterThan(bytes.length);
   });
 
   it("reads no further blob once the key is revoked", async () => {

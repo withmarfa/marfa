@@ -1456,7 +1456,7 @@ When the key or signed-in app that a `GET /export` request was admitted on is re
 
 ### `search-and-filters/export-credential-narrowed`
 
-If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export carries, then the server MUST end the response with an error and not with a clean end, in both formats.
+If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export has still to send, then the server MUST end the response with an error and not with a clean end, in both formats.
 
 **Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its rows and blobs in its manifest.
 
@@ -1464,9 +1464,9 @@ If the credential that a `GET /export` request was admitted on is narrowed while
 
 ### `search-and-filters/export-narrowed-reaches`
 
-When the credential that a `GET /export` request was admitted on is narrowed while the response is open, and it still reads everything the export carries, the server MUST send the rest of the export, in both formats.
+When the credential that a `GET /export` request was admitted on is narrowed while the response is open, and it still reads everything the export has still to send, the server MUST send the rest of the export, in both formats.
 
-**Reason:** a narrowing that takes away nothing the export carries changes nothing the export has promised.
+**Reason:** a narrowing that takes away nothing the export has still to send changes nothing the export has promised.
 
 **Tests:** `compliance/export-credential.test.ts › arrives whole when its credential stands, which is the witness for the cases below`, `› arrives whole when its key is narrowed to what the export still carries`.
 

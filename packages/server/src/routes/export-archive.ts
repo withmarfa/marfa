@@ -16,8 +16,10 @@
  * The tar is then written from the spool with backpressure, and the spool
  * is removed on every outcome. Each batch of spooled lines and each blob is
  * sent only after the credential has been asked again (`export-authority.ts`),
- * and a credential that ended or no longer reads what the archive carries ends
- * the response with an error.
+ * and a credential that ended or no longer reads what the archive has still to
+ * send ends the response with an error. The manifest, which lists every blob,
+ * and the type registrations are held only by the credential still standing,
+ * not by what it reads.
  *
  * A blob no store can read whole is named under the manifest's
  * `missing_blobs` and left out, so one lost file costs the backup that file
@@ -1070,20 +1072,21 @@ async function* heldLines(
   spool: TextSpool,
   holds: (lines: string[]) => Promise<void>,
 ): AsyncGenerator<Buffer> {
-  let rest: Buffer = Buffer.alloc(0);
+  // The bytes of a line that has not ended yet, joined only when it does.
+  let partial: Buffer[] = [];
   for await (const chunk of spool.read()) {
-    const bytes =
-      rest.length > 0
-        ? Buffer.concat([rest, chunk as Buffer])
-        : (chunk as Buffer);
+    const bytes = chunk as Buffer;
     const end = bytes.lastIndexOf(0x0a) + 1;
-    rest = bytes.subarray(end);
-    if (end === 0) continue;
-    const whole = bytes.subarray(0, end);
+    if (end === 0) {
+      partial.push(bytes);
+      continue;
+    }
+    const whole = Buffer.concat([...partial, bytes.subarray(0, end)]);
+    partial = end < bytes.length ? [bytes.subarray(end)] : [];
     await holds(whole.toString("utf8").split("\n").slice(0, -1));
     yield whole;
   }
-  if (rest.length > 0) throw new Error("A spooled line file ended mid-line");
+  if (partial.length > 0) throw new Error("A spooled line file ended mid-line");
 }
 
 /** How many blob bytes pass between asking whether the credential still reads the blob. */
