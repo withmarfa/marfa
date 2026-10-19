@@ -498,6 +498,30 @@ describe("the owner's steps", () => {
       trash_retention_days: 12,
     });
 
+    // A body that is not a form has no name in it, which is not a blank one.
+    await ctx.storage.settings.set(
+      "instance_config",
+      JSON.stringify({ name: "Kept", trash_retention_days: 12 }),
+    );
+    const asJson = await ctx.app.request(
+      "/setup/name",
+      json({ name: "Other" }, { origin, cookie }),
+    );
+    expect(asJson.status).toBe(400);
+    expect(await readInstanceConfig(ctx.storage.settings)).toEqual({
+      name: "Kept",
+      trash_retention_days: 12,
+    });
+    const stray = await ctx.app.request(
+      "/setup/name",
+      form({ name: "Other", bogus: "1" }, { origin, cookie }),
+    );
+    expect(stray.status).toBe(400);
+    await ctx.storage.settings.set(
+      "instance_config",
+      JSON.stringify({ trash_retention_days: 12 }),
+    );
+
     const long = await ctx.app.request(
       "/setup/name",
       form({ name: "x".repeat(201) }, { origin, cookie }),

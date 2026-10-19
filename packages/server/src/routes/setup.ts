@@ -59,6 +59,8 @@ const ClaimBody = z.object({
   name: z.string(),
   code: z.string(),
 });
+/** What the setup page's name form sends. */
+const NameForm = z.object({ name: z.string() });
 /** What the setup page's code form sends. */
 const ExchangeForm = z.object({ code: z.string() });
 
@@ -320,7 +322,13 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
   router.post("/name", async (c) => {
     requireOwnerOrigin(auth, c.req.raw.headers);
     const session = await requireOwnerSession(storage, auth, c.req.raw.headers);
+    if (!isForm(c))
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Send the name as a form.",
+      );
     const body = await c.req.parseBody();
+    refuseUnknownBodyKeys(body, NameForm);
     const raw = typeof body.name === "string" ? body.name : "";
     const blank = raw.trim() === "";
     const parsed = blank ? null : InstanceNameSchema.safeParse(raw);
