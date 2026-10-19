@@ -1,3 +1,4 @@
+import { assertCompatibleDependents } from "./_type-dependents.js";
 import {
   canonicalTypeDefinition,
   labelledTypeDefinition as labelled,
@@ -19,7 +20,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { SchemaValidationIssue } from "@withmarfa/shared";
+import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -47,6 +48,21 @@ import { MergePolicySchema, nullableRef, wholeListOf } from "./_schemas.js";
 // ---------------------------------------------------------------------------
 // Constants & helpers
 // ---------------------------------------------------------------------------
+
+function requireDependencyReach(
+  c: Context<AppEnv>,
+  schema: TypeSchema,
+  stored?: TypeSchema,
+): void {
+  if (schema.parent && schema.parent !== stored?.parent) {
+    requireParentReach(c, schema.parent);
+  }
+  for (const target of schema.compatible_with ?? []) {
+    if (!stored?.compatible_with?.includes(target)) {
+      requireParentReach(c, target);
+    }
+  }
+}
 
 /**
  * How `POST /types` and `PUT /types/:id` phrase a rejected chain.
@@ -615,7 +631,7 @@ const registerTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map doesn't grant write on the identifier, or on `parent` (`details.grant` names it).",
+        "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).",
     },
     409: {
       content: {
@@ -778,7 +794,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you have neither `schema.write` nor `metadata.types:write`, or the change needs `schema.write`, such as adding a field some item already holds a value under. `details.changes` lists what needs it.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map doesn't grant write on the type or a new `parent` (`details.grant` names it).",
+        "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` or `compatible_with` target (`details.grant` names it).",
     },
     404: {
       content: {
@@ -804,7 +820,7 @@ const replaceTypeRoute = createRoute({
         },
       },
       description:
-        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
+        "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy, or the change breaks another type's claim (`details.dependent_type_ids`).",
     },
   },
 });
@@ -830,11 +846,20 @@ const deleteTypeRoute = createRoute({
         .enum(["true", "false"])
         .optional()
         .describe(
-          "Delete the type even if items of it exist, in any state. It doesn't cover a type that has subtypes.",
+          "Delete the type even if items of it exist, in any state. It doesn't cover subtypes or compatibility dependents.",
         ),
     }),
   },
   responses: {
+    422: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["compatible_with_violation"]),
+        },
+      },
+      description:
+        "`compatible_with_violation`: other types name this type in `compatible_with`. `details.dependent_type_ids` lists them. Remove their claims before deleting the target; `force=true` does not bypass this check.",
+    },
     200: {
       content: {
         "application/json": {
@@ -1009,8 +1034,8 @@ export function typeRoutes(storage: Storage) {
 
           labelled(schema);
 
+          requireDependencyReach(c, schema);
           if (schema.parent) {
-            requireParentReach(c, schema.parent);
             validateParentChain(schema.id, schema.parent);
           }
           if (getTypeSchema(schema.id)) {
@@ -1019,7 +1044,9 @@ export function typeRoutes(storage: Storage) {
               `Type "${schema.id}" already exists`,
             );
           }
-          return await storage.types.create(schema);
+          const created = await storage.types.create(schema);
+          assertCompatibleDependents([schema.id]);
+          return created;
         },
         (created) => ({
           client_ip: c.get("clientIp") ?? null,
@@ -1064,6 +1091,7 @@ export function typeRoutes(storage: Storage) {
           await requireTypeReplacement(c, stored, schema, (types, names) =>
             storage.types.propertyNamesHeld(types, names),
           );
+          requireDependencyReach(c, schema, stored);
           if (schema.parent) {
             // Measured on the type as it stands, before the update lands, which
             // is the subtree that would move with it.
@@ -1073,7 +1101,9 @@ export function typeRoutes(storage: Storage) {
               maxDescendantDepth(schema.id),
             );
           }
-          return await storage.types.update(id, schema);
+          const updated = await storage.types.update(id, schema);
+          assertCompatibleDependents([id]);
+          return updated;
         },
         {
           client_ip: c.get("clientIp") ?? null,
@@ -1158,6 +1188,7 @@ export function typeRoutes(storage: Storage) {
           }
         }
         await storage.types.delete(id);
+        assertCompatibleDependents([id]);
       },
       {
         client_ip: c.get("clientIp") ?? null,

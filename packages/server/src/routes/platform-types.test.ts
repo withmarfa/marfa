@@ -97,6 +97,49 @@ describe("GET /platform-types/drift", () => {
 });
 
 describe("DELETE /platform-types/{id}", () => {
+  it("keeps a drifted compatibility target until its reader drops the claim", async () => {
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+    const reader = "user.drift_reader";
+    const fields = { name: { type: "string", required: true } };
+    expect(
+      (
+        await request(ctx.app, "POST", "/types", {
+          key: ctx.workingKey,
+          body: { id: reader, fields, compatible_with: [id] },
+        })
+      ).status,
+    ).toBe(201);
+    const response = await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+      key: ctx.managementKey,
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: "conflict", details: { dependent_type_ids: [reader] } },
+    });
+    const listed = await request(ctx.app, "GET", "/platform-types/drift", {
+      key: ctx.managementKey,
+    });
+    expect(await listed.json()).toMatchObject({
+      data: [{ id, removable: false }],
+    });
+    expect(
+      (
+        await request(ctx.app, "PUT", `/types/${reader}`, {
+          key: ctx.workingKey,
+          body: { fields },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/platform-types/${id}`, {
+          key: ctx.managementKey,
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it("refuses an unauthenticated caller", async () => {
     const ctx = await newContext();
     const res = await request(

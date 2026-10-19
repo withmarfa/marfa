@@ -252,9 +252,17 @@ When a type names `compatible_with`, the server MUST take it only where the type
 
 ### `types/compatible-with-refused`
 
-If a type's `compatible_with` names a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
+If a registration or replacement declares `compatible_with` naming a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
 
 **Tests:** `compliance/type-inheritance.test.ts › rejects compatible_with target that does not exist`, `› rejects compatible_with when a required ancestor field is missing`, `› refuses a compatible_with claim whose target field the type declares in another shape, or optional where the target requires it`, `compliance/types.test.ts › refuses a replacement that breaks its compatible_with claim, as registration does`.
+
+### `types/compatible-with-preserved`
+
+If an otherwise permitted `PUT /types/{id}` or `DELETE /types/{id}` would break a registered type's `compatible_with` claim, directly or through inherited fields on either side, then the server MUST refuse the change with `422 compatible_with_violation` naming the affected claimants in `details.dependent_type_ids`, including a deletion with `force=true`.
+
+**Reason:** compatibility is a maintained promise, so accepted registrations remain valid when exported and restored under `search-and-filters/restore-compatible-types`.
+
+**Tests:** `compliance/restore-compatible-types.test.ts › refuses a target change that breaks a reader and restores the accepted registry`.
 
 ### `types/custom-lifecycle`
 
@@ -498,11 +506,11 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `description`, `display_hints`, `version` or a kept field's `description`, including when its retained parent or compatibility targets are outside the key's write permissions.
 
 **Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
 
-**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`.
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/evolve-held-name`
 
@@ -534,21 +542,31 @@ When a key holding `schema.write` sends `PUT /types/{id}` for a type its map gra
 
 **Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a field whose name a stored row holds, in any lifecycle state, and lands it for a key with schema.write`.
 
-## Naming a parent
+## Dependency permissions
 
 ### `types/parent-reach`
 
-If `POST /types`, or a `PUT /types/{id}` from a key holding `schema.write` that changes the stored `parent`, names a parent, other than a platform type, the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming the parent, whether or not the parent is registered.
+If `POST /types`, or an otherwise permitted `PUT /types/{id}` that changes the stored `parent`, names a non-platform parent the key's type map does not grant write on, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that parent, whether or not the parent is registered.
 
-**Reason:** a subtype stops its parent being deleted, so naming a parent is a write to it.
+**Reason:** adding a parent can prevent replacement or deletion of that parent, so establishing the relationship requires write permission on it.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`.
+**Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`.
+
+### `types/compatible-with-reach`
+
+If an otherwise valid `POST /types` or an otherwise permitted `PUT /types/{id}` names a non-platform `compatible_with` target absent from the type's stored `compatible_with` and the key's type map does not grant write on that target, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that target.
+
+**Reason:** a new compatibility claim can prevent replacement or deletion of its target, so establishing the claim requires write permission on it.
+
+**Tests:** `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/parent-kept`
 
-The server MUST NOT ask write on the parent of a replacement that keeps the stored `parent`.
+When a replacement retains its stored `parent` or a target in its stored `compatible_with`, the server MUST NOT require target write permission for retaining that relationship.
 
-**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`.
+**Reason:** existing relationships remain valid after a target grant is narrowed, so connectors can continue updating their own types.
+
+**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/parent-shipped`
 
@@ -562,7 +580,7 @@ The server MUST NOT ask write on a parent that is a platform type, shipped or dr
 
 ### `types/delete`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no type names as parent, the server MUST remove it.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no other type names as parent or compatibility target, the server MUST remove it.
 
 **Tests:** `compliance/type-registry.test.ts › deletes a type with no items`.
 
@@ -580,7 +598,7 @@ If a key holding `schema.write` whose type map grants write on it sends `DELETE 
 
 ### `types/delete-force`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold, the server MUST remove the type and keep the items.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold but no other type names as parent or compatibility target, the server MUST remove the type and keep the items.
 
 **Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to a row a forced delete left, until its type is registered again`.
 
@@ -800,7 +818,7 @@ When a caller with `instance.read` or direct owner or local authority sends `GET
 
 ### `types/platform-remove`
 
-When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no type names as parent, the server MUST remove it and answer `200` with `removed: true`.
+When a caller with `instance.maintain` or direct owner or local authority sends `DELETE /platform-types/{id}` for a drifted type no item holds and no other type names as parent or compatibility target, the server MUST remove it and answer `200` with `removed: true`.
 
 **Tests:** `compliance/platform-type-drift.test.ts › lists a drifted platform type, and removes it once nothing holds it`.
 
@@ -812,9 +830,9 @@ When `DELETE /platform-types/{id}` removes a type, the server MUST record a `pla
 
 ### `types/platform-remove-refused`
 
-If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent, then the server MUST answer `409 conflict`.
+If `DELETE /platform-types/{id}` names a type the build ships, a type registered at run time, or a drifted type an item holds or a type names as parent or compatibility target, then the server MUST answer `409 conflict`.
 
-**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`.
+**Tests:** `compliance/platform-types.test.ts › refuses to remove a type the build still ships`, `› answers 409 for a type registered at run time, which no platform row carries`, `compliance/platform-type-drift.test.ts › refuses to remove a drifted type that items still carry`, `› refuses to remove a drifted type another type inherits from`, `› keeps a drifted compatibility target until its reader drops the claim`.
 
 ### `types/platform-remove-missing`
 

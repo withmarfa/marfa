@@ -1,3 +1,4 @@
+import { compatibilityDependents } from "./_type-dependents.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 /**
  * Management operations for shipped types an instance still carries that its
@@ -51,7 +52,7 @@ const DriftedTypeSchema = z
     removable: z
       .boolean()
       .describe(
-        "`true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it.",
+        "`true` if `DELETE /platform-types/{id}` would remove the type: no item carries it and no type inherits from it or names it in `compatible_with`.",
       ),
   })
   .describe("A platform type that this build no longer ships.")
@@ -159,7 +160,7 @@ const deletePlatformTypeRoute = createRoute({
         },
       },
       description:
-        "`conflict`: the type isn't one this build stopped shipping, items still carry it, or another type inherits from it (`details.child_types` lists them).",
+        "`conflict`: the type isn't one this build stopped shipping, items still carry it, another type inherits from it (`details.child_types`), or another type declares compatibility with it (`details.dependent_type_ids`).",
     },
   },
 });
@@ -202,7 +203,10 @@ export function platformTypeRoutes(storage: Storage) {
           id,
           item_count: itemCount,
           child_types: children,
-          removable: itemCount === 0 && children.length === 0,
+          removable:
+            itemCount === 0 &&
+            children.length === 0 &&
+            compatibilityDependents(id).length === 0,
         };
       }),
     );
@@ -265,6 +269,14 @@ export function platformTypeRoutes(storage: Storage) {
           );
         }
 
+        const dependents = compatibilityDependents(id);
+        if (dependents.length > 0) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `Types still declare compatibility with "${id}": ${dependents.join(", ")}`,
+            { type: id, dependent_type_ids: dependents },
+          );
+        }
         const removed = await storage.types.deletePlatformType(id);
         if (!removed) {
           throw new MarfaError(

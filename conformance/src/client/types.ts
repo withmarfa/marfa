@@ -154,7 +154,7 @@ export interface TypeSchema {
    * validates at registration and rejects mismatched claims with
    * `compatible_with_violation`.
    */
-  compatible_with?: string;
+  compatible_with?: string | string[];
 }
 
 /** What a purge left of a row's link or natural key under its type. */
@@ -699,6 +699,8 @@ export interface TrackedResource {
    * declared parent is what the server answers on, not the dotted name.
    */
   parent?: string;
+  /** Compatibility targets must outlive the types that name them. */
+  compatibleWith?: string[];
 }
 
 export interface TestContext {

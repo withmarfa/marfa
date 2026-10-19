@@ -399,13 +399,17 @@ describe("cleanup, type phase ordering", () => {
  * The teardown order is only as good as the parent it recorded, and the
  * record comes from the wrapper rather than from a read-back at teardown.
  */
-describe("type tracking records the declared parent", () => {
+describe("type tracking records accepted dependencies", () => {
   function clientStub(): Record<string, unknown> {
     return {
       registerType: (schema: { id: string }) =>
         Promise.resolve({ ok: true, status: 201, data: { type: schema } }),
-      replaceType: (_id: string, _schema: object) =>
-        Promise.resolve({ ok: true, status: 200, data: {} }),
+      replaceType: (id: string, schema: object) =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          data: { type: { id, ...schema } },
+        }),
     };
   }
 
@@ -477,7 +481,7 @@ describe("type tracking records the declared parent", () => {
     expect(ctx.trackedTypes[0]?.parent).toBe("user.z");
   });
 
-  it("leaves the recorded parent alone when the update does not mention one", async () => {
+  it("removes the recorded parent when the replacement omits it", async () => {
     const { trackRegisteredTypes } = await import("./setup.js");
     const ctx = { trackedTypes: [] as { id: string; parent?: string }[] };
     const client = clientStub();
@@ -490,20 +494,118 @@ describe("type tracking records the declared parent", () => {
       id: "user.b",
       parent: "user.a",
     });
-    // A field-only edit, which is what every update in the suite is.
-    // Reading the absent key as "no parent" would order this type alongside
-    // its own parent and race the pair the ordering exists to separate.
     await (client.replaceType as (i: string, s: object) => Promise<unknown>)(
       "user.b",
       { fields: { url: { type: "string" } } },
     );
 
-    expect(ctx.trackedTypes[0]?.parent).toBe("user.a");
+    expect(ctx.trackedTypes[0]?.parent).toBeUndefined();
+  });
+
+  it("tracks accepted compatibility targets through replacement and removal", async () => {
+    const { trackRegisteredTypes } = await import("./setup.js");
+    const ctx = {
+      trackedTypes: [] as { id: string; compatibleWith?: string[] }[],
+    };
+    const client = clientStub();
+    trackRegisteredTypes(
+      ctx as Parameters<typeof trackRegisteredTypes>[0],
+      client as unknown as Parameters<typeof trackRegisteredTypes>[1],
+    );
+    const register = client.registerType as (s: unknown) => Promise<unknown>;
+    const replace = client.replaceType as (
+      id: string,
+      s: object,
+    ) => Promise<unknown>;
+    await register({ id: "reader", compatible_with: "target" });
+    expect(ctx.trackedTypes[0]?.compatibleWith).toEqual(["target"]);
+    await replace("reader", { compatible_with: ["a", "b"] });
+    expect(ctx.trackedTypes[0]?.compatibleWith).toEqual(["a", "b"]);
+    await replace("reader", { fields: {} });
+    expect(ctx.trackedTypes[0]?.compatibleWith).toBeUndefined();
+  });
+
+  it("keeps automatic dependencies when a fixture also tracks the same type", async () => {
+    const { trackRegisteredTypes, trackType } = await import("./setup.js");
+    const ctx = { trackedTypes: [] } as unknown as Parameters<
+      typeof trackType
+    >[0];
+    const client = clientStub();
+    trackRegisteredTypes(
+      ctx,
+      client as unknown as Parameters<typeof trackRegisteredTypes>[1],
+    );
+    await (client.registerType as (s: unknown) => Promise<unknown>)({
+      id: "reader",
+      parent: "parent",
+      compatible_with: ["target"],
+    });
+    trackType(ctx, "reader", client);
+    expect(ctx.trackedTypes).toEqual([
+      {
+        id: "reader",
+        createdBy: client,
+        parent: "parent",
+        compatibleWith: ["target"],
+      },
+    ]);
+  });
+
+  it("updates dependencies when a deleted identifier is registered again", async () => {
+    const { trackRegisteredTypes } = await import("./setup.js");
+    const ctx = { trackedTypes: [] } as unknown as Parameters<
+      typeof trackRegisteredTypes
+    >[0];
+    const client = clientStub();
+    trackRegisteredTypes(
+      ctx,
+      client as unknown as Parameters<typeof trackRegisteredTypes>[1],
+    );
+    const register = client.registerType as (s: unknown) => Promise<unknown>;
+    await register({
+      id: "reader",
+      parent: "parent",
+      compatible_with: ["target"],
+    });
+    await register({ id: "reader" });
+    expect(ctx.trackedTypes).toEqual([
+      {
+        id: "reader",
+        createdBy: client,
+        parent: undefined,
+        compatibleWith: undefined,
+      },
+    ]);
   });
 });
 
 describe("typeDeletionLevels", () => {
-  it("puts a declared child in a later group than its parent's", async () => {
+  it("awaits compatibility dependents before either target and their parents", async () => {
+    const { cleanup } = await import("./setup.js");
+    const ctx = contextWithFixtures() as { trackedTypes: unknown[] };
+    ctx.trackedTypes = [
+      { id: "parent" },
+      { id: "target", parent: "parent" },
+      { id: "other" },
+      { id: "reader", compatibleWith: ["target", "other"] },
+      { id: "child", parent: "reader" },
+    ];
+    await cleanup(ctx as Parameters<typeof cleanup>[0]);
+    for (const [dependent, target] of [
+      ["child", "reader"],
+      ["reader", "target"],
+      ["reader", "other"],
+      ["target", "parent"],
+    ]) {
+      expect(calls).toContain(`scoped-type-done:${dependent}`);
+      expect(calls).toContain(`scoped-type:${target}`);
+      expect(calls.indexOf(`scoped-type-done:${dependent}`)).toBeLessThan(
+        calls.indexOf(`scoped-type:${target}`),
+      );
+    }
+  });
+
+  it("puts a declared child in an earlier group than its parent's", async () => {
     const { typeDeletionLevels } = await import("./setup.js");
     const levels = typeDeletionLevels([
       { id: "parent" },
@@ -515,7 +617,7 @@ describe("typeDeletionLevels", () => {
     ]);
   });
 
-  it("groups by depth rather than one type per group", async () => {
+  it("groups independent dependents together", async () => {
     const { typeDeletionLevels } = await import("./setup.js");
     const levels = typeDeletionLevels([
       { id: "p1" },
@@ -531,8 +633,7 @@ describe("typeDeletionLevels", () => {
 
   it("ignores a parent this teardown is not deleting", async () => {
     const { typeDeletionLevels } = await import("./setup.js");
-    // Depth counts what holds the delete. A platform parent is not being
-    // deleted, so nothing is waiting on this row.
+    // A platform parent is not being deleted, so it needs no level here.
     const levels = typeDeletionLevels([
       { id: "a" },
       { id: "b", parent: "core.note" },

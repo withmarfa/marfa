@@ -27,6 +27,8 @@ const REMOVABLE = "drift.removable";
 const WITH_ITEMS = "drift.with-items";
 const PARENT = "drift.parent";
 const CHILD = "drift.child";
+const COMPATIBLE_TARGET = "drift.compatible-target";
+const READER = "drift.reader";
 
 beforeAll(async () => {
   server = await bootFreshServer("platform-type-drift");
@@ -35,7 +37,7 @@ beforeAll(async () => {
     apiKey: server.workingKey,
   });
   const fields = { name: { type: "string" as const } };
-  for (const id of [REMOVABLE, WITH_ITEMS, PARENT]) {
+  for (const id of [REMOVABLE, WITH_ITEMS, PARENT, COMPATIBLE_TARGET]) {
     expect((await arranging.registerType({ id, fields })).status, id).toBe(201);
   }
   expect(
@@ -44,6 +46,15 @@ beforeAll(async () => {
         id: CHILD,
         parent: PARENT,
         fields: { extra: { type: "string" } },
+      })
+    ).status,
+  ).toBe(201);
+  expect(
+    (
+      await arranging.registerType({
+        id: READER,
+        fields,
+        compatible_with: [COMPATIBLE_TARGET],
       })
     ).status,
   ).toBe(201);
@@ -56,10 +67,12 @@ beforeAll(async () => {
   await server.restart(() => {
     const changed = withInstanceDatabase(server!.sqlitePath, (db) =>
       db
-        .prepare("UPDATE types SET origin = 'platform' WHERE id IN (?, ?, ?)")
-        .run(REMOVABLE, WITH_ITEMS, PARENT),
+        .prepare(
+          "UPDATE types SET origin = 'platform' WHERE id IN (?, ?, ?, ?)",
+        )
+        .run(REMOVABLE, WITH_ITEMS, PARENT, COMPATIBLE_TARGET),
     );
-    expect(Number(changed.changes)).toBe(3);
+    expect(Number(changed.changes)).toBe(4);
   });
   working = new MarfaClient({
     baseUrl: server.apiUrl,
@@ -76,6 +89,29 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 describe("a drifted platform type", () => {
+  it("keeps a drifted compatibility target until its reader drops the claim", async () => {
+    const refused = await manager.deletePlatformType(COMPATIBLE_TARGET);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error).toMatchObject({
+      code: "conflict",
+      details: { dependent_type_ids: [READER] },
+    });
+    const listed = await manager.listPlatformTypeDrift();
+    expect(
+      listed.data.data.find((row) => row.id === COMPATIBLE_TARGET),
+    ).toMatchObject({ removable: false });
+    expect((await working.getType(COMPATIBLE_TARGET)).status).toBe(200);
+    expect(
+      (
+        await working.replaceType(READER, {
+          fields: { name: { type: "string" } },
+        })
+      ).status,
+    ).toBe(200);
+    expect((await manager.deletePlatformType(COMPATIBLE_TARGET)).status).toBe(
+      200,
+    );
+  });
   it("lists a drifted platform type, and removes it once nothing holds it", async () => {
     const listed = await manager.listPlatformTypeDrift();
     expect(listed.status).toBe(200);

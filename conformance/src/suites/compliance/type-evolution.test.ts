@@ -794,8 +794,7 @@ describe("a parent is named only within the key's reach", () => {
       id: foreign,
       fields: { name: { type: "string" } },
     });
-    // Registered before the reach was asked of a parent, by a key reaching
-    // both.
+    // A key reaching both types can establish the relationship.
     const wide = await keyFor(`wide-${mine}`, {
       permissions: ["schema.write"],
       types: { [`${mine}.*`]: "write", [foreign]: "write" },
@@ -807,13 +806,13 @@ describe("a parent is named only within the key's reach", () => {
       fields: { size: { type: "integer" } },
     });
 
-    // The type's own key keeps editing it while it keeps its parent.
+    // Retaining the relationship needs no new authority over its target.
     const own = await connector(mine);
     const kept = await own.replaceType(id, {
       parent: foreign,
       fields: { size: { type: "integer" }, more: { type: "string" } },
     });
-    expect(kept.status, JSON.stringify(kept.error)).toBe(200);
+    expect(kept.status).toBe(200);
 
     // A key holding schema.write whose map stops short of a new parent is
     // refused, naming it.
