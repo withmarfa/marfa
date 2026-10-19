@@ -260,6 +260,8 @@ const REGISTRY_WRITERS: Record<string, string> = {
   "routes/restore-archive-types.ts":
     "the restore's type registrations, reached only through POST /restore",
   "routes/platform-types.ts": "DELETE /platform-types/:id",
+  "routes/archive-validation.ts":
+    "the archive export's restore check, which stages an archive's registrations in a registry frame of its own that nothing publishes",
 };
 
 function registryWriters(): string[] {

@@ -1,4 +1,3 @@
-import { createWriteStream } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -642,7 +641,7 @@ export function blobRoutes(
 ) {
   const minCopies = config.blobMinCopies ?? 1;
   const reserve = new DiskReserve(
-    blobs.disk.locator,
+    blobs.disk.spoolDir,
     config.diskReserveBytes ?? 0,
   );
   const router = createOpenAPIRouter<AppEnv>();
@@ -766,12 +765,7 @@ export function blobRoutes(
     try {
       const body = c.req.raw.body;
       if (body) {
-        await pipeline(
-          Readable.fromWeb(body),
-          hashing,
-          place.guard(),
-          createWriteStream(spool),
-        );
+        await pipeline(Readable.fromWeb(body), hashing, place.writer(spool));
       }
     } catch (err) {
       await rm(spool, { force: true });

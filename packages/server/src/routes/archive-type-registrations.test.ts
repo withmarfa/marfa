@@ -502,6 +502,13 @@ describe("archives carry type registrations", () => {
       fields,
     });
     await source.storage.types.create({
+      id: parentId,
+      label: "Held",
+      description: "A parent the destination holds.",
+      version: 1,
+      fields,
+    });
+    await source.storage.types.create({
       id: childId,
       label: "Held child",
       description: "A child the archive carries.",

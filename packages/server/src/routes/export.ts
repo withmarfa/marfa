@@ -1,3 +1,4 @@
+import { DiskReserve } from "../storage/disk-space.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -131,14 +132,24 @@ const exportRoute = createRoute({
       description:
         "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.",
     },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["export_rows_unrestorable"]),
+        },
+      },
+      description:
+        "- `export_rows_unrestorable`: with `format=archive`, Marfa read the selection twice, and both times a restore would refuse or skip the same row, which was unchanged between the reads, so no archive was sent. `details.row` names the row by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct the row or its type, then export again.",
+    },
     503: {
       description:
-        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Try again later.\n- `write_contention`: the database was busy. Nothing changed. Try the request again.\n- `export_unrestorable`: with `format=archive`, writes changed a row that a restore would refuse, or its type, between two reads. No archive was sent. Retry the export.",
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
             "blob_store_unavailable",
             "write_contention",
+            "export_unrestorable",
           ]),
         },
       },
@@ -157,8 +168,12 @@ export function exportRoutes(
   storage: Storage,
   blobs: BlobLayer,
   instanceId: string,
+  diskReserveBytes: number,
+  /** The largest properties a write door takes, `bulkBodyCap(config)`. */
+  maxRowBytes: number,
 ) {
   const router = createOpenAPIRouter<AppEnv>();
+  const reserve = new DiskReserve(blobs.disk.spoolDir, diskReserveBytes);
 
   router.openapi(exportRoute, async (c) => {
     const reader = ownerItemRead(c);
@@ -239,6 +254,8 @@ export function exportRoutes(
           source_filter: sourceFilter,
         },
         reader,
+        reserve,
+        maxRowBytes,
       );
     }
 

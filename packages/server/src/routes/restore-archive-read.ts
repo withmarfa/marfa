@@ -8,7 +8,7 @@
  * often as the restore needs to, so the largest text held is one line.
  */
 
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream } from "node:fs";
 import { rm } from "node:fs/promises";
 import { Transform, type TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -97,6 +97,10 @@ function tooLarge(what: string): MarfaError {
   );
 }
 
+export function assertArchiveTextSize(bytes: number, name: string): void {
+  if (bytes > MAX_ARCHIVE_TEXT_BYTES) throw tooLarge(name);
+}
+
 /** The refusal for a manifest the schema does not take, naming each field. */
 function invalidManifest(error: z.ZodError): MarfaError {
   const errors = error.issues.map((issue) => ({
@@ -107,7 +111,8 @@ function invalidManifest(error: z.ZodError): MarfaError {
   return invalid(`Invalid manifest.json: ${named}`, { errors });
 }
 
-function parseManifest(text: string): ArchiveManifest {
+export function parseManifest(text: string): ArchiveManifest {
+  assertArchiveTextSize(Buffer.byteLength(text), "manifest.json");
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -245,12 +250,7 @@ export async function readArchive(
       reserve.admit(header.size).then((place) => {
         const spool = mintSpool();
         if (blobHash === undefined) {
-          pipeline(
-            stream,
-            new LineLengthGuard(name),
-            place.guard(),
-            createWriteStream(spool),
-          )
+          pipeline(stream, new LineLengthGuard(name), place.writer(spool))
             .then(() => {
               lineFiles[name as LineFile] = spool;
               next();
@@ -265,7 +265,7 @@ export async function readArchive(
         // hash to its name is left out, as an entry under a name that is no
         // hash is.
         const hashing = new HashingTransform();
-        pipeline(stream, hashing, place.guard(), createWriteStream(spool))
+        pipeline(stream, hashing, place.writer(spool))
           .then(async () => {
             if (constantTimeEqual(hashing.digest(), blobHash)) {
               blobs.push({
@@ -322,7 +322,7 @@ export async function readArchive(
  * `MAX_ARCHIVE_TEXT_BYTES`, so the spool never holds more of one than that,
  * and `archiveLines` never has more than that to hold.
  */
-class LineLengthGuard extends Transform {
+export class LineLengthGuard extends Transform {
   private run = 0;
   private line = 1;
 

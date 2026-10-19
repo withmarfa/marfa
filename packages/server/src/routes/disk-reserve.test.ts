@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { setAvailableBytesProbe } from "../storage/disk-space.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
@@ -181,8 +181,8 @@ describe("POST /blobs keeps the disk reserve", () => {
         ).status;
       }),
     );
-    expect(answers.filter((status) => status === 201)).toHaveLength(1);
-    expect(answers.filter((status) => status === 507)).toHaveLength(3);
+    expect(answers.filter((status) => status === 201)).toHaveLength(3);
+    expect(answers.filter((status) => status === 507)).toHaveLength(1);
   });
 
   it("takes the same streamed body when nothing is held back", async () => {
@@ -224,8 +224,8 @@ describe("POST /restore keeps the disk reserve", () => {
     const res = await restore(c, await inflatingArchive(96));
     expect(res.status).toBe(507);
     expect((await errorOf(res)).code).toBe("insufficient_storage");
-    // The archive's own admission and the entry's, and no look at a stream.
-    expect(volume.looks).toBe(2);
+    // Admission and the compressed body write precede the oversized entry.
+    expect(volume.looks).toBe(3);
     expect(await spoolEntries(c)).toEqual([]);
   });
 
@@ -242,4 +242,57 @@ describe("POST /restore keeps the disk reserve", () => {
     expect(res.status).toBe(507);
     expect((await errorOf(res)).code).toBe("insufficient_storage");
   });
+});
+
+it("an upload and an export share outstanding reservations on their volume", async () => {
+  const c = await boot(MIB);
+  await request(c.app, "POST", "/items", {
+    key: c.workingKey,
+    body: { type: "core.note", properties: { body: "witness" } },
+  });
+  setAvailableBytesProbe(() => Promise.resolve(2 * MIB));
+  const runExport = () =>
+    request(c.app, "GET", "/export?format=archive", { key: c.workingKey });
+  const witness = await runExport();
+  expect(witness.status).toBe(200);
+  await witness.arrayBuffer();
+  await vi.waitFor(async () => {
+    expect(await spoolEntries(c)).toEqual([]);
+  });
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let end!: () => void;
+  const pending = upload(
+    c,
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        end = () => {
+          controller.enqueue(Buffer.from("upload witness"));
+          controller.close();
+        };
+      },
+      pull() {
+        entered();
+      },
+    }),
+    { "Content-Length": String(MIB) },
+  );
+  await started;
+  await vi.waitFor(async () => {
+    expect((await spoolEntries(c)).length).toBeGreaterThan(0);
+  });
+  try {
+    const refused = await runExport();
+    const status = refused.status;
+    await refused.arrayBuffer();
+    expect(status).toBe(507);
+  } finally {
+    end();
+    expect((await pending).status).toBe(201);
+  }
+  const after = await runExport();
+  expect(after.status).toBe(200);
+  await after.arrayBuffer();
 });

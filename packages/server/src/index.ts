@@ -32,6 +32,7 @@ import {
   setBulkJobEnqueueListener,
 } from "./bulk-actions/index.js";
 import { shutdownInOrder } from "./shutdown.js";
+import { stopArchiveExports } from "./routes/export-lifecycle.js";
 import { endOpenStreams } from "./routes/open-streams.js";
 import { installUnhandledRejectionReporter } from "./process-faults.js";
 import { installDateShim, setClockOffset } from "./clock.js";
@@ -216,6 +217,7 @@ async function main() {
       void shutdownInOrder({
         bulkActionWorker,
         housekeeping,
+        archiveExports: { stop: () => stopArchiveExports(storage) },
         streams: { endAll: endOpenStreams },
         server,
         storage,

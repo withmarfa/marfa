@@ -32,6 +32,21 @@ function isDuplicateKey(err: unknown): boolean {
   return extended !== undefined && DUPLICATE_KEY_CODES.has(extended);
 }
 
+/** Stages a registration in the caller's registry frame, where its
+ *  provenance places it. */
+export function stageTypeRegistration(
+  schema: TypeSchema,
+  origin: TypeProvenance["origin"] | undefined,
+  family?: LoadedType["family"],
+): void {
+  if (origin === "platform") {
+    for (const row of projectPlatformRows([
+      { schema, origin: "platform", ...(family !== undefined && { family }) },
+    ]))
+      stagePlatformRegistryType(schema, row.family);
+  } else registerTypeSchema(schema);
+}
+
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
 
@@ -69,10 +84,7 @@ export class SqliteTypeStore implements TypeStore {
       // purges left were the deleted type's.
       await forgetType(tx, schema.id);
       await buildTypeLinks(tx, schema.id, schema.link_field);
-      if (provenance?.origin === "platform") {
-        for (const row of projectPlatformRows([{ schema, origin: "platform" }]))
-          stagePlatformRegistryType(schema, row.family);
-      } else registerTypeSchema(schema);
+      stageTypeRegistration(schema, provenance?.origin);
       await reindexChangedTypes(tx, schema.id, shapes);
     });
     return schema;
@@ -111,16 +123,11 @@ export class SqliteTypeStore implements TypeStore {
       if (getTypeSchema(id)?.link_field !== schema.link_field) {
         await rebuildTypeLinks(tx, id, schema.link_field);
       }
-      if (stored?.origin === "platform") {
-        for (const row of projectPlatformRows([
-          {
-            schema,
-            origin: "platform",
-            family: stored.family as LoadedType["family"],
-          },
-        ]))
-          stagePlatformRegistryType(schema, row.family);
-      } else registerTypeSchema(schema);
+      stageTypeRegistration(
+        schema,
+        stored?.origin as TypeProvenance["origin"] | undefined,
+        stored?.family as LoadedType["family"],
+      );
       await reindexChangedTypes(tx, id, shapes);
     });
     return schema;

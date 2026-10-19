@@ -79,6 +79,7 @@ export const POINTS: {
     { name: "read-snapshot", arg: "none" },
     { name: "webhook-schedule:queued", arg: "none" },
     { name: "read-hydration", arg: "none" },
+    { name: "export-validation", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },

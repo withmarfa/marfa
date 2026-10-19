@@ -246,7 +246,7 @@ withReader("export and restore (%s)", (reader) => {
       source_id: planted.id,
       target_id: folderId,
       edge_type: "in-folder",
-      properties: { path: "../planted.md" },
+      properties: { path: "Notes/planted.md" },
     });
     const revoke = await request(
       source.app,
@@ -265,6 +265,22 @@ withReader("export and restore (%s)", (reader) => {
         : { key: source.workingKey },
     );
     expect(exportRes.status).toBe(200);
+    const entries = await extractArchive(
+      Buffer.from(await exportRes.arrayBuffer()),
+    );
+    const archive = await buildArchive(
+      JSON.parse(entries.get("manifest.json")!.toString()) as Record<
+        string,
+        unknown
+      >,
+      entries.get("items.ndjson")!.toString().trim().split("\n"),
+      entries
+        .get("edges.ndjson")!
+        .toString()
+        .trim()
+        .split("\n")
+        .map((line) => line.replace("Notes/planted.md", "../planted.md")),
+    );
     const restoreRes = await destination.app.request(`/restore`, {
       method: "POST",
       headers: {
@@ -272,7 +288,7 @@ withReader("export and restore (%s)", (reader) => {
         origin: new URL(destination.config.authBaseUrl).origin,
         "Content-Type": "application/gzip",
       },
-      body: Buffer.from(await exportRes.arrayBuffer()),
+      body: archive,
     });
     expect(restoreRes.status).toBe(200);
     const result = (await restoreRes.json()) as RestoreResult & {

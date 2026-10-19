@@ -836,7 +836,16 @@ export function createApp(
       "/_control/test",
       testRoutes(() => housekeeping.names()),
     );
-  app.route("/export", exportRoutes(storage, blobs, instanceId));
+  app.route(
+    "/export",
+    exportRoutes(
+      storage,
+      blobs,
+      instanceId,
+      config.diskReserveBytes ?? 0,
+      bulkBodyCap(config),
+    ),
+  );
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all

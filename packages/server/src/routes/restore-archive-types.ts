@@ -46,7 +46,7 @@ export interface ArchiveTypeEntry {
 }
 
 /** A type from the archive with the provenance the restore will write. */
-interface PendingType {
+export interface PendingType {
   schema: TypeSchema;
   input: unknown;
   provenance: TypeProvenance;
@@ -284,6 +284,12 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
   return { types, edgeTypes };
 }
 
+/** The registrations an archive is planned against. */
+export interface ArchiveTypeBaseline {
+  types: Pick<Storage["types"], "listRegistered">;
+  edgeTypes: Pick<Storage["edgeTypes"], "list">;
+}
+
 /** The registrations an archive adds, decided before anything is written. */
 export interface ArchiveTypePlan {
   types: PendingType[];
@@ -303,7 +309,7 @@ export interface ArchiveTypePlan {
  * archive has to be a no-op.
  */
 export async function planArchiveTypes(
-  storage: Storage,
+  storage: ArchiveTypeBaseline,
   entries: ArchiveTypeEntry[],
 ): Promise<ArchiveTypePlan> {
   const { types, edgeTypes } = parseTypeEntries(entries);
@@ -387,34 +393,84 @@ export async function writeArchiveTypes(
   plan: ArchiveTypePlan,
   actor: Pick<AuditLogEntry, "key_id" | "client_ip">,
 ): Promise<ArchiveTypeResult> {
-  // Storage and registry writes remain private to the restore transaction.
+  await stageArchiveTypes(plan, {
+    createType: async (entry) => {
+      const schema = entry.schema;
+      await runAuditedTransaction(
+        storage,
+        async () => {
+          try {
+            await storage.types.create(schema, entry.provenance);
+          } catch (err) {
+            if (
+              err instanceof MarfaError &&
+              err.code === ErrorCode.TYPE_ALREADY_EXISTS
+            )
+              throw registeredMeanwhile(schema.id);
+            throw err;
+          }
+        },
+        {
+          ...actor,
+          action: "restore_archive.type",
+          resource_type: "type",
+          resource_id: schema.id,
+          details: { provenance: entry.provenance },
+        },
+      );
+    },
+    updateType: async (entry, schema) => {
+      await storage.types.update(entry.schema.id, schema);
+    },
+    // The names were checked when the archive was read, and much has been
+    // awaited since, so each is checked again where it is claimed: under the
+    // write lock, with the row written before the registry holds the name,
+    // as the route does.
+    createEdgeType: (schema, claim) =>
+      runAuditedTransaction(
+        storage,
+        async () => {
+          claim();
+          await storage.edgeTypes.create(schema);
+        },
+        {
+          ...actor,
+          action: "restore_archive.edge_type",
+          resource_type: "edge_type",
+          resource_id: schema.id,
+        },
+      ),
+  });
+
+  return {
+    typesRegistered: plan.types.length,
+    typesSkipped: plan.typesSkipped,
+    edgeTypesRegistered: plan.edgeTypes.length,
+    edgeTypesSkipped: plan.edgeTypesSkipped,
+  };
+}
+
+/** Where `stageArchiveTypes` puts each registration it judges. */
+export interface ArchiveTypeWrites {
+  createType(entry: PendingType): Promise<void>;
+  /** Replaces a registration `createType` wrote with its normalized form. */
+  updateType(entry: PendingType, schema: TypeSchema): Promise<void>;
+  /** `claim` refuses a name another registration holds; call it where the
+   *  write that takes the name is made. */
+  createEdgeType(schema: EdgeTypeSchema, claim: () => void): Promise<void>;
+}
+
+/**
+ * Registers and judges an archive's types against the registry the caller's
+ * frame holds, in the order and with the checks of a restore.
+ */
+export async function stageArchiveTypes(
+  plan: ArchiveTypePlan,
+  writes: ArchiveTypeWrites,
+): Promise<void> {
   // No schema can be judged against a partial archive, even if its parent
   // or compatibility target occurs later in the file.
-  for (const entry of plan.types) {
-    const schema = entry.schema;
-    await runAuditedTransaction(
-      storage,
-      async () => {
-        try {
-          await storage.types.create(schema, entry.provenance);
-        } catch (err) {
-          if (
-            err instanceof MarfaError &&
-            err.code === ErrorCode.TYPE_ALREADY_EXISTS
-          )
-            throw registeredMeanwhile(schema.id);
-          throw err;
-        }
-      },
-      {
-        ...actor,
-        action: "restore_archive.type",
-        resource_type: "type",
-        resource_id: schema.id,
-        details: { provenance: entry.provenance },
-      },
-    );
-  }
+  for (const entry of plan.types) await writes.createType(entry);
 
   for (const { schema } of plan.typesToValidate) {
     if (schema.parent) assertParentChainResolves(schema.id, schema.parent);
@@ -450,7 +506,7 @@ export async function writeArchiveTypes(
       writtenIds.has(entry.schema.id) &&
       !sameSchema(entry.schema, result.data)
     ) {
-      await storage.types.update(entry.schema.id, result.data);
+      await writes.updateType(entry, result.data);
     }
     entry.schema = result.data;
   }
@@ -468,34 +524,13 @@ export async function writeArchiveTypes(
 
   assertCompatibleDependents([...writtenIds]);
 
-  // The names were checked when the archive was read, and much has been
-  // awaited since, so each is checked again where it is claimed: under the
-  // write lock, with the row written before the registry holds the name, as
-  // the route does.
   for (const schema of plan.edgeTypes) {
-    await runAuditedTransaction(
-      storage,
-      async () => {
-        // An id registered since the rows were read was registered by a
-        // request that wrote its own row, and registering over it would put
-        // this archive's schema in its place.
-        if (getEdgeTypeSchema(schema.id)) throw registeredMeanwhile(schema.id);
-        assertEdgeNamesFree(schema.id, schema.reverse_name);
-        await storage.edgeTypes.create(schema);
-      },
-      {
-        ...actor,
-        action: "restore_archive.edge_type",
-        resource_type: "edge_type",
-        resource_id: schema.id,
-      },
-    );
+    await writes.createEdgeType(schema, () => {
+      // An id registered since the rows were read was registered by a
+      // request that wrote its own row, and registering over it would put
+      // this archive's schema in its place.
+      if (getEdgeTypeSchema(schema.id)) throw registeredMeanwhile(schema.id);
+      assertEdgeNamesFree(schema.id, schema.reverse_name);
+    });
   }
-
-  return {
-    typesRegistered: plan.types.length,
-    typesSkipped: plan.typesSkipped,
-    edgeTypesRegistered: plan.edgeTypes.length,
-    edgeTypesSkipped: plan.edgeTypesSkipped,
-  };
 }
