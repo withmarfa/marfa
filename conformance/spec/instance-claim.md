@@ -68,6 +68,30 @@ When valid setup proof claims an unclaimed instance with valid owner details, th
 
 **Tests:** `compliance/owner.test.ts › creates exactly one owner and requires owner sign-in to read it`, `› answers the setup routes in snake_case and the claim as the public claim does`.
 
+### `instance-claim/claim-signs-in`
+
+When a valid claim that carries the instance's own origin in its `Origin` header creates the owner, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner` with it answers `200` and the session counts as a sign-in within the last five minutes.
+
+**Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within five minutes, works without asking again.
+
+**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`, `› signs the owner in when the setup page claims through its setup session`.
+
+### `instance-claim/claim-script-no-session`
+
+When a valid claim that carries no `Origin` header creates the owner, the server MUST NOT set an owner session cookie in the answer.
+
+**Reason:** A script that holds a setup code has no browser to keep a cookie, and a session it never asked for would be a standing credential it does not need. Only a request from the instance's own origin is a browser.
+
+**Tests:** `compliance/owner.test.ts › leaves a script that claims with a setup code without a session`.
+
+### `instance-claim/claim-refused-no-session`
+
+If a claim is refused, then the server MUST NOT set an owner session cookie in the answer.
+
+**Reason:** A wrong code, invalid details, a request from another origin and a second claim each prove nothing about who is asking, so none may leave a browser signed in.
+
+**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`.
+
 ### `instance-claim/status-fields`
 
 When the private local command reads the claim status, the server MUST answer `claimed`, `owner_id` and `generation`, where `owner_id` is the owner's `id` once claimed and otherwise `null`, and `generation` is a string while unclaimed and `null` once claimed.

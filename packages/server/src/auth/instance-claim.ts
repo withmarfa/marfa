@@ -245,11 +245,32 @@ export async function claimOwner(
 ): Promise<OwnerRecord> {
   const parsed = ownerDetailsSchema.safeParse(input);
   if (!parsed.success)
-    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid owner details.");
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid owner details.", {
+      errors: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        message:
+          issue.path[0] === "email"
+            ? "Enter a valid email address."
+            : issue.path[0] === "name"
+              ? "Use at most 200 characters."
+              : "Check this field.",
+      })),
+    });
   const { proof } = input;
   if (proof.kind === "code") await countCodeAttempt(storage, proof.address);
   validateClaimProof(await read(storage), proof);
-  const prepared = await auth.preparePassword(parsed.data.password);
+  const prepared = await auth
+    .preparePassword(parsed.data.password)
+    .catch((error: unknown) => {
+      if (
+        error instanceof MarfaError &&
+        error.code === ErrorCode.VALIDATION_ERROR
+      )
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, error.message, {
+          errors: [{ path: "password", message: error.message }],
+        });
+      throw error;
+    });
   return runAuditedTransaction(
     storage,
     async () => {

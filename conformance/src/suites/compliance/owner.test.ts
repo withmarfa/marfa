@@ -497,6 +497,202 @@ describe("claiming the one owner", () => {
   });
 });
 
+/**
+ * A fresh unclaimed server on its own state folder, for a test that claims it.
+ * The claim happens once, so each way of claiming needs an instance of its own.
+ */
+async function withFreshInstance(
+  run: (instance: {
+    url: string;
+    code: () => Promise<string>;
+    ticket: () => Promise<string>;
+  }) => Promise<void>,
+): Promise<void> {
+  const freshState = await mkdtemp(join(tmpdir(), "marfa-owner-session-"));
+  let booted = false;
+  try {
+    const fresh = await bootUnclaimedServer({ state: freshState });
+    booted = true;
+    const control = (path: string) =>
+      controlRequest(fresh.controlSocket, path, { method: "POST", body: {} });
+    await run({
+      url: fresh.url,
+      code: async () =>
+        (await control("/_control/setup/code")).body.code as string,
+      ticket: async () =>
+        (await control("/_control/setup/ticket")).body.ticket as string,
+    });
+  } finally {
+    if (booted) await stopServer({ state: freshState });
+    await rm(freshState, { recursive: true, force: true });
+  }
+}
+const sessionCookies = (response: Response): string[] =>
+  response.headers
+    .getSetCookie()
+    .filter((value) => /session_token=/.test(value));
+const cookieHeader = (cookies: string[]): string =>
+  cookies.map((value) => value.split(";")[0]).join("; ");
+/** What a cookie's attributes say, apart from its value and its clock-dependent expiry. */
+const cookieShape = (cookie: string): string[] =>
+  cookie
+    .split(";")
+    .slice(1)
+    .map((part) => part.trim().toLowerCase())
+    .filter((part) => !part.startsWith("expires="))
+    .sort();
+
+describe("signing the owner in at the claim", () => {
+  it(
+    "signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const origin = instance.url;
+        const code = await instance.code();
+        const claim = (body: unknown, headers: Record<string, string>) =>
+          fetch(`${instance.url}/owner`, {
+            method: "POST",
+            headers: { "content-type": "application/json", ...headers },
+            body: JSON.stringify(body),
+          });
+        const refusals: [string, Response][] = [
+          [
+            "a wrong code",
+            await claim({ ...OWNER, code: "WRONG-CODE" }, { origin }),
+          ],
+          ["no proof at all", await claim(OWNER, { origin })],
+          [
+            "a password that is too short",
+            await claim({ ...OWNER, password: "short", code }, { origin }),
+          ],
+          [
+            "another origin",
+            await claim(
+              { ...OWNER, code },
+              { origin: "https://elsewhere.example" },
+            ),
+          ],
+        ];
+        expect(refusals.map(([, r]) => r.status)).toEqual([401, 401, 400, 403]);
+        for (const [what, refused] of refusals)
+          expect(sessionCookies(refused), what).toEqual([]);
+
+        const claimed = await claim({ ...OWNER, code }, { origin });
+        expect(claimed.status).toBe(201);
+        const owner = await claimed.json();
+        // The witness for the refusals above: the same request, valid, does set one.
+        const session = sessionCookies(claimed);
+        expect(session).toHaveLength(1);
+        const read = await fetch(`${instance.url}/owner`, {
+          headers: { cookie: cookieHeader(session) },
+        });
+        expect(read.status).toBe(200);
+        expect(await read.json()).toEqual(owner);
+
+        const login = await fetch(`${instance.url}/auth/sign-in/email`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin },
+          body: JSON.stringify(OWNER),
+        });
+        expect(login.status).toBe(200);
+        expect(cookieShape(session[0]!)).toEqual(
+          cookieShape(sessionCookies(login)[0]!),
+        );
+        expect(session[0]!.split("=")[0]).toBe(
+          sessionCookies(login)[0]!.split("=")[0],
+        );
+
+        // A sign-in within the last five minutes is what the owner update needs.
+        const renamed = await fetch(`${instance.url}/owner`, {
+          method: "PATCH",
+          headers: {
+            "content-type": "application/json",
+            origin,
+            cookie: cookieHeader(session),
+          },
+          body: JSON.stringify({ name: "Renamed" }),
+        });
+        expect(renamed.status).toBe(200);
+
+        const repeated = await claim({ ...OWNER, code }, { origin });
+        expect(repeated.status).toBe(409);
+        expect(sessionCookies(repeated)).toEqual([]);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "signs the owner in when the setup page claims through its setup session",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const origin = instance.url;
+        const post = (path: string, body: unknown, cookie?: string) =>
+          fetch(`${instance.url}${path}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin,
+              ...(cookie ? { cookie } : {}),
+            },
+            body: JSON.stringify(body),
+          });
+        const exchanged = await post("/setup/exchange", {
+          ticket: await instance.ticket(),
+        });
+        expect(exchanged.status).toBe(200);
+        const setupCookie = cookieHeader(exchanged.headers.getSetCookie());
+        expect(sessionCookies(exchanged)).toEqual([]);
+        const claimed = await post("/setup/claim", OWNER, setupCookie);
+        expect(claimed.status).toBe(201);
+        const session = sessionCookies(claimed);
+        expect(session).toHaveLength(1);
+        expect(
+          claimed.headers
+            .getSetCookie()
+            .some((value) => /^marfa\.setup=;.*Max-Age=0/i.test(value)),
+        ).toBe(true);
+        const read = await fetch(`${instance.url}/owner`, {
+          headers: { cookie: cookieHeader(session) },
+        });
+        expect(read.status).toBe(200);
+        // The spent setup session signs in nothing.
+        const again = await post("/setup/claim", OWNER, setupCookie);
+        expect(again.status).toBe(409);
+        expect(sessionCookies(again)).toEqual([]);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "leaves a script that claims with a setup code without a session",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const claimed = await fetch(`${instance.url}/owner`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...OWNER, code: await instance.code() }),
+        });
+        expect(claimed.status).toBe(201);
+        expect(sessionCookies(claimed)).toEqual([]);
+        // The owner exists, so the missing cookie is the rule and not a failed claim.
+        const login = await fetch(`${instance.url}/auth/sign-in/email`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: instance.url,
+          },
+          body: JSON.stringify(OWNER),
+        });
+        expect(login.status).toBe(200);
+        expect(sessionCookies(login)).toHaveLength(1);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
 describe("claiming through the private socket", () => {
   it(
     "answers the setup routes in snake_case and the claim as the public claim does",

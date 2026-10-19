@@ -19,6 +19,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import type { Storage } from "../storage/interface.js";
 import { claimOwner } from "../auth/instance-claim.js";
 import { requireOwnerOrigin } from "../auth/owner-browser.js";
+import { ownerSessionCookies } from "./claim-session.js";
 import { SETUP_COOKIE } from "./setup.js";
 import { setNoStore } from "./no-store.js";
 import { OwnerSchema, ownerWire } from "./owner-wire.js";
@@ -102,7 +103,7 @@ const createOwnerRoute = createRoute({
   tags: ["Access"],
   summary: "Claim the instance",
   description:
-    "Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup.",
+    "Creates the one owner using a machine-issued setup code or setup-only browser session. The claim, consumed proof, and audit commit together. A claimed instance never reopens setup. A claim from the instance's own origin, which is what the setup page sends, also signs the owner in: the answer sets the same session cookie as a password sign-in. A claim with no `Origin` header, such as a script's, and a refused claim set no cookie.",
   request: {
     body: {
       content: {
@@ -502,6 +503,13 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
           : { kind: "session", token: token ?? "" },
     });
     deleteCookie(c, SETUP_COOKIE, { path: "/" });
+    for (const cookie of await ownerSessionCookies(
+      c,
+      auth,
+      owner,
+      body.password,
+    ))
+      c.header("set-cookie", cookie, { append: true });
     return c.json(ownerWire(owner), 201);
   });
   router.route("/passkeys", ownerPasskeyRoutes(storage, auth));
