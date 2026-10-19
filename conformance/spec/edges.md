@@ -1907,7 +1907,7 @@ If an edge write lands after its source item was retyped into a type the key may
 
 **Reason:** the permission is judged against the source's type as it stands when the write lands.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/write-order.test.ts › refuses edge creation after its source is retyped outside write reach`.
 
 ### `edges/race-event`
 
@@ -1915,4 +1915,4 @@ When an operation announces an event for an edge it wrote or removed, the server
 
 **Reason:** an event naming ends the edge did not have when it was written or removed tells a subscriber of something that did not happen.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/write-order.test.ts › announces the moved endpoints when a waiting delete removes the edge`.

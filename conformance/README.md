@@ -289,6 +289,8 @@ hold where it stood, for the new process to start without. A hold inside a
 write, such as `hold:bulk-job:in-chunk`, keeps the write lock while it waits, so
 another write waits with it.
 
+Write holds act before admission because SQLite admits only one writer at a time. Holding a write between its checks and commit would block the competing write, so it would not reproduce a check made against stale state. A fixture arms the hold, starts its first request, waits for `waitForHold`, commits the competing request, and clears the hold. The delayed request then checks the committed state. Export holds leave the writer free between pages. These counted holds act once per arming; uncounted holds continue to hold every caller. Literal `<action>` and `<n>` placeholders are refused.
+
 | Name                           | What it does                                                                                                                                                                                                                                                                                                                                                        |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `hold:housekeeping:<job>`      | A run of the job waits at its start until the fault is cleared.                                                                                                                                                                                                                                                                                                     |
@@ -315,6 +317,8 @@ another write waits with it.
 | `hold:export-validation`       | An archive export waits after it has staged its selection's type registrations for the restore checks and before it checks the selection's rows. It holds no read snapshot and no write lock. A client that leaves, or a server that stops, ends the wait.                                                                                                          |
 
 For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.
+| `hold:write=<action>@<n>` | The nth attempted write for that audit action waits before it acquires the writer lock or checks mutable state. Later writes can commit while it waits. A bare action means its first attempt; a bare number counts all outer audited transactions. Fixed audit entries name their action directly; result-dependent entries declare it in advance for `item.update`, `item.delete`, `type.register`, `edge.create`, `edge.update`, and `edge.delete`. Refused attempts count too. |
+| `hold:export-page=<n>` | An archive export waits after its nth complete item or edge page has been spooled, before it reads the next page or section. Item pages count first, then edge pages, including the last page of each section. The count starts when the fault is armed, across exports on that target. |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve uploads, restores, and archive exports keep (`blobs`) and for the `disk` component
@@ -325,8 +329,8 @@ to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
 A reserve of zero disables these checks. `<bytes>` is a decimal integer from
 0 through 9007199254740991.
 
-Every caller that reaches a held point waits, and `waiting` in the fault's
-listing counts them. A hold does not suspend a stream's head-read budget or
+Every caller selected by a hold waits, and `waiting` in the fault's
+listing counts them. An uncounted hold selects every caller. A hold does not suspend a stream's head-read budget or
 a read snapshot's lifetime. A target told to stop releases its faults as the
 stop begins, so a request held at `hold:stream-open` resumes after the stop
 has begun. Fixtures use this to open a stream during shutdown.

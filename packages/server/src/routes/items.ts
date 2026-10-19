@@ -2117,6 +2117,8 @@ export function itemRoutes(storage: Storage) {
               resource_id: id,
             }
           : null,
+      undefined,
+      "item.update",
     );
 
     if (result.outcome === "conflict" || result.outcome === "stale") {
@@ -2177,6 +2179,8 @@ export function itemRoutes(storage: Storage) {
               resource_id: id,
             }
           : null,
+      undefined,
+      "item.delete",
     );
     if (result.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this

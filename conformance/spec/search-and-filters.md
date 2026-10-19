@@ -1390,7 +1390,7 @@ When `GET /export?format=archive` returns a complete archive, the server MUST en
 
 **Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`.
 
 ### `search-and-filters/archive-validation-retry`
 

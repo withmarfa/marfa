@@ -320,3 +320,42 @@ describe("a fail fault on an event point", () => {
     }
   });
 });
+
+describe("counted holds", () => {
+  it("holds only the nth matching write and lets later writes pass", async () => {
+    expect(arm("hold:write", "item.update@2")).toBeUndefined();
+    await holdAt("write", "edge.create");
+    await holdAt("write", "item.update");
+    const held = holdAt("write", "item.update");
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    await holdAt("write", "item.update");
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    clearFaults();
+    await held;
+  });
+
+  it("resets the page count when rearmed and releases every waiter on clear", async () => {
+    arm("hold:export-page", "2");
+    await holdAt("export-page");
+    const first = holdAt("export-page");
+    expect(activeFaults()[0]?.waiting).toBe(1);
+    arm("hold:export-page", "1");
+    const second = holdAt("export-page");
+    expect(activeFaults()[0]?.waiting).toBe(2);
+    clearFaults();
+    await Promise.all([first, second]);
+  });
+
+  it("refuses literal templates and invalid counts with valid names as witnesses", () => {
+    for (const [name, arg] of [
+      ["hold:write", "<action>@<n>"],
+      ["hold:export-page", "<n>"],
+      ["hold:write", "item.update@0"],
+      ["hold:export-page", "1000001"],
+    ])
+      expect(arm(name!, arg!)).toBeDefined();
+    expect(activeFaults()).toEqual([]);
+    expect(arm("hold:write", "item.update@2")).toBeUndefined();
+    expect(arm("hold:export-page", "2")).toBeUndefined();
+  });
+});

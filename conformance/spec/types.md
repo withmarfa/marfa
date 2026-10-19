@@ -148,7 +148,7 @@ When `POST /types`, `PUT /types/{id}` or `DELETE /types/{id}` races another regi
 
 **Reason:** a parent deleted while a child registers, a child registered while its parent is deleted, or two re-parents closing a loop would otherwise leave a registry no single write could make.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/write-order.test.ts › refuses a child whose parent was deleted while registration waited`, `› refuses a parent deletion after a child registers`, `› refuses the second reparent that would close a loop`.
 
 ### `types/label`
 
@@ -638,7 +638,7 @@ When a type is registered again, the server MUST hold each later write to its it
 
 When an item write races `DELETE /types/{id}`, the server MUST either count the item, refusing a delete without `force=true` `409 type_in_use`, or refuse the item `unknown_type`.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/write-order.test.ts › counts an item that lands before a waiting type deletion`, `› refuses an item whose type was deleted before its write starts`.
 
 ## Version policy
 
