@@ -2166,7 +2166,7 @@ When a catch-up's stream sends a frame that names an id and an event and carries
 
 When a catch-up's or a held stream's stream ends part way through an event, a device MUST NOT take the event as sent.
 
-**Reason:** a connection closed between two bytes, as a proxy can close it, has not said the rest. A catch-up then ends `stream_incomplete` and a held stream is opened again from the cursor it holds (`device/follow-reopens`), where taking the part as an event would end the run `decoding`.
+**Reason:** a connection closed between two bytes, as a proxy can close it, has not said the rest. A catch-up then ends `stream_incomplete` (`device/catch-up-incomplete`) and a held stream is opened again from the cursor it holds (`device/follow-reopens`), so the next stream sends the event whole. Taken as an event, the part can end the run `decoding` on a connection that only dropped.
 
 **Tests:** `device/catch-up.test.ts › takes an event the stream ended in as not sent, keeping the cursor it had`, `› opens a held stream again, rather than ending, when the stream ended part way through an event`.
 
