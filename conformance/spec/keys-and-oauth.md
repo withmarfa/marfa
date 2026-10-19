@@ -1213,13 +1213,13 @@ If a browser session that signed in more than five minutes ago accepts on the co
 
 **Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`, `› refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in`.
 
 ### `keys-and-oauth/consent-recent-browser`
 
 If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/authorize` with the request's signed query as `return_to`.
 
-**Reason:** A screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same request, which still has its signed window to run.
+**Reason:** A screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same request, if its signed window has not closed.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › sends a browser that approves a request for a permission or a write on a screen left open past five minutes to sign in again, and back to the request`.
 
@@ -1723,13 +1723,13 @@ If a browser session that signed in more than five minutes ago approves a device
 
 **Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`, `› refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in`.
 
 ### `keys-and-oauth/device-recent-browser`
 
 If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/device/consent` with the code as `return_to`.
 
-**Reason:** As on the authorization screen, a screen left open past five minutes would otherwise end on an error page, and the code is still pending when the person returns.
+**Reason:** As on the authorization screen, a screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same code, if it has not expired.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › sends a browser that approves a device code for a permission or a write on a screen left open past five minutes to sign in again, and back to the code`.
 
