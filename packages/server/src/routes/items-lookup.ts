@@ -415,16 +415,21 @@ export function itemsLookupRoutes(storage: Storage) {
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, false);
     const settledAt = normalizeTimeBound(body.settled_at, "settled_at");
+    const mayRun = (): void => {
+      requireTypeAccess(c, type, "write");
+      if (selector.kind === "source") {
+        itemProvenanceSource(requireAuth(c), selector.source);
+      }
+    };
+    // Asked here, so a refusal is not held up by the writer's turn, and again
+    // in the transaction, of the key as it stands there.
+    mayRun();
     const tombstones = inOrder(
       selector.values,
       await runAuditedTransaction(
         storage,
         () => {
-          // Asked inside the transaction, of the key as it stands there.
-          requireTypeAccess(c, type, "write");
-          if (selector.kind === "source") {
-            itemProvenanceSource(requireAuth(c), selector.source);
-          }
+          mayRun();
           return storage.items.settleTombstones(
             type,
             tombstoneSelector(selector),
