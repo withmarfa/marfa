@@ -26,6 +26,7 @@ import {
   TextField,
 } from "../pages/parts/index.js";
 import { SETUP_STEP_COUNT, SETUP_WORDS } from "../pages/setup-words.js";
+import { signInAgainPath } from "./sign-in-again.js";
 
 const steps = (current: number) => ({ current, total: SETUP_STEP_COUNT });
 
@@ -310,7 +311,7 @@ export function renderPasskeyPage(nonce: string) {
             action={
               <Button
                 kind="quiet"
-                href="/auth/sign-in?prompt=login&return_to=%2Fsetup%2Fpasskey"
+                href={signInAgainPath(SETUP_STEP_PATHS.passkey)}
               >
                 Sign in again
               </Button>

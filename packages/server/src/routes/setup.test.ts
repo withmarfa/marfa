@@ -264,9 +264,13 @@ describe("the claim and setup pages", () => {
       form({ ...details, code, bogus: "1" }, { origin }),
     );
     expect(claim.status).toBe(400);
-    expect((await claim.json()).error.details.unknown_body_fields).toEqual([
-      "bogus",
-    ]);
+    expect(
+      (
+        (await claim.json()) as {
+          error: { details: { unknown_body_fields: string[] } };
+        }
+      ).error.details.unknown_body_fields,
+    ).toEqual(["bogus"]);
     expect((await getClaimStatus(ctx.storage)).claimed).toBe(false);
     // The witness: the same request without the stray key exchanges the code.
     const exchanged = await ctx.app.request(
@@ -430,6 +434,11 @@ describe("the owner's steps", () => {
       expect(html, step).toContain(title);
       expect(html, step).toContain(`aria-label="Step ${String(number)} of 6"`);
     }
+    expect(
+      await (
+        await ctx.app.request("/setup/passkey", { headers: { cookie } })
+      ).text(),
+    ).toContain("/auth/sign-in?prompt=login&amp;return_to=%2Fsetup%2Fpasskey");
     // A new computer has no server saved, so the command names this one.
     const connect = await ctx.app.request("/setup/connect", {
       headers: { cookie },
