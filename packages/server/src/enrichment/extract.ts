@@ -1,3 +1,4 @@
+import { toWellFormedText, truncateText } from "@withmarfa/shared";
 import {
   OFFICE_MIME_TO_FILE_TYPE,
   extractOfficeText,
@@ -73,5 +74,8 @@ export async function extractText(
 
   const trimmed = text.trim();
   if (trimmed.length === 0) return { kind: "empty" };
-  return { kind: "text", text: trimmed.slice(0, opts.maxTextChars) };
+  return {
+    kind: "text",
+    text: truncateText(toWellFormedText(trimmed), opts.maxTextChars),
+  };
 }

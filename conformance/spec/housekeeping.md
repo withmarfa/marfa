@@ -175,6 +175,14 @@ Where enrichment is on, if reading a document needs more memory than `MARFA_ENRI
 
 **Tests:** `compliance/enrichment-document-bounds.test.ts › is skipped, writes no text, and leaves the server answering, beside a document that reads`.
 
+### `housekeeping/enrichment-text-whole`
+
+Where enrichment is on, if the text of a file is longer than `MARFA_ENRICHMENT_MAX_TEXT_CHARS` UTF-16 code units, then the server MUST write an `extracted_text` that ends before any character the limit would cut in two.
+
+**Reason:** a character outside the Basic Multilingual Plane takes two code units, and half of one is text that is not well-formed (`items/json-text-well-formed`).
+
+**Tests:** `compliance/enrichment-text-cut.test.ts › cuts extracted text at the limit without cutting a character in two`.
+
 ### `housekeeping/enrichment-document-no-text`
 
 If the enrichment sweep skips a document for a limit, then the server MUST NOT write an `extracted_text` onto its item.

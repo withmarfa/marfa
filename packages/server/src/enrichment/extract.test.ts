@@ -159,6 +159,30 @@ describe("extractText", () => {
     if (out.kind === "text") expect(out.text).toHaveLength(100);
   });
 
+  it("never cuts a surrogate pair at the character cap, and keeps the pair when it fits", async () => {
+    const bytes = Buffer.from(`${"x".repeat(99)}😀tail`);
+    const cut = await extractText(bytes, "text/plain", {
+      ...OPTS,
+      maxTextChars: 100,
+    });
+    expect(cut).toEqual({ kind: "text", text: "x".repeat(99) });
+
+    // The witness: a cap that leaves room for both units keeps the pair.
+    const kept = await extractText(bytes, "text/plain", {
+      ...OPTS,
+      maxTextChars: 101,
+    });
+    expect(kept).toEqual({ kind: "text", text: `${"x".repeat(99)}😀` });
+  });
+
+  it("replaces a lone surrogate a reader hands back", async () => {
+    const out = await extractText(Buffer.from([1]), "image/png", {
+      ...OPTS,
+      ocr: new FakeOcr("scan \ud83d here \ude00 😀"),
+    });
+    expect(out).toEqual({ kind: "text", text: "scan \ufffd here \ufffd 😀" });
+  });
+
   it("refuses a type it has no reader for", async () => {
     const out = await extractText(Buffer.from("..."), "video/mp4", OPTS);
     expect(out.kind).toBe("unsupported");
