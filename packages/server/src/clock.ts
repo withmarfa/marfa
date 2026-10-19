@@ -30,7 +30,11 @@ export function realNowMs(): number {
   return systemNow();
 }
 
-/** Keep a library and its asynchronous work on its external peer's clock. */
+/**
+ * Keep a library and its asynchronous work on its external peer's clock.
+ * With test hooks on, install the shim before calling this: the hooks-off
+ * path does not track asynchronous work for a later installation.
+ */
 export function withRealTime<T>(run: () => T): T {
   return installed ? realTime.run(true, run) : run();
 }
@@ -106,17 +110,16 @@ export function setClockOffset(ms: number): void {
 /**
  * Makes the global `Date` read the clock: `Date.now()`, `new Date()` with no
  * argument and a call to `Date()` answer the time the server reads, and
- * everything else on `Date` is the system's. Called once at boot, before the
- * sign-in library is created, and only on a server started with the test
- * hooks, so the library's session, token and link times move with the clock.
+ * everything else on `Date` is the system's. Called at boot before telemetry,
+ * storage or the sign-in library can schedule work, and only on a server
+ * started with the test hooks, so session, token and link times move with
+ * the clock. Only work explicitly wrapped in `withRealTime` is exempt.
  * `nowMs()` reads the system clock directly, so the offset is counted once.
  */
 export function installDateShim(): void {
   if (installed) return;
-  // Work scheduled before installation keeps its unmarked, real-time context.
-  realTime.enterWith(false);
   const shifted = (): number =>
-    systemNow() + (realTime.getStore() === false ? offsetMs : 0);
+    systemNow() + (realTime.getStore() === true ? 0 : offsetMs);
   const shim = new Proxy(SystemDate, {
     construct: (target, args: unknown[], newTarget): object =>
       Reflect.construct(
@@ -149,5 +152,4 @@ export function resetClockForTests(): void {
   });
   globalThis.Date = SystemDate;
   installed = false;
-  realTime.enterWith(true);
 }

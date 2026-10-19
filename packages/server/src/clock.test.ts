@@ -33,29 +33,25 @@ describe("clock", () => {
     expect(run).toHaveBeenCalledExactlyOnceWith(true, callback);
   });
 
-  it.each([false, true])(
-    "keeps external asynchronous work on real time when the shim was already installed: %s",
-    async (installedBefore) => {
-      const systemDate = Date;
-      if (installedBefore) installDateShim();
-      advanceClock(86_400_000);
-      let release!: () => void;
-      const wait = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const external = withRealTime(async () => {
-        await wait;
-        expect(Math.abs(Date.now() - systemDate.now())).toBeLessThan(100);
-        expect(Math.abs(new Date().getTime() - realNowMs())).toBeLessThan(100);
-      });
-      if (!installedBefore) installDateShim();
-      advanceClock(3_600_000);
-      expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
-      release();
-      await external;
-      expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
-    },
-  );
+  it("keeps external asynchronous work on real time after installation", async () => {
+    const systemDate = Date;
+    installDateShim();
+    advanceClock(86_400_000);
+    let release!: () => void;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const external = withRealTime(async () => {
+      await wait;
+      expect(Math.abs(Date.now() - systemDate.now())).toBeLessThan(100);
+      expect(Math.abs(new Date().getTime() - realNowMs())).toBeLessThan(100);
+    });
+    advanceClock(3_600_000);
+    expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
+    release();
+    await external;
+    expect(Date.now() - systemDate.now()).toBeGreaterThan(89_999_900);
+  });
 
   it("reads the system clock until it is moved", () => {
     vi.useFakeTimers();

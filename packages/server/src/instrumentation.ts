@@ -95,6 +95,9 @@ function readConfig(): AppConfig {
 
 async function start(): Promise<void> {
   const config = readConfig();
+  // External work must enter its real-time context before telemetry schedules
+  // it. Installing in the main entry would be too late for this preload.
+  if (config.testHooks) clock.installDateShim();
   const otel = config.otel;
   if (!otel) return;
 

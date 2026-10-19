@@ -51,8 +51,8 @@ async function main() {
     setClockOffset(config.testClockOffsetMs ?? 0);
     setServedContractVersion(config.testContractVersion);
     if (config.testHooks) {
-      // The sign-in library reads `Date` for itself; with the hooks on it
-      // follows the clock too. Before anything creates it.
+      // Direct starts without the telemetry preload still install before
+      // storage or the sign-in library can schedule work.
       installDateShim();
       log(
         "warn",
