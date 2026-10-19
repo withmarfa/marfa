@@ -1,12 +1,17 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Permission } from "@withmarfa/shared";
 
+/** `at` is the moment the sign-in is judged at; unset, it is when the transaction opens. */
+export interface RecentSignIn {
+  at: number | undefined;
+}
+
 interface RequestAuthority {
   permissions: Set<Permission>;
-  recent: boolean;
+  recent: RecentSignIn | undefined;
   validate: (
     permissions: ReadonlySet<Permission>,
-    recent: boolean,
+    recent: RecentSignIn | undefined,
   ) => Promise<void>;
 }
 
@@ -17,16 +22,31 @@ export function withRequestAuthority<T>(
   validate: RequestAuthority["validate"],
   run: () => Promise<T>,
 ): Promise<T> {
-  return requests.run({ permissions: new Set(), recent: false, validate }, run);
+  return requests.run(
+    { permissions: new Set(), recent: undefined, validate },
+    run,
+  );
 }
 
 export function rememberAuthorityPermission(permission: Permission): void {
   requests.getStore()?.permissions.add(permission);
 }
 
-export function rememberRecentAuthentication(): void {
+/**
+ * A check made with no moment is judged when the transaction opens, and
+ * outweighs one that named a moment, so naming one never loosens a check
+ * another door made.
+ */
+export function rememberRecentAuthentication(at?: number): void {
   const request = requests.getStore();
-  if (request) request.recent = true;
+  if (!request) return;
+  const held = request.recent;
+  request.recent = {
+    at:
+      at === undefined || (held && held.at === undefined)
+        ? undefined
+        : Math.max(at, held?.at ?? at),
+  };
 }
 
 /**

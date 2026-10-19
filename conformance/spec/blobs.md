@@ -128,6 +128,30 @@ When the server answers `POST /blobs` with `507 insufficient_storage`, the serve
 
 **Tests:** `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`, `› takes the same upload and the same restore once the instance holds no reserve`.
 
+## How long an upload takes
+
+### `blobs/upload-duration`
+
+While a part of the body of `POST /blobs` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+
+**Reason:** an upload has no size cap (`blobs/upload-unlimited`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `blobs/upload-idle`.
+
+**Tests:** `compliance/upload-timing.test.ts › stores a blob whose body takes 66 seconds to arrive, a part at a time`.
+
+### `blobs/upload-idle`
+
+If no byte of the body of `POST /blobs` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a sender that has gone quiet would otherwise hold its request, the bytes it has sent and its share of the disk reserve for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a blob upload with 408 request_timeout and stores no blob, neither whole nor as far as it got`.
+
+### `blobs/upload-idle-nothing-kept`
+
+When the server answers `POST /blobs` with `408 request_timeout`, the server MUST NOT serve the bytes that arrived as a blob on `GET /blobs/{hash}`.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a blob upload with 408 request_timeout and stores no blob, neither whole nor as far as it got`.
+
 ## Who may upload a blob
 
 ### `blobs/upload-needs-write`

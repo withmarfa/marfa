@@ -650,7 +650,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.REQUEST_TIMEOUT]: {
     status: 408,
     summary:
-      "An inbound webhook delivery did not finish arriving before its deadline.",
+      "A body did not arrive in time: an inbound webhook delivery did not finish before its deadline, or a restore or a blob upload received no bytes for the upload idle limit.",
   },
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: {
     status: 503,

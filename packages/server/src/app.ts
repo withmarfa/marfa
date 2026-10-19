@@ -68,6 +68,7 @@ import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { restoreArchiveRoutes } from "./routes/restore-archive.js";
+import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS } from "./upload-body.js";
 import { platformTypeRoutes } from "./routes/platform-types.js";
 import { ownerRoutes } from "./routes/owner.js";
 import { authRoutes } from "./routes/auth-pages.js";
@@ -817,6 +818,8 @@ export function createApp(
     restoreArchiveRoutes(storage, blobs, {
       maxRowBytes: bulkBodyCap(config),
       diskReserveBytes: config.diskReserveBytes,
+      uploadIdleTimeoutMs:
+        config.uploadIdleTimeoutMs ?? DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
     }),
   );
   app.route("/platform-types", platformTypeRoutes(storage));

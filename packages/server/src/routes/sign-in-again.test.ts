@@ -48,13 +48,14 @@ function ask(
 describe("isRecentOwnerAuthentication", () => {
   async function recent(
     authority: DirectAuthority | undefined,
+    at?: number,
   ): Promise<string> {
     const app = new Hono<AppEnv>();
     app.use(async (c, next) => {
       c.set("authority", authority);
       await next();
     });
-    app.get("/", (c) => c.text(String(isRecentOwnerAuthentication(c))));
+    app.get("/", (c) => c.text(String(isRecentOwnerAuthentication(c, at))));
     return (await app.request("/")).text();
   }
 
@@ -62,6 +63,15 @@ describe("isRecentOwnerAuthentication", () => {
     expect(await recent(owner(MINUTE))).toBe("true");
     expect(await recent(owner(5 * MINUTE - 1000))).toBe("true");
     expect(await recent(owner(6 * MINUTE))).toBe("false");
+  });
+
+  it("judges a session at the moment it is given, not at the current time", async () => {
+    const session = owner(4 * MINUTE);
+    const started = clock.nowMs();
+    clock.advanceClock(2 * MINUTE);
+    expect(await recent(session)).toBe("false");
+    expect(await recent(session, started)).toBe("true");
+    expect(await recent(session, started + 2 * MINUTE)).toBe("false");
   });
 
   it("does not hold for a session that signed in in the future", async () => {
