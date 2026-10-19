@@ -272,6 +272,52 @@ export function requiresExplicitConsent(scope: string): boolean {
 }
 
 /**
+ * Whether an owner browser session that signed in more than five minutes ago
+ * may approve this scope for an app.
+ *
+ * **An allowlist of reading, so a scope added later is gated until someone
+ * decides otherwise.** Every item-type, edge, metadata, content and profile
+ * scope with the `read` verb, and the four OIDC literals, are grantable on an
+ * older sign-in. Every write, every permission and every literal this build
+ * cannot parse are not.
+ */
+export function grantableOnOlderSignIn(scope: string): boolean {
+  const parsed = parseScope(scope);
+  if (!parsed) return false;
+  switch (parsed.kind) {
+    case "oidc":
+      return true;
+    case "type":
+    case "edge":
+    case "metadata":
+    case "content":
+    case "profile":
+      return parsed.operation === "read";
+    default:
+      return false;
+  }
+}
+
+/**
+ * Whether approving these scopes needs a recent sign-in: any one of them is
+ * not {@link grantableOnOlderSignIn} and is not already covered by what the
+ * app holds.
+ *
+ * Both consent surfaces and both of their pages ask this one function, so
+ * the page that refuses to render and the decision that refuses to commit
+ * cannot disagree about which requests are gated.
+ */
+export function needsRecentSignIn(
+  approved: readonly string[],
+  held: readonly string[] | undefined,
+): boolean {
+  return approved.some(
+    (scope) =>
+      !grantableOnOlderSignIn(scope) && !grantCoversScope(held ?? [], scope),
+  );
+}
+
+/**
  * Whether a held scope set carries one specific permission.
  *
  * The only correct way to ask. A permission is granted by naming it and
