@@ -5244,7 +5244,7 @@ When a device decides whether a restore wrote a missing file back, a device MUST
 
 ### `folders/restore-not-written-flag`
 
-When a device lists a file in `not_written_back`, a device MUST give it the flag and reason the pull flagged its item with, or `unwritten` where the pull flagged none.
+When a device lists a file in `not_written_back`, a device MUST give it the flag and reason the pull flagged its item with, else those the pull flagged its path with while naming no item, or `unwritten` where the pull flagged neither.
 
 **Tests:** `device/folders.test.ts › does not count as put back a file somebody else's file stands in for`.
 

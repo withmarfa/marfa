@@ -189,16 +189,12 @@ impl Folder {
                 state::unbind(&conn, path)?;
             }
             not_written_back.push(
-                pull.flagged
-                    .iter()
-                    .find(|file| file.item.as_ref() == Some(item_id) || &file.path == *path)
-                    .cloned()
-                    .unwrap_or_else(|| Flagged {
-                        path: (*path).clone(),
-                        flag: "unwritten",
-                        reason: "the pull did not write it".into(),
-                        item: Some(item_id.clone()),
-                    }),
+                flagged_for(&pull.flagged, item_id, path).unwrap_or_else(|| Flagged {
+                    path: (*path).clone(),
+                    flag: "unwritten",
+                    reason: "the pull did not write it".into(),
+                    item: Some(item_id.clone()),
+                }),
             );
         }
         Ok(Restored {
@@ -207,5 +203,52 @@ impl Folder {
             restored,
             pull,
         })
+    }
+}
+
+/// What the pull said of the item's own file, or else of a file at its path
+/// that the pull tied to no item: a flag on another item's file at the path
+/// is about that item.
+fn flagged_for(flagged: &[Flagged], item_id: &str, path: &str) -> Option<Flagged> {
+    flagged
+        .iter()
+        .find(|file| file.item.as_deref() == Some(item_id))
+        .or_else(|| {
+            flagged
+                .iter()
+                .find(|file| file.item.is_none() && file.path == path)
+        })
+        .cloned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn flag(path: &str, flag: &'static str, item: Option<&str>) -> Flagged {
+        Flagged {
+            path: path.into(),
+            flag,
+            reason: format!("{flag} at {path}"),
+            item: item.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn reports_the_items_own_flag_ahead_of_a_strangers_at_its_path() {
+        let stranger = flag("notes/a.md", "conflict", Some("someone-else"));
+        let own = flag("notes/moved.md", "unfetched", Some("item"));
+        assert_eq!(
+            flagged_for(&[stranger.clone(), own.clone()], "item", "notes/a.md"),
+            Some(own)
+        );
+        // A flag at the path that names no item still stands for the file,
+        // but a stranger's alone says nothing of it.
+        let untied = flag("notes/a.md", "unreadable", None);
+        assert_eq!(
+            flagged_for(&[stranger.clone(), untied.clone()], "item", "notes/a.md"),
+            Some(untied)
+        );
+        assert_eq!(flagged_for(&[stranger], "item", "notes/a.md"), None);
     }
 }
