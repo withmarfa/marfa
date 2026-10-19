@@ -2,7 +2,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import { createGzip } from "node:zlib";
 import * as tar from "tar-stream";
-import { activeFaults, clearFaults, setFault } from "../control/faults.js";
+import {
+  activeFaults,
+  clearFaults,
+  setFault,
+  unfoldDeadlineFault,
+} from "../control/faults.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import {
   createTestContext,
@@ -14,12 +19,6 @@ import {
 } from "../test-utils.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
 import { expandSeries } from "../events/expand-recurrence.js";
-
-vi.mock("../control/faults.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../control/faults.js")>();
-  return { ...actual, unfoldDeadlineFault: vi.fn(actual.unfoldDeadlineFault) };
-});
-import { unfoldDeadlineFault } from "../control/faults.js";
 
 const spies = vi.hoisted(() => ({
   audit: vi.fn(),
@@ -57,6 +56,7 @@ vi.mock("../control/faults.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../control/faults.js")>();
   return {
     ...actual,
+    unfoldDeadlineFault: vi.fn(actual.unfoldDeadlineFault),
     holdAt: (...args: Parameters<typeof actual.holdAt>) => {
       spies.hold();
       return actual.holdAt(...args);
