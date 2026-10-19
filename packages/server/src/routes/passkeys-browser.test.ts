@@ -122,7 +122,9 @@ inBrowser("passkey pages with a virtual authenticator", () => {
         code_challenge_method: "S256",
       });
       await page.goto(origin + "/auth/oauth2/authorize?" + query.toString());
-      await page.click("#sign-in-passkey");
+      await page
+        .getByRole("button", { name: "Sign in with a passkey" })
+        .click();
       await page.waitForURL(/\/auth\/authorize\?/);
       await page.click('button[name="accept"][value="true"]');
       await page.waitForURL(/\/callback\?.*code=/);

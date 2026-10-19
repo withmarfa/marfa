@@ -245,11 +245,11 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
       "GET /auth/oauth2/end-session",
       "GET /auth/sign-in",
       "POST /auth/sign-in",
+      "GET /auth/forgot-password",
       "GET /auth/static/auth.css",
       "GET /auth/static/pages.css",
       "GET /auth/static/pages.js",
       "GET /auth/static/passkeys.js",
-      "GET /auth/static/password-toggle.js",
       "GET /auth/static/submit-state.js",
     ],
   "the address or the signature in it is the credential": [

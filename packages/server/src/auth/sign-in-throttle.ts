@@ -28,8 +28,11 @@ import {
   CLIENT_ADDRESS_HEADER,
   addressBucket,
 } from "../middleware/client-ip.js";
-import { KeyedThrottle } from "./keyed-throttle.js";
-import * as clock from "../clock.js";
+import {
+  KeyedThrottle,
+  admitThroughLanes,
+  secondsUntilReset,
+} from "./keyed-throttle.js";
 
 /** Attempts one address may make at one account per window. */
 export const SIGN_IN_ADDRESS_LIMIT = 10;
@@ -48,8 +51,8 @@ interface SignInHookCtx {
 /**
  * The two windows a password check is counted against, shared by sign-in and
  * by every other operation that checks the owner's password, so a guess
- * counts the same wherever it is made. Answers when the caller may try again
- * if the attempt is refused.
+ * counts the same wherever it is made. If the attempt is refused, answers when
+ * the caller may try again: the latest end among the windows that are spent.
  */
 export function passwordAttempts(storage: Storage) {
   const perAddress = new KeyedThrottle(storage, {
@@ -68,16 +71,12 @@ export function passwordAttempts(storage: Storage) {
   ): Promise<{ allowed: true } | { allowed: false; retryAfter: number }> => {
     const account = email.trim().toLowerCase();
     const address = ip ? addressBucket(ip) : "unknown";
-    const local = await perAddress.attempt(`${account}|${address}`);
-    const refused = local.allowed ? await perAccount.attempt(account) : local;
-    if (refused.allowed) return { allowed: true };
-    return {
-      allowed: false,
-      retryAfter: Math.max(
-        1,
-        Math.ceil((refused.resetAt - clock.nowMs()) / 1000),
-      ),
-    };
+    const admitted = await admitThroughLanes([
+      { throttle: perAddress, key: `${account}|${address}` },
+      { throttle: perAccount, key: account },
+    ]);
+    if (admitted.allowed) return { allowed: true };
+    return { allowed: false, retryAfter: secondsUntilReset(admitted.resetAt) };
   };
 }
 

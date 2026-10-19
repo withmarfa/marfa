@@ -421,6 +421,35 @@ dialog.palette::backdrop {
   align-items: center;
   gap: var(--space-2);
 }
+.or {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  color: var(--fg2);
+}
+.or::before,
+.or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--divider);
+}
+/* A small link under a form's main button: where focus goes after the button. */
+.form-link {
+  text-align: center;
+}
+.form-link a {
+  color: var(--fg2);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.form-link a:hover {
+  color: var(--fg);
+  text-decoration-color: currentColor;
+}
 .muted {
   color: var(--fg2);
 }

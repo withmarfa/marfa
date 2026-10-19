@@ -2,14 +2,12 @@
 export const PASSKEYS_JS = `(() => {
   const status = document.getElementById('passkey-status');
   const add = document.getElementById('add-passkey');
-  const signIn = document.getElementById('sign-in-passkey');
   const list = document.getElementById('passkeys');
   const supported = window.isSecureContext && window.PublicKeyCredential &&
     PublicKeyCredential.parseCreationOptionsFromJSON && PublicKeyCredential.parseRequestOptionsFromJSON;
   if (!supported) {
     status.textContent = 'Passkeys need a supported browser and a secure HTTPS address (or localhost for development).';
     if (add) add.disabled = true;
-    if (signIn) signIn.disabled = true;
   }
   async function request(path, body, method = body === undefined ? 'GET' : 'POST') {
     const response = await fetch(path.startsWith('/') ? path : '/auth/passkey/' + path, {
@@ -51,14 +49,6 @@ export const PASSKEYS_JS = `(() => {
     if (!credential) throw new Error('No passkey was created. Try again.');
     await request('verify-registration', { response: credential.toJSON(), name });
     await refresh(); status.textContent = 'Passkey added.';
-  }));
-  if (signIn) signIn.addEventListener('click', () => run(signIn, async () => {
-    const options = await request('generate-authenticate-options');
-    options.userVerification = 'required';
-    const credential = await navigator.credentials.get({ publicKey: PublicKeyCredential.parseRequestOptionsFromJSON(options) });
-    if (!credential) throw new Error('No passkey was selected. Try again.');
-    await request('verify-authentication', { response: credential.toJSON() });
-    location.assign(signIn.dataset.returnTo);
   }));
   if (list) refresh().catch(error => { status.textContent = error.message; });
 })();`;

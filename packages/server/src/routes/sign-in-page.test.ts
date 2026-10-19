@@ -1,8 +1,15 @@
-import { authAssetUrl } from "./auth-static.js";
 import { afterEach, describe, expect, it } from "vitest";
+import { pageAssetUrl } from "../pages/assets.js";
+import {
+  pageField,
+  pageFieldError,
+  pageForms,
+  pageLinks,
+  visibleText,
+} from "../pages/reading.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
-import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-page.js";
+import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-return.js";
 import { renderSignInPage } from "./test-render.js";
 
 /**
@@ -10,8 +17,8 @@ import { renderSignInPage } from "./test-render.js";
  * form-handler that wraps Better Auth's JSON API. Coverage:
  *   - 200 + text/html + form action/method correct
  *   - return_to round-trips through the form's hidden field
- *   - mode=magic renders the email-only form
- *   - error query param surfaces as a banner with role=alert
+ *   - the form posts email and password, and is a plain post with no script
+ *   - error query param surfaces as the password field's error, with focus on it
  *   - validateReturnTo rejects open-redirect attempts
  *   - POST /auth/sign-in with bad credentials redirects with error code
  */
@@ -43,40 +50,52 @@ async function signInCookie(
 }
 
 describe("renderSignInPage", () => {
-  it("renders the password view with the right action + hidden return_to", () => {
+  it("renders a form that posts email and password, with the return_to in a hidden field", () => {
     const html = renderSignInPage({
       returnTo: "/auth/authorize?client_id=abc",
     });
-    expect(html).toContain('<form method="POST" action="/auth/sign-in"');
-    // Default view submits mode=password; the one-time-link path is a GET form
-    // in the alternatives row, distinguished by button text from the magic
-    // submit.
-    expect(html).toContain(
-      '<input type="hidden" name="return_to" value="/auth/authorize?client_id=abc">',
-    );
-    expect(html).toContain('name="email"');
-    expect(html).toContain('name="password"');
+    expect(pageForms(html)).toEqual([
+      { method: "post", action: "/auth/sign-in", novalidate: true },
+    ]);
+    expect(pageField(html, "return_to")).toMatchObject({
+      type: "hidden",
+      value: "/auth/authorize?client_id=abc",
+    });
+    expect(pageField(html, "email")).toMatchObject({ type: "email" });
+    expect(pageField(html, "password")).toMatchObject({ type: "password" });
+    expect(visibleText(html)).toContain("Sign in");
   });
 
-  it("structures the password form with fields in .form and the button in .actions", () => {
-    const html = renderSignInPage({
-      returnTo: "/",
-    });
-    // The primary button lives in an .actions block inside the form (uniform
-    // with sign-up), so it renders full width below the fields.
-    expect(html).toMatch(
-      /<div class="actions">\s*<button type="submit" class="btn btn--primary"/,
-    );
-    expect(html).toContain('data-loading-label="Signing in..."');
+  it("works as a plain form post: the fields are required and the form needs no script to submit", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    expect(html).toMatch(/<input[^>]*name="email"[^>]*required/);
+    expect(html).toMatch(/<input[^>]*name="password"[^>]*required/);
+    expect(html).toMatch(/<button[^>]*type="submit"/);
+    // The passkey block starts hidden, so a browser with no script shows no
+    // button that does nothing.
+    expect(html).toMatch(/<div[^>]*data-passkey-signin[^>]*hidden/);
   });
 
-  it("includes the submit-state script on the password view", () => {
-    const html = renderSignInPage({
-      returnTo: "/",
+  it("leads to the forgotten-password page, and says so in words", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    expect(pageLinks(html)).toContainEqual({
+      href: "/auth/forgot-password",
+      text: "Forgot password?",
     });
-    expect(html).toContain(
-      `<script src="${authAssetUrl("submit-state.js")}" nonce="test-nonce"></script>`,
-    );
+  });
+
+  it("lists what takes focus in reading order, with no tabindex: email, password, Sign in, Forgot password, the passkey button", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    const stops = [
+      /name="email"/,
+      /name="password"/,
+      /type="submit"/,
+      /href="\/auth\/forgot-password"/,
+      /data-hook="passkey-signin"/,
+    ].map((pattern) => html.search(pattern));
+    expect(stops.every((at) => at >= 0)).toBe(true);
+    expect([...stops].sort((a, b) => a - b)).toEqual(stops);
+    expect(html).not.toMatch(/<(?:input|a|button)\b[^>]*tabindex/);
   });
 
   it("escapes HTML in returnTo to prevent template injection", () => {
@@ -84,43 +103,151 @@ describe("renderSignInPage", () => {
       returnTo: '/foo"><script>alert(1)</script>',
     });
     expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
-  });
-
-  it("renders invalid_credentials as an inline form-level error, not a top banner", () => {
-    const html = renderSignInPage({
-      returnTo: "/",
-      error: "invalid_credentials",
-    });
-    // The credential error spans email + password, so it renders as an inline
-    // .form__error line above the actions, never the boxed top banner. (The
-    // always-present hidden passkey-error div is a banner, so we assert the
-    // credential copy itself isn't inside a banner rather than that no banner
-    // class exists at all.)
-    expect(html).toContain(
-      'class="form__error" role="alert">That email or password is wrong',
+    expect(pageField(html, "return_to")?.value).toBe(
+      '/foo"><script>alert(1)</script>',
     );
   });
 
-  it("falls back to a generic message for unknown error codes (top banner on password view)", () => {
+  it("says a wrong email or password is wrong under the password field, marks both fields invalid and moves focus to the password", () => {
+    const html = renderSignInPage({
+      returnTo: "/",
+      error: "invalid_credentials",
+      email: "dana@example.com",
+    });
+    expect(pageFieldError(html, "password")).toBe(
+      "That email or password is wrong.",
+    );
+    // The server does not say which of the two was wrong, so both are marked,
+    // and the email field points at the same message.
+    expect(pageField(html, "email")).toMatchObject({
+      invalid: true,
+      describedBy: pageField(html, "password")?.describedBy,
+    });
+    expect(pageField(html, "password")?.invalid).toBe(true);
+    // The password has to be typed again, so it takes focus; the email, which
+    // came back, does not.
+    expect(pageField(html, "password")?.autofocus).toBe(true);
+    expect(pageField(html, "email")?.autofocus).toBe(false);
+    // The error is said once, on the field, and not again in a box.
+    expect(html.match(/That email or password is wrong/g)).toHaveLength(1);
+  });
+
+  it("asks for what is missing under the password field and focuses the email when it is the empty one", () => {
+    const noEmail = renderSignInPage({ returnTo: "/", error: "missing_field" });
+    expect(pageFieldError(noEmail, "password")).toBe(
+      "Enter your email and password.",
+    );
+    expect(pageField(noEmail, "email")).toMatchObject({
+      invalid: true,
+      autofocus: true,
+    });
+    const noPassword = renderSignInPage({
+      returnTo: "/",
+      error: "missing_field",
+      email: "dana@example.com",
+    });
+    expect(pageField(noPassword, "email")?.invalid).toBe(false);
+    expect(pageField(noPassword, "password")).toMatchObject({
+      invalid: true,
+      autofocus: true,
+    });
+  });
+
+  it("marks no field invalid and shows no error on a fresh page", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    expect(html).not.toContain("aria-invalid");
+    expect(pageFieldError(html, "password")).toBeUndefined();
+  });
+
+  it("focuses the email field on a fresh page, and the password field when the email came back", () => {
+    const fresh = renderSignInPage({ returnTo: "/" });
+    expect(pageField(fresh, "email")?.autofocus).toBe(true);
+    expect(pageField(fresh, "password")?.autofocus).toBe(false);
+    const typed = renderSignInPage({ returnTo: "/", email: "a@example.com" });
+    expect(pageField(typed, "email")?.autofocus).toBe(false);
+    expect(pageField(typed, "password")?.autofocus).toBe(true);
+  });
+
+  it("falls back to a generic message for unknown error codes", () => {
     const html = renderSignInPage({
       returnTo: "/",
       error: "some_unknown_code",
     });
-    // A non-credential, non-field error still renders as the top banner.
-    expect(html).toContain('class="banner banner--error"');
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Something went wrong");
+    expect(pageFieldError(html, "password")).toBe(
+      "Something went wrong. Try again.",
+    );
   });
 
-  it("links to /auth/static/auth.css and carries no inline <style>", () => {
-    const html = renderSignInPage({
-      returnTo: "/",
+  describe("when sign-in is refused for too many attempts", () => {
+    const locked = (retryAfter?: number) =>
+      visibleText(
+        renderSignInPage({
+          returnTo: "/",
+          error: "too_many_attempts",
+          retryAfter,
+        }),
+      );
+
+    it("says how long to wait in whole minutes, rounded up", () => {
+      for (const [seconds, said] of [
+        [1, "1 minute"],
+        [59, "1 minute"],
+        [60, "1 minute"],
+        [61, "2 minutes"],
+        [899, "15 minutes"],
+        [900, "15 minutes"],
+        [901, "16 minutes"],
+        [3600, "60 minutes"],
+      ] as const)
+        expect(locked(seconds), String(seconds)).toContain(
+          `Try again in ${said}`,
+        );
     });
-    expect(html).toContain(
-      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
-    );
+
+    it("says a passkey still signs in, in the same sentence as the wait", () => {
+      expect(locked(120)).toContain(
+        "Try again in 2 minutes, or sign in with a passkey.",
+      );
+    });
+
+    it("puts the lockout under the password field, and does not mark the email field invalid", () => {
+      const html = renderSignInPage({
+        returnTo: "/",
+        error: "too_many_attempts",
+        retryAfter: 600,
+        email: "dana@example.com",
+      });
+      expect(pageFieldError(html, "password")).toBe(
+        "Too many attempts. Try again in 10 minutes, or sign in with a passkey.",
+      );
+      expect(pageField(html, "email")?.invalid).toBe(false);
+      expect(pageField(html, "password")?.autofocus).toBe(true);
+    });
+
+    it("never invents a number when it was given no wait", () => {
+      const text = locked(undefined);
+      expect(text).toContain("Too many attempts");
+      expect(text).not.toMatch(/\d+ minutes?/);
+    });
+
+    it("keeps the typed email and does not call the password wrong", () => {
+      const html = renderSignInPage({
+        returnTo: "/",
+        error: "too_many_attempts",
+        retryAfter: 600,
+        email: "dana@example.com",
+      });
+      expect(pageField(html, "email")?.value).toBe("dana@example.com");
+      expect(visibleText(html)).not.toContain("is wrong");
+    });
+  });
+
+  it("loads the page system's stylesheet and script, with no inline style", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    expect(html).toContain(`href="${pageAssetUrl("pages.css")}"`);
+    expect(html).toContain(`src="${pageAssetUrl("pages.js")}"`);
     expect(html).not.toContain("<style>");
+    expect(html).not.toMatch(/\sstyle=/);
   });
 });
 
@@ -235,8 +362,8 @@ describe("GET /auth/sign-in", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toMatch(/text\/html/);
     const html = await res.text();
-    expect(html).toContain("Sign in to Marfa");
-    expect(html).toContain('action="/auth/sign-in"');
+    expect(visibleText(html)).toContain("Sign in to Marfa");
+    expect(pageForms(html)[0]?.action).toBe("/auth/sign-in");
   });
 
   it("§3.18: returns Cache-Control: no-store + Pragma: no-cache", async () => {
@@ -260,15 +387,10 @@ describe("GET /auth/sign-in", () => {
       `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
       { headers: { origin: ORIGIN } },
     );
-    const html = await res.text();
-    expect(html).toContain(
-      `<input type="hidden" name="return_to" value="${returnTo
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")}">`,
-    );
+    expect(pageField(await res.text(), "return_to")?.value).toBe(returnTo);
   });
 
-  it("surfaces error code from query as a role=alert banner", async () => {
+  it("surfaces the error code from the query as the password field's error", async () => {
     ctx = await createTestContext();
     const res = await request(
       ctx.app,
@@ -276,9 +398,9 @@ describe("GET /auth/sign-in", () => {
       "/auth/sign-in?error=invalid_credentials",
       { headers: { origin: ORIGIN } },
     );
-    const html = await res.text();
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("That email or password is wrong");
+    expect(pageFieldError(await res.text(), "password")).toBe(
+      "That email or password is wrong.",
+    );
   });
 
   // -------------------------------------------------------------------
@@ -310,11 +432,10 @@ describe("GET /auth/sign-in", () => {
     const html = await res.text();
     // The form's hidden return_to should now point back at /auth/authorize
     // carrying the full OAuth query string.
-    expect(html).toMatch(
-      /<input type="hidden" name="return_to" value="\/auth\/authorize\?[^"]*response_type=code/,
-    );
-    expect(html).toContain("client_id=client-xyz");
-    expect(html).toContain("sig=signature-stub");
+    const carried = pageField(html, "return_to")?.value ?? "";
+    expect(carried).toMatch(/^\/auth\/authorize\?.*response_type=code/);
+    expect(carried).toContain("client_id=client-xyz");
+    expect(carried).toContain("sig=signature-stub");
   });
 
   it("prefers an explicit return_to over OAuth-param synthesis", async () => {
@@ -327,12 +448,10 @@ describe("GET /auth/sign-in", () => {
       "/auth/sign-in?return_to=%2Fauth%2Fauthorize%3Fa%3D1&response_type=code&client_id=xx",
       { headers: { origin: ORIGIN } },
     );
-    const html = await res.text();
-    expect(html).toContain(
-      '<input type="hidden" name="return_to" value="/auth/authorize?a=1">',
-    );
+    const carried = pageField(await res.text(), "return_to")?.value;
+    expect(carried).toBe("/auth/authorize?a=1");
     // Synthesized URL would carry client_id=xx; absent means explicit won.
-    expect(html).not.toMatch(/return_to[^"]*client_id=xx/);
+    expect(carried).not.toContain("client_id=xx");
   });
 
   it("does NOT synthesize when no OAuth indicator (response_type) is present", async () => {
@@ -343,10 +462,45 @@ describe("GET /auth/sign-in", () => {
       "/auth/sign-in?client_id=stray&mode=password",
       { headers: { origin: ORIGIN } },
     );
-    const html = await res.text();
     // Bare /auth/sign-in (no return_to and no response_type) → form
     // carries return_to="/" — the long-standing default.
-    expect(html).toContain('name="return_to" value="/"');
+    expect(pageField(await res.text(), "return_to")?.value).toBe("/");
+  });
+});
+
+describe("the sign-in page after a lockout", () => {
+  it("promises no number of minutes when the address names none, or names nonsense", async () => {
+    ctx = await createTestContext();
+    for (const query of [
+      "error=too_many_attempts",
+      "error=too_many_attempts&retry_after=0",
+      "error=too_many_attempts&retry_after=-5",
+      "error=too_many_attempts&retry_after=soon",
+      "error=too_many_attempts&retry_after=99999999",
+      "error=too_many_attempts&retry_after=1.5",
+    ]) {
+      const res = await request(ctx.app, "GET", `/auth/sign-in?${query}`);
+      const text = visibleText(await res.text());
+      expect(text, query).toContain("Too many attempts");
+      expect(text, query).not.toMatch(/\d+ minutes?/);
+    }
+    // Witness: a wait the server could have named is shown.
+    const named = await request(
+      ctx.app,
+      "GET",
+      "/auth/sign-in?error=too_many_attempts&retry_after=300",
+    );
+    expect(visibleText(await named.text())).toContain("Try again in 5 minutes");
+  });
+
+  it("keeps the lockout's own parameters out of the authorization it wraps", () => {
+    expect(
+      synthesizeOauthReturnTo(
+        new URLSearchParams(
+          "response_type=code&client_id=abc&error=too_many_attempts&retry_after=60",
+        ),
+      ),
+    ).toBe("/auth/authorize?response_type=code&client_id=abc");
   });
 });
 
@@ -699,8 +853,8 @@ describe("the sign-in page keeps what was typed", () => {
 
     const page = await ctx.app.fetch(new Request(`${ORIGIN}${location}`));
     const html = await page.text();
-    expect(html).toMatch(/name="email"\s+value="dana@example.com"/);
-    expect(html).not.toMatch(/name="password"[^>]*value=/);
+    expect(pageField(html, "email")?.value).toBe("dana@example.com");
+    expect(pageField(html, "password")?.value).toBeUndefined();
   });
 
   it("escapes what it puts back in the field", () => {
@@ -709,12 +863,12 @@ describe("the sign-in page keeps what was typed", () => {
       email: '"><script>x</script>',
     });
     expect(html).not.toContain("<script>x</script>");
-    expect(html).toContain("&quot;&gt;&lt;script&gt;");
+    expect(pageField(html, "email")?.value).toBe('"><script>x</script>');
   });
 
   it("leaves the field empty when nothing was typed", () => {
-    expect(renderSignInPage({ returnTo: "/" })).toMatch(
-      /name="email"\s+value=""/,
+    expect(pageField(renderSignInPage({ returnTo: "/" }), "email")?.value).toBe(
+      "",
     );
   });
 
@@ -773,10 +927,10 @@ describe("the sign-in page names the app that sent the person", () => {
     const signInUrl = await signInUrlFor(ctx, clientId);
     expect(signInUrl).toContain("/auth/sign-in");
     const page = await ctx.app.fetch(new Request(`${ORIGIN}${signInUrl}`));
-    const html = await page.text();
-    expect(html).toContain("Sign in to continue to <b>Named Notes</b>");
+    const text = visibleText(await page.text());
+    expect(text).toContain("Sign in to continue to Named Notes.");
     // A self-registered app is flagged as the consent page flags it.
-    expect(html).toContain("Marfa hasn't verified this app");
+    expect(text).toContain("Marfa hasn't verified this app");
   });
 
   it("names nothing when the request was never signed", async () => {
@@ -797,9 +951,9 @@ describe("the sign-in page names the app that sent the person", () => {
         `${ORIGIN}/auth/sign-in?return_to=${encodeURIComponent(`/auth/authorize?${forged.toString()}`)}`,
       ),
     );
-    const html = await page.text();
-    expect(html).not.toContain("Forged Notes");
-    expect(html).toContain("Welcome back.");
+    const text = visibleText(await page.text());
+    expect(text).not.toContain("Forged Notes");
+    expect(text).not.toContain("Sign in to continue to");
   });
 
   it("names nothing when the request was signed and has since been edited", async () => {
@@ -809,7 +963,7 @@ describe("the sign-in page names the app that sent the person", () => {
     const edited = new URL(signInUrl, ORIGIN);
     edited.searchParams.set("scope", "core.note:write");
     const page = await ctx.app.fetch(new Request(edited));
-    expect(await page.text()).not.toContain("Edited Notes");
+    expect(visibleText(await page.text())).not.toContain("Edited Notes");
   });
 });
 
@@ -844,16 +998,18 @@ describe("signing in with no app waiting", () => {
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(page.headers.get("cache-control")).toContain("no-store");
-    const html = await page.text();
-    expect(html).toContain("You&#39;re signed in");
-    expect(html).toContain("erin@example.com");
+    const text = visibleText(await page.text());
+    expect(text).toContain("You're signed in");
+    expect(text).toContain("erin@example.com");
 
     // Witness: the same address with no session is the page that says
     // nobody is, and a program is still given the JSON whoever it is.
     const anonymous = await request(ctx.app, "GET", "/", {
       headers: { accept: "text/html" },
     });
-    expect(await anonymous.text()).not.toContain("erin@example.com");
+    expect(visibleText(await anonymous.text())).not.toContain(
+      "erin@example.com",
+    );
     const program = await request(ctx.app, "GET", "/", { headers: { cookie } });
     expect(program.headers.get("content-type")).toContain("application/json");
   });
@@ -871,14 +1027,14 @@ describe("signing in with no app waiting", () => {
     });
     expect(page.status).toBe(200);
     const html = await page.text();
-    expect(html).toContain("You&#39;re signed in");
-    expect(html).toContain("finn@example.com");
-    expect(html).not.toContain('name="password"');
+    expect(visibleText(html)).toContain("You're signed in");
+    expect(visibleText(html)).toContain("finn@example.com");
+    expect(pageField(html, "password")).toBeUndefined();
     // Witness: without a session the same address is the form.
     const anonymous = await (
       await request(ctx.app, "GET", "/auth/sign-in")
     ).text();
-    expect(anonymous).toContain('name="password"');
+    expect(pageField(anonymous, "password")).toBeDefined();
   });
 
   it("still shows the form to a signed-in person an authorization sent to sign in afresh", async () => {
@@ -898,13 +1054,13 @@ describe("signing in with no app waiting", () => {
       { headers: { cookie } },
     );
     const html = await page.text();
-    expect(html).toContain('name="password"');
-    expect(html).not.toContain("You&#39;re signed in");
+    expect(pageField(html, "password")).toBeDefined();
+    expect(visibleText(html)).not.toContain("You're signed in");
     // Witness: the same person, sent nowhere in particular, is told.
     const elsewhere = await request(ctx.app, "GET", "/auth/sign-in", {
       headers: { cookie },
     });
-    expect(await elsewhere.text()).toContain("You&#39;re signed in");
+    expect(visibleText(await elsewhere.text())).toContain("You're signed in");
   });
 
   it("offers to continue to where an already signed-in person was headed", async () => {
@@ -921,6 +1077,9 @@ describe("signing in with no app waiting", () => {
       `/auth/sign-in?return_to=${encodeURIComponent("/auth/device")}`,
       { headers: { cookie } },
     );
-    expect(await page.text()).toContain('href="/auth/device"');
+    expect(pageLinks(await page.text())).toContainEqual({
+      href: "/auth/device",
+      text: "Continue",
+    });
   });
 });

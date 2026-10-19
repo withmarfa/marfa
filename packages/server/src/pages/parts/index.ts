@@ -23,7 +23,13 @@ export type {
   SearchFieldProps,
   TextFieldProps,
 } from "./fields.js";
-export { ConsoleColumn, MomentCard, PageHeader, Section } from "./layout.js";
+export {
+  ConsoleColumn,
+  Divider,
+  MomentCard,
+  PageHeader,
+  Section,
+} from "./layout.js";
 export type {
   MomentCardProps,
   PageHeaderProps,

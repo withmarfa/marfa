@@ -10,6 +10,8 @@
  * it creates, which is what these cases read.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { advanceClock, resetClockForTests } from "../clock.js";
+import { visibleText } from "../pages/reading.js";
 import { eq } from "drizzle-orm";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -26,6 +28,7 @@ let ctx: TestContext | undefined;
 afterEach(async () => {
   await ctx?.cleanup();
   ctx = undefined;
+  resetClockForTests();
 });
 
 const ORIGIN = "http://localhost:0";
@@ -197,7 +200,7 @@ describe("the per-account sign-in throttle", () => {
     expect(other.status).toBe(401);
   });
 
-  it("tells the form's visitor the sign-in is throttled, not that the password is wrong", async () => {
+  it("tells the form's visitor the sign-in is throttled, and for how long, not that the password is wrong", async () => {
     ctx = await createTestContext(undefined, {
       email: EMAIL,
       password: PASSWORD,
@@ -215,9 +218,126 @@ describe("the per-account sign-in throttle", () => {
     expect(location).toContain("error=too_many_attempts");
     expect(throttled.headers.get("set-cookie")).toBeNull();
 
+    // The wait is the address limit's: what is left of its fifteen minutes.
+    const wait = Number(
+      new URL(location, ORIGIN).searchParams.get("retry_after"),
+    );
+    expect(wait).toBeGreaterThan(14 * 60);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
+
     const page = await request(ctx.app, "GET", location);
-    const html = await page.text();
-    expect(html).toContain("Too many sign-in attempts");
-    expect(html).not.toContain("That email or password is wrong");
+    const text = visibleText(await page.text());
+    expect(text).toMatch(
+      /Try again in (14|15) minutes, or sign in with a passkey/,
+    );
+    expect(text).not.toContain("That email or password is wrong");
+  });
+
+  it("names the account limit's wait when every address together has spent it, not the address limit's", async () => {
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
+    for (let i = 0; i < SIGN_IN_ACCOUNT_LIMIT - 1; i++)
+      await signInDirect(ctx, "wrong", `203.0.${String(i)}.1`);
+
+    // A fresh address, with all its own attempts left, is refused by the
+    // account's window.
+    const throttled = await signInForm(ctx, PASSWORD, "192.0.2.201");
+    const location = throttled.headers.get("location") ?? "";
+    expect(location).toContain("error=too_many_attempts");
+    const wait = Number(
+      new URL(location, ORIGIN).searchParams.get("retry_after"),
+    );
+    expect(wait).toBeGreaterThan(59 * 60);
+    expect(wait).toBeLessThanOrEqual(60 * 60);
+    expect(
+      visibleText(await (await request(ctx.app, "GET", location)).text()),
+    ).toMatch(/Try again in (59|60) minutes/);
+  });
+
+  it("names the later of the two waits when the address and the account have both been spent", async () => {
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
+    // Provisioning signed the owner in once, so 89 more attempts from other
+    // addresses plus the ten below fill the account's hundred exactly.
+    for (let i = 0; i < 89; i++)
+      await signInDirect(ctx, "wrong", `203.0.${String(i)}.1`);
+    for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++) {
+      const res = await signInForm(ctx, "wrong", "192.0.2.50");
+      expect(res.headers.get("location")).toContain(
+        "error=invalid_credentials",
+      );
+    }
+
+    // Both limits are spent now. Waiting out the address limit's quarter hour
+    // only meets the account limit, so the account limit's hour is the wait.
+    const refused = await signInForm(ctx, PASSWORD, "192.0.2.50");
+    const location = refused.headers.get("location") ?? "";
+    expect(location).toContain("error=too_many_attempts");
+    const wait = Number(
+      new URL(location, ORIGIN).searchParams.get("retry_after"),
+    );
+    expect(wait).toBeGreaterThan(59 * 60);
+    expect(wait).toBeLessThanOrEqual(60 * 60);
+
+    // The direct door names the same wait in its header.
+    const direct = await signInDirect(ctx, PASSWORD, "192.0.2.50");
+    expect(direct.status).toBe(429);
+    expect(Number(direct.headers.get("retry-after"))).toBeGreaterThan(59 * 60);
+
+    // The answer holds up: when the wait is over, the right password signs in.
+    advanceClock((wait + 1) * 1000);
+    const open = await signInForm(ctx, PASSWORD, "192.0.2.50");
+    expect(open.headers.get("location")).toBe("/");
+  });
+
+  it("does not count the attempt it refuses against the account", async () => {
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
+    for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++)
+      await signInDirect(ctx, "wrong", "203.0.113.70");
+    // Twenty refused attempts at the address limit leave the account's count
+    // where it was, so another address still has 89 of its hundred to use.
+    for (let i = 0; i < 20; i++)
+      expect((await signInDirect(ctx, "wrong", "203.0.113.70")).status).toBe(
+        429,
+      );
+    for (let i = 0; i < SIGN_IN_ACCOUNT_LIMIT - 1 - SIGN_IN_ADDRESS_LIMIT; i++)
+      expect(
+        (await signInDirect(ctx, "wrong", `203.0.${String(i)}.2`)).status,
+      ).toBe(401);
+  });
+
+  it("signs the owner in again once the wait is over", async () => {
+    ctx = await createTestContext(undefined, {
+      email: EMAIL,
+      password: PASSWORD,
+    });
+    for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++)
+      await signInForm(ctx, "wrong", "203.0.113.61");
+    const locked = await signInForm(ctx, PASSWORD, "203.0.113.61");
+    expect(locked.headers.get("location")).toContain("error=too_many_attempts");
+    const wait = Number(
+      new URL(locked.headers.get("location") ?? "", ORIGIN).searchParams.get(
+        "retry_after",
+      ),
+    );
+
+    // Just before the wait is over the lock holds; just after, the right
+    // password signs in and sets the session.
+    advanceClock((wait - 5) * 1000);
+    const stillLocked = await signInForm(ctx, PASSWORD, "203.0.113.61");
+    expect(stillLocked.headers.get("location")).toContain(
+      "error=too_many_attempts",
+    );
+    advanceClock(10 * 1000);
+    const open = await signInForm(ctx, PASSWORD, "203.0.113.61");
+    expect(open.headers.get("location")).toBe("/");
+    expect(open.headers.get("set-cookie")).toContain("session_token");
   });
 });

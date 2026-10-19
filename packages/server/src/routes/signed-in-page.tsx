@@ -1,13 +1,14 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * What a person sees when they are signed in and there is nowhere further to
  * send them: at the server's address after signing in with no app waiting,
  * and when they open the sign-in page while a session already exists and no
  * authorization sent them.
  */
-
 import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
-import { renderAuthLayout } from "./auth-layout.js";
-import { confirmIcon, escapeHtml } from "./auth-html.js";
+import { renderDocument } from "../pages/render.js";
+import { Button, MomentCard, PageShell } from "../pages/parts/index.js";
 
 interface SignedInPageParams {
   instanceName?: string;
@@ -23,24 +24,36 @@ interface SignedInPageParams {
   continueTo?: string;
 }
 
+const TITLE = "You're signed in";
+
 /** Renders the signed-in page as a full HTML document. */
 export function renderSignedInPage(params: SignedInPageParams): string {
+  const name = params.instanceName ?? DEFAULT_INSTANCE_NAME;
   const next =
     params.continueTo !== undefined && params.continueTo !== "/"
-      ? `<div class="actions"><a class="btn btn--primary" href="${escapeHtml(params.continueTo)}">Continue</a></div>`
-      : "";
-  const bodyHtml = `
-    ${confirmIcon("check")}
-    <h1 class="title">You're signed in</h1>
-    <p class="sub" role="status">You're signed in to ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)} as <b>${escapeHtml(params.email)}</b>. To use your data, open an app and connect it to this server.</p>
-    ${next}
-    <p><a href="/auth/owner/manage">Manage ${escapeHtml(params.instanceName ?? DEFAULT_INSTANCE_NAME)}</a></p>
-  `;
-
-  return renderAuthLayout({
-    title: "You're signed in",
-    bodyHtml,
-    centered: true,
-    nonce: params.nonce,
-  });
+      ? params.continueTo
+      : undefined;
+  return renderDocument(
+    <PageShell title={TITLE} nonce={params.nonce} needsScript={false}>
+      <MomentCard
+        title={TITLE}
+        ledeRole="status"
+        lede={
+          <>
+            You're signed in to {name} as <b>{params.email}</b>. To use your
+            data, open an app and connect it to this server.
+          </>
+        }
+      >
+        {next !== undefined && (
+          <Button kind="primary" wide href={next}>
+            Continue
+          </Button>
+        )}
+        <Button kind="outline" wide href="/auth/owner/manage">
+          Manage {name}
+        </Button>
+      </MomentCard>
+    </PageShell>,
+  );
 }

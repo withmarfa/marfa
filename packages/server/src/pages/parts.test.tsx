@@ -403,6 +403,24 @@ describe("fields", () => {
     expect(out).not.toContain("hint");
   });
 
+  it("marks a field invalid by another field's message, with no message of its own", () => {
+    const out = html(
+      <TextField id="e" name="e" label="E" hint="h" invalidBy="other-err" />,
+    );
+    expect(attrs(out, /<input /)).toMatchObject({
+      "aria-invalid": "true",
+      "aria-describedby": "other-err e-hint",
+    });
+    expect(out).not.toContain('class="err"');
+    const password = html(
+      <PasswordField id="p" name="p" label="P" invalidBy="other-err" />,
+    );
+    expect(attrs(password, /<input /)).toMatchObject({
+      "aria-invalid": "true",
+      "aria-describedby": "other-err",
+    });
+  });
+
   it("puts the label's end content on the label's line", () => {
     const out = html(
       <PasswordField

@@ -10,7 +10,7 @@
  * writer at a time, which is what stops two of those increments landing as
  * one.
  */
-import { and, eq, or, lt, sql } from "drizzle-orm";
+import { and, eq, gt, or, lt, sql } from "drizzle-orm";
 import type { RateLimitStore } from "../interface.js";
 import { rateLimitWindows } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -70,6 +70,28 @@ export class SqliteRateLimitStore implements RateLimitStore {
       throw new Error("rateLimits.incrementWindow: upsert returned no row");
     }
     return { count: row.count, expires_at: row.expires_at };
+  }
+
+  async peekWindow(
+    family: string,
+    key: string,
+    nowIso: string,
+  ): Promise<{ count: number; expires_at: string } | null> {
+    const rows = await this.db
+      .select({
+        count: rateLimitWindows.count,
+        expires_at: rateLimitWindows.expires_at,
+      })
+      .from(rateLimitWindows)
+      .where(
+        and(
+          eq(rateLimitWindows.family, family),
+          eq(rateLimitWindows.window_key, key),
+          gt(rateLimitWindows.expires_at, nowIso),
+        ),
+      )
+      .all();
+    return rows[0] ?? null;
   }
 
   async incrementWindows(

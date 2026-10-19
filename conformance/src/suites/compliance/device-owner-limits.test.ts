@@ -242,9 +242,15 @@ describe("the owner device lookup lane", () => {
     ).toHaveLength(6);
     await server.restart();
     origin = await issuerOrigin(server);
-    expect(
+    const refused = new URL(
       await location(await enter(codeFor(100), second, "203.0.113.1")),
-    ).toContain("error=too_many_attempts");
+      origin,
+    );
+    expect(refused.searchParams.get("error")).toBe("too_many_attempts");
+    // The owner lane's wait is what is left of its fifteen minutes.
+    const wait = Number(refused.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(0);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
     expect(
       await location(await screen(codeFor(101), second, "203.0.113.2")),
     ).toContain("error=too_many_attempts");

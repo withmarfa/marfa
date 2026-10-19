@@ -5,6 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { visibleText } from "../../utils/page-html.js";
 
 /**
  * The caution the pages a person approves an app on show beside its name.
@@ -121,14 +122,14 @@ async function consentPage(clientId: string, scope?: string): Promise<string> {
   return page.text();
 }
 
-/** The sign-in page a person nobody has signed in is sent to by the app. */
+/** The text of the sign-in page a person nobody has signed in is sent to by the app. */
 async function signInPage(clientId: string): Promise<string> {
   const authorize = await fetch(authorizeUrl(clientId), { redirect: "manual" });
   const signIn = await sentTo(authorize);
   expect(signIn.pathname).toBe("/auth/sign-in");
   const page = await fetch(signIn);
   expect(page.status).toBe(200);
-  return page.text();
+  return visibleText(await page.text());
 }
 
 /** The approval page for a code the app asked for on a device. */

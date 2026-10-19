@@ -32,15 +32,18 @@ import type {
   MarfaAuth,
   MarfaAuthSession,
 } from "../auth/instance.js";
-import {
-  renderSignInPage,
-  synthesizeOauthReturnTo,
-  validateReturnTo,
-} from "./sign-in-page.js";
+import { renderForgotPasswordPage } from "./forgot-password-page.js";
+import { renderSignInPage } from "./sign-in-page.js";
+import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-return.js";
+import { parseWaitSeconds } from "../pages/lockout.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
 import { renderSignedInPage } from "./signed-in-page.js";
 import { prefersHtml } from "./http-error-page.js";
-import { KeyedThrottle } from "../auth/keyed-throttle.js";
+import {
+  KeyedThrottle,
+  admitThroughLanes,
+  secondsUntilReset,
+} from "../auth/keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { webOriginsOf } from "../auth/web-origins.js";
@@ -258,28 +261,60 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     windowMs: DEVICE_CODE_WINDOW_MS,
   });
 
-  const admitCodeLookup = async (c: Context<AppEnv>): Promise<boolean> => {
+  type CodeLookupAdmission =
+    { allowed: true } | { allowed: false; retryAfter: number };
+  const refusal = (
+    admitted: { allowed: true } | { allowed: false; resetAt: number },
+  ): CodeLookupAdmission =>
+    admitted.allowed
+      ? admitted
+      : { allowed: false, retryAfter: secondsUntilReset(admitted.resetAt) };
+
+  /** Counts a lookup, and when a lane refuses it, says when another will be
+   *  allowed: the latest end among the lanes that are spent. */
+  const admitCodeLookup = async (
+    c: Context<AppEnv>,
+  ): Promise<CodeLookupAdmission> => {
     const authority = c.get("authority");
     if (authority?.kind === "owner") {
       // The transaction revalidates the admitted authority under the write lock,
       // so ending a session cannot race the owner lane's counter writes.
-      return storage.runInTransaction(async () => {
-        const owner = await deviceCodePerOwner.attempt(authority.userId);
-        return (
-          owner.allowed &&
-          (await deviceCodeOwnerInstance.attempt("all")).allowed
-        );
-      });
+      return storage.runInTransaction(async () =>
+        refusal(
+          await admitThroughLanes([
+            { throttle: deviceCodePerOwner, key: authority.userId },
+            { throttle: deviceCodeOwnerInstance, key: "all" },
+          ]),
+        ),
+      );
     }
     const ip = c.var.clientIp;
-    const address = await deviceCodePerAddress.attempt(
-      ip ? addressBucket(ip) : "unknown",
-    );
     // Over-cap callers cannot spend the rest of their lane's aggregate budget.
-    return (
-      address.allowed && (await deviceCodePerInstance.attempt("all")).allowed
+    return refusal(
+      await admitThroughLanes([
+        {
+          throttle: deviceCodePerAddress,
+          key: ip ? addressBucket(ip) : "unknown",
+        },
+        { throttle: deviceCodePerInstance, key: "all" },
+      ]),
     );
   };
+
+  /** The redirect to the code page for a lookup a lane refused. */
+  const lookupRefused = (
+    c: Context<AppEnv>,
+    refusal: { retryAfter: number },
+    userCode?: string,
+  ): Response =>
+    c.redirect(
+      `/auth/device?${new URLSearchParams({
+        error: "too_many_attempts",
+        retry_after: String(refusal.retryAfter),
+        ...(userCode ? { user_code: userCode } : {}),
+      }).toString()}`,
+      302,
+    );
 
   /**
    * Gate `/auth/authorize` on a Better Auth cookie session. Every caller must
@@ -498,12 +533,21 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       renderSignInPage({
         instanceName: await readInstanceName(storage.settings),
         nonce: c.var.cspNonce,
+        address: new URL(c.var.config.authBaseUrl).host,
         returnTo,
         error,
+        retryAfter: parseWaitSeconds(url.searchParams.get("retry_after")),
         email,
         app: app ?? undefined,
       }),
     );
+  });
+
+  // Where "Forgot password?" leads. Marfa has no reset by email, so the page
+  // says how to recover on the machine; it is fixed and needs no session.
+  router.get("/forgot-password", (c) => {
+    setNoStore(c);
+    return c.html(renderForgotPasswordPage(c.var.cspNonce));
   });
 
   router.post("/sign-in", async (c) => {
@@ -524,9 +568,14 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const emailStr = typeof email === "string" ? email.trim() : "";
 
     // Carried back so the form is not emptied by a wrong password.
-    const errorRedirect = (errCode: string): Response =>
+    const errorRedirect = (errCode: string, retryAfter?: string): Response =>
       c.redirect(
-        buildSignInRedirect({ returnTo, error: errCode, email: emailStr }),
+        buildSignInRedirect({
+          returnTo,
+          error: errCode,
+          email: emailStr,
+          retryAfter,
+        }),
         302,
       );
 
@@ -581,11 +630,15 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
-    // A 429 is a limit, Better Auth's per-address one or the per-account
-    // one in `auth/sign-in-throttle.ts`, and the password was never judged.
-    const reason =
-      response.status === 429 ? "too_many_attempts" : "invalid_credentials";
-    return errorRedirect(reason);
+    // A 429 is a limit, the per-address one or the per-account one in
+    // `auth/sign-in-throttle.ts`, and the password was never judged. Its
+    // `Retry-After` is the latest end among the limits that are spent.
+    if (response.status === 429)
+      return errorRedirect(
+        "too_many_attempts",
+        response.headers.get("retry-after") ?? undefined,
+      );
+    return errorRedirect("invalid_credentials");
   });
 
   // Browser logout. The plugin owns the whole of it — validating the id token,
@@ -698,12 +751,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       return c.redirect(`/auth/device?error=missing_code`, 302);
     }
 
-    if (!(await admitCodeLookup(c))) {
-      return c.redirect(
-        `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
-        302,
-      );
-    }
+    const admission = await admitCodeLookup(c);
+    if (!admission.allowed) return lookupRefused(c, admission, submitted);
     const refuseCode = (errorCode: string): Response =>
       c.redirect(
         `/auth/device?error=${errorCode}&user_code=${encodeURIComponent(submitted)}`,
@@ -750,6 +799,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       renderDevicePage({
         prefilled: rawCode,
         error,
+        retryAfter: parseWaitSeconds(url.searchParams.get("retry_after")),
         nonce: c.var.cspNonce,
       }),
     );
@@ -763,9 +813,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     if (!userCode) {
       return c.redirect("/auth/device?error=missing_code", 302);
     }
-    if (!(await admitCodeLookup(c))) {
-      return c.redirect("/auth/device?error=too_many_attempts", 302);
-    }
+    const admission = await admitCodeLookup(c);
+    if (!admission.allowed) return lookupRefused(c, admission);
     // Verified with the session's cookies, which is what claims a pending
     // code for this person: the plugin approves only a code its owner has
     // claimed, and the owner is whoever the verification step saw first.
@@ -873,9 +922,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         "user_code and decision are required",
       );
     }
-    if (!(await admitCodeLookup(c))) {
-      return c.redirect("/auth/device?error=too_many_attempts", 302);
-    }
+    const admission = await admitCodeLookup(c);
+    if (!admission.allowed) return lookupRefused(c, admission);
     const verdict = await deviceAuth.deviceVerify(userCode, c.req.raw.headers);
     if (!verdict.ok) {
       if (verdict.reason === "expired_code") {
@@ -1125,14 +1173,16 @@ function scopeList(scope: string | undefined): string[] {
 }
 
 /** Build a redirect URL back to the sign-in page with the right query
- *  shape (error, email, return_to). All values are encoded. */
+ *  shape (error, retry_after, email, return_to). All values are encoded. */
 function buildSignInRedirect(params: {
   returnTo: string;
   error?: string;
   email?: string;
+  retryAfter?: string;
 }): string {
   const search = new URLSearchParams();
   if (params.error) search.set("error", params.error);
+  if (params.retryAfter) search.set("retry_after", params.retryAfter);
   if (params.email) search.set("email", params.email);
   if (params.returnTo && params.returnTo !== "/") {
     search.set("return_to", params.returnTo);

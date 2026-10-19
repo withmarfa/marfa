@@ -13,6 +13,8 @@ There is no client framework and no client-side rendering.
 | `styles/tokens.css`   | Colors (light and dark), spacing, radii, type and the focus ring.           |
 | `styles/parts.css`    | The parts' styles. It reads tokens and holds no color of its own.           |
 | `client/`             | The browser modules, bundled into one script.                               |
+| `lockout.ts`          | Turns the wait a refusal names into the minutes a page says.                |
+| `reading.ts`          | Reads a rendered page as a person does, for tests: text, fields, forms.     |
 | `registry.ts`         | The pages of the console, for the page picker and the command search.       |
 | `navigation.ts`       | Logic the server and the browser share: stepping, matching, pagination.     |
 | `assets.generated.ts` | The built stylesheet and script, with their hashes. Generated; do not edit. |
@@ -25,7 +27,7 @@ There is no client framework and no client-side rendering.
   one-line `<noscript>` notice. A page that works in full without script (the
   signed-out and problem pages) sets it to false, so it loads no script and
   does not say it needs one.
-- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader` and `Section`.
+- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and `Divider`.
 - **Rows:** `RowGroup`, `Row` and `ClosingAction`.
 - **Controls and fields:** `Button`, `Select`, `Switch`, `TextField`,
   `PasswordField`, `SearchField` and `FormFoot`.
