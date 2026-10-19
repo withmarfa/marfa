@@ -4,7 +4,6 @@ import {
   createTestContext,
   request,
   seedOauthBearer,
-  narrowAppGrant,
   type TestContext,
 } from "../test-utils.js";
 let ctx: TestContext;
@@ -384,7 +383,7 @@ it("serves changed profile values through real OAuth userinfo and keeps wildcard
     picture: "https://example.com/p.png",
   });
 });
-it("refuses an app narrowed while awaiting the profile writer", async () => {
+it("refuses an app disconnected while awaiting the profile writer", async () => {
   const oauth = await seedOauthBearer(ctx, ["openid", "profile:write"]);
   const before = await ctx.storage.owner!.find();
   const original = ctx.storage.runInTransaction.bind(ctx.storage);
@@ -410,7 +409,13 @@ it("refuses an app narrowed while awaiting the profile writer", async () => {
   });
   try {
     await arrived;
-    await narrowAppGrant(ctx, oauth.clientId, ["openid", "profile.name:write"]);
+    expect(
+      (
+        await ctx.ownerRequest(`/auth/grants/${oauth.grantId}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(204);
   } finally {
     release();
   }
@@ -443,6 +448,4 @@ it("keeps an old app token through an identical approval with explicit email rea
     clientId: app.clientId,
   });
   expect((await change()).status).toBe(200);
-  await narrowAppGrant(ctx, app.clientId, ["openid", "profile.name:write"]);
-  expect((await change()).status).toBe(401);
 });

@@ -17,7 +17,6 @@
     "calls": {
       "KeyStore.revoke": 1,
       "OauthProviderStore.deleteDeviceCodesForGrant": 1,
-      "OauthProviderStore.revokeAccessTokensForGrant": 1,
       "OauthProviderStore.revokeTokensForGrant": 1,
       "runAuditedTransaction": 2,
       "writeItem": 3

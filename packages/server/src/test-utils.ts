@@ -6,10 +6,7 @@ import { claimOwner, issueSetupCode } from "./auth/instance-claim.js";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
-import { consentLockDepth, withConsentLock } from "./auth/consent-lock.js";
-import { projectGrantOnConsent } from "./auth/grant-lifecycle.js";
-import { runAuditedTransaction } from "./storage/audited-transaction.js";
-import { browserWriter } from "./auth/version-writer.js";
+import { consentLockDepth } from "./auth/consent-lock.js";
 import type { AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
@@ -313,47 +310,6 @@ export async function seedOauthBearer(
     clientId,
     refreshToken: exchanged.refresh_token as string | undefined,
   };
-}
-
-/**
- * Lower what an app holds to exactly `scopes`, as the owner ending part of
- * its access would. Approving never lowers a grant, so a test that needs a
- * narrower one does it here.
- */
-export async function narrowAppGrant(
-  ctx: TestContext,
-  clientId: string,
-  scopes: string[],
-): Promise<void> {
-  const provider = ctx.storage.oauthProvider;
-  if (!provider) throw new Error("Credential storage is unavailable");
-  await withConsentLock(clientId, ctx.owner.id, async () => {
-    let audit!: Awaited<ReturnType<typeof projectGrantOnConsent>>;
-    await runAuditedTransaction(
-      ctx.storage,
-      async () => {
-        const prior =
-          (await provider.getPriorConsent(clientId, ctx.owner.id)) ?? [];
-        if (
-          !(await provider.setConsentScopes(
-            clientId,
-            ctx.owner.id,
-            scopes,
-            prior,
-          ))
-        )
-          throw new Error("The app has no consent to narrow");
-        audit = await projectGrantOnConsent(ctx.storage, {
-          authUserId: ctx.owner.id,
-          clientId,
-          scopes,
-          clientIp: null,
-          by: browserWriter("test-narrow", null),
-        });
-      },
-      () => audit,
-    );
-  });
 }
 
 /**

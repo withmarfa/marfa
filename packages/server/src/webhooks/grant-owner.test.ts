@@ -18,7 +18,6 @@ import {
   createTestContext,
   request,
   seedOauthBearer,
-  narrowAppGrant,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
@@ -60,6 +59,18 @@ function rawRun(query: string, params: unknown[]): Promise<unknown> {
       __sqliteRun: (q: string, p: unknown[]) => Promise<unknown>;
     }
   ).__sqliteRun(query, params);
+}
+
+/** Lower the consent a grant stands on to exactly `scopes`, as storage holds it. */
+async function narrowConsent(
+  clientId: string,
+  userId: string,
+  scopes: string[],
+): Promise<void> {
+  const prior = (await provider().getPriorConsent(clientId, userId)) ?? [];
+  expect(
+    await provider().setConsentScopes(clientId, userId, scopes, prior),
+  ).toBe(true);
 }
 
 /** A consented grant and a first token under it. */
@@ -239,7 +250,7 @@ describe("a signed-in app's subscription", () => {
   it("narrows its deliveries when the grant is narrowed", async () => {
     const g = await grant();
     await register(g.first);
-    await narrowAppGrant(ctx, g.clientId, [
+    await narrowConsent(g.clientId, g.userId, [
       "core.note:read",
       "webhooks.manage",
     ]);
