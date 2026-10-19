@@ -286,7 +286,7 @@ A `hold` fault makes the target wait at the point until the fault is cleared.
 | `hold:stream-drain`          | A stream waits after its replay, or at once where it has none, before it delivers the frames it held while it opened and announces `stream_live`.                                                                         |
 | `hold:announce`              | A write's events wait after the write commits, before the target tells its open streams of them. Announcements of later writes wait behind them, in order.                                                                |
 | `hold:read-snapshot`         | A conditional read, one that names `X-Marfa-Read-View`, waits inside the snapshot it reads from, after the target has judged the read view and before the door reads. The snapshot's own bound, five seconds, still runs. |
-| `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms. |
+| `unfold-deadline=<ms>`       | Shortens the 1,000 ms one series may take to unfold, so a fixture shows that a series past the time bound is left out without needing a rule that is slow enough. It tests the bound, not the 1,000 ms.                   |
 
 A `free` fault makes the target read the free space it says on one volume, for
 the reserve an upload and a restore keep (`blobs`) and for the `disk` component
