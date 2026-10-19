@@ -19,6 +19,7 @@ import {
 } from "../../utils/moved-clock.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * What the retention jobs expire, and what they leave when the retention is
@@ -325,6 +326,96 @@ describe("a positive retention", () => {
       expect(bin.data.data.map((item) => item.id)).toEqual([
         newerBin.data.item.id,
       ]);
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a bin holding more than one run of trash-purge removes", () => {
+  it(
+    "empties it without waiting the job's interval for each batch, and audits every run",
+    async () => {
+      // The interval is out of reach, so every run after the one this case
+      // asks for is one the server scheduled for itself.
+      const server = await bootFreshServer(
+        "retention-trash-backlog",
+        QUIET_SCHEDULE,
+      );
+      await quiet(server, ["trash-purge"]);
+      const writer = writerOf(server);
+      const config = (await writer.getConfig()).data as Record<string, unknown>;
+      const set = await writer.updateConfig({
+        ...config,
+        trash_retention_days: 1,
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+
+      const total = 450;
+      const ids: string[] = [];
+      for (let from = 0; from < total; from += 150) {
+        const created = await writer.bulkItems({
+          items: Array.from({ length: 150 }, (_, n) => ({
+            type: "core.note",
+            properties: { body: `backlog ${String(from + n)}` },
+          })),
+        });
+        expect(created.status, JSON.stringify(created.error)).toBeLessThan(300);
+        for (const row of created.data.results) {
+          ids.push(row.id!);
+        }
+      }
+      expect(ids).toHaveLength(total);
+      for (let from = 0; from < total; from += 50) {
+        const deleted = await Promise.all(
+          ids.slice(from, from + 50).map((id) => writer.deleteItem(id)),
+        );
+        for (const res of deleted) expect(res.ok).toBe(true);
+      }
+
+      const inBin = async (): Promise<number> => {
+        let count = 0;
+        let cursor: string | undefined;
+        do {
+          const page = await writer.listItems({
+            state: "trashed",
+            limit: 100,
+            ...(cursor !== undefined && { cursor }),
+          });
+          expect(page.ok, JSON.stringify(page.error)).toBe(true);
+          count += page.data.data.length;
+          cursor = page.data.next_cursor ?? undefined;
+        } while (cursor !== undefined);
+        return count;
+      };
+      // The witness: every item is in the bin, and nothing is old enough yet.
+      expect(await inBin()).toBe(total);
+      expect((await runJob(server, "trash-purge")).result).toEqual({
+        deleted: 0,
+      });
+      expect(await inBin()).toBe(total);
+
+      await movedClock(server).advance(2 * DAY_MS);
+      const first = await runJob(server, "trash-purge");
+      expect(first.outcome, String(first.error)).toBe("ok");
+      const removed = (first.result as { deleted: number }).deleted;
+      expect(removed).toBeGreaterThan(0);
+
+      await waitFor(
+        "the server to run trash-purge again until the bin was empty",
+        async () => ((await inBin()) === 0 ? true : undefined),
+        30_000,
+      );
+
+      const audited = await operatorOf(server).listAudit({
+        action: "items.trash_purged",
+        limit: 100,
+      });
+      expect(audited.status, JSON.stringify(audited.error)).toBe(200);
+      const deletedByRun = audited.data.data.map(
+        (entry) => (entry.details as { deleted: number }).deleted,
+      );
+      expect(deletedByRun.reduce((sum, n) => sum + n, 0)).toBe(total);
+      expect(deletedByRun).toContain(removed);
     },
     4 * FRESH_SERVER_TIMEOUT_MS,
   );

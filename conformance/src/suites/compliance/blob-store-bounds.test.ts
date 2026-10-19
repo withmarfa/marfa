@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { renameSync, writeFileSync } from "node:fs";
 import {
   DeleteObjectCommand,
   PutObjectCommand,
@@ -13,6 +13,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  blobFolder,
   bytesOf,
   clientsFor,
   diskPath,
@@ -146,6 +147,7 @@ describe("a replication run that is bounded by count", () => {
         verified: 1,
         struck: 0,
         bytes: sizeOf.get(copy.hash),
+        unreachable: 0,
       });
       const now = await stamped();
       expect([...now.keys()].sort(), `after run ${String(index + 1)}`).toEqual(
@@ -257,7 +259,12 @@ describe("an integrity run that is bounded by bytes", () => {
     );
     for (const left of [1, 0]) {
       const run = await runJob(operator, "blob-integrity");
-      expect(run.result).toEqual({ verified: 1, struck: 0, bytes: 300 });
+      expect(run.result).toEqual({
+        verified: 1,
+        struck: 0,
+        bytes: 300,
+        unreachable: 0,
+      });
       expect(await unverified(big)).toBe(left);
     }
   });
@@ -279,14 +286,78 @@ describe("an integrity run that is bounded by bytes", () => {
     const second = await uploadAndCopy(smaller);
 
     const bound = await runJob(operator, "blob-integrity");
-    expect(bound.result).toEqual({ verified: 2, struck: 0, bytes: 200 });
+    expect(bound.result).toEqual({
+      verified: 2,
+      struck: 0,
+      bytes: 200,
+      unreachable: 0,
+    });
     expect(await unverified(first)).toBe(0);
     expect(await unverified(second)).toBe(2);
 
     const rest = await runJob(operator, "blob-integrity");
-    expect(rest.result).toEqual({ verified: 2, struck: 0, bytes: 2 });
+    expect(rest.result).toEqual({
+      verified: 2,
+      struck: 0,
+      bytes: 2,
+      unreachable: 0,
+    });
     expect(await unverified(second)).toBe(0);
   });
+});
+
+describe("an integrity run while the disk store cannot be reached", () => {
+  it(
+    "checks the copies of a store that can answer when another cannot be reached",
+    async () => {
+      const { server, operator, working } = await boot(
+        "blob-store-unreachable-others",
+        { MARFA_BLOB_INTEGRITY_BATCH: "3" },
+      );
+      const hashes: string[] = [];
+      for (const label of ["one", "two", "three"]) {
+        const upload = await working.uploadBlob(
+          bytesOf(`blob ${label} of three`, 100),
+          "text/plain",
+        );
+        expect(upload.status, JSON.stringify(upload.error)).toBe(201);
+        hashes.push(upload.data.hash);
+      }
+      await whenCopied(operator, hashes);
+      const stores = (await operator.listBlobStores()).data.data;
+      const disk = stores.find((store) => store.kind === "disk")!;
+      const s3 = stores.find((store) => store.kind === "s3")!;
+
+      // Six copies and three to a run: the disk's, never stamped while it is
+      // away, would take every row if the run kept asking for them.
+      const folder = blobFolder(server);
+      renameSync(folder, `${folder}.away`);
+      try {
+        const run = await runJob(operator, "blob-integrity");
+        expect(run.result).toEqual({
+          verified: 3,
+          struck: 0,
+          bytes: 300,
+          unreachable: 1,
+        });
+      } finally {
+        renameSync(`${folder}.away`, folder);
+      }
+      for (const hash of hashes) {
+        const rows = (await operator.listBlobLocations(hash)).data.data;
+        expect(rows.map((row) => row.store_id).sort()).toEqual(
+          [disk.id, s3.id].sort(),
+        );
+        expect(
+          rows.find((row) => row.store_id === s3.id)?.verified_at,
+        ).not.toBe(null);
+        expect(rows.find((row) => row.store_id === disk.id)?.verified_at).toBe(
+          null,
+        );
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
 describe("a replication run over a copy that does not hash to its name", () => {
@@ -399,6 +470,7 @@ describe("an integrity run over the object store's copies", () => {
         verified: 7,
         struck: 3,
         bytes: 10 * size,
+        unreachable: 0,
       });
 
       const struck = async (hash: string) =>

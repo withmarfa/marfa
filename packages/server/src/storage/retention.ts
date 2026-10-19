@@ -22,6 +22,14 @@ import * as clock from "../clock.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
+ * The most rows one run of a purge removes, so a run's transaction, and the
+ * write lock it holds, stay short. A run that leaves rows behind has the
+ * housekeeping scheduler run it again at once (`hasBacklog`), so a backlog
+ * is cleared a batch at a time and not a batch per interval.
+ */
+const PURGE_BATCH = 200;
+
+/**
  * Purges each row through the write the purge doors use, a savepoint of the
  * sweep's transaction with its events, so the removal and its announcement
  * commit together. A row that cannot be purged is logged and left for the
@@ -104,21 +112,16 @@ export class TrashPurger {
 
   /**
    * One sweep. Computes the cutoff date from the injected clock and deletes
-   * at most 200 trashed rows strictly older than it, with one audit.
+   * at most {@link PURGE_BATCH} trashed rows strictly older than it, with one
+   * audit.
    *
    * Returns the number of rows deleted, at the configured override when
    * one is wired and at the instance default otherwise.
    */
   async runOnce(): Promise<number> {
-    const deleted = this.configOverride
-      ? await runSweepToCutoff({
-          override: this.configOverride,
-          nowFn: this.nowFn,
-          instanceDefault: this.retentionDays,
-          unitMs: MS_PER_DAY,
-          sweep: (cutoff) => this.purge(cutoff),
-        })
-      : await this.runOnceGlobal();
+    const cutoff = await this.cutoff();
+    if (cutoff === null) return 0;
+    const deleted = await this.purge(cutoff);
     if (deleted > 0) {
       log("info", "Trash purge", {
         deleted,
@@ -128,13 +131,32 @@ export class TrashPurger {
     return deleted;
   }
 
+  /** Whether trashed rows older than the retention are still there. */
+  async hasBacklog(): Promise<boolean> {
+    const cutoff = await this.cutoff();
+    return (
+      cutoff !== null &&
+      (await this.storage.items.listTrashedOlderThan(cutoff, 1)).length > 0
+    );
+  }
+
+  /** The instant before which a row has outlived the retention, or `null`
+   *  when the retention is 0 and nothing expires by age. */
+  private async cutoff(): Promise<string | null> {
+    const days = this.configOverride
+      ? await effectiveRetention(this.configOverride, this.retentionDays)
+      : this.retentionDays;
+    if (days <= 0) return null;
+    return new Date(this.nowFn().getTime() - days * MS_PER_DAY).toISOString();
+  }
+
   private purge(cutoff: string): Promise<number> {
     return runAuditedTransaction(
       this.storage,
       async () =>
         purgeEach(
           this.storage,
-          await this.storage.items.listTrashedOlderThan(cutoff, 200),
+          await this.storage.items.listTrashedOlderThan(cutoff, PURGE_BATCH),
           {},
         ),
       (deleted) =>
@@ -148,19 +170,11 @@ export class TrashPurger {
           : null,
     );
   }
-
-  private async runOnceGlobal(): Promise<number> {
-    if (this.retentionDays <= 0) return 0;
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
-    ).toISOString();
-    return this.purge(cutoff);
-  }
 }
 
 /**
- * Hard-deletes up to 200 revoked application-grant rows once older than the
- * configured window.
+ * Hard-deletes revoked application-grant rows once older than the configured
+ * window, {@link PURGE_BATCH} to a run.
  *
  * **The row it sweeps is not trash and is not in a terminal lifecycle state.**
  * A grant revoked through the user-facing path keeps `state: "active"` — the
@@ -190,16 +204,17 @@ export class RevokedGrantPurger {
   ) {}
 
   async runOnce(): Promise<number> {
-    if (this.retentionDays <= 0) return 0;
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
-    ).toISOString();
+    const cutoff = this.cutoff();
+    if (cutoff === null) return 0;
     const deleted = await runAuditedTransaction(
       this.storage,
       async () =>
         purgeEach(
           this.storage,
-          await this.storage.items.listRevokedAppGrantsOlderThan(cutoff, 200),
+          await this.storage.items.listRevokedAppGrantsOlderThan(
+            cutoff,
+            PURGE_BATCH,
+          ),
           { revokedGrant: true },
         ),
       (deleted) =>
@@ -215,6 +230,23 @@ export class RevokedGrantPurger {
       log("info", "Revoked grant rows purged", { deleted });
     }
     return deleted;
+  }
+
+  /** Whether revoked grant rows older than the window are still there. */
+  async hasBacklog(): Promise<boolean> {
+    const cutoff = this.cutoff();
+    return (
+      cutoff !== null &&
+      (await this.storage.items.listRevokedAppGrantsOlderThan(cutoff, 1))
+        .length > 0
+    );
+  }
+
+  private cutoff(): string | null {
+    if (this.retentionDays <= 0) return null;
+    return new Date(
+      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
+    ).toISOString();
   }
 }
 
@@ -503,25 +535,6 @@ async function effectiveRetention(
   const config = await readInstanceConfig(override.settings);
   const configured = config?.[override.configField];
   return typeof configured === "number" ? configured : instanceDefault;
-}
-
-/** One sweep at the effective retention. */
-async function runSweepToCutoff(opts: {
-  override: RetentionOverride;
-  nowFn: () => Date;
-  instanceDefault: number;
-  unitMs: number;
-  sweep: (cutoff: string) => Promise<number>;
-}): Promise<number> {
-  const effective = await effectiveRetention(
-    opts.override,
-    opts.instanceDefault,
-  );
-  if (effective <= 0) return 0;
-  const cutoff = new Date(
-    opts.nowFn().getTime() - effective * opts.unitMs,
-  ).toISOString();
-  return opts.sweep(cutoff);
 }
 
 /**

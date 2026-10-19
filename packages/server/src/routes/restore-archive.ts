@@ -48,7 +48,12 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import { wholeCopies, type BlobLayer } from "../storage/blob-layer.js";
+import {
+  storeUnavailable,
+  wholeCopies,
+  type BlobLayer,
+} from "../storage/blob-layer.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { writeArchiveTypes } from "./restore-archive-types.js";
 import type { ArchiveTypePlan } from "./restore-archive-types.js";
@@ -288,8 +293,17 @@ async function placeBlobBytes(
 ): Promise<string[]> {
   const missing: PendingBlob[] = [];
   for (const blob of pending) {
-    await finishCopyDeletion(storage, blobs.disk, blob.hash);
-    if ((await blobs.disk.has(blob.hash)) === null) missing.push(blob);
+    try {
+      await finishCopyDeletion(storage, blobs.disk, blob.hash);
+      if ((await blobs.disk.has(blob.hash)) === null) missing.push(blob);
+    } catch (error) {
+      // Before anything is written. A disk that cannot be reached cannot say
+      // whether it holds the bytes, or take them.
+      if (error instanceof BlobStoreUnreachable) {
+        throw storeUnavailable(blobs.disk, blob.hash, error);
+      }
+      throw error;
+    }
   }
   const unnamed: string[] = [];
   for (const blob of missing) {

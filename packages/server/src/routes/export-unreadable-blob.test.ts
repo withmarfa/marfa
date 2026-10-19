@@ -24,6 +24,7 @@ import {
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 import { BlobReplicator } from "../housekeeping/blob-replicate.js";
 import { storeChecks } from "../storage/blob-layer.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import {
   closeTestContexts,
   createTestContext,
@@ -904,6 +905,30 @@ describe("a restore of an archive that lacks a blob it names", () => {
     expect(
       (await target.storage.items.list({ limit: 100 })).data.map((i) => i.id),
     ).toEqual(before.data.map((i) => i.id));
+  });
+
+  it("answers 503 blob_store_unavailable and writes nothing when the disk cannot be reached to place a blob the archive carries", async () => {
+    const { entries } = await archiveNaming(["bytes the archive carries"]);
+    const target = await context();
+    const before = await target.storage.items.list({ limit: 100 });
+    const has = target.blobs.disk.has.bind(target.blobs.disk);
+    const unreachable = vi
+      .spyOn(target.blobs.disk, "has")
+      .mockRejectedValue(new BlobStoreUnreachable("the folder is away"));
+    const res = await restore(target, await pack(entries));
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "blob_store_unavailable",
+    );
+    expect(
+      (await target.storage.items.list({ limit: 100 })).data.map((i) => i.id),
+    ).toEqual(before.data.map((i) => i.id));
+    expect((await target.storage.blobs.count()).count).toBe(0);
+
+    // The witness: the same archive restores once the disk answers.
+    unreachable.mockImplementation(has);
+    const again = await restore(target, await pack(entries));
+    expect(again.status, await again.clone().text()).toBe(200);
   });
 
   it("answers an empty list for an archive that carries every blob it names", async () => {

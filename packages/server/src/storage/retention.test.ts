@@ -5,6 +5,7 @@ import type { TestContext } from "../test-utils.js";
 import {
   createTestContext,
   sweepRevokedGrantsBefore,
+  seedTrashedNotes,
   sweepTrashBefore,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
@@ -310,6 +311,65 @@ describe("TrashPurger — the instance config override", () => {
     const deleted = await purger.runOnce();
     expect(deleted).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
+  });
+});
+
+describe("TrashPurger — a backlog larger than one run's batch", () => {
+  const TRASHED_AT = new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY);
+
+  async function binSize(): Promise<number> {
+    const s = ctx.storage as unknown as {
+      __sqliteAll: (q: string) => Promise<{ n: number }[]>;
+    };
+    return (
+      await s.__sqliteAll(
+        "SELECT count(*) AS n FROM items WHERE state = 'trashed'",
+      )
+    )[0]!.n;
+  }
+
+  it("removes a batch a run, reports that more is waiting until none is, and audits each run", async () => {
+    await seedTrashedNotes(ctx.storage, 450, TRASHED_AT.toISOString());
+    const purger = new TrashPurger(ctx.storage, 60, () => FIXED_NOW);
+    expect(await binSize()).toBe(450);
+
+    // The witness for the claims below: the bin is full of eligible rows.
+    expect(await purger.hasBacklog()).toBe(true);
+
+    const runs: number[] = [];
+    const backlog: boolean[] = [];
+    while (runs.length < 5) {
+      runs.push(await purger.runOnce());
+      backlog.push(await purger.hasBacklog());
+      if (!backlog.at(-1)) break;
+    }
+    expect(runs).toEqual([200, 200, 50]);
+    expect(backlog).toEqual([true, true, false]);
+    expect(await binSize()).toBe(0);
+    expect(await purger.runOnce()).toBe(0);
+
+    const audited = await ctx.storage.audit.list({
+      action: "items.trash_purged",
+      limit: 10,
+    });
+    expect(
+      audited.data.map((row) => (row.details as { deleted: number }).deleted),
+    ).toEqual(expect.arrayContaining([200, 200, 50]));
+    expect(audited.data).toHaveLength(3);
+  });
+
+  it("reports no backlog while the retention is off or nothing has outlived it", async () => {
+    await seedTrashedNotes(ctx.storage, 3, TRASHED_AT.toISOString());
+    expect(
+      await new TrashPurger(ctx.storage, 0, () => FIXED_NOW).hasBacklog(),
+    ).toBe(false);
+    expect(
+      await new TrashPurger(ctx.storage, 120, () => FIXED_NOW).hasBacklog(),
+    ).toBe(false);
+    // The witness: the same rows under a retention they have outlived.
+    expect(
+      await new TrashPurger(ctx.storage, 60, () => FIXED_NOW).hasBacklog(),
+    ).toBe(true);
   });
 });
 
@@ -878,6 +938,21 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     const purger = new RevokedGrantPurger(ctx.storage, 90);
     expect(await purger.runOnce()).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
+  });
+
+  it("removes a batch a run and reports that more is waiting until none is", async () => {
+    const ids: string[] = [];
+    for (let n = 0; n < 250; n += 1) ids.push(await seedRevokedGrant(OLD));
+    const purger = new RevokedGrantPurger(ctx.storage, 90);
+    expect(await purger.hasBacklog()).toBe(true);
+
+    expect(await purger.runOnce()).toBe(200);
+    expect(await purger.hasBacklog()).toBe(true);
+    expect(await purger.runOnce()).toBe(50);
+    expect(await purger.hasBacklog()).toBe(false);
+    for (const id of ids) {
+      expect(await ctx.storage.items.get(id)).toBeNull();
+    }
   });
 
   it("keeps an active grant that still carries an old revoked_at", async () => {

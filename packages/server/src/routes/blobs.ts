@@ -11,7 +11,11 @@ import { standingPermission, authorityId } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import { recordedStores, type BlobLayer } from "../storage/blob-layer.js";
+import {
+  recordedStores,
+  storeUnavailable,
+  type BlobLayer,
+} from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
   blobDisposition,
@@ -297,6 +301,18 @@ const bytesResponses = {
     headers: UNSATISFIABLE_HEADERS,
     description:
       "- `range_not_satisfiable`: the range starts past the end of the blob, or ends before it starts. `Content-Range` gives the blob's size.",
+  },
+  503: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema([
+          "blob_store_unavailable",
+          "write_contention",
+        ]),
+      },
+    },
+    description:
+      "- `blob_store_unavailable`: no store that holds this blob answered, so Marfa couldn't tell whether it still has the bytes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
   },
 };
 
@@ -712,11 +728,20 @@ export function blobRoutes(
     }
 
     let read: BlobRead | null = null;
+    let failure: { store: BlobStore; error: unknown } | undefined;
     for (const store of stores) {
-      read = await store.get(hash, range ?? undefined);
+      try {
+        read = await store.get(hash, range ?? undefined);
+      } catch (error) {
+        // A store that cannot answer says nothing of the bytes, and another
+        // store may hold them.
+        failure ??= { store, error };
+        continue;
+      }
       if (read) break;
     }
     if (!read) {
+      if (failure) throw storeUnavailable(failure.store, hash, failure.error);
       throw new MarfaError(
         ErrorCode.BLOB_NOT_FOUND,
         "No store holds the bytes of this blob",
