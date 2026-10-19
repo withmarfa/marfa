@@ -18,7 +18,7 @@ import {
   token,
   type App,
 } from "../../utils/signed-in.js";
-import { readControls, visibleText } from "../../utils/approval-form.js";
+import { readControls } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -429,12 +429,17 @@ describe("the device screen", () => {
       // request, and the stale session is shown a request that only reads.
       const shown = await deviceScreen(device, fresh);
       expect(shown.status, scope).toBe(200);
-      expect(visibleText(await shown.text())).toContain(device.userCode);
+      // The page shows the code as cells, one picture named by the code with its dash.
+      expect(await shown.text()).toContain(
+        `aria-label="${device.userCode.slice(0, 4)}-${device.userCode.slice(4)}"`,
+      );
     }
     const reading = await deviceCode("core.note:read openid");
     const shown = await deviceScreen(reading, stale);
     expect(shown.status).toBe(200);
-    expect(visibleText(await shown.text())).toContain(reading.userCode);
+    expect(await shown.text()).toContain(
+      `aria-label="${reading.userCode.slice(0, 4)}-${reading.userCode.slice(4)}"`,
+    );
   });
 
   it("lands the person back on the screen after they sign in again, where they approve", async () => {

@@ -565,7 +565,7 @@ describe("what the approval pages offer an app that holds a read and asks for th
     await offersTheHeldRead({
       held: "core.note:read",
       asked: "core.note:write",
-      label: "Notes",
+      label: "Note",
       write: "core.note:write",
     });
   });
@@ -574,7 +574,7 @@ describe("what the approval pages offer an app that holds a read and asks for th
     await offersTheHeldRead({
       held: "core.*:read",
       asked: "core.*:read core.note:write",
-      label: "Notes",
+      label: "Note",
       write: "core.note:write",
     });
   });
