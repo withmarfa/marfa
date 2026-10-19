@@ -1583,19 +1583,11 @@ function describeScope(scope: ParsedScope): string | undefined {
       return undefined;
     case "content":
       // Resolved from the curated map, unlike the two arms above, because
-      // both screens do read the map for this kind: `labelFor` falls
-      // through `SCOPE_LABELS` to it for everything that is not OIDC or a
-      // permission, and both screens label a row through `labelFor`. So
-      // a `content` entry written there reaches a person on both surfaces,
-      // and a hard return here would discard it — silently, on the one screen
-      // whose job is saying how large a grant is.
-      //
-      // The entry exists now, and this arm never changed to accommodate it —
-      // which is what resolving rather than hard-returning bought. The two
-      // literals still share the pattern `content`, so this map answers the
-      // same sentence for both; what tells the read level from the write one
-      // is the operation the row's label carries, which is derived per
-      // literal rather than looked up here.
+      // `describe` in `access-model.ts` reads this sentence for the content
+      // category and puts it on the row's second line, under the curated
+      // title "Your content". The two literals share the pattern `content`,
+      // so this map answers the same sentence for both; what tells the read
+      // level from the write one is the level the row's control offers.
       return CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
     case "edge": {
       // `edgeType` is optional on ParsedScope but always present when

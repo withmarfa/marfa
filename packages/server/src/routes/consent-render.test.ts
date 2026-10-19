@@ -384,6 +384,18 @@ describe("renderConsentScreen: a grant that reaches things not yet created", () 
       expect(name, pattern).not.toMatch(FUTURITY);
   });
 
+  it("says what the content category leaves out beside its name, and how far it reaches", () => {
+    const html = render(["content:read", "content:write"], {
+      descriptions: buildScopeDescriptions([scope("content:write")]),
+    });
+    const text = rowText(html, "content:read");
+    expect(text).toContain("Your content");
+    expect(text).toContain(
+      "Everything you save, and nothing about your account.",
+    );
+    expect(strip(text).stated).toBe(1);
+  });
+
   it("offers the whole of the data as one row", () => {
     const html = render(["*:read", "*:write"], {
       descriptions: buildScopeDescriptions([scope("*:write")]),

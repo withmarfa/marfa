@@ -154,8 +154,9 @@ function isCarried(literal: string, held: readonly string[]): boolean {
  * A curated name is the title. Without one the sentence that explains the
  * scope stands in, without its full stop, and the humanized pattern is the
  * floor. The line under the title says how far an open-ended grant reaches,
- * which is composed from the grammar and never written into any copy, or
- * explains a scope whose name alone does not.
+ * which is composed from the grammar and never written into any copy, and,
+ * for a metadata area, a profile row or the content category, a sentence
+ * that says what the name alone does not.
  */
 function describe(
   scope: ParsedScope,
@@ -173,7 +174,10 @@ function describe(
   if (scope.kind === "oidc" || scope.kind === "permission")
     return { title: scopeTitle(scope) };
   if (curated !== undefined) {
-    const explains = scope.kind === "metadata" || scope.kind === "profile";
+    const explains =
+      scope.kind === "metadata" ||
+      scope.kind === "profile" ||
+      scope.kind === "content";
     return {
       title: curated,
       description:
