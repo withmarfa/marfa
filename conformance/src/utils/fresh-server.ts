@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { offeredValues } from "./approval-form.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
   groupOf,
@@ -810,11 +811,8 @@ export async function startDeviceFlow(
         user_code: code.user_code,
         decision: "approve",
       });
-      for (const scope of new Set(
-        [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map(
-          (m) => m[1]!,
-        ),
-      )) {
+      // The owner approves everything the device asked for.
+      for (const scope of offeredValues(html, "scopes")) {
         form.append("scopes", scope);
       }
       const approved = await fetch(`${origin}/auth/device/consent`, {

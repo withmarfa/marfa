@@ -18,6 +18,7 @@ import {
   token,
   type App,
 } from "../../utils/signed-in.js";
+import { readControls, visibleText } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -428,12 +429,12 @@ describe("the device screen", () => {
       // request, and the stale session is shown a request that only reads.
       const shown = await deviceScreen(device, fresh);
       expect(shown.status, scope).toBe(200);
-      expect(await shown.text()).toContain(device.userCode);
+      expect(visibleText(await shown.text())).toContain(device.userCode);
     }
     const reading = await deviceCode("core.note:read openid");
     const shown = await deviceScreen(reading, stale);
     expect(shown.status).toBe(200);
-    expect(await shown.text()).toContain(reading.userCode);
+    expect(visibleText(await shown.text())).toContain(reading.userCode);
   });
 
   it("lands the person back on the screen after they sign in again, where they approve", async () => {
@@ -446,7 +447,9 @@ describe("the device screen", () => {
     // The sign-in page asks for the password although a session exists.
     const page = await ownerGet(location, stale);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('type="password"');
+    expect(
+      readControls(await page.text()).some((c) => c.type === "password"),
+    ).toBe(true);
     const returnTo = new URL(location, server.apiUrl).searchParams.get(
       "return_to",
     )!;
@@ -685,7 +688,9 @@ describe("the authorization screen", () => {
     const location = screen.headers.get("location")!;
     const page = await ownerGet(location, stale);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('type="password"');
+    expect(
+      readControls(await page.text()).some((c) => c.type === "password"),
+    ).toBe(true);
     const returnTo = new URL(location, server.apiUrl).searchParams.get(
       "return_to",
     )!;

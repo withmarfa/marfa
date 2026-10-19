@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { visibleText } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import {
   authorize,
@@ -35,7 +36,7 @@ const CONFIGURED = "https://configured.web-page-origin.test";
 const SCOPE = "core.note:read core.note:write";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 /** What an approval page says beside the addresses it names. */
-const REACH_LINE = "reach your server from a browser";
+const REACH_LINE = "from your browser";
 
 beforeAll(async () => {
   server = await bootFreshServer("web-page-origin", {
@@ -490,9 +491,9 @@ describe("where the owner reads a page's address", () => {
       headers: { cookie },
     });
     expect(screen.status).toBe(200);
-    const html = await screen.text();
-    expect(html).toContain(`<b>${origin}</b>`);
-    expect(html).toContain(REACH_LINE);
+    const text = visibleText(await screen.text());
+    expect(text).toContain(origin);
+    expect(text).toContain(REACH_LINE);
     // A native app's screen names no address.
     const app = await registerPage(
       ["https://named-native.web-page-origin.test/cb"],
@@ -502,7 +503,7 @@ describe("where the owner reads a page's address", () => {
       headers: { cookie },
     });
     expect(nativeScreen.status).toBe(200);
-    expect(await nativeScreen.text()).not.toContain(REACH_LINE);
+    expect(visibleText(await nativeScreen.text())).not.toContain(REACH_LINE);
 
     await approve(page);
     const grant = await grantOf(page);
@@ -523,9 +524,9 @@ describe("where the owner reads a page's address", () => {
       headers: { cookie },
     });
     expect(consent.status).toBe(200);
-    const consentHtml = await consent.text();
-    expect(consentHtml).toContain(`<b>${first}</b>`);
-    expect(consentHtml).toContain(`<b>${second}</b>`);
+    const consentText = visibleText(await consent.text());
+    expect(consentText).toContain(first);
+    expect(consentText).toContain(second);
 
     const code = await fetch(`${server.apiUrl}/auth/device/code`, {
       method: "POST",
@@ -544,9 +545,9 @@ describe("where the owner reads a page's address", () => {
       { headers: { cookie } },
     );
     expect(device.status).toBe(200);
-    const deviceHtml = await device.text();
-    expect(deviceHtml).toContain(`<b>${first}</b>`);
-    expect(deviceHtml).toContain(`<b>${second}</b>`);
+    const deviceText = visibleText(await device.text());
+    expect(deviceText).toContain(first);
+    expect(deviceText).toContain(second);
   });
 
   it("names the page's origin on the device approval page, and allows it once approved there", async () => {
@@ -583,9 +584,9 @@ describe("where the owner reads a page's address", () => {
       { headers: { cookie } },
     );
     expect(screen.status).toBe(200);
-    const html = await screen.text();
-    expect(html).toContain(`<b>${origin}</b>`);
-    expect(html).toContain(REACH_LINE);
+    const text = visibleText(await screen.text());
+    expect(text).toContain(origin);
+    expect(text).toContain(REACH_LINE);
     await expectRefused(origin, server.workingKey);
 
     const approved = await fetch(`${server.apiUrl}/auth/device/consent`, {

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { offeredValues } from "../../utils/approval-form.js";
 import { cleanup } from "../../utils/setup.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { cliContext, once, releaseHeld } from "./harness.js";
@@ -154,13 +155,7 @@ describe("the owner", () => {
     );
     expect(consent.status).toBe(200);
     const html = await consent.text();
-    const scopes = [
-      ...new Set(
-        [...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g)].map(
-          (m) => m[1]!,
-        ),
-      ),
-    ];
+    const scopes = offeredValues(html, "scopes");
     expect(scopes.length).toBeGreaterThan(0);
     const form = new URLSearchParams();
     form.set("user_code", first.user_code);
