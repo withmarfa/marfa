@@ -6,7 +6,7 @@
  * restore answers which named blobs neither the archive nor the instance
  * holds.
  */
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -173,6 +173,29 @@ function restore(ctx: TestContext, archive: Buffer) {
     },
     body: archive,
   });
+}
+
+/**
+ * A file item whose `blob_ref` the instance has no record of. A write is
+ * refused for bytes its writer never proved, so the item comes the only way
+ * it can: a restore of an archive that names the blob and does not carry it.
+ */
+async function unrecordedFile(
+  extra: Record<string, unknown> = {},
+): Promise<{ ctx: TestContext; id: string; hash: string }> {
+  const source = await context();
+  const hash = await upload(source, `bytes the archive drops ${randomUUID()}`);
+  const id = await fileNaming(source, hash, extra);
+  const res = await exportArchive(source);
+  expect(res.status).toBe(200);
+  const entries = await unpack(Buffer.from(await res.arrayBuffer()));
+  entries.delete(`blobs/${hash}`);
+  const ctx = await context();
+  const restored = await restore(ctx, await pack(entries));
+  expect(restored.status, await restored.clone().text()).toBe(200);
+  expect(await restored.json()).toMatchObject({ blobs_missing: [hash] });
+  expect(await ctx.storage.blobs.get(hash)).toBeNull();
+  return { ctx, id, hash };
 }
 
 describe("an archive export of a blob it cannot read", () => {
@@ -404,9 +427,7 @@ describe("an archive export of a blob it cannot read", () => {
   });
 
   it("names a blob a file's blob_ref refers to that the instance has no record of, with no type or size", async () => {
-    const ctx = await context();
-    const hash = unheardOf();
-    await fileNaming(ctx, hash);
+    const { ctx, hash } = await unrecordedFile();
 
     const { entries, manifest } = await exported(ctx, true);
     expect(manifest.blobs).toEqual({});
@@ -418,9 +439,7 @@ describe("an archive export of a blob it cannot read", () => {
   });
 
   it("names an unrecorded blob that only an earlier version's blob_ref refers to", async () => {
-    const ctx = await context();
-    const earlier = unheardOf();
-    const id = await fileNaming(ctx, earlier);
+    const { ctx, id, hash: earlier } = await unrecordedFile();
     const now = await upload(ctx, "the bytes the file names now");
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.workingKey,
@@ -439,12 +458,12 @@ describe("an archive export of a blob it cannot read", () => {
   });
 
   it("names no unrecorded digest a row holds anywhere but a file's blob_ref", async () => {
-    const ctx = await context();
     const inText = unheardOf();
     const inOtherField = unheardOf();
-    const referenced = unheardOf();
+    const { ctx, hash: referenced } = await unrecordedFile({
+      description: `see ${inOtherField}`,
+    });
     await noteNaming(ctx, inText);
-    await fileNaming(ctx, referenced, { description: `see ${inOtherField}` });
 
     // The witness is the file's own blob_ref, named in the same archive.
     const { manifest } = await exported(ctx, true);
