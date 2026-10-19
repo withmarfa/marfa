@@ -133,36 +133,36 @@ export class TrashPurger {
   }
 
   private async purge(cutoff: string): Promise<number> {
-    // Batch by batch, each its own audited write, until a batch comes back
-    // short: feed expiry fills the bin with no daily cap, so a backlog can
-    // be larger than one batch and must not wait a whole cadence per batch.
-    // A full batch that purges nothing is rows the purge refuses, which the
-    // next listing would answer again.
+    // Until a batch comes back short: feed expiry fills the bin with no
+    // daily cap, so a backlog can be larger than one batch and must not wait
+    // a whole cadence per batch. A full batch that purges nothing is rows
+    // the purge refuses, which the next listing would answer again.
     let deleted = 0;
     for (;;) {
-      let listed = 0;
-      const batch = await runAuditedTransaction(
+      const { listed, purged } = await runAuditedTransaction(
         this.storage,
         async () => {
           const ids = await this.storage.items.listTrashedOlderThan(
             cutoff,
             TRASH_PURGE_BATCH,
           );
-          listed = ids.length;
-          return purgeEach(this.storage, ids, {});
+          return {
+            listed: ids.length,
+            purged: await purgeEach(this.storage, ids, {}),
+          };
         },
-        (count) =>
-          count > 0
+        ({ purged }) =>
+          purged > 0
             ? {
                 action: "items.trash_purged",
                 resource_type: "item",
                 client_ip: null,
-                details: { deleted: count, before: cutoff },
+                details: { deleted: purged, before: cutoff },
               }
             : null,
       );
-      deleted += batch;
-      if (listed < TRASH_PURGE_BATCH || batch === 0) break;
+      deleted += purged;
+      if (listed < TRASH_PURGE_BATCH || purged === 0) break;
       await yieldBulkWork();
     }
     return deleted;

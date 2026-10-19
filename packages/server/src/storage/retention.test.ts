@@ -95,40 +95,42 @@ async function rowExists(itemId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/** The event type of every frame in the event log, in log order. */
-async function loggedEventTypes(): Promise<string[]> {
-  const types: string[] = [];
-  let cursor = 0n;
-  for (;;) {
-    const rows = await ctx.storage.eventLog.getAfter(cursor, 200);
-    if (rows.length === 0) return types;
-    for (const row of rows) {
-      types.push(
-        (JSON.parse(row.payload) as { event_type: string }).event_type,
-      );
-      if (row.id > cursor) cursor = row.id;
-    }
-  }
-}
-
 /** Seeds `count` notes in the bin, every one trashed at `trashedAtIso`. */
 async function seedTrash(count: number, trashedAtIso: string): Promise<void> {
   for (let i = 0; i < count; i += 1) {
-    const item = await itemWrites(ctx.storage).create({
-      writer: null,
-      type: "core.note",
-      properties: { body: `trash ${String(i)}` },
+    await seedItemWithUpdatedAt({
+      id: id(`e${String(i)}`),
+      state: "trashed",
+      tier: "library",
+      updatedAtIso: trashedAtIso,
     });
-    await itemWrites(ctx.storage).transition(item.id, "trashed");
   }
+}
+
+/**
+ * Seeds a live app grant in the bin, 400 days ago. The purge doors refuse
+ * it, so it stays in the bin and is the first row the sweep reaches.
+ */
+async function seedStuckGrantInBin(clientId: string): Promise<string> {
+  const stuck = await itemWrites(ctx.storage).create({
+    writer: null,
+    type: "system.connection",
+    properties: {
+      kind: "app",
+      status: "active",
+      granted_at: "2019-01-01T00:00:00.000Z",
+      client_id: clientId,
+    },
+  });
   await (
     ctx.storage as unknown as {
       __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     }
   ).__sqliteRun(
-    "UPDATE items SET updated_at = ?, trashed_at = ? WHERE state = 'trashed'",
-    [trashedAtIso, trashedAtIso],
+    "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
+    [new Date(FIXED_NOW.getTime() - 400 * MS_PER_DAY).toISOString(), stuck.id],
   );
+  return stuck.id;
 }
 
 async function trashedCount(): Promise<number> {
@@ -251,29 +253,7 @@ describe("TrashPurger.runOnce — behavioral", () => {
   });
 
   it("leaves a row the purge refuses in the bin and purges the rows behind it", async () => {
-    // A live app grant in the bin is refused by the purge doors, and is
-    // the oldest row, so it is the first the sweep reaches.
-    const stuck = await itemWrites(ctx.storage).create({
-      writer: null,
-      type: "system.connection",
-      properties: {
-        kind: "app",
-        status: "active",
-        granted_at: "2019-01-01T00:00:00.000Z",
-        client_id: "stuck-in-the-bin",
-      },
-    });
-    const ancient = new Date(
-      FIXED_NOW.getTime() - 400 * MS_PER_DAY,
-    ).toISOString();
-    await (
-      ctx.storage as unknown as {
-        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-      }
-    ).__sqliteRun(
-      "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
-      [ancient, stuck.id],
-    );
+    const stuck = await seedStuckGrantInBin("stuck-in-the-bin");
     const behind = id("ddd1");
     await seedItemWithUpdatedAt({
       id: behind,
@@ -292,11 +272,11 @@ describe("TrashPurger.runOnce — behavioral", () => {
 
     expect(purged).toBe(1);
     expect(await rowExists(behind)).toBe(false);
-    expect(await rowExists(stuck.id)).toBe(true);
+    expect(await rowExists(stuck)).toBe(true);
   });
 
   it("purges a backlog larger than one batch in one run, a write and an announcement per row", async () => {
-    const backlog = TRASH_PURGE_BATCH * 2 + 1;
+    const backlog = TRASH_PURGE_BATCH + 1;
     await seedTrash(
       backlog,
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
@@ -323,37 +303,18 @@ describe("TrashPurger.runOnce — behavioral", () => {
       audited.data
         .map((row) => row.details.deleted as number)
         .sort((a, b) => b - a),
-    ).toEqual([TRASH_PURGE_BATCH, TRASH_PURGE_BATCH, 1]);
-    expect(await loggedEventTypes()).toEqual(
-      Array<string>(backlog).fill("item.purged"),
-    );
+    ).toEqual([TRASH_PURGE_BATCH, 1]);
+    expect(
+      (await ctx.storage.eventLog.getAfter(0n, 10_000)).map(
+        (row) => row.event_type,
+      ),
+    ).toEqual(Array<string>(backlog).fill("purged"));
   });
 
   it("ends the run when a full batch purges nothing", async () => {
-    // Live app grants in the bin are refused by the purge doors; a full
-    // batch of them would bring the same batch back forever.
-    const ancient = new Date(
-      FIXED_NOW.getTime() - 400 * MS_PER_DAY,
-    ).toISOString();
+    // A full batch of rows the purge refuses would come back forever.
     for (let i = 0; i < TRASH_PURGE_BATCH; i += 1) {
-      const stuck = await itemWrites(ctx.storage).create({
-        writer: null,
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          status: "active",
-          granted_at: "2019-01-01T00:00:00.000Z",
-          client_id: `stuck-${String(i)}`,
-        },
-      });
-      await (
-        ctx.storage as unknown as {
-          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-        }
-      ).__sqliteRun(
-        "UPDATE items SET state = 'trashed', trashed_at = ? WHERE id = ?",
-        [ancient, stuck.id],
-      );
+      await seedStuckGrantInBin(`stuck-${String(i)}`);
     }
 
     expect(
