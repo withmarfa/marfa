@@ -1968,37 +1968,43 @@ If `POST /items/tombstones` names a `type` nothing registered, then the server M
 
 ### `items/json-depth`
 
-If a JSON request body, other than one posted to an inbound webhook endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, then the server MUST answer `400 validation_error`.
+If a request body, other than one posted to an inbound webhook endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
-**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`.
+**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`, `compliance/well-formed-text.test.ts › is refused when it nests too deep, before any credential`.
 
 ### `items/json-text-well-formed`
 
-If a JSON request body, other than one posted to an inbound webhook endpoint, holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` with `details.errors[].path` naming the first by its JSON pointer.
+If a request body, other than one posted to an inbound webhook endpoint, is JSON that holds a string or an object key that is not well-formed UTF-16, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for text that is not well-formed UTF-16, before any credential`, `device/well-formed-text-live.test.ts › refuses text that is not well-formed UTF-16 and leaves a device able to hydrate and catch up over the row that is`.
 
 ### `items/json-text-pointer`
 
-When the server names text that is not well-formed UTF-16 in a refusal, the server MUST write its JSON pointer as RFC 6901 does, `~0` for each `~` and `~1` for each `/`, and with U+FFFD for each lone surrogate in a key.
+When the server names text that is not well-formed UTF-16 in a refusal, the server MUST write its JSON pointer with `~0` for each `~` and `~1` for each `/`, as RFC 6901 does.
+
+**Tests:** `compliance/well-formed-text.test.ts › escapes a slash and a tilde in the pointer it names`.
+
+### `items/json-text-pointer-key`
+
+When the server names text that is not well-formed UTF-16 in a refusal and the pointer passes through an object key that holds a lone surrogate, the server MUST write U+FFFD in the pointer in place of each lone surrogate.
 
 **Reason:** the pointer is itself text in the answer, so it follows the same rule.
 
-**Tests:** `compliance/well-formed-text.test.ts › escapes a slash and a tilde in the pointer it names`, `› refuses $name, naming where, and takes a surrogate pair there`.
+**Tests:** `compliance/well-formed-text.test.ts › writes U+FFFD in the pointer for each lone surrogate in a key`, `› refuses $name, naming where, and takes a surrogate pair there`.
 
 ### `items/json-text-before-credential`
 
-If a request to an operation that requires a credential carries no credential and a JSON body that holds text that is not well-formed UTF-16, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
+If a request to an operation that requires a credential carries no credential and a body that is JSON holding text that is not well-formed UTF-16, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
 
 **Tests:** `compliance/well-formed-text.test.ts › answers it before a missing credential, as it answers a body nested too deep`, `› refuses it on every published operation that takes a JSON body, before any credential`.
 
 ### `items/json-text-after-depth`
 
-If a JSON request body nests more than 64 levels and holds text that is not well-formed UTF-16, then the server MUST answer as `items/json-depth` says.
+If a request body nests more than 64 levels and holds text that is not well-formed UTF-16, then the server MUST answer as `items/json-depth` says.
 
 **Tests:** `compliance/well-formed-text.test.ts › names the nesting before the text when a body is both too deep and not well-formed`.
 

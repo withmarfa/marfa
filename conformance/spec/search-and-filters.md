@@ -1682,7 +1682,7 @@ If an archive records a `version` of an item or an edge that is not a positive s
 
 ### `search-and-filters/restore-text`
 
-If a line of an archive's `items.ndjson`, `edges.ndjson` or `types.ndjson` holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` naming the row and the JSON pointer of the text, and write nothing.
+If the `manifest.json` of an archive, or a line of its `items.ndjson`, `edges.ndjson` or `types.ndjson`, holds a string or an object key that is not well-formed UTF-16, then the server MUST answer `400 validation_error` naming the entry or the row and the JSON pointer of the text, and write nothing.
 
 **Reason:** a restore is not a way to plant text the write doors refuse (`items/json-text-well-formed`).
 

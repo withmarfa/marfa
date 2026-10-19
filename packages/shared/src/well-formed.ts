@@ -43,8 +43,10 @@ function pointerTo(step: Step): string {
 }
 
 /**
- * The RFC 6901 JSON pointer to the first string or object key in `value`
- * that is not well-formed UTF-16, or null when there is none. A key is named
+ * The RFC 6901 JSON pointer to one string or object key in `value` that is
+ * not well-formed UTF-16, or null when there is none. Which one it names is
+ * not specified when there are several: an object's integer-like keys come
+ * before its others, whatever the order the text wrote them. A key is named
  * by the member it opens. The pointer itself is well-formed, with each lone
  * surrogate in a key shown as U+FFFD, so it can go back in an answer.
  *

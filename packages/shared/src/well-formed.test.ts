@@ -98,7 +98,7 @@ describe("findLoneSurrogate", () => {
     expect(findLoneSurrogate({ "a/b": { "c~d": HIGH } })).toBe("/a~1b/c~0d");
   });
 
-  it("returns the first offender in document order", () => {
+  it("reads string keys in the order they were written", () => {
     expect(findLoneSurrogate({ a: "ok", b: HIGH, c: LOW })).toBe("/b");
   });
 
