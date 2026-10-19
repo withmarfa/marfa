@@ -319,11 +319,10 @@ export interface MarfaAuth {
     options?: { readOnly?: boolean },
   ) => Promise<MarfaAuthSession | null>;
   /**
-   * Admit a request on the session its cookie names, and count it as a use:
-   * unless a use was recorded within {@link BROWSER_SESSION_USE_INTERVAL_SECONDS},
-   * the session's expiry moves to {@link BROWSER_SESSION_LIFETIME_SECONDS}
-   * after now. `session` is what a read-only `getSession` found for these
-   * headers. `null` when the session ended or expired since that lookup.
+   * `session` must come from a read-only `getSession` for these headers.
+   * Renewal checks it again under the writer; a storage refusal keeps the
+   * existing expiry and cookie so reads can continue. Each later write
+   * still revalidates the session's authority.
    */
   useSession: (
     headers: Headers,
