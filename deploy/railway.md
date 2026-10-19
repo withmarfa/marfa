@@ -43,13 +43,24 @@ The browser handoff carries a single-use ticket in the URL fragment. Do not put 
 
 The `/data` volume holds the SQLite database and blob files. It persists through service restarts and redeployments. The container streams the database to the backup bucket with Litestream, and Marfa replicates blob files to that bucket separately. See [the deployment guide](README.md#what-runs-in-the-container) for the backup configuration.
 
-The template also enables daily Railway volume backups, retained for six days. They cover the volume within the same project and environment. Wiping the volume deletes its snapshots; see [Railway volume backups](https://docs.railway.com/volumes/backups).
+The template also enables daily Railway volume backups, retained for six days. They cover the volume within the same project and environment. Wiping the volume deletes its snapshots; see [Railway volume backups](https://docs.railway.com/volumes/backups). **A volume backup is older than the backup bucket.** Starting one with the bucket's current `S3_PREFIX` makes the backup the bucket's newest copy of the database, and the writes made after the backup survive only in older bucket history that expires. Restore it as in [Restore a volume backup](#restore-a-volume-backup).
 
 The volume is the working copy; the bucket is a separate recovery copy. Replication is asynchronous, so a bucket restore can miss recent changes or blobs that have not finished copying. A successful `/health` response does not prove that backup replication has completed. Railway's deployment health check also runs at startup rather than continuously; see [Railway health checks](https://docs.railway.com/deployments/healthchecks#continuous-healthchecks).
 
 Preserve **`API_KEY_SALT` and `MARFA_AUTH_SECRET`** across restarts, redeployments, and restores. Keep a secure recovery copy outside the project. These values are not stored in the data volume or bucket: changing the salt invalidates existing API keys and app tokens, and losing the authentication secret ends existing browser sessions. If you seal Railway variables, save their recovery copies first, because [sealed values cannot be retrieved](https://docs.railway.com/variables#sealed-variables).
 
-To recover a lost data volume, use the same container revision, backup bucket, `S3_PREFIX`, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
+To recover a lost data volume, use the same container revision, backup bucket, current `S3_PREFIX`, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
+
+## Restore a volume backup
+
+Restoring a Railway volume backup rolls the database back to the backup. Do the steps below so that the bucket keeps the writes made after the backup. [The deployment guide](README.md#restore-a-backup-that-is-older-than-the-bucket) explains why.
+
+1. Open the Marfa server's **Variables**. Change `S3_PREFIX` to a new value that this instance has never used, such as `restored/blobs`. Railway stages the change.
+2. Restore the backup from the volume's backups, as [Railway volume backups](https://docs.railway.com/volumes/backups) describes. Railway stages a new volume at the same mount path and keeps the previous volume, unmounted.
+3. Select **Details**, check that the new volume and the new `S3_PREFIX` are both in the staged changes, and select **Deploy**.
+4. When the service is healthy, open its deploy logs. Check that the `replicating to` line ends with the new prefix and `/db`, and that no `detected database behind replica` line appears.
+
+The old prefix keeps the newer history. Keep it, and the previous volume, until you are sure you do not need them. Later recoveries use the new `S3_PREFIX`.
 
 ## Recover a forgotten password
 

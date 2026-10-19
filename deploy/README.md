@@ -195,7 +195,7 @@ To hold the transaction on a machine that has the `sqlite3` command and reaches 
 sqlite3 /data/marfa.db "BEGIN; SELECT count(*) FROM sqlite_master;" ".shell cp /data/marfa.db /data/marfa.db-wal /backup/" ".shell cp -R /data/blobs /backup/" "COMMIT;"
 ```
 
-Restore from any of these like this:
+Restore from any of these like this. **If the bucket is still live and holds writes newer than the copy, read [Restore a backup that is older than the bucket](#restore-a-backup-that-is-older-than-the-bucket) first.** These steps start the copy on the bucket's own prefix, which makes the copy the bucket's newest copy of the database.
 
 1. Stop the instance.
 2. Put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file, which is rebuilt at start.
@@ -204,6 +204,40 @@ Restore from any of these like this:
 The instance applies the log at start. A copy's integrity can be checked first with `sqlite3 marfa.db "PRAGMA integrity_check"`, which answers `ok`.
 
 `GET /export` and `POST /restore` move data between machines and between builds that share a schema. They are not a machine backup. `conformance/spec/instance.md` states what a restore promises.
+
+## Restore a backup that is older than the bucket
+
+A machine backup or a Railway volume backup is older than the bucket's copy of the database, which is current to within a second. **If you start an older copy with the bucket's current `S3_PREFIX`, the copy becomes the bucket's newest copy of the database.** Litestream logs `detected database behind replica`, carries on, and uploads the copy's later transactions on top of the replica. A restore from the bucket then returns the copy plus the writes made after you started it. The writes made between the backup and the restore stay in the bucket only at earlier transaction points, which Litestream's own retention removes in time.
+
+A point-in-time restore of the bucket onto the same prefix does the same thing, because the restored file is also behind the replica.
+
+Going back to an older state loses the later writes from the instance, as you intend. The steps in this section also keep them in the bucket. They give the restored instance a new prefix, so the old prefix is left as it was and nothing writes to it.
+
+### Start a backup under a new prefix
+
+1. Note the instance's current `S3_PREFIX`. It is `blobs` when you have not set one.
+2. Stop the instance.
+3. Choose a new prefix that no instance has used, such as `restored/blobs`. [The names it needs](#the-names-it-needs) gives the rules for a prefix.
+4. Put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file.
+5. Set `S3_PREFIX` to the new prefix. Leave the bucket, its credentials, `API_KEY_SALT` and `MARFA_AUTH_SECRET` as they were.
+6. Start the instance. In its log, check that the `replicating to` line ends with the new prefix and `/db`, such as `path=restored/blobs/db`, and that no `detected database behind replica` line appears. Then read `GET /health`.
+
+On Railway, make the same change through the dashboard: see [Restore a volume backup](railway.md#restore-a-volume-backup).
+
+### Go back to a point in time using the bucket
+
+Use this when you have no copy of the volume, or the moment you want is not in one. It keeps the instance's own blob folder.
+
+1. Stop the instance.
+2. Restore the database from the bucket's current prefix to a file, as in [Restoring by hand](#restoring-by-hand), with `-o` and `-timestamp`. Check the file with `sqlite3 restored.db "PRAGMA integrity_check"`.
+3. In the data directory, delete `marfa.db`, `marfa.db-wal` and `marfa.db-shm`, then move `restored.db` to `SQLITE_PATH`. Leave the blob folder.
+4. Choose and set a new `S3_PREFIX`, start the instance and check its log, as in steps 3, 5 and 6 above.
+
+### What the steps leave behind
+
+- **The new prefix is now the instance's.** Every later recovery, including a fresh volume and [Restoring by hand](#restoring-by-hand), uses the new prefix. The instance keeps its blobs there too, and the `blob-replicate` job copies the blobs the disk holds to it.
+- **The old prefix holds the newer history, unchanged.** To read it, restore from the old prefix to a file by hand and start a second instance on that file with a prefix of its own. Do not start it on the old prefix, which would write to it again.
+- **Nothing removes the old prefix.** Delete its objects yourself, from the bucket, when you no longer need that history.
 
 ## Restoring by hand
 
@@ -223,7 +257,7 @@ Replace `blobs` with the instance's own prefix when it has another.
 
 How fine a point can be named depends on its age. Litestream keeps every one-second sync for five minutes, then compacts them into longer segments (thirty seconds, five minutes, an hour), so a moment in the last five minutes is restorable to the second and an older one to the segment that contains it, back as far as the day of snapshots kept. The drill restores to a moment a few seconds old and asserts the item count it wrote before that moment.
 
-Then boot a server on the restored file with the same bucket and prefix and an empty blob folder. The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
+Then boot a server on the restored file with the same bucket and prefix and an empty blob folder. That is right for the latest state. A file older than the bucket's newest copy needs a new prefix instead; see [Restore a backup that is older than the bucket](#restore-a-backup-that-is-older-than-the-bucket). The folder is a new disk store, so the log claims nothing for it; `blob-replicate` brings every blob the log names back to it from the object store, on its next run or when asked through `POST /housekeeping/blob-replicate/run`, and `GET /blobs/{hash}` serves from the object store meanwhile. The restored database carries the owner claim and ordinary credentials, so setup stays closed.
 
 ## What a point-in-time restore can and cannot promise
 
