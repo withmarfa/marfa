@@ -1214,7 +1214,7 @@ When `GET /export?format=archive` names the filters of an NDJSON export, the ser
 
 ### `search-and-filters/archive-entries`
 
-The server MUST open an archive with its `manifest.json`, then `items.ndjson`, `edges.ndjson` and `types.ndjson`, and then a `blobs/<hash>` entry for each blob.
+The server MUST open an archive with its `manifest.json`, then `items.ndjson`, `edges.ndjson` and `types.ndjson`, and then a `blobs/<hash>` entry for each blob its manifest lists in `blobs`.
 
 **Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest.
 
@@ -1233,6 +1233,82 @@ The server MUST write into the manifest of an archive its `version`, its `format
 The server MUST list in the manifest of an archive each blob it carries, with its MIME type and its size in bytes.
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
+
+### `search-and-filters/archive-missing-blobs`
+
+When an archive would carry a blob of which no attached store holds a copy that the location log records, at the blob's whole size, the server MUST name the blob in the manifest's `missing_blobs` with its MIME type and its size in bytes.
+
+**Reason:** one lost file costs the backup that file and not the rest of the instance, and the manifest, which a reader reads first, says which file the archive lacks. The bytes a struck or dropped copy leaves in its store are not the blob's (`stores/no-bytes-not-found`).
+
+**Tests:** `compliance/export-missing-blob.test.ts › names a blob whose file has left the disk under missing_blobs, and carries the rest`, `› names a blob whose struck copy is the only one under missing_blobs, and answers a whole archive`.
+
+### `search-and-filters/archive-missing-unrecorded`
+
+When an item that `GET /export?format=archive` carries is of `core.file` or a type that inherits from it, in its current version or a snapshot the archive carries, and its `blob_ref` is a whole `sha256:` hash that the instance holds no blob of and that the caller may read, the server MUST name the hash in the manifest's `missing_blobs` with a `mime_type` and a `size_bytes` of `null`.
+
+**Reason:** a blob that a restore answered missing keeps being named by every later backup, with no record of it standing in for bytes the instance does not hold. Its type and size are not known, so they are not given.
+
+**Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
+
+### `search-and-filters/archive-missing-only-blobs`
+
+The server MUST NOT name in the manifest's `missing_blobs` a hash that the instance holds no blob of and that no carried file's `blob_ref` names.
+
+**Reason:** a run of hex in a row's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
+
+**Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
+
+### `search-and-filters/archive-missing-not-carried`
+
+When the manifest of an archive names a blob in `missing_blobs`, the server MUST NOT list the blob in `blobs`, count it in `blob_count` or carry a `blobs/<hash>` entry for it.
+
+**Tests:** `compliance/export-missing-blob.test.ts › names a blob whose file has left the disk under missing_blobs, and carries the rest`.
+
+### `search-and-filters/archive-blob-any-store`
+
+When one attached store's recorded copy of a blob that an archive carries is missing or not as long as the blob, and another attached store holds a recorded copy whole, the server MUST carry the blob's bytes from that other store.
+
+**Tests:** `compliance/export-missing-blob.test.ts › carries a blob whose disk file is gone from the object store's copy`.
+
+### `search-and-filters/archive-bytes-verified`
+
+If the bytes `GET /export?format=archive` reads for a blob do not hash to the blob's name, then the server MUST end the response with an error and not with a clean end.
+
+**Reason:** the manifest that lists the blob has already been sent, so the archive is cut short rather than carrying other bytes under the blob's name. The bytes are checked as they are sent rather than before, because checking first would read every blob twice on every export.
+
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+
+### `search-and-filters/archive-bytes-struck`
+
+If the bytes `GET /export?format=archive` reads from a store's copy of a blob are as long as the blob and do not hash to its name, and the copy still does not hash to the name when it is read again under the blob's upload lock, then the server MUST strike that copy from the location log.
+
+**Reason:** the next export then reads the blob from another store that holds it, or names it in `missing_blobs`, as it does once `blob-integrity` has struck the copy. The first read is made without the lock, so the copy is read again before it is struck, in case it was put right in between.
+
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy`.
+
+### `search-and-filters/archive-read-fault-kept`
+
+If a read of a blob's copy by `GET /export?format=archive` fails or ends before the blob's size, then the server MUST NOT strike the copy for it.
+
+**Reason:** a read that goes wrong says nothing of the bytes the store holds.
+
+**Tests:** `compliance/export-missing-blob.test.ts › strikes no copy when a read of a blob's bytes fails`, `› strikes no copy when a read of a blob's bytes ends short`.
+
+### `search-and-filters/archive-blob-gone`
+
+If a blob that the manifest of `GET /export?format=archive` lists in `blobs` has no record, or no recorded copy that a store holds whole, when its entry is due, then the server MUST end the response with an error and not with a clean end.
+
+**Reason:** the manifest that lists the blob has already been sent, so an archive that left the entry out would claim a file it does not hold.
+
+**Tests:** `compliance/export-missing-blob.test.ts › ends the response with an error when a listed blob's file goes before its entry is written`.
+
+### `search-and-filters/archive-store-unavailable`
+
+If a store fails, or does not answer within 15 seconds, while the server checks a copy of a blob that `GET /export?format=archive` would carry, and no other attached store holds a recorded copy of the blob whole, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a store that cannot answer is no evidence that the copy is gone, so the blob is not named in `missing_blobs`. A copy that another store holds whole is carried from there. The checks are made before the response begins, so the refusal is an ordinary answer and not a stream cut short.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
 
 ### `search-and-filters/archive-only`
 
@@ -1370,6 +1446,50 @@ When `POST /restore` succeeds, the server MUST carry the counts `imported`, `dup
 
 **Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`.
 
+### `search-and-filters/restore-blobs-missing`
+
+When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each blob that the archive's manifest names in `blobs` or `missing_blobs`, that no entry of the archive carries bytes hashing to, and that no attached store of the instance holds a recorded copy of whole.
+
+**Reason:** an archive that lacks a file says so on the restore rather than restoring as though it were complete. Uploading the bytes again through `POST /blobs` restores the file.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers in blobs_missing a blob the archive names and lacks, and none the instance holds`, `› answers in blobs_missing a blob the manifest lists that the archive carries no bytes for`.
+
+### `search-and-filters/restore-store-unavailable`
+
+If a store fails, or does not answer within 15 seconds, while `POST /restore` checks whether the instance holds a blob that the archive names and does not carry, and no other attached store holds a recorded copy of the blob whole, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a store that cannot answer is no evidence that the instance lacks the blob, so the restore does not answer it in `blobs_missing`.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`, `› restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it`.
+
+### `search-and-filters/restore-store-unavailable-unwritten`
+
+When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
+
+### `search-and-filters/cli-export-lacking`
+
+When `marfa export --format archive` has written an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+
+**Reason:** the archive is kept, because it holds everything else, and the exit says it is not a whole backup.
+
+**Tests:** `cli/archive-blobs.test.ts › writes the archive and exits 1 with blobs_missing, naming the blob`.
+
+### `search-and-filters/cli-restore-lacking`
+
+When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the CLI MUST print the answer and exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+
+**Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
+
+### `search-and-filters/cli-export-cut`
+
+If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave the path as it was before the command and exit 3.
+
+**Reason:** a file cut short at the path would pass for a backup until a restore needed it.
+
+**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
+
 ### `search-and-filters/restore-edge-skips`
 
 When `POST /restore` skips an edge because the instance already holds it, because an endpoint is missing or because the line is malformed, the server MUST count it in `edges_skipped_reasons` under `already_present`, `endpoint_missing` or `malformed` respectively.
@@ -1472,7 +1592,7 @@ If the `manifest.json` of an archive names a `version` other than 0, then the se
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them or an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
+If the `manifest.json` of an archive is missing `version`, or `blobs`, or mistypes them, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
 **Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 

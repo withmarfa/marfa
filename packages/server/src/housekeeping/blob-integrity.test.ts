@@ -8,10 +8,11 @@
 import { writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createTestContext, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { BlobStore } from "../storage/blob-store.js";
+import { storeChecks } from "../storage/blob-layer.js";
 import { BlobIntegrityChecker } from "./blob-integrity.js";
 import { BlobReplicator } from "./blob-replicate.js";
 
@@ -379,6 +380,72 @@ describe("BlobIntegrityChecker.runOnce", () => {
     expect(
       locations.find((l) => l.store_id === ctx!.blobs.disk.id)?.verified_at,
     ).not.toBeNull();
+  });
+
+  it("neither stamps nor strikes a disk copy whose read ends short", async () => {
+    ctx = await createTestContext();
+    const content = "bytes whose read ends early";
+    const hash = await upload(ctx, content);
+    const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
+    vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+      async (wanted, ...rest) =>
+        wanted === hash
+          ? {
+              stream: Readable.from([Buffer.from(content.slice(0, 5))]),
+              size_bytes: content.length,
+              offset: 0,
+              length: content.length,
+            }
+          : get(wanted, ...rest),
+    );
+    const checker = new BlobIntegrityChecker(ctx.storage, ctx.blobs, {
+      maxRows: 100,
+      maxBytes: 1024 * 1024,
+    });
+    const silenced = quiet();
+    let result;
+    try {
+      result = await checker.runOnce();
+    } finally {
+      silenced.restore();
+    }
+    expect(result).toMatchObject({ struck: 0 });
+    const [location] = await ctx.storage.blobs.listLocations(hash);
+    expect(location?.verified_at).toBeNull();
+  });
+
+  it("calls off a disk read that does not open in time, and neither stamps nor strikes the copy", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "bytes a hanging disk holds");
+    let open = 0;
+    vi.spyOn(ctx.blobs.disk, "get").mockImplementation(
+      (_hash, _range, signal) => {
+        open++;
+        return new Promise<never>((_, reject) => {
+          signal?.addEventListener("abort", () => {
+            open--;
+            reject(signal.reason as Error);
+          });
+        });
+      },
+    );
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    const silenced = quiet();
+    let result;
+    try {
+      result = await new BlobIntegrityChecker(ctx.storage, ctx.blobs, {
+        maxRows: 100,
+        maxBytes: 1024 * 1024,
+      }).runOnce();
+    } finally {
+      silenced.restore();
+      storeChecks.timeoutMs = timeout;
+    }
+    expect(result).toMatchObject({ verified: 0, struck: 0 });
+    expect(open).toBe(0);
+    const [location] = await ctx.storage.blobs.listLocations(hash);
+    expect(location?.verified_at).toBeNull();
   });
 
   it("counts no strike for a row dropped between the listing and the check", async () => {

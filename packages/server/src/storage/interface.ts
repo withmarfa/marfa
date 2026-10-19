@@ -1406,6 +1406,9 @@ export interface BlobRegistry {
    */
   recordLocation(hash: string, storeId: string): Promise<void>;
   listLocations(hash: string): Promise<BlobLocation[]>;
+  /** For each of `hashes`, the ids of the stores the log records a copy
+   *  in, oldest copy first; a hash with no copy maps to an empty list. */
+  storeIdsOf(hashes: readonly string[]): Promise<Map<string, string[]>>;
   /** Durable cleanup intent, written with the location removal and its audit. */
   queueCopyDeletion(hash: string, storeId: string): Promise<void>;
   /** Move a pending intent to the retry tail before I/O; caller holds the per-hash lock. */

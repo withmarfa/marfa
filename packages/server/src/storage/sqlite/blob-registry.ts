@@ -651,6 +651,23 @@ export class SqliteBlobRegistry implements BlobRegistry {
     await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
   }
 
+  async storeIdsOf(hashes: readonly string[]): Promise<Map<string, string[]>> {
+    const held = new Map<string, string[]>(hashes.map((hash) => [hash, []]));
+    for (let i = 0; i < hashes.length; i += 500) {
+      const rows = await this.db
+        .select({
+          hash: blobLocations.hash,
+          store_id: blobLocations.store_id,
+        })
+        .from(blobLocations)
+        .where(inArray(blobLocations.hash, hashes.slice(i, i + 500)))
+        .orderBy(blobLocations.recorded_at)
+        .all();
+      for (const row of rows) held.get(row.hash)?.push(row.store_id);
+    }
+    return held;
+  }
+
   async listLocations(hash: string): Promise<BlobLocation[]> {
     const rows = await this.db
       .select({

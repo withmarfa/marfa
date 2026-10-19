@@ -4268,6 +4268,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        BlobStoreUnavailableOrWriteContentionRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "blob_store_unavailable" | "write_contention";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description A page holding every stale type. */
         DriftedPlatformTypePage: {
             /** @description Every stale type. */
@@ -21193,6 +21210,8 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
+                        blobs_missing: string[];
                         /** @description How many types Marfa registered. */
                         types_registered: number;
                         /** @description How many types Marfa skipped because the instance already registers them identically. */
@@ -21314,7 +21333,10 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /**
+             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21326,7 +21348,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                    "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
                 };
             };
             /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
@@ -23325,7 +23347,7 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold. */
                 format?: "ndjson" | "archive";
             };
             header?: never;
@@ -23428,7 +23450,10 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /**
+             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23440,7 +23465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                    "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
                 };
             };
             /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */

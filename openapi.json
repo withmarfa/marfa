@@ -6573,6 +6573,42 @@
         ],
         "description": "An error response."
       },
+      "BlobStoreUnavailableOrWriteContentionRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "blob_store_unavailable",
+                  "write_contention"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "DriftedPlatformTypePage": {
         "type": "object",
         "properties": {
@@ -41611,6 +41647,13 @@
                       "type": "number",
                       "description": "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them."
                     },
+                    "blobs_missing": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them."
+                    },
                     "types_registered": {
                       "type": "number",
                       "description": "How many types Marfa registered."
@@ -41635,6 +41678,7 @@
                     "edges_skipped",
                     "edges_skipped_reasons",
                     "blobs_imported",
+                    "blobs_missing",
                     "types_registered",
                     "types_skipped",
                     "edge_types_registered",
@@ -41873,11 +41917,11 @@
             }
           },
           "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },
@@ -45940,10 +45984,10 @@
                 "ndjson",
                 "archive"
               ],
-              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`."
+              "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold."
             },
             "required": false,
-            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`.",
+            "description": "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold.",
             "name": "format",
             "in": "query"
           }
@@ -46136,11 +46180,11 @@
             }
           },
           "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "description": "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },

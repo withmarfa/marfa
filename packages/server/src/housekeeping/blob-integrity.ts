@@ -1,14 +1,8 @@
-import { createHash } from "node:crypto";
-import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
-import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import {
-  finishCopyDeletion,
-  finishPendingCopyDeletions,
-  type Stores,
-} from "./blob-delete.js";
+import { finishPendingCopyDeletions, type Stores } from "./blob-delete.js";
+import { copyIntact, strikeCopy } from "./blob-strike.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
 
@@ -80,7 +74,7 @@ export class BlobIntegrityChecker {
         try {
           intact =
             store.kind === "disk"
-              ? await this.hashMatches(store, row.hash, row.size_bytes)
+              ? await copyIntact(store, row.hash, row.size_bytes)
               : (await store.has(row.hash))?.size_bytes === row.size_bytes;
         } catch (err) {
           // A store that cannot answer is not evidence against the copy: it
@@ -104,62 +98,9 @@ export class BlobIntegrityChecker {
         }
         // A row dropped by an operator between the listing and the check is
         // not a strike: nothing was found wrong with a copy the log claims.
-        const removed = await runAuditedTransaction(
-          this.storage,
-          async () => {
-            if (!(await this.storage.blobs.removeLocation(row.hash, store.id)))
-              return false;
-            await this.storage.blobs.queueCopyDeletion(row.hash, store.id);
-            return true;
-          },
-          (removed) =>
-            removed
-              ? {
-                  action: "blob.copy_struck",
-                  resource_type: "blob",
-                  resource_id: row.hash,
-                  client_ip: null,
-                  details: { store_id: store.id, kind: store.kind },
-                }
-              : null,
-        );
-        if (!removed) return;
-        struck += 1;
-        log("error", "blob.copy_struck", {
-          hash: row.hash,
-          store_id: store.id,
-          kind: store.kind,
-        });
-        try {
-          await finishCopyDeletion(this.storage, store, row.hash);
-        } catch (err) {
-          // The durable cleanup intent survives for the next run.
-          log("error", "blob.struck_copy_kept", {
-            hash: row.hash,
-            store_id: store.id,
-            error: errorMessage(err),
-          });
-        }
+        if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
       });
     }
     return { verified, struck, bytes };
-  }
-
-  private async hashMatches(
-    store: BlobStore,
-    hash: string,
-    sizeBytes: number,
-  ): Promise<boolean> {
-    const read = await store.get(hash);
-    if (!read) return false;
-    if (read.size_bytes !== sizeBytes) {
-      read.stream.destroy();
-      return false;
-    }
-    const digest = createHash("sha256");
-    for await (const chunk of read.stream) {
-      digest.update(chunk as Buffer);
-    }
-    return `sha256:${digest.digest("hex")}` === hash;
   }
 }

@@ -3,6 +3,9 @@ import { DiskBlobStore, type BlobStore } from "./blob-store.js";
 import { S3BlobStore } from "./blob-s3.js";
 import type { Storage } from "./interface.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { log } from "../middleware/logger.js";
+import { errorMessage } from "../error-text.js";
 import { withBlobFaults } from "./blob-faults.js";
 
 /**
@@ -19,6 +22,182 @@ export interface BlobLayer {
   /** Every attached store, the disk first. */
   readonly stores: readonly BlobStore[];
   byId(id: string): BlobStore | undefined;
+}
+
+/**
+ * The attached stores the location log records a copy of `hash` in, the disk
+ * first. A copy struck or dropped can linger in its store until its deletion
+ * is retried, and those bytes are not the blob's.
+ */
+export async function recordedStores(
+  storage: Storage,
+  blobs: BlobLayer,
+  hash: string,
+): Promise<BlobStore[]> {
+  const holding = new Set(
+    (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
+  );
+  return blobs.stores.filter((store) => holding.has(store.id));
+}
+
+/**
+ * How a page of blobs has its copies checked: a few checks at a time, and
+ * each given up after a bound, so a slow or hanging store answers a refusal
+ * in time rather than holding back the answer.
+ */
+export const storeChecks = { concurrency: 16, timeoutMs: 15_000 };
+
+/** The refusal for a store that failed or did not answer, which proves
+ *  nothing about the copy it was asked for. */
+export function storeUnavailable(
+  store: BlobStore,
+  hash: string,
+  cause: unknown,
+): MarfaError {
+  log("error", "blob.store_unavailable", {
+    hash,
+    store_id: store.id,
+    kind: store.kind,
+    error: errorMessage(cause),
+  });
+  return new MarfaError(
+    ErrorCode.BLOB_STORE_UNAVAILABLE,
+    `The ${store.kind} store did not answer for a blob's copy. Retry later.`,
+    { store_id: store.id },
+  );
+}
+
+/**
+ * `work`, or a rejection once `ms` have passed without it settling or once
+ * `signal` aborts. Either way the signal `work` was handed aborts, so the
+ * store gives the request up, and an answer that comes after all is handed
+ * to `late`, so a stream it opened is not left open.
+ */
+export async function within<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  options: { signal?: AbortSignal; late?: (value: T) => void } = {},
+): Promise<T> {
+  const controller = new AbortController();
+  const { signal: outer, late } = options;
+  const stop = () => {
+    controller.abort(outer?.reason);
+  };
+  if (outer?.aborted) stop();
+  else outer?.addEventListener("abort", stop, { once: true });
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`no answer within ${String(ms)} ms`));
+  }, ms);
+  const running = work(controller.signal);
+  try {
+    return await Promise.race([
+      running,
+      new Promise<never>((_, reject) => {
+        const given = () => {
+          reject(controller.signal.reason as Error);
+        };
+        if (controller.signal.aborted) given();
+        else controller.signal.addEventListener("abort", given, { once: true });
+      }),
+    ]);
+  } catch (error) {
+    running.then(late ?? (() => undefined), () => undefined);
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    outer?.removeEventListener("abort", stop);
+  }
+}
+
+/**
+ * `stores` with those in `unanswered`, the ids of stores that failed or did
+ * not answer earlier in the same piece of work, moved to the end. One
+ * hanging store then costs the work one timeout, not one for each blob,
+ * while a blob it alone holds is still asked of it.
+ */
+export function answeringFirst(
+  stores: readonly BlobStore[],
+  unanswered: ReadonlySet<string>,
+): BlobStore[] {
+  return [
+    ...stores.filter((store) => !unanswered.has(store.id)),
+    ...stores.filter((store) => unanswered.has(store.id)),
+  ];
+}
+
+/**
+ * For each blob in `sizes`, an attached store that the log records a copy
+ * in and that holds the blob at its whole size, asked of the stores
+ * themselves; `null` when none does. The stores are asked in the order
+ * {@link answeringFirst} gives, the disk first otherwise, and a store that
+ * fails or does not answer joins `unanswered`. The log is read once for the
+ * lot.
+ *
+ * Throws `blob_store_unavailable` when no store holds a blob whole and a
+ * store it asked failed or did not answer in time: a store that cannot
+ * answer is not evidence that a copy is gone. The checks still running then
+ * are called off.
+ */
+export async function wholeCopies(
+  storage: Storage,
+  blobs: BlobLayer,
+  sizes: ReadonlyMap<string, number>,
+  options: { signal?: AbortSignal; unanswered?: Set<string> } = {},
+): Promise<Map<string, BlobStore | null>> {
+  const { signal, unanswered = new Set<string>() } = options;
+  const recorded = await storage.blobs.storeIdsOf([...sizes.keys()]);
+  const found = new Map<string, BlobStore | null>();
+  const queue = [...sizes];
+  const decided = new AbortController();
+  const stop = () => {
+    decided.abort(signal?.reason);
+  };
+  if (signal?.aborted) stop();
+  else signal?.addEventListener("abort", stop, { once: true });
+  const check = async (hash: string, size: number) => {
+    const ids = new Set(recorded.get(hash) ?? []);
+    let failure: MarfaError | undefined;
+    const holding = blobs.stores.filter((one) => ids.has(one.id));
+    for (const store of answeringFirst(holding, unanswered)) {
+      let held: { size_bytes: number } | null;
+      try {
+        held = await within(
+          (cancel) => store.has(hash, cancel),
+          storeChecks.timeoutMs,
+          { signal: decided.signal },
+        );
+      } catch (error) {
+        decided.signal.throwIfAborted();
+        unanswered.add(store.id);
+        failure ??= storeUnavailable(store, hash, error);
+        continue;
+      }
+      if (held?.size_bytes === size) return store;
+    }
+    if (failure) throw failure;
+    return null;
+  };
+  const worker = async () => {
+    for (
+      let next = queue.shift();
+      next && !decided.signal.aborted;
+      next = queue.shift()
+    ) {
+      found.set(next[0], await check(next[0], next[1]));
+    }
+  };
+  try {
+    await Promise.all(
+      Array.from(
+        { length: Math.min(storeChecks.concurrency, queue.length) },
+        worker,
+      ),
+    );
+  } finally {
+    decided.abort();
+    signal?.removeEventListener("abort", stop);
+  }
+  return found;
 }
 
 export type BlobLayerConfig = Pick<

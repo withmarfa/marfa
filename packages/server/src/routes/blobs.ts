@@ -12,7 +12,7 @@ import { standingPermission, authorityId } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type { BlobLayer } from "../storage/blob-layer.js";
+import { recordedStores, type BlobLayer } from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
   blobDisposition,
@@ -679,12 +679,7 @@ export function blobRoutes(
       );
     }
 
-    // Only a store with a recorded copy answers: a copy struck or dropped
-    // can linger in its store until its deletion is retried.
-    const holding = new Set(
-      (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
-    );
-    const stores = blobs.stores.filter((store) => holding.has(store.id));
+    const stores = await recordedStores(storage, blobs, hash);
     if (stores.length === 0) {
       throw new MarfaError(
         ErrorCode.BLOB_NOT_FOUND,

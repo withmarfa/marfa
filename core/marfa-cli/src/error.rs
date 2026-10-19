@@ -74,6 +74,21 @@ pub enum CliError {
     CredentialEnded,
     #[error("{0}")]
     Invalid(String),
+    /// An export written whole but for blobs no store could read.
+    #[error(
+        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names",
+        .0.len(),
+        hash_list(.0)
+    )]
+    ArchiveLacksBlobs(Vec<String>),
+    /// A restore that wrote what the archive carries, of an archive that
+    /// lacks blobs it names.
+    #[error(
+        "{} blob(s) the archive names are in neither the archive nor this instance: {}; `marfa blobs upload` with their bytes restores them",
+        .0.len(),
+        hash_list(.0)
+    )]
+    RestoreLacksBlobs(Vec<String>),
     #[error(
         "{origin} {}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
         contract_said(served.as_deref(), *status),
@@ -211,7 +226,7 @@ impl Exit {
         match self {
             Exit::Done => "done",
             Exit::Refused => {
-                "the request was refused, by the server, by the CLI before sending, for an answer on another contract, or for a docs page that does not exist; a retry does not change it"
+                "the request was refused, by the server, by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
             }
             Exit::Usage => "the command line was wrong, or named no store or server",
             Exit::Environment => {
@@ -264,6 +279,7 @@ own_codes! {
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
     CliError::Invalid(_) => "invalid",
+    CliError::ArchiveLacksBlobs(_) | CliError::RestoreLacksBlobs(_) => "blobs_missing",
     CliError::ContractMismatch { .. } => "contract_mismatch",
     CliError::Redirected { .. } => "redirect",
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
@@ -354,6 +370,8 @@ impl CliError {
             }
             CliError::NotHeld(_)
             | CliError::Invalid(_)
+            | CliError::ArchiveLacksBlobs(_)
+            | CliError::RestoreLacksBlobs(_)
             | CliError::DocsPageNotFound { .. }
             | CliError::ContractMismatch { .. }
             | CliError::Redirected { .. } => Exit::Refused,
@@ -458,6 +476,17 @@ fn contract_said(served: Option<&str>, status: Option<u16>) -> String {
             || "answers no contract at its root".into(),
             |status| format!("answered {status} naming no contract"),
         ),
+    }
+}
+
+/// The first few hashes, and how many more: a message names what is
+/// missing without growing with an instance that lost every file.
+fn hash_list(hashes: &[String]) -> String {
+    const SHOWN: usize = 10;
+    let shown = hashes[..hashes.len().min(SHOWN)].join(", ");
+    match hashes.len().saturating_sub(SHOWN) {
+        0 => shown,
+        more => format!("{shown} and {more} more"),
     }
 }
 
@@ -661,6 +690,7 @@ mod tests {
             "no_credential",
             "docs_page_not_found",
             "docs_unreachable",
+            "blobs_missing",
         ] {
             expected.push(own);
         }
@@ -870,6 +900,8 @@ mod tests {
             Exit::Environment
         );
         assert_eq!(CliError::Invalid("x".into()).exit(), Exit::Refused);
+        assert_eq!(CliError::ArchiveLacksBlobs(vec![]).exit(), Exit::Refused);
+        assert_eq!(CliError::RestoreLacksBlobs(vec![]).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {
                 code: "unauthorized".into(),
@@ -893,5 +925,19 @@ mod tests {
         for status in [400, 403, 404, 409, 413, 422] {
             assert_eq!(refused(status).exit(), Exit::Refused, "{status}");
         }
+    }
+}
+
+#[cfg(test)]
+mod hash_list_tests {
+    use super::*;
+
+    #[test]
+    fn names_ten_hashes_and_counts_the_rest() {
+        let hashes: Vec<String> = (0..12).map(|n| format!("sha256:{n:02}")).collect();
+        let message = CliError::ArchiveLacksBlobs(hashes).to_string();
+        assert!(message.contains("lacks 12 blob(s)"), "{message}");
+        assert!(message.contains("sha256:09 and 2 more"), "{message}");
+        assert!(!message.contains("sha256:10"), "{message}");
     }
 }

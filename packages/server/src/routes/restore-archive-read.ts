@@ -37,10 +37,11 @@ export const MAX_ARCHIVE_TEXT_BYTES = 64 * 1024 * 1024;
  *
  * `ArchiveManifest` in `routes/export-archive.ts` is the writer's own declaration
  * and the authority on the format. This one stops at the fields the restore
- * consults: `version`, which it refuses, and `blobs`, whose mime type each
- * blob entry is stored under. Widening it to match the writer would have it
- * claim fields of every archive ever written, which is a claim nothing here
- * can keep.
+ * consults: `version`, which it refuses, `blobs`, whose mime type each blob
+ * entry is stored under, and `missing_blobs`, which with `blobs` names every
+ * blob the archive should carry. Widening it to match the writer would have
+ * it claim fields of every archive ever written, which is a claim nothing
+ * here can keep.
  */
 const archiveManifestSchema = z.object({
   version: z.literal(0),
@@ -51,6 +52,16 @@ const archiveManifestSchema = z.object({
       size_bytes: z.number().int().nonnegative(),
     }),
   ),
+  // A blob the writer had no record of has neither.
+  missing_blobs: z
+    .record(
+      z.string(),
+      z.object({
+        mime_type: z.string().nullable(),
+        size_bytes: z.number().int().nonnegative().nullable(),
+      }),
+    )
+    .optional(),
 });
 type ArchiveManifest = z.infer<typeof archiveManifestSchema>;
 
@@ -70,6 +81,9 @@ type LineFile = (typeof LINE_FILES)[number];
 export interface ReadArchive {
   lineFiles: Partial<Record<LineFile, string>>;
   blobs: PendingBlob[];
+  /** The blobs the manifest names, under `blobs` or `missing_blobs`, for
+   *  which no entry carries bytes that hash to the name, in order. */
+  absent: string[];
 }
 
 function invalid(message: string, details?: Record<string, unknown>) {
@@ -292,7 +306,15 @@ export async function readArchive(
     blob.mimeType =
       manifest?.blobs[blob.hash]?.mime_type ?? "application/octet-stream";
   }
-  return { lineFiles, blobs };
+  const carried = new Set(blobs.map((blob) => blob.hash));
+  const named = new Set([
+    ...Object.keys(manifest?.missing_blobs ?? {}),
+    ...Object.keys(manifest?.blobs ?? {}),
+  ]);
+  const absent = [...named]
+    .filter((hash) => isValidBlobHash(hash) && !carried.has(hash))
+    .sort();
+  return { lineFiles, blobs, absent };
 }
 
 /**

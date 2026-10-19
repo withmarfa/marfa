@@ -33,6 +33,10 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::SignedOut { .. } => "the sign-in has ended",
         CliError::CredentialEnded => "the credential that held the stream has ended",
         CliError::Invalid(_) => "a value was not accepted",
+        CliError::ArchiveLacksBlobs(_) => "the export archive lacks blobs no store could read",
+        CliError::RestoreLacksBlobs(_) => {
+            "the restored archive lacks blobs this instance does not hold"
+        }
         CliError::ContractMismatch { .. } => {
             "the server speaks a different contract than this build"
         }

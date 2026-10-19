@@ -10,8 +10,9 @@
  *
  * - text, appended a page at a time and read back as a stream; and
  * - sets of strings, which the export has to ask questions of while it is still
- *   reading: whether an edge's endpoints were both exported, and which blob
- *   digests the exported rows name. They live in a scratch SQLite file whose
+ *   reading: whether an edge's endpoints were both exported, which blob
+ *   digests the exported rows name, and which of those a file's `blob_ref`
+ *   names. They live in a scratch SQLite file whose
  *   members are sorted, so a lookup is an index probe and a walk is a keyset
  *   page.
  */
@@ -60,7 +61,8 @@ export class TextSpool {
 export class KeySet {
   constructor(
     private readonly client: Client,
-    private readonly table: "item_ids" | "blob_hashes" | "listed_blobs",
+    private readonly table:
+      "item_ids" | "blob_hashes" | "file_refs" | "listed_blobs",
   ) {}
 
   async add(members: Iterable<string>): Promise<void> {
@@ -127,10 +129,11 @@ export class ExportSpool {
     return spool;
   }
 
-  /** The two sets, in a scratch SQLite file created on first use. */
+  /** The sets, in a scratch SQLite file created on first use. */
   async sets(): Promise<{
     itemIds: KeySet;
     blobHashes: KeySet;
+    fileRefs: KeySet;
     listedBlobs: KeySet;
   }> {
     if (!this.scratch) {
@@ -147,7 +150,7 @@ export class ExportSpool {
       await client.execute(
         "CREATE TABLE item_ids (key TEXT PRIMARY KEY) WITHOUT ROWID",
       );
-      for (const table of ["blob_hashes", "listed_blobs"]) {
+      for (const table of ["blob_hashes", "file_refs", "listed_blobs"]) {
         await client.execute(
           `CREATE TABLE ${table} (key TEXT PRIMARY KEY) WITHOUT ROWID`,
         );
@@ -156,6 +159,7 @@ export class ExportSpool {
     return {
       itemIds: new KeySet(this.scratch, "item_ids"),
       blobHashes: new KeySet(this.scratch, "blob_hashes"),
+      fileRefs: new KeySet(this.scratch, "file_refs"),
       listedBlobs: new KeySet(this.scratch, "listed_blobs"),
     };
   }

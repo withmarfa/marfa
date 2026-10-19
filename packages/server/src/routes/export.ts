@@ -85,7 +85,7 @@ const exportRoute = createRoute({
         .enum(["ndjson", "archive"])
         .optional()
         .describe(
-          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`.",
+          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold.",
         ),
     }),
   },
@@ -128,6 +128,18 @@ const exportRoute = createRoute({
       },
       description:
         "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.",
+    },
+    503: {
+      description:
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
     },
   },
 });

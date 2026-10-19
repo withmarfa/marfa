@@ -10,9 +10,15 @@
  * server for are one page's, not the instance's. The tar is then written
  * from the spool with backpressure, and the spool is removed on every
  * outcome.
+ *
+ * A blob no store can read whole is named under the manifest's
+ * `missing_blobs` and left out, so one lost file costs the backup that file
+ * and not the rest. Bytes that do not hash to their name are found only as
+ * they are sent, and end the response with an error.
  */
 
-import { PassThrough, Readable } from "node:stream";
+import { createHash } from "node:crypto";
+import { PassThrough, Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGzip } from "node:zlib";
 import type { Context } from "hono";
@@ -21,9 +27,19 @@ import type { Item } from "@withmarfa/shared";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import type { OwnerItemRead } from "./_owner-item-read.js";
 import type { Storage, ItemFilters } from "../storage/interface.js";
-import type { BlobLayer } from "../storage/blob-layer.js";
-import type { BlobRead } from "../storage/blob-store.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
+import {
+  answeringFirst,
+  recordedStores,
+  storeChecks,
+  storeUnavailable,
+  wholeCopies,
+  within,
+  type BlobLayer,
+} from "../storage/blob-layer.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { copyIntact, strikeCopy } from "../housekeeping/blob-strike.js";
+import type { BlobRead, BlobStore } from "../storage/blob-store.js";
+import { collectBlobHashes, fileBlobRef } from "../storage/blob-utils.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
@@ -66,21 +82,119 @@ export interface ArchiveManifest {
   type_count: number;
   edge_type_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
+  /** The blobs the archive should carry that no store could read whole,
+   *  in the shape of `blobs`, and not counted in `blob_count`. A blob the
+   *  instance has no record of, which a file's `blob_ref` names, has a null
+   *  type and size: nothing here knows them. */
+  missing_blobs: Record<
+    string,
+    { mime_type: string | null; size_bytes: number | null }
+  >;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type HonoContext = Context<any, any, any>;
 
-/** The bytes from the first attached store that holds them. */
-async function readFromAnyStore(
+/**
+ * The bytes of the first recorded copy of `hash` that holds them whole, and
+ * the store they come from, asking the stores in `unanswered` last and
+ * adding to it a store that fails. Nothing of the entry is written yet, so
+ * a store that fails here, or holds the blob short, gives way to the next.
+ */
+async function readWhole(
+  storage: Storage,
   blobs: BlobLayer,
   hash: string,
-): Promise<BlobRead | null> {
-  for (const store of blobs.stores) {
-    const read = await store.get(hash);
-    if (read) return read;
+  sizeBytes: number,
+  unanswered: Set<string>,
+  signal: AbortSignal,
+): Promise<{ read: BlobRead; store: BlobStore }> {
+  let failure: unknown;
+  const stores = answeringFirst(
+    await recordedStores(storage, blobs, hash),
+    unanswered,
+  );
+  for (const store of stores) {
+    let read: BlobRead | null;
+    try {
+      read = await within(
+        (cancel) => store.get(hash, undefined, cancel),
+        storeChecks.timeoutMs,
+        { signal, late: (gone) => gone?.stream.destroy() },
+      );
+    } catch (error) {
+      signal.throwIfAborted();
+      unanswered.add(store.id);
+      failure = storeUnavailable(store, hash, error);
+      continue;
+    }
+    if (!read) continue;
+    if (read.length === sizeBytes) return { read, store };
+    read.stream.destroy();
   }
-  return null;
+  throw new Error(`No store holds the whole bytes of ${hash}`, {
+    cause: failure,
+  });
+}
+
+/**
+ * Passes bytes on while hashing them, and holds the last chunk back until
+ * they are known to be the blob's, so an entry with other bytes ends short
+ * and its tar is not well formed. Only `size` bytes that hash to another
+ * name are evidence against the copy, and `onMismatch` is then asked to
+ * judge it; a read that ends short says only that the read went wrong.
+ */
+class VerifyingTransform extends Transform {
+  private readonly hashing = createHash("sha256");
+  private held: Buffer | null = null;
+  private bytes = 0;
+
+  constructor(
+    private readonly hash: string,
+    private readonly size: number,
+    private readonly onMismatch: () => Promise<void>,
+  ) {
+    super();
+  }
+
+  override _transform(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null, data?: Buffer) => void,
+  ): void {
+    this.hashing.update(chunk);
+    this.bytes += chunk.length;
+    const previous = this.held;
+    this.held = chunk;
+    callback(null, previous ?? undefined);
+  }
+
+  override _flush(callback: (error?: Error | null, data?: Buffer) => void) {
+    if (this.bytes !== this.size) {
+      callback(
+        new Error(
+          `The read of ${this.hash} ended after ${String(this.bytes)} of ${String(this.size)} bytes`,
+        ),
+      );
+      return;
+    }
+    const actual = `sha256:${this.hashing.digest("hex")}`;
+    if (actual === this.hash) {
+      callback(null, this.held ?? undefined);
+      return;
+    }
+    const mismatch = new Error(
+      `The bytes read for ${this.hash} hash to ${actual}`,
+    );
+    this.onMismatch().then(
+      () => {
+        callback(mismatch);
+      },
+      (error: unknown) => {
+        callback(new Error(mismatch.message, { cause: error }));
+      },
+    );
+  }
 }
 
 /** The export's filter, resolved once by the route handler. */
@@ -105,6 +219,8 @@ interface Selection {
   types: TextSpool;
   /** The manifest's `blobs` entries, comma separated, without braces. */
   blobEntries: TextSpool;
+  /** The manifest's `missing_blobs` entries, in the same form. */
+  missingEntries: TextSpool;
   itemCount: number;
   edgeCount: number;
   typeCount: number;
@@ -124,15 +240,20 @@ export async function handleArchiveExport(
 ): Promise<Response> {
   const clientGone = c.req.raw.signal;
   const spool = new ExportSpool(() => blobs.disk.spoolPath());
+  // Kept from the selection to the last entry, so a store that hung once is
+  // waited for once.
+  const unanswered = new Set<string>();
 
   let selection: Selection;
   try {
     selection = await collectSelection({
       storage,
+      blobs,
       reader,
       filter,
       spool,
       signal: clientGone,
+      unanswered,
     });
   } catch (error) {
     await spool.dispose();
@@ -152,13 +273,18 @@ export async function handleArchiveExport(
     blob_count: selection.blobCount,
     type_count: selection.typeCount,
     edge_type_count: selection.edgeTypeCount,
-  } satisfies Omit<ArchiveManifest, "blobs">);
+  } satisfies Omit<ArchiveManifest, "blobs" | "missing_blobs">);
   // The manifest is the head's object with the blob entries inside its
   // `blobs` member, cut open here so the entries are never held whole.
   const manifestHead = Buffer.from(`${head.slice(0, -1)},"blobs":{`);
+  const manifestMiddle = Buffer.from('},"missing_blobs":{');
   const manifestTail = Buffer.from("}}");
   const manifestSize =
-    manifestHead.length + selection.blobEntries.bytes + manifestTail.length;
+    manifestHead.length +
+    selection.blobEntries.bytes +
+    manifestMiddle.length +
+    selection.missingEntries.bytes +
+    manifestTail.length;
 
   const pack = tar.pack();
   const gzip = createGzip();
@@ -173,6 +299,27 @@ export async function handleArchiveExport(
 
   const entry = (name: string, size: number, source: Readable) =>
     pipeline(source, pack.entry({ name, size }), { signal: stopped.signal });
+  const blobEntry = (
+    hash: string,
+    size: number,
+    source: Readable,
+    store: BlobStore,
+  ) =>
+    pipeline(
+      source,
+      // The read was made outside the blob's upload lock, so the copy may
+      // have been put right since: it is read again under the lock, as
+      // `blob-integrity` reads it, and struck only if it is still wrong.
+      new VerifyingTransform(hash, size, async () => {
+        await withBlobUploadLock(hash, async () => {
+          if (!(await copyIntact(store, hash, size, stopped.signal))) {
+            await strikeCopy(storage, store, hash);
+          }
+        });
+      }),
+      pack.entry({ name: `blobs/${hash}`, size }),
+      { signal: stopped.signal },
+    );
 
   const write = async (): Promise<void> => {
     await entry(
@@ -182,6 +329,10 @@ export async function handleArchiveExport(
         (async function* () {
           yield manifestHead;
           for await (const chunk of selection.blobEntries.read()) {
+            yield chunk as Buffer;
+          }
+          yield manifestMiddle;
+          for await (const chunk of selection.missingEntries.read()) {
             yield chunk as Buffer;
           }
           yield manifestTail;
@@ -203,9 +354,21 @@ export async function handleArchiveExport(
     for (;;) {
       const hashes = await selection.listedBlobs.page(after, PAGE);
       for (const hash of hashes) {
-        const read = await readFromAnyStore(blobs, hash);
-        if (!read) continue;
-        await entry(`blobs/${hash}`, read.length, read.stream);
+        // The manifest listing the blob has been sent, so a blob whose
+        // record or last copy went since the selection cuts the archive
+        // short rather than leaving the entry out. A blob's record is never
+        // rewritten, so its size is the one the selection judged by.
+        const size = (await storage.blobs.get(hash))?.size_bytes;
+        if (size === undefined) throw new Error(`${hash} is not registered`);
+        const { read, store } = await readWhole(
+          storage,
+          blobs,
+          hash,
+          size,
+          unanswered,
+          stopped.signal,
+        );
+        await blobEntry(hash, size, read.stream, store);
       }
       after = hashes.at(-1);
       if (hashes.length < PAGE) break;
@@ -256,18 +419,21 @@ export async function handleArchiveExport(
 
 async function collectSelection(input: {
   storage: Storage;
+  blobs: BlobLayer;
   reader: OwnerItemRead;
   filter: ExportFilter;
   spool: ExportSpool;
   signal: AbortSignal;
+  unanswered: Set<string>;
 }): Promise<Selection> {
-  const { storage, reader, filter, spool, signal } = input;
+  const { storage, blobs, reader, filter, spool, signal, unanswered } = input;
   const readsHistory = reader.reads;
   const items = await spool.text();
   const edges = await spool.text();
   const types = await spool.text();
   const blobEntries = await spool.text();
-  const { itemIds, blobHashes, listedBlobs } = await spool.sets();
+  const missingEntries = await spool.text();
+  const { itemIds, blobHashes, fileRefs, listedBlobs } = await spool.sets();
 
   // Between pages, and nowhere else, the event loop gets its turn: a page is
   // read as a unit, so an item's row, metadata, lending digests and history
@@ -292,6 +458,7 @@ async function collectSelection(input: {
     const lines: string[] = [];
     const ids: string[] = [];
     const hashes = new Set<string>();
+    const refs = new Set<string>();
     // Of the version each row was read at, which a write since may have
     // moved the row past. A writer is held to the reach that holds the
     // snapshots, so a caller that may not read the history learns none.
@@ -315,6 +482,10 @@ async function collectSelection(input: {
         ).filter(([namespace]) => namespace in metadata.extensions),
       );
       const versions = await historyBelow(storage, item, readsHistory, hashes);
+      for (const row of [item, ...versions]) {
+        const ref = fileBlobRef(row);
+        if (ref) refs.add(ref);
+      }
       lines.push(
         JSON.stringify({
           item,
@@ -333,6 +504,7 @@ async function collectSelection(input: {
     await items.append(lines.map((line) => `${line}\n`).join(""));
     await itemIds.add(ids);
     await blobHashes.add(hashes);
+    await fileRefs.add(refs);
     itemCount += lines.length;
     cursor = result.next_cursor ?? undefined;
   } while (cursor);
@@ -406,29 +578,59 @@ async function collectSelection(input: {
   // caller: naming a digest in a row it may read lends nothing the
   // door would not, wherever in the row the digest sits.
   let blobCount = 0;
+  let missingCount = 0;
   let after: string | undefined;
   for (;;) {
     await turn();
     const page = await blobHashes.page(after, PAGE);
     const listed: string[] = [];
     const entries: string[] = [];
+    const missing: string[] = [];
+    const records = new Map<
+      string,
+      { mime_type: string | null; size_bytes: number | null }
+    >();
+    const sizes = new Map<string, number>();
+    // A digest with no record is a blob only where a file's `blob_ref`
+    // names it; anywhere else it may be any run of hex.
+    const refs = await fileRefs.held(page);
     for (const hash of page) {
       if (!(await reader.blob(storage, hash))) continue;
       const record = await storage.blobs.get(hash);
-      if (!record) continue;
-      listed.push(hash);
-      entries.push(
-        `${JSON.stringify(hash)}:${JSON.stringify({
-          mime_type: record.mime_type,
-          size_bytes: record.size_bytes,
-        })}`,
-      );
+      if (record) {
+        records.set(hash, record);
+        sizes.set(hash, record.size_bytes);
+      } else if (refs.has(hash)) {
+        records.set(hash, { mime_type: null, size_bytes: null });
+      }
+    }
+    const copies = await wholeCopies(storage, blobs, sizes, {
+      signal,
+      unanswered,
+    });
+    for (const [hash, record] of records) {
+      const entry = `${JSON.stringify(hash)}:${JSON.stringify({
+        mime_type: record.mime_type,
+        size_bytes: record.size_bytes,
+      })}`;
+      if (copies.get(hash)) {
+        listed.push(hash);
+        entries.push(entry);
+      } else {
+        missing.push(entry);
+      }
     }
     await blobEntries.append(
       entries.map((one, i) => (blobCount + i === 0 ? one : `,${one}`)).join(""),
     );
+    await missingEntries.append(
+      missing
+        .map((one, i) => (missingCount + i === 0 ? one : `,${one}`))
+        .join(""),
+    );
     await listedBlobs.add(listed);
     blobCount += listed.length;
+    missingCount += missing.length;
     after = page.at(-1);
     if (page.length < PAGE) break;
   }
@@ -438,12 +640,14 @@ async function collectSelection(input: {
     edges.seal(),
     types.seal(),
     blobEntries.seal(),
+    missingEntries.seal(),
   ]);
   return {
     items,
     edges,
     types,
     blobEntries,
+    missingEntries,
     itemCount,
     edgeCount,
     typeCount,

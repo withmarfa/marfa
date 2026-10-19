@@ -301,6 +301,16 @@ describe("restore", () => {
         }),
         path: `blobs.${hash}.size_bytes`,
       },
+      { reshape: (m) => ({ ...m, missing_blobs: [] }), path: "missing_blobs" },
+      {
+        reshape: (m) => ({
+          ...m,
+          missing_blobs: {
+            [hash]: { mime_type: "text/plain", size_bytes: -1 },
+          },
+        }),
+        path: `missing_blobs.${hash}.size_bytes`,
+      },
       { reshape: (m) => without(m, "version"), path: "version" },
       { reshape: (m) => ({ ...m, version: "0" }), path: "version" },
     ];
@@ -658,6 +668,7 @@ describe("what a restore answers", () => {
     expect(Object.keys(first.data).sort()).toEqual(
       [
         "blobs_imported",
+        "blobs_missing",
         "duplicates",
         "edge_types_registered",
         "edge_types_skipped",
@@ -676,6 +687,7 @@ describe("what a restore answers", () => {
       edges_skipped: 0,
       edges_skipped_reasons: {},
       blobs_imported: 1,
+      blobs_missing: [],
       types_registered: 1,
       types_skipped: 0,
       edge_types_registered: 1,
@@ -708,6 +720,7 @@ describe("what a restore answers", () => {
         malformed: 1,
       },
       blobs_imported: 1,
+      blobs_missing: [],
       types_registered: 0,
       types_skipped: 1,
       edge_types_registered: 0,

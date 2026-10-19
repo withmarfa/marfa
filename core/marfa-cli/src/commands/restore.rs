@@ -19,5 +19,21 @@ pub fn request(args: &RestoreArgs) -> Request {
 }
 
 pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    out.value(&remote.json(&request(&args))?)
+    let answer = remote.json(&request(&args))?;
+    out.value(&answer)?;
+    let missing: Vec<String> = answer
+        .get("blobs_missing")
+        .and_then(serde_json::Value::as_array)
+        .map(|hashes| {
+            hashes
+                .iter()
+                .filter_map(|hash| hash.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(CliError::RestoreLacksBlobs(missing))
+    }
 }

@@ -4,7 +4,7 @@
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, edges_skipped_reasons, blobs_imported,
- * types_registered, types_skipped, edge_types_registered,
+ * blobs_missing, types_registered, types_skipped, edge_types_registered,
  * edge_types_skipped}`. Enforces the manifest version 0 contract and blob-hash
  * verification, and checks every row before writing any. Memory does not
  * grow with the archive: entries it does not read are skipped, the rest are
@@ -58,7 +58,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import type { BlobLayer } from "../storage/blob-layer.js";
+import { wholeCopies, type BlobLayer } from "../storage/blob-layer.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
   planArchiveTypes,
@@ -210,6 +210,11 @@ const restoreArchiveRoute = createRoute({
               .describe(
                 "How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them.",
               ),
+            blobs_missing: z
+              .array(z.string())
+              .describe(
+                "The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them.",
+              ),
             types_registered: z
               .number()
               .describe("How many types Marfa registered."),
@@ -277,6 +282,18 @@ const restoreArchiveRoute = createRoute({
       },
       description:
         "- `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.\n- `link_taken`: the archive registers a type naming a `link_field` in which two rows a forced delete left share a value.",
+    },
+    503: {
+      description:
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
     },
   },
 });
@@ -967,6 +984,25 @@ async function restoreRows(
   );
 }
 
+/**
+ * Of `absent`, the blobs no attached store holds whole. Asked before the
+ * restore writes, so a store that cannot answer refuses the restore rather
+ * than reporting a blob it may hold as missing.
+ */
+async function stillAbsent(
+  storage: Storage,
+  blobs: BlobLayer,
+  absent: readonly string[],
+): Promise<string[]> {
+  const sizes = new Map<string, number>();
+  for (const hash of absent) {
+    const record = await storage.blobs.get(hash);
+    if (record) sizes.set(hash, record.size_bytes);
+  }
+  const copies = await wholeCopies(storage, blobs, sizes);
+  return absent.filter((hash) => !copies.get(hash));
+}
+
 export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
@@ -1071,10 +1107,12 @@ export function restoreArchiveRoutes(
       }
       const typePlan = await planArchiveTypes(storage, typeEntries);
 
-      const releaseBlobs = await holdBlobUploadLocks(
-        archive.blobs.map((blob) => blob.hash),
-      );
+      const releaseBlobs = await holdBlobUploadLocks([
+        ...archive.blobs.map((blob) => blob.hash),
+        ...archive.absent,
+      ]);
       try {
+        const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
         try {
           requireRecentOwnerAuthentication(c);
@@ -1096,6 +1134,7 @@ export function restoreArchiveRoutes(
               edges_skipped: result.edgesSkipped,
               edges_skipped_reasons: result.edgesSkippedReasons,
               blobs_imported: archive.blobs.length,
+              blobs_missing: absent,
               types_registered: result.types.typesRegistered,
               types_skipped: result.types.typesSkipped,
               edge_types_registered: result.types.edgeTypesRegistered,

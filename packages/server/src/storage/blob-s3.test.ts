@@ -307,6 +307,14 @@ describe("S3BlobStore", () => {
       mockSend.mockRejectedValueOnce(new Error("AccessDenied"));
       await expect(store.has("sha256:abc")).rejects.toThrow("AccessDenied");
     });
+
+    it("hands the SDK the signal that calls the request off", async () => {
+      const store = await attached();
+      const signal = new AbortController().signal;
+      mockSend.mockResolvedValueOnce({ ContentLength: 42 });
+      await store.has("sha256:abc", signal);
+      expect(mockSend.mock.calls[1]?.[1]).toEqual({ abortSignal: signal });
+    });
   });
 
   describe("get", () => {
@@ -353,6 +361,17 @@ describe("S3BlobStore", () => {
       expect(read?.size_bytes).toBe(7);
       expect(read?.offset).toBe(1);
       expect(read?.length).toBe(3);
+    });
+
+    it("hands the SDK the signal that calls the request off", async () => {
+      const store = await attached();
+      const signal = new AbortController().signal;
+      mockSend.mockResolvedValueOnce({
+        Body: Readable.from([Buffer.from("x")]),
+        ContentLength: 1,
+      });
+      await store.get("sha256:abc", undefined, signal);
+      expect(mockSend.mock.calls[1]?.[1]).toEqual({ abortSignal: signal });
     });
 
     it("answers null for an absent object", async () => {

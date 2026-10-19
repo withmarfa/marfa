@@ -22,7 +22,7 @@ const READS: Record<string, string> = {
   SearchStore: "search",
   KeyStore: "list get validate count",
   BlobRegistry:
-    "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores listLocations listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
+    "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores listLocations storeIdsOf listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
   WebhookStore: "checkpoint listAfter list get count",
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
