@@ -200,7 +200,25 @@ describe("the claim and setup pages", () => {
       expect(html).toContain('id="owner-form"');
       expect(html).toContain('aria-label="Step 2 of 6"');
     }
+    // Back from the details reads the code page, and changes nothing.
+    const back = await ctx.app.request("/setup?step=code", {
+      headers: { cookie },
+    });
+    const backHtml = await back.text();
+    expect(backHtml).toContain('id="code-form"');
+    expect(backHtml).toContain('aria-label="Step 1 of 6"');
+    expect(back.headers.get("set-cookie")).toBeNull();
+    const details2 = await ctx.app.request("/setup", { headers: { cookie } });
+    const detailsHtml = await details2.text();
+    expect(detailsHtml).toContain('id="owner-form"');
+    expect(detailsHtml).toContain('href="/setup?step=code"');
     await ctx.app.request("/owner", json(details, { origin, cookie }));
+    const afterClaim = await ctx.app.request("/setup?step=code", {
+      headers: { cookie },
+    });
+    expect(await afterClaim.text()).toContain(
+      "This Marfa already has an owner",
+    );
     const claimed = await (await ctx.app.request("/setup")).text();
     expect(claimed).toContain("This Marfa already has an owner");
     expect(claimed).toContain('href="/auth/sign-in"');

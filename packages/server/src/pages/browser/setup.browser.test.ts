@@ -205,6 +205,15 @@ describe("the whole sequence", () => {
           await page.getByRole("link", { name: "Continue" }).click();
 
           await page.waitForURL(`${origin}/setup/name`);
+          // Back and Continue share the width, as the pair on every other step does.
+          const pair = await Promise.all(
+            [
+              page.getByRole("link", { name: "Back" }),
+              page.getByRole("button", { name: "Continue" }),
+            ].map(async (control) => (await control.boundingBox())!.width),
+          );
+          expect(Math.abs(pair[0]! - pair[1]!)).toBeLessThanOrEqual(1);
+          expect(pair[0]).toBeGreaterThan(100);
           await page.fill("#instance-name", "Library");
           await page.getByRole("button", { name: "Continue" }).click();
           await page.waitForURL(`${origin}/setup/connect`);
@@ -226,6 +235,44 @@ describe("the whole sequence", () => {
       });
     },
     60_000,
+  );
+
+  inBrowser(
+    "goes back from the details to the setup code, and forward again with the code",
+    async () => {
+      await withInstance(async ({ origin, ctx }) => {
+        const { context, page } = await open();
+        try {
+          const { code } = await issueSetupCode(ctx.storage);
+          await toDetails(page, origin, code);
+          const back = page.getByRole("link", { name: "Back" });
+          const claimButton = page.getByRole("button", {
+            name: "Claim Marfa",
+          });
+          const widths = async () =>
+            Promise.all(
+              [back, claimButton].map(async (control) =>
+                Math.round((await control.boundingBox())!.width),
+              ),
+            );
+          const [backWidth, claimWidth] = await widths();
+          expect(Math.abs(backWidth! - claimWidth!)).toBeLessThanOrEqual(1);
+          await back.click();
+          await page.locator("#code-form").waitFor();
+          await page.getByRole("img", { name: "Step 1 of 6" }).waitFor();
+          // Nothing was undone: a refresh goes on to the details, and the claim is still open.
+          await page.goto(`${origin}/setup`);
+          await page.locator("#owner-form").waitFor();
+          await page.getByRole("link", { name: "Back" }).click();
+          await page.fill("#code", code);
+          await page.click("#code-form button[type=submit]");
+          await page.locator("#owner-form").waitFor();
+          expect((await getClaimStatus(ctx.storage)).claimed).toBe(false);
+        } finally {
+          await context.close();
+        }
+      });
+    },
   );
 
   inBrowser("puts the Copy label back after two quick clicks", async () => {
@@ -570,7 +617,7 @@ describe("by keyboard alone", () => {
           const details: string[] = [];
           await page.focus("#email");
           await page.keyboard.type(OWNER.email);
-          for (let tab = 0; tab < 4; tab++) {
+          for (let tab = 0; tab < 5; tab++) {
             await page.keyboard.press("Tab");
             const where = await focused();
             expect(where.ring, where.name).toBe(true);
@@ -582,6 +629,7 @@ describe("by keyboard alone", () => {
             "name",
             "password",
             "Show password",
+            "Back",
             "Claim Marfa",
           ]);
           await page.focus("#password");

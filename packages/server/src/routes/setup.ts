@@ -116,10 +116,9 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
 
   router.get("/", async (c) => {
     if ((await getClaimStatus(storage)).claimed) return claimedPage(c);
-    const setupReady = await hasSetupSession(
-      storage,
-      getCookie(c, SETUP_COOKIE) ?? "",
-    );
+    const setupReady =
+      c.req.query("step") !== "code" &&
+      (await hasSetupSession(storage, getCookie(c, SETUP_COOKIE) ?? ""));
     return page(
       c,
       setupReady

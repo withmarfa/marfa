@@ -18,7 +18,6 @@ import {
   Button,
   CommandBlock,
   Disclosure,
-  FormFoot,
   MomentCard,
   Notice,
   PageShell,
@@ -37,6 +36,8 @@ export const SETUP_STEP_PATHS = {
   connect: "/setup/connect",
   backups: "/setup/backups",
 } as const;
+/** The code page, shown even while a setup session lives, so the details can step back to it. */
+export const SETUP_CODE_PATH = "/setup?step=code";
 export type OwnerStep = keyof typeof SETUP_STEP_PATHS;
 export const OWNER_STEPS = Object.keys(SETUP_STEP_PATHS) as OwnerStep[];
 
@@ -246,9 +247,11 @@ export function renderDetailsPage(nonce: string, state: DetailsPageState = {}) {
           error={errors.password}
           autofocus={firstInvalid === "password"}
         />
-        <Button kind="primary" type="submit" wide loadingLabel="Claiming...">
-          Claim Marfa
-        </Button>
+        <StepPair back={SETUP_CODE_PATH}>
+          <Button kind="primary" type="submit" loadingLabel="Claiming...">
+            Claim Marfa
+          </Button>
+        </StepPair>
       </form>
     </Step>,
   );
@@ -270,19 +273,14 @@ export function renderClaimedPage(nonce: string, instanceName: string) {
   );
 }
 
-function StepButtons(props: {
-  back: string;
-  next: string;
-  nextLabel?: string;
-}) {
+/** The pair every step after the first ends in: Back, outlined, and the step's main button. */
+function StepPair(props: { back: string; children: Child }) {
   return (
     <div class="pair">
       <Button kind="outline" href={props.back}>
         Back
       </Button>
-      <Button kind="primary" href={props.next}>
-        {props.nextLabel ?? "Continue"}
-      </Button>
+      {props.children}
     </div>
   );
 }
@@ -377,14 +375,11 @@ export function renderNamePage(
           error={state.error}
           autofocus={state.error !== undefined}
         />
-        <FormFoot>
-          <Button kind="outline" href={SETUP_STEP_PATHS.passkey}>
-            Back
-          </Button>
+        <StepPair back={SETUP_STEP_PATHS.passkey}>
           <Button kind="primary" type="submit" loadingLabel="Saving...">
             Continue
           </Button>
-        </FormFoot>
+        </StepPair>
       </form>
     </Step>,
   );
@@ -418,10 +413,11 @@ export function renderConnectPage(nonce: string, instanceUrl: string) {
             what it can access, and you can end its access at any time.
           </p>
         </div>
-        <StepButtons
-          back={SETUP_STEP_PATHS.name}
-          next={SETUP_STEP_PATHS.backups}
-        />
+        <StepPair back={SETUP_STEP_PATHS.name}>
+          <Button kind="primary" href={SETUP_STEP_PATHS.backups}>
+            Continue
+          </Button>
+        </StepPair>
       </div>
     </Step>,
   );
@@ -459,11 +455,11 @@ export function renderBackupsPage(nonce: string, state: { bucket: boolean }) {
           export moves your data to another Marfa, so it doesn't replace a
           backup.
         </p>
-        <StepButtons
-          back={SETUP_STEP_PATHS.connect}
-          next="/auth/owner/manage"
-          nextLabel="Done"
-        />
+        <StepPair back={SETUP_STEP_PATHS.connect}>
+          <Button kind="primary" href="/auth/owner/manage">
+            Done
+          </Button>
+        </StepPair>
       </div>
     </Step>,
   );
