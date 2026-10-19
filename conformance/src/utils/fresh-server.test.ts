@@ -77,6 +77,14 @@ describe("fixture listener ownership", () => {
       );
       for (const server of servers) {
         const publicRoot = await (await fetch(`${server.url}/`)).json();
+        const discovery = await (
+          await fetch(
+            `${server.url}/auth/.well-known/oauth-authorization-server`,
+          )
+        ).json();
+        expect(new URL(discovery.issuer).origin).toBe(
+          new URL(server.url).origin,
+        );
         const privateRoot = await controlRequest(server.controlSocket, "/");
         expect(publicRoot.instance_id).toBe(privateRoot.body.instance_id);
         const competitor = createServer();
