@@ -5,8 +5,9 @@
  * file) so tsup bundles it into `dist/` without a separate static-asset
  * copy step. Treat the body as plain CSS.
  *
- * Single source of truth for every `/auth/*` page (sign-in, OAuth consent,
- * device flow, signed out, the error pages). Page renderers
+ * Single source of truth for the `/auth/*` pages not built on the page system
+ * (OAuth consent, the device flow, the owner and setup pages, the auth error
+ * page). Page renderers
  * reference these classes by name and never inline styles.
  *
  * The design is a calm, monochrome "Luma" shadcn surface: a white card on
@@ -236,16 +237,6 @@ a {
   line-height: 1.4;
   color: var(--error-fg);
 }
-/* Form-level error line for an error that isn't tied to a single field
-   (e.g. sign-in's wrong email-or-password, which spans both inputs). An
-   inline red line, NOT a boxed banner. */
-.form__error {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--error-fg);
-}
-
 /* Form controls share one input treatment, so there is one control shape
    and not three.
    NB: no backticks anywhere in this file. It is a template literal, and a
@@ -527,8 +518,8 @@ select:focus {
    contributes its own trailing space — a flex .form's column-gap, or the
    bottom margin of a .sub / .banner immediately above it — subtract that base
    gap so the step stays a single 20px instead of stacking to 36px. This one
-   rule is what makes the field→button gap identical across sign-in, sign-up,
-   one-time-link, reset, verify-email, and the device flow. */
+   rule is what makes the field→button gap identical on every screen that
+   uses this stylesheet. */
 .form > .actions,
 .sub + .actions,
 .banner + .actions {

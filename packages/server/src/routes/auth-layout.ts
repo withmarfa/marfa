@@ -3,7 +3,7 @@ import { authAssetUrl } from "./auth-static.js";
  * Shared HTML scaffold for every auth-surface page. `renderAuthLayout`
  * is the single source of truth for the `<!DOCTYPE>...</html>` envelope,
  * the `<meta viewport>` tag, the `<title>`, and the `<link rel="stylesheet">`
- * to `/auth/static/auth.css`. Page renderers (`renderSignInPage`,
+ * to `/auth/static/auth.css`. Page renderers (`renderDevicePage`,
  * `renderConsentScreen`, etc.) build the inner HTML and hand it to this
  * helper rather than duplicating the scaffold.
  *
