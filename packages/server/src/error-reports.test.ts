@@ -496,18 +496,26 @@ describe("a read that fails after the response has begun", () => {
     }
     await bootTelemetry(collector.url);
 
-    // The export reads each item's metadata as it streams. The second read
-    // finds the table gone, which fails a real statement after the first
-    // line has been sent and the response has begun.
+    // An open WAL snapshot still sees a table dropped on another connection.
+    // Hold the next page before capture so its real metadata query fails.
+    let resumeNextPage!: () => void;
+    const nextPage = new Promise<void>((resolve) => {
+      resumeNextPage = resolve;
+    });
+    const snapshot = ctx.storage.runInReadSnapshot.bind(ctx.storage);
+    let pages = 0;
+    vi.spyOn(ctx.storage, "runInReadSnapshot").mockImplementation(
+      async (fn, options) => {
+        if (++pages === 2) await nextPage;
+        return snapshot(fn, options);
+      },
+    );
     const storage = ctx.storage as unknown as {
       __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     };
     const real = ctx.storage.metadata.get.bind(ctx.storage.metadata);
-    let reads = 0;
     let raised: Error | undefined;
     vi.spyOn(ctx.storage.metadata, "get").mockImplementation(async (id) => {
-      reads += 1;
-      if (reads === 2) await storage.__sqliteRun("DROP TABLE metadata", []);
       try {
         return await real(id);
       } catch (error) {
@@ -527,10 +535,33 @@ describe("a read that fails after the response has begun", () => {
       return true;
     });
 
-    const response = await fetch(`${url}/export`, {
-      headers: { Authorization: `Bearer ${ctx.workingKey}` },
-    });
-    await response.text().catch(() => undefined);
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try {
+      const response = await fetch(`${url}/export`, {
+        headers: { Authorization: `Bearer ${ctx.workingKey}` },
+      });
+      expect(response.status).toBe(200);
+      reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let firstLine = "";
+      while (!firstLine.includes("\n")) {
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        firstLine += decoder.decode(first.value, { stream: true });
+      }
+      const lines = firstLine.trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const record = JSON.parse(lines[0]!) as {
+        item: { type: string; properties: { body: string } };
+      };
+      expect(record.item.type).toBe("core.note");
+      expect(record.item.properties.body).toMatch(/^exported \d$/);
+      expect(raised).toBeUndefined();
+      await storage.__sqliteRun("DROP TABLE metadata", []);
+    } finally {
+      resumeNextPage();
+    }
+    await expect(reader.read()).rejects.toThrow();
     await vi.waitFor(() => {
       expect(raised).toBeDefined();
     });
