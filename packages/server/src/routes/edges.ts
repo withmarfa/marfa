@@ -785,6 +785,8 @@ export function edgeRoutes(storage: Storage) {
                 target_id: result.edge.target_id,
               },
             },
+      undefined,
+      "edge.create",
     );
 
     if ("conflict" in outcome) {
@@ -893,6 +895,8 @@ export function edgeRoutes(storage: Storage) {
                 : { edge_type: written.edge.edge_type },
             }
           : null,
+      undefined,
+      "edge.update",
     );
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
@@ -972,6 +976,8 @@ export function edgeRoutes(storage: Storage) {
               resource_id: id,
               details: { edge_type: result.removed.edge_type },
             },
+      undefined,
+      "edge.delete",
     );
 
     if ("conflict" in result) {

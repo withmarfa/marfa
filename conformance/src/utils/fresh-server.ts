@@ -98,7 +98,7 @@ export interface FreshServer {
    */
   clockOffsetMs: number;
   /**
-   * Arms a fault, through `fault set`: `hold:<point>` waits at a point until
+   * Arms a fault, through `fault set`: `hold:<point>[=<arg>]` waits at a point until
    * cleared, `fail:<point>[=<arg>]` fails the target at a point once,
    * `deadline:<job>=<ms>` shortens a job's run deadline,
    * `free:<volume>=<bytes>` sets the reported free space, and

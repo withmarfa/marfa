@@ -1390,7 +1390,7 @@ When `GET /export?format=archive` returns a complete archive, the server MUST en
 
 **Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`, `› restores a custom type retyped away and deleted between archive pages`.
 
 ### `search-and-filters/archive-validation-retry`
 
@@ -1398,7 +1398,7 @@ If an archive selection fails restore validation, then the server MUST restart `
 
 **Reason:** a write between pages can make their combined state invalid even when each page was valid when read.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › retries an incompatible selection from the beginning and restores every item after repair`.
 
 ### `search-and-filters/archive-validation-refused`
 
@@ -1406,7 +1406,7 @@ If both archive selections fail restore validation and the second selection refu
 
 **Reason:** a row that changed between the reads, or a different row refused, shows that writes were landing on what failed, and a later retry can read it after the writes have finished. Returning an invalid archive would claim a backup the restore cannot read.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/export-write-order.test.ts › refuses with export_unrestorable when the refused row's type is registered again between the reads`.
 
 ### `search-and-filters/archive-rows-refused`
 
@@ -1428,7 +1428,7 @@ When a `GET /export?format=archive` response ends, whether the archive was read 
 
 If selection, validation or streaming fails during `GET /export?format=archive`, then the server MUST leave nothing of the export on disk.
 
-**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`.
+**Tests:** `compliance/export-faults.test.ts › is answered with an error, not an archive, and leaves nothing of the export on disk`, `compliance/export-write-order.test.ts › refuses with export_unrestorable when the refused row's type is registered again between the reads`.
 
 ### `search-and-filters/archive-spool-start`
 

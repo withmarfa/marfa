@@ -9,7 +9,8 @@
  * are declared in {@link POINTS}; deadlines name jobs and lookups name hosts:
  *
  * - `hold:<point>` makes the server wait at the point until the fault is
- *   cleared.
+ *   cleared. A counted hold selects one reach, optionally by audit action,
+ *   with the same arguments as a failure. Other reaches continue.
  * - `fail:<point>` makes the server fail at the point, once: on the nth time
  *   the point is reached after the fault was set (the first, unless the
  *   argument says another). The fault stays in the table afterwards with its
@@ -80,6 +81,8 @@ export const POINTS: {
     { name: "webhook-schedule:queued", arg: "none" },
     { name: "read-hydration", arg: "none" },
     { name: "export-validation", arg: "none" },
+    { name: "write", arg: "write" },
+    { name: "export-page", arg: "nth" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -131,7 +134,7 @@ export interface ActiveFault {
   fired: number;
 }
 
-/** Which reach of a `fail` point acts. */
+/** Which reach of a counted point acts. */
 interface Target {
   action: string | undefined;
   nth: number;
@@ -140,7 +143,7 @@ interface Target {
 interface Entry {
   arg: string | null;
   release: Set<() => void>;
-  /** For a `fail` fault: how it is aimed, and how many reaches it has counted. */
+  /** How a counted fault is aimed, and how many reaches it has counted. */
   target: Target | undefined;
   seen: number;
   fired: number;
@@ -171,7 +174,7 @@ function nth(text: string): number | undefined {
   return value <= MAX_NTH ? value : undefined;
 }
 
-/** How a `fail` fault is aimed, or why its argument is refused. */
+/** How a counted fault is aimed, or why its argument is refused. */
 function aim(point: Point, arg: string | null): Target | string {
   if (arg === null) return { action: undefined, nth: 1 };
   if (point.arg === "none") return `${point.name} takes no argument`;
@@ -230,7 +233,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
   if (kind === "hold" || kind === "fail") {
     const found = declared(kind, rest);
     if (found === undefined) return `no ${kind} point is named ${rest}`;
-    if (kind === "hold")
+    if (kind === "hold" && found.point.arg === "none")
       return arg === null ? undefined : "a hold fault takes no argument";
     const target = aim(found.point, arg);
     return typeof target === "string" ? target : undefined;
@@ -302,10 +305,15 @@ export function faultProblem(
 export function setFault(name: string, arg: string | null): void {
   const problem = shapeProblem(name, arg);
   if (problem !== undefined) throw new RangeError(problem);
-  const point = name.startsWith("fail:")
-    ? declared("fail", name.slice(5))?.point
-    : undefined;
-  const target = point === undefined ? undefined : aim(point, arg);
+  const kind = name.slice(0, name.indexOf(":"));
+  const point =
+    kind === "fail" || kind === "hold"
+      ? declared(kind, name.slice(kind.length + 1))?.point
+      : undefined;
+  const target =
+    point === undefined || (kind === "hold" && point.arg === "none")
+      ? undefined
+      : aim(point, arg);
   const aimed = typeof target === "object" ? target : undefined;
   const existing = faults.get(name);
   if (existing) {
@@ -405,9 +413,16 @@ export function recordFired(point: string): void {
 export function atPoint<T>(
   point: string,
   step: (held: boolean) => Promise<T>,
+  action?: string,
 ): Promise<T> {
   const entry = faults.get(`hold:${point}`);
   if (entry === undefined) return step(false);
+  if (entry.target !== undefined) {
+    if (entry.target.action !== undefined && entry.target.action !== action)
+      return step(false);
+    entry.seen += 1;
+    if (entry.seen !== entry.target.nth) return step(false);
+  }
   return new Promise<void>((resolve) => {
     const release = () => {
       entry.release.delete(release);
@@ -417,9 +432,9 @@ export function atPoint<T>(
   }).then(() => step(true));
 }
 
-/** Waits here while `hold:<point>` is armed; returns at once otherwise. */
-export async function holdAt(point: string): Promise<void> {
-  await atPoint(point, () => Promise.resolve());
+/** Waits when this reach is selected by `hold:<point>`. */
+export async function holdAt(point: string, action?: string): Promise<void> {
+  await atPoint(point, () => Promise.resolve(), action);
 }
 
 /** The deadline `deadline:<job>` sets for a run of `job`, if one is armed. */

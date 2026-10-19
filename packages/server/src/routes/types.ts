@@ -1055,6 +1055,8 @@ export function typeRoutes(storage: Storage) {
           resource_type: "type",
           resource_id: created.id,
         }),
+        undefined,
+        "type.register",
       );
 
       return c.json({ type: created }, 201);

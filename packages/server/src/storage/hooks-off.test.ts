@@ -141,6 +141,7 @@ const write = () =>
 
 it("takes the original path with no fault set: no fault wrapper is built and no scope is entered", async () => {
   await write();
+  expect(spies.hold).not.toHaveBeenCalled();
   expect(spies.audit).not.toHaveBeenCalled();
   expect(spies.scope).not.toHaveBeenCalled();
   expect(await ctx.storage.audit.list({ action: "test.hooks" })).toMatchObject({
@@ -669,4 +670,42 @@ it("hydrates an ordinary read without entering a hold unless a fault is armed", 
     clearFaults();
   }
   expect((await held).status).toBe(200);
+});
+
+it("enters the write hold only when it is armed, before work starts", async () => {
+  await write();
+  expect(spies.hold).not.toHaveBeenCalled();
+  setFault("hold:write", "test.hooks@1");
+  const work = vi.fn(() => ctx.storage.settings.set("hooks.off", "held"));
+  const pending = runAuditedTransaction(ctx.storage, work, entry);
+  await vi.waitFor(() => {
+    expect(activeFaults()[0]?.waiting).toBe(1);
+  });
+  expect(work).not.toHaveBeenCalled();
+  clearFaults();
+  await pending;
+  expect(work).toHaveBeenCalledTimes(1);
+  expect(spies.hold).toHaveBeenCalledTimes(1);
+});
+
+it("enters the export page hold only when it is armed", async () => {
+  await note("exported");
+  const read = () =>
+    request(ctx.app, "GET", "/export?format=archive", { key: ctx.workingKey });
+  const ordinary = await read();
+  expect(ordinary.status).toBe(200);
+  await ordinary.arrayBuffer();
+  expect(spies.hold).not.toHaveBeenCalled();
+  setFault("hold:export-page", "1");
+  const pending = read();
+  await vi.waitFor(() => {
+    expect(activeFaults()[0]?.waiting).toBe(1);
+  });
+  clearFaults();
+  const exported = await pending;
+  expect(exported.status).toBe(200);
+  await exported.arrayBuffer();
+  expect(
+    spies.hold.mock.calls.filter(([point]) => point === "export-page"),
+  ).toHaveLength(1);
 });

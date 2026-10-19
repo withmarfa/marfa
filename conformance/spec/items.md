@@ -668,11 +668,11 @@ When a write moves an item, the server MUST index it for search under the type i
 
 ### `items/write-race`
 
-When two writes to one item race, the server MUST judge each against the item and its type as they stand when that write lands, so a write raced against a move, a type change or a trash is refused as one sent after it.
+When two writes to one item race, the server MUST judge each against the item and its type as they stand when that write lands, with the same outcome as a request sent after any move, type change or trash that committed before it.
 
-**Reason:** a check made before the write lands is made of a row another write may change first.
+**Reason:** a check made before the write lands is made of a row another write may change first. A preceding change does not always require refusal: the current permissions, lifecycle and version rules determine the outcome. SQLite serializes writers, so each write checks the state left by the writes admitted before it.
 
-**Tests:** waiting on #2074.
+**Tests:** `compliance/write-order.test.ts › judges an item update after a trash against the trashed row`, `› judges an exact item update after a move against the current version`, `› judges an item update after retyping against the current type`.
 
 ## Idempotency keys
 

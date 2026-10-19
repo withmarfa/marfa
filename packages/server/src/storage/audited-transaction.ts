@@ -5,7 +5,7 @@ import {
   transactionControl,
   reconcileCommitHooks,
 } from "./sqlite/transaction-control.js";
-import { failAt, faultsArmed } from "../control/faults.js";
+import { failAt, faultsArmed, holdArmed, holdAt } from "../control/faults.js";
 import { lockNotFree } from "./sqlite/connection.js";
 import { auditUnderFaults } from "./sqlite/injected-failure.js";
 
@@ -15,8 +15,12 @@ export async function runAuditedTransaction<T>(
   work: () => T | Promise<T>,
   entry: AuditLogEntry | ((result: T) => AuditLogEntry | null),
   options: { retainCommitHooksOnUncertain?: boolean } = {},
+  // A conditional audit cannot name its action until work has returned.
+  action?: string,
 ): Promise<T> {
   const nested = transactionControl.getStore() !== undefined;
+  if (faultsArmed() && !nested && holdArmed("write"))
+    await holdAt("write", typeof entry === "function" ? action : entry.action);
   if (!nested && failAt("lock")) throw lockNotFree();
   const id = generateId();
   let result!: T;

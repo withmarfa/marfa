@@ -258,6 +258,9 @@ describe("the fault routes", () => {
       { name: "unfold-deadline", arg: "0" },
       { name: "unfold-deadline", arg: "soon" },
       { name: "fail:disk" },
+      { name: "hold:write", arg: "<action>@<n>" },
+      { name: "hold:export-page", arg: "<n>" },
+      { name: "hold:write", arg: "item.update@0" },
       { name: "fail:lock", arg: "0" },
       { name: "fail:lock", arg: "items.bulk@2" },
       { name: "fail:commit", arg: "items.bulk@0" },
@@ -291,6 +294,8 @@ describe("the fault routes", () => {
       { name: "unfold-deadline", arg: "1" },
       { name: "hold:webhook-schedule:queued" },
       { name: "resolve:rebind.test", arg: "1.1.1.1,::1;127.0.0.1" },
+      { name: "hold:write", arg: "item.update@2" },
+      { name: "hold:export-page", arg: "2" },
     ]) {
       const armed = await app.request("/_control/test/faults", {
         method: "PUT",

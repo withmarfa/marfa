@@ -55,7 +55,7 @@ import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { loggablePath } from "../inbound/address.js";
 import { streamFailure } from "../process-faults.js";
-import { faultsArmed, holdAt } from "../control/faults.js";
+import { faultsArmed, holdArmed, holdAt } from "../control/faults.js";
 import { readableExportEdges } from "./export-read.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -713,6 +713,7 @@ async function collectSelection(input: {
     await spoolBlobs(records);
     itemCount += rows.length;
     cursor = next ?? undefined;
+    if (faultsArmed() && holdArmed("export-page")) await holdAt("export-page");
   } while (cursor);
 
   // Same both-endpoints rule as the NDJSON path: the archive carries the
@@ -754,6 +755,7 @@ async function collectSelection(input: {
     await spoolBlobs(records.filter((record) => hashes.has(record.hash)));
     edgeCount += lines.length;
     edgeCursor = page.next_cursor ?? undefined;
+    if (faultsArmed() && holdArmed("export-page")) await holdAt("export-page");
   } while (edgeCursor);
 
   // Provenance belongs beside the schema: restore compares normalized schemas
