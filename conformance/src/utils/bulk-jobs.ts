@@ -5,7 +5,6 @@ import type {
   BulkActionJob,
   BulkItemInput,
 } from "../client/types.js";
-import type { FreshServer } from "./fresh-server.js";
 
 /**
  * What the fixtures that hold or restart a bulk-action job share: rows seeded
@@ -108,43 +107,6 @@ export async function jobOf(
   const read = await client.bulkActionStatus(id);
   expect(read.status, JSON.stringify(read.error)).toBe(200);
   return read.data;
-}
-
-/** Waits until `ready` holds for the job, reading it every 100 ms. */
-export async function jobWhen(
-  client: MarfaClient,
-  id: string,
-  what: string,
-  ready: (job: BulkActionJob) => boolean,
-  timeoutMs = 30_000,
-): Promise<BulkActionJob> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const job = await jobOf(client, id);
-    if (ready(job)) return job;
-    if (Date.now() > deadline) {
-      throw new Error(
-        `${what}: the job was still ${job.status} after ${String(timeoutMs)}ms with ${String(job.processed)} processed`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-}
-
-/**
- * Holds the worker at the start of a job nothing else claims, so a job
- * queued behind it stays queued. Releases it by clearing the fault.
- */
-export async function holdWorker(
-  server: FreshServer,
-  client: MarfaClient,
-  tag: string,
-): Promise<string> {
-  await server.setFault(HOLD.claimed);
-  const id = await mark(client, tag, `${tag}-held`);
-  await server.waitForHold(HOLD.claimed);
-  expect((await jobOf(client, id)).status).toBe("in_progress");
-  return id;
 }
 
 /** How many rows the job's first chunk took, from the audit entries of its chunks. */

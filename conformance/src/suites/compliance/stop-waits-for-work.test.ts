@@ -26,7 +26,7 @@ let writer: MarfaClient;
 const THINNING = "version-thinning";
 const HELD_THINNING = "hold:version-thinning:item";
 
-/** Rows enough that the job has a place between chunks, whatever the chunk size. */
+/** More rows than the reference worker processes in one chunk. */
 const ROWS = 350;
 
 beforeAll(async () => {
