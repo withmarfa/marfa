@@ -19,12 +19,14 @@
  * items. Edges restore in a second pass, only where both endpoints
  * resolve in the target database. A row comes back at the version
  * it was archived at, with its original dates and readable item history.
+ * An item that is not of a `core` or `system` type that this build ships
+ * keeps the properties the archive holds, whatever shape its type has now and
+ * whether or not the type is registered.
  *
  * Paired with GET /export?format=archive.
  */
 
 import { rm, stat } from "node:fs/promises";
-import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, resolveEnforcement } from "@withmarfa/shared";
@@ -48,7 +50,12 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { DiskReserve } from "../storage/disk-space.js";
 import { NaturalKeyHeld } from "../storage/interface.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import { wholeCopies, type BlobLayer } from "../storage/blob-layer.js";
+import {
+  storeUnavailable,
+  wholeCopies,
+  type BlobLayer,
+} from "../storage/blob-layer.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { writeArchiveTypes } from "./restore-archive-types.js";
 import type { ArchiveTypePlan } from "./restore-archive-types.js";
@@ -81,6 +88,8 @@ import type { PendingBlob, ReadArchive } from "./restore-archive-read.js";
 import { yieldBulkWork } from "../bulk-actions/yield.js";
 import { errorMessage } from "../error-text.js";
 import { faultsArmed, holdAt } from "../control/faults.js";
+import * as clock from "../clock.js";
+import { uploadBody } from "../upload-body.js";
 
 function archivedRestoredAt(
   item: Record<string, unknown>,
@@ -98,14 +107,14 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export and restore"],
   summary: "Restore from an archive",
   description:
-    "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes.",
+    "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires local authority or the owner, authenticated within five minutes before the request starts.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: {
     body: {
       required: true,
       description:
-        "The archive file, as `GET /export?format=archive` returned it. Only the build that wrote an archive is sure to read it.",
+        "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `items.ndjson`, `edges.ndjson` and `types.ndjson`. Only the build that wrote an archive is sure to read it.",
       content: {
         "application/gzip": {
           // The archive is a gzipped tarball: bytes, as 3.1 spells them.
@@ -164,7 +173,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge whether or not its properties fit its edge type's `property_schema`. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
+        "Returns the counts. Items and edges keep their IDs, versions and dates, and items keep their tags, extensions and history. Marfa restores an edge, and an item of a type you registered, as archived, even if its type now refuses it or is gone. Marfa leaves an existing item as it is when an archived one has its ID, natural key or link. An archive holds no keys, webhooks, configuration or tombstones.",
     },
     400: {
       content: {
@@ -177,7 +186,7 @@ const restoreArchiveRoute = createRoute({
         },
       },
       description:
-        "- `validation_error`: the body isn't a valid archive, or is at another format version, repeats an entry, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: an item sets a property its type doesn't declare, and `strict_mode` names that type.\n- `invalid_schema`: an archived type is invalid or carries a key the schema doesn't define.",
+        "- `validation_error`: the body isn't a valid archive, lacks one of its four files (`details.entries`), repeats an entry, is at another version, has an invalid row, or has a file over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, an event's schedule can't unfold, or `strict_mode` refuses a property.\n- `invalid_schema`: an archived type is invalid or has an unknown key.",
     },
     413: {
       content: {
@@ -201,7 +210,16 @@ const restoreArchiveRoute = createRoute({
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
       description:
-        "Requires direct owner or local authority and recent owner authentication.",
+        "Requires direct owner or local authority, and an owner who signed in within five minutes before the request started, however long the upload takes.",
+    },
+    408: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["request_timeout"]),
+        },
+      },
+      description:
+        "- `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving.",
     },
     409: {
       content: {
@@ -288,8 +306,17 @@ async function placeBlobBytes(
 ): Promise<string[]> {
   const missing: PendingBlob[] = [];
   for (const blob of pending) {
-    await finishCopyDeletion(storage, blobs.disk, blob.hash);
-    if ((await blobs.disk.has(blob.hash)) === null) missing.push(blob);
+    try {
+      await finishCopyDeletion(storage, blobs.disk, blob.hash);
+      if ((await blobs.disk.has(blob.hash)) === null) missing.push(blob);
+    } catch (error) {
+      // Before anything is written. A disk that cannot be reached cannot say
+      // whether it holds the bytes, or take them.
+      if (error instanceof BlobStoreUnreachable) {
+        throw storeUnavailable(blobs.disk, blob.hash, error);
+      }
+      throw error;
+    }
   }
   const unnamed: string[] = [];
   for (const blob of missing) {
@@ -515,6 +542,7 @@ async function restoreRows(
             { kind: "platform", by: writer },
             {
               op: "create",
+              as_archived: true,
               // A digest lends here exactly where it lent in the
               // instance the archive was taken from, and a line naming
               // none lends nothing.
@@ -527,6 +555,11 @@ async function restoreRows(
               ...(typeof item.version === "number" && {
                 version: item.version,
               }),
+              ...(typeof item.schema_version === "number" &&
+                Number.isSafeInteger(item.schema_version) &&
+                item.schema_version >= 0 && {
+                  schema_version: item.schema_version,
+                }),
               type: item.type as string,
               properties: restoredProperties(item),
               state: item.state as ItemState | undefined,
@@ -765,7 +798,11 @@ async function stillAbsent(
 export function restoreArchiveRoutes(
   storage: Storage,
   blobs: BlobLayer,
-  limits: { maxRowBytes: number; diskReserveBytes?: number },
+  limits: {
+    maxRowBytes: number;
+    diskReserveBytes?: number;
+    uploadIdleTimeoutMs: number;
+  },
 ) {
   const router = createOpenAPIRouter<AppEnv>();
   const reserve = new DiskReserve(
@@ -774,7 +811,11 @@ export function restoreArchiveRoutes(
   );
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    requireRecentOwnerAuthentication(c);
+    // The sign-in is judged at this moment, before a byte of the body is
+    // read, and the write transaction judges it at the same moment however
+    // long the upload took.
+    const startedAt = clock.nowMs();
+    requireRecentOwnerAuthentication(c, startedAt);
     const uploader = authorityId(c);
     const actor = {
       key_id: authorityId(c),
@@ -798,10 +839,10 @@ export function restoreArchiveRoutes(
     };
     try {
       const bodySpool = mintSpool();
-      const body = c.req.raw.body;
+      const body = uploadBody(c, limits.uploadIdleTimeoutMs);
       if (body) {
         try {
-          await pipeline(Readable.fromWeb(body), place.writer(bodySpool));
+          await pipeline(body, place.writer(bodySpool));
         } finally {
           place.close();
         }
@@ -832,7 +873,7 @@ export function restoreArchiveRoutes(
         const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);
         try {
-          requireRecentOwnerAuthentication(c);
+          requireRecentOwnerAuthentication(c, startedAt);
           const result = await restoreRows(storage, blobs, {
             plan: typePlan,
             pending: archive.blobs,

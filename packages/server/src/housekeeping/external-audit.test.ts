@@ -163,22 +163,24 @@ async function archive(
       }) + "\n",
     ),
   );
+  const targetId = generateId();
+  entry(
+    "edges.ndjson",
+    Buffer.from(
+      withEdge
+        ? JSON.stringify({
+            edge: {
+              id: generateId(),
+              source_id: id,
+              target_id: targetId,
+              edge_type: "references",
+              properties: {},
+            },
+          }) + "\n"
+        : "",
+    ),
+  );
   if (withEdge) {
-    const targetId = generateId();
-    entry(
-      "edges.ndjson",
-      Buffer.from(
-        JSON.stringify({
-          edge: {
-            id: generateId(),
-            source_id: id,
-            target_id: targetId,
-            edge_type: "references",
-            properties: {},
-          },
-        }) + "\n",
-      ),
-    );
     // The target already exists, so this restore's event batch contains only
     // the newly restored source and its edge.
     await itemWrites(ctx.storage).create({
@@ -188,25 +190,26 @@ async function archive(
       properties: { body: "target" },
     });
   }
-  if (typeId)
-    entry(
-      "types.ndjson",
-      Buffer.from(
-        JSON.stringify({
-          type: {
-            id: typeId,
-            label: "Restored",
-            description: "Restored test type",
-            version: 1,
-            fields: {
-              body: { type: "string", description: "Body" },
-              blob_ref: { type: "string", description: "Blob" },
+  entry(
+    "types.ndjson",
+    Buffer.from(
+      typeId
+        ? JSON.stringify({
+            type: {
+              id: typeId,
+              label: "Restored",
+              description: "Restored test type",
+              version: 1,
+              fields: {
+                body: { type: "string", description: "Body" },
+                blob_ref: { type: "string", description: "Blob" },
+              },
             },
-          },
-          provenance: { origin: "user" },
-        }) + "\n",
-      ),
-    );
+            provenance: { origin: "user" },
+          }) + "\n"
+        : "",
+    ),
+  );
   entry(`blobs/${blob.hash}`, blob.bytes);
   pack.finalize();
   await collecting;

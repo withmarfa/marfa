@@ -400,6 +400,11 @@ describe("restore", () => {
     name: "manifest.json",
     body: JSON.stringify({ version: 0, format: "marfa-archive-v0", blobs: {} }),
   };
+  /** The members an archive always carries beside its items, empty. */
+  const noEdgesOrTypes = [
+    { name: "edges.ndjson", body: "" },
+    { name: "types.ndjson", body: "" },
+  ];
 
   it("steps past an entry it does not read", async () => {
     const id = uuidv7();
@@ -410,6 +415,7 @@ describe("restore", () => {
           name: "items.ndjson",
           body: archivedLine(id, "beside padding") + "\n",
         },
+        ...noEdgesOrTypes,
         { name: "padding.bin", body: new Uint8Array(16 * 1024 * 1024) },
       ]),
     );
@@ -430,6 +436,7 @@ describe("restore", () => {
             Buffer.alloc(64 * 1024 * 1024 + 1, "x"),
           ]),
         },
+        ...noEdgesOrTypes,
       ]),
     );
     expect(refused.status).toBe(400);
@@ -450,6 +457,7 @@ describe("restore", () => {
         manifest,
         items(first, "first copy"),
         items(second, "second copy"),
+        ...noEdgesOrTypes,
       ]),
     );
     expect(refused.status).toBe(400);
@@ -462,7 +470,7 @@ describe("restore", () => {
 
     // The witness: either copy alone restores.
     const restored = await owner.restoreArchive(
-      tarGz([manifest, items(first, "first copy")]),
+      tarGz([manifest, items(first, "first copy"), ...noEdgesOrTypes]),
     );
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, first);
@@ -518,6 +526,153 @@ function withEntry(
   }
   return tarGz(entries);
 }
+
+describe("an archive that lacks a member", () => {
+  const MEMBERS = [
+    "manifest.json",
+    "items.ndjson",
+    "edges.ndjson",
+    "types.ndjson",
+  ];
+
+  /** An archive of one note and one blob that a restore would write. */
+  function carrying() {
+    const id = uuidv7();
+    const bytes = new Uint8Array(randomBytes(64));
+    const hash = blobHash(bytes);
+    const archive = itemsArchive(
+      [
+        {
+          id,
+          type: "core.file",
+          source: ctx.source,
+          properties: { blob_ref: hash, mime_type: "application/x-lack" },
+        },
+      ],
+      [{ data: bytes, mime_type: "application/x-lack" }],
+    );
+    return { id, hash, archive };
+  }
+  const without = (archive: Uint8Array, member: string): Uint8Array =>
+    tarGz(listTarGzEntries(archive).filter((entry) => entry.name !== member));
+
+  it.each(MEMBERS)(
+    "refuses an archive without %s, naming it, and writes nothing",
+    async (member) => {
+      const { id, hash, archive } = carrying();
+      const refused = await owner.restoreArchive(without(archive, member));
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain(member);
+      expect(refused.error?.error.details?.entries).toEqual([member]);
+      expect((await client.getItem(id)).status).toBe(404);
+      expect((await owner.downloadBlob(hash)).status).toBe(404);
+
+      // The witness: the same archive with the member restores the row and
+      // the blob that the refusal left unwritten.
+      const restored = await owner.restoreArchive(archive);
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      trackItem(ctx, id);
+      expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
+      expect((await client.getItem(id)).status).toBe(200);
+      expect((await owner.downloadBlob(hash)).status).toBe(200);
+    },
+  );
+
+  it("refuses a gzip-compressed tar that is no archive, naming every member it lacks", async () => {
+    const unrelated = tarGz([{ name: "notes.txt", body: "not an archive" }]);
+    const refused = await owner.restoreArchive(unrelated);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    for (const member of MEMBERS) {
+      expect(refused.error?.error.message).toContain(member);
+    }
+    expect(refused.error?.error.details?.entries).toEqual(MEMBERS);
+
+    // The witness: the same tar with the four members, all empty, is an
+    // archive of nothing and restores as one.
+    const nothing = await owner.restoreArchive(
+      tarGz([
+        { name: "notes.txt", body: "not an archive" },
+        {
+          name: "manifest.json",
+          body: JSON.stringify({
+            version: 0,
+            format: "marfa-archive-v0",
+            blobs: {},
+          }),
+        },
+        ...MEMBERS.slice(1).map((name) => ({ name, body: "" })),
+      ]),
+    );
+    expect(nothing.ok, JSON.stringify(nothing.error)).toBe(true);
+    expect(nothing.data).toMatchObject({ imported: 0, edges_imported: 0 });
+  });
+});
+
+describe("an archived item that no instance wrote", () => {
+  const line = (item: Record<string, unknown>): string =>
+    `${JSON.stringify({ item: { source: ctx.source, ...item }, metadata: { tags: [], extensions: {} } })}\n`;
+
+  it("refuses an item whose type is no identifier or whose properties are no object, and writes nothing", async () => {
+    const witness = uuidv7();
+    const good = line({
+      id: witness,
+      type: "user.never_registered",
+      properties: { anything: [1, { a: 2 }] },
+    });
+    const cases: [string, Record<string, unknown>, string, string][] = [
+      ["no type", { properties: {} }, "validation_error", "type"],
+      [
+        "a type that is no identifier",
+        { type: "Not A Type", properties: {} },
+        "validation_error",
+        "type",
+      ],
+      [
+        "properties that are a list",
+        { type: "user.never_registered", properties: [1, 2] },
+        "invalid_properties",
+        "properties",
+      ],
+      [
+        "properties that are a string",
+        { type: "core.note", properties: "body" },
+        "invalid_properties",
+        "properties",
+      ],
+    ];
+    for (const [what, item, code, field] of cases) {
+      const id = uuidv7();
+      const refused = await owner.restoreArchive(
+        withEntry(
+          itemsArchive([]),
+          "items.ndjson",
+          good + line({ id, ...item }),
+        ),
+      );
+      expect(refused.status, `${what}: ${JSON.stringify(refused.error)}`).toBe(
+        400,
+      );
+      expect(refused.error?.error.code, what).toBe(code);
+      expect(refused.error?.error.message, what).toContain(id);
+      expect(refused.error?.error.message, what).toContain(field);
+      // The row ahead of it is not written either.
+      expect((await client.getItem(witness)).status, what).toBe(404);
+      expect((await client.getItem(id)).status, what).toBe(404);
+    }
+
+    // The witness: the first line alone, an item of a type nothing
+    // registers, restores.
+    const restored = await owner.restoreArchive(
+      withEntry(itemsArchive([]), "items.ndjson", good),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, witness);
+    expect(restored.data.imported).toBe(1);
+    expect((await client.getItem(witness)).status).toBe(200);
+  });
+});
 
 describe("a body that is no archive", () => {
   /** An archive of one note that would restore, so a refusal can be told from

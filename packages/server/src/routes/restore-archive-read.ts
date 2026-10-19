@@ -79,12 +79,14 @@ export interface PendingBlob {
   sizeBytes: number;
 }
 
-/** The line files the restore reads, each spooled if the archive carries it. */
+/** The line files the restore reads, each spooled. An archive lacking one is
+ *  refused (`search-and-filters/restore-members`). */
 const LINE_FILES = ["items.ndjson", "edges.ndjson", "types.ndjson"] as const;
 type LineFile = (typeof LINE_FILES)[number];
+const REQUIRED_ENTRIES = ["manifest.json", ...LINE_FILES] as const;
 
 export interface ReadArchive {
-  lineFiles: Partial<Record<LineFile, string>>;
+  lineFiles: Record<LineFile, string>;
   blobs: PendingBlob[];
   /** The blobs the manifest names, under `blobs` or `missing_blobs`, for
    *  which no entry carries bytes that hash to the name, in order. */
@@ -175,7 +177,7 @@ export async function readArchive(
 ): Promise<ReadArchive> {
   // Set from a stream callback, which the compiler cannot follow.
   let manifest = null as ArchiveManifest | null;
-  const lineFiles: ReadArchive["lineFiles"] = {};
+  const spooled: Partial<ReadArchive["lineFiles"]> = {};
   const blobs: PendingBlob[] = [];
   const seen = new Set<string>();
   const extract = tar.extract();
@@ -264,7 +266,7 @@ export async function readArchive(
         if (blobHash === undefined) {
           pipeline(stream, new LineLengthGuard(name), place.writer(spool))
             .then(() => {
-              lineFiles[name as LineFile] = spool;
+              spooled[name as LineFile] = spool;
               next();
             }, fail)
             .finally(() => {
@@ -311,6 +313,18 @@ export async function readArchive(
     extract.destroy();
     throw err;
   }
+
+  // Export writes every one of these even when it holds no row, so an entry
+  // that is missing is a damaged archive or a file that is no archive, and
+  // not an empty one.
+  const lacking = REQUIRED_ENTRIES.filter((name) => !seen.has(name));
+  if (lacking.length > 0) {
+    throw invalid(
+      `Invalid archive: it lacks ${lacking.join(", ")}, which every archive carries`,
+      { entries: lacking },
+    );
+  }
+  const lineFiles = spooled as ReadArchive["lineFiles"];
 
   // Resolved once every entry is read, so a manifest written after the blobs
   // names their types as well as one written first.
@@ -368,10 +382,7 @@ export class LineLengthGuard extends Transform {
 }
 
 /** The lines of a spooled line file, one at a time, skipping blank ones. */
-export async function* archiveLines(
-  path: string | undefined,
-): AsyncGenerator<string> {
-  if (path === undefined) return;
+export async function* archiveLines(path: string): AsyncGenerator<string> {
   let pending: Buffer[] = [];
   for await (const chunk of createReadStream(path)) {
     let rest = chunk as Buffer;

@@ -28,7 +28,6 @@ const UNPUBLISHED_DOORS: Record<string, string> = {
   invalid_client: "the device consent page, `GET /auth/device/consent`",
   oauth_grant_not_found: "the grants door, `DELETE /auth/grants/{id}`",
   inbound_unavailable: "an inbound webhook address",
-  request_timeout: "an inbound webhook address",
 };
 
 function sourceFiles(dir: string): string[] {

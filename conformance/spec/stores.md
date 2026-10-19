@@ -336,7 +336,7 @@ The `blob-integrity` housekeeping job checks the copies the log claims.
 
 ### `stores/integrity-result`
 
-When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, and `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing.
+When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing, and `unreachable`, the attached stores it could not reach.
 
 **Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
 
@@ -362,9 +362,41 @@ When a run of `blob-integrity` checks an object-store copy whose object is missi
 
 ### `stores/integrity-strikes`
 
-When a run of `blob-integrity` finds a copy missing or altered, the server MUST remove the copy from the location log.
+When a run of `blob-integrity` finds a copy altered, or missing from a store it can reach, the server MUST remove the copy from the location log.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
+**Reason:** a store that cannot be reached is not evidence that its copies are missing (`stores/integrity-unreachable-keeps`).
+
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `› still strikes a copy missing from a folder that is there`.
+
+### `stores/integrity-unreachable-keeps`
+
+When a run of `blob-integrity` cannot reach a store, such as a disk store whose folder or `.marfa-store` marker is missing, the server MUST leave every copy the location log names in that store as it was.
+
+**Reason:** a store that cannot be reached is not evidence that its copies are missing. A folder that went away, a drive that did not mount and a mount point left empty each answer that every name is absent. Striking those copies would leave the blobs unreadable through the server after the store returns, with nothing to bring them back.
+
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`.
+
+### `stores/integrity-unreachable-reported`
+
+When a run of `blob-integrity` cannot reach a store, the server MUST count the store in the run's `unreachable`.
+
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`.
+
+### `stores/integrity-unreachable-others`
+
+When a run of `blob-integrity` cannot reach one store, the server MUST still check the copies in the stores it can reach.
+
+**Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's `MARFA_BLOB_INTEGRITY_BATCH` copies.
+
+**Tests:** `compliance/blob-store-bounds.test.ts › checks the copies of a store that can answer when another cannot be reached`.
+
+### `stores/unreachable-read`
+
+When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob, and no store that holds a recorded copy of it can be reached, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a store that cannot answer says nothing of the bytes, so `404 blob_not_found` would claim they are gone.
+
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`.
 
 ### `stores/integrity-strike-restored`
 

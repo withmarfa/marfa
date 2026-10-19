@@ -4,6 +4,7 @@
  * it. A second disk store stands in for the bucket.
  */
 import { createHash } from "node:crypto";
+import { rename } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, withSecondStore } from "../test-utils.js";
@@ -358,5 +359,47 @@ describe("BlobReplicator.runOnce", () => {
       remaining: 0,
     });
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
+  });
+});
+
+describe("BlobReplicator.runOnce while a store cannot be reached", () => {
+  it("ends no run on a copy whose queued deletion cannot reach the folder, and copies it back, settling the deletion, once the folder returns", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hash = await upload(ctx, "struck from a disk that goes away");
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    await replicator.runOnce();
+
+    // The disk's copy struck as the integrity check leaves it: the row gone
+    // and the deletion queued.
+    await ctx.storage.runInTransaction(async () => {
+      await ctx!.storage.blobs.removeLocation(hash, ctx!.blobs.disk.id);
+      await ctx!.storage.blobs.queueCopyDeletion(hash, ctx!.blobs.disk.id);
+    });
+    const folder = ctx.blobs.disk.locator;
+    await rename(folder, `${folder}.away`);
+    const during = await replicator.runOnce();
+    expect(during).toMatchObject({ copied: 0, remaining: 1 });
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toHaveLength(
+      1,
+    );
+
+    await rename(`${folder}.away`, folder);
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
+    expect(await bytesOf(ctx.blobs.disk, hash)).toBe(
+      "struck from a disk that goes away",
+    );
+    expect(
+      (await ctx.storage.blobs.listLocations(hash))
+        .map((l) => l.store_id)
+        .sort(),
+    ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 });

@@ -63,7 +63,7 @@ Without `S3_BUCKET` the container runs the server alone and says so in its log: 
 
 ## Claiming the instance
 
-Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password, then sign in at `/auth/sign-in`. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
+Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password. The claim signs you in and goes on to add a passkey, name the instance and connect something. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.
 
 The image includes the CLI. To create a single-use browser setup link from the running container:
 
@@ -79,7 +79,7 @@ docker exec -it marfa marfa --socket /data/control/marfa.sock setup claim --emai
 
 The password prompt is hidden. For automation, use `docker exec -i` with `setup claim --stdin` and supply a JSON object containing `email`, `password` and optional `name` through standard input. Never put passwords or setup codes in command-line arguments. `setup code` replaces the setup code and invalidates earlier setup sessions; a process restart also replaces it while the instance is unclaimed.
 
-After signing in, open `/auth/owner/manage` for key, app, connector and maintenance controls. `/auth/owner/restore` is the owner's archive restore form. Creating, changing, or revoking a key, disconnecting an app, approving an app for anything beyond reading, and restoring an archive require a sign-in within the last five minutes. The private socket provides the same machine authority without an API key. Ordinary keys and OAuth tokens use explicit [permissions](../GLOSSARY.md#permissions); even a credential with all twelve permissions cannot claim machine authority or recover the owner.
+After signing in, open `/auth/owner/manage` for key, app, connector and maintenance controls. `/auth/owner/restore` is the owner's archive restore form. Creating, changing, or revoking a key, disconnecting an app, approving an app for anything beyond reading, and restoring an archive require a sign-in within the last five minutes. A restore is judged when it starts, so a long upload is not refused for finishing after the five minutes; the server ends an upload only when no bytes arrive for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60 seconds unless set. The private socket provides the same machine authority without an API key. Ordinary keys and OAuth tokens use explicit [permissions](../GLOSSARY.md#permissions); even a credential with all twelve permissions cannot claim machine authority or recover the owner.
 
 ## Recovering the owner
 
@@ -118,7 +118,7 @@ The image's health check reads `GET /health`, which answers without a credential
 | `database`       | Reads a row.                                                      | The database refuses the read.                                      | It gives no answer within two seconds, as a held database does. |
 | `database_write` | Commits one write, at most once every ten seconds.                | The database refuses the write, as a full or read-only volume does. | It commits nothing within two seconds.                          |
 | `disk`           | Measures the room on the volume of the database and of the blobs. | Less than 1 MiB is available.                                       | Less than 64 MiB is available, or the room could not be read.   |
-| `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses.                                             | It gives no answer within two seconds.                          |
+| `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses, or its folder or marker is gone.            | It gives no answer within two seconds.                          |
 
 A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. A credential with `instance.read`, or direct owner or local authority, gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
 

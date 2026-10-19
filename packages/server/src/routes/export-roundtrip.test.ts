@@ -65,6 +65,7 @@ async function buildArchive(
     edgeLines.length > 0 ? edgeLines.join("\n") + "\n" : "",
   );
   pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
+  pack.entry({ name: "types.ndjson", size: 0 }, Buffer.alloc(0));
   pack.finalize();
 
   await new Promise<void>((resolve) => gzip.on("end", resolve));

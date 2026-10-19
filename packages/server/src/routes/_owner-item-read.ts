@@ -3,8 +3,8 @@ import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import {
   getTypeFilter,
   requireAuth,
+  mayReadType,
   standingRule,
-  typeReader,
   type AppEnv,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -40,7 +40,7 @@ export const readsOwnerItems: MiddlewareHandler<AppEnv> = standingRule(
 export function ownerItemRead(c: Context<AppEnv>) {
   const owner = isOwnerItemRead(c);
   const key = owner ? undefined : requireAuth(c);
-  const reads = key ? typeReader(c) : () => true;
+  const reads = key ? (type: string) => mayReadType(key, type) : () => true;
   const permissions =
     c.get("authType") === "oauth"
       ? (c.get("oauthGrant")?.scopes ?? [])

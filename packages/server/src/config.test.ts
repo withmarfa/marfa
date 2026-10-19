@@ -59,6 +59,10 @@ describe("the settings schema", () => {
     expect(config.rateLimitEnabled).toBe(true);
     expect(config.enableHsts).toBe(false);
     expect(config.connectorHoldMs).toBe(DEFAULT_CONNECTOR_HOLD_MS);
+    expect(config.uploadIdleTimeoutMs).toBe(60_000);
+    expect(
+      loadConfig({ MARFA_UPLOAD_IDLE_TIMEOUT_MS: "2500" }).uploadIdleTimeoutMs,
+    ).toBe(2500);
     expect(config.authBaseUrl).toBe("http://localhost:8600");
     expect(config.authSecret.length).toBeGreaterThanOrEqual(32);
   });
@@ -850,6 +854,7 @@ describe("the settings as data", () => {
 it.each([
   "SQLITE_BUSY_BUDGET_MS",
   "MARFA_INBOUND_READ_TIMEOUT_MS",
+  "MARFA_UPLOAD_IDLE_TIMEOUT_MS",
   "MARFA_ENRICHMENT_ITEM_TIMEOUT_MS",
   "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS",
   "MARFA_BULK_ACTION_POLL_INTERVAL_MS",

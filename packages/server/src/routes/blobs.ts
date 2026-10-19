@@ -6,12 +6,17 @@ import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
+import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS, uploadBody } from "../upload-body.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { standingPermission, authorityId } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import { recordedStores, type BlobLayer } from "../storage/blob-layer.js";
+import {
+  recordedStores,
+  storeUnavailable,
+  type BlobLayer,
+} from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
   blobDisposition,
@@ -298,6 +303,18 @@ const bytesResponses = {
     description:
       "- `range_not_satisfiable`: the range starts past the end of the blob, or ends before it starts. `Content-Range` gives the blob's size.",
   },
+  503: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema([
+          "blob_store_unavailable",
+          "write_contention",
+        ]),
+      },
+    },
+    description:
+      "- `blob_store_unavailable`: no store that holds this blob answered, so Marfa couldn't tell whether it still has the bytes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -347,6 +364,15 @@ const uploadBlobRoute = createRoute({
     },
     ...unauthorized,
     403: UPLOAD_REFUSED_RESPONSE,
+    408: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["request_timeout"]),
+        },
+      },
+      description:
+        "- `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
+    },
   },
 });
 
@@ -636,7 +662,11 @@ export function blobRoutes(
   housekeeping: Pick<Housekeeping, "wake">,
   config: Pick<
     AppConfig,
-    "authBaseUrl" | "authSecret" | "blobMinCopies" | "diskReserveBytes"
+    | "authBaseUrl"
+    | "authSecret"
+    | "blobMinCopies"
+    | "diskReserveBytes"
+    | "uploadIdleTimeoutMs"
   >,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
@@ -712,11 +742,20 @@ export function blobRoutes(
     }
 
     let read: BlobRead | null = null;
+    let failure: { store: BlobStore; error: unknown } | undefined;
     for (const store of stores) {
-      read = await store.get(hash, range ?? undefined);
+      try {
+        read = await store.get(hash, range ?? undefined);
+      } catch (error) {
+        // A store that cannot answer says nothing of the bytes, and another
+        // store may hold them.
+        failure ??= { store, error };
+        continue;
+      }
       if (read) break;
     }
     if (!read) {
+      if (failure) throw storeUnavailable(failure.store, hash, failure.error);
       throw new MarfaError(
         ErrorCode.BLOB_NOT_FOUND,
         "No store holds the bytes of this blob",
@@ -765,9 +804,12 @@ export function blobRoutes(
     const spool = disk.spoolPath();
     const hashing = new HashingTransform();
     try {
-      const body = c.req.raw.body;
+      const body = uploadBody(
+        c,
+        config.uploadIdleTimeoutMs ?? DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
+      );
       if (body) {
-        await pipeline(Readable.fromWeb(body), hashing, place.writer(spool));
+        await pipeline(body, hashing, place.writer(spool));
       }
     } catch (err) {
       await rm(spool, { force: true });

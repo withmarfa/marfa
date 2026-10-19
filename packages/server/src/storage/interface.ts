@@ -663,8 +663,24 @@ export interface WriterInput {
   writer: VersionWriter | null;
 }
 
+/**
+ * **Server-internal, and set by a restore alone.** A row that is not of a
+ * `core` or `system` type that this build ships is stored as the archive
+ * holds it, whatever shape its type has now or whether the type is registered
+ * at all, a retired platform row included
+ * (`search-and-filters/restore-rows-shape-free`). Every other create is held
+ * to the type it names. Never caller-supplied.
+ */
+export interface ArchivedItemInput {
+  as_archived?: true;
+  /** The version the row's type had when the row was written, which the
+   *  archive holds and a restore keeps. */
+  schema_version?: number;
+}
+
 export type StoredCreateItemInput = CreateItemInput &
   RestoredRowInput &
+  ArchivedItemInput &
   BlobProofInput &
   WriterInput;
 

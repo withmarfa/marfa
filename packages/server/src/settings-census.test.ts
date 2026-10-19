@@ -16,7 +16,7 @@ const REPO = resolve(SRC, "../../..");
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "control/socket.test.ts":
     "runs cross-user socket access only on the hosted CI runner",
-  "routes/setup-browser.test.ts":
+  "pages/browser/setup.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "routes/management-pages.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",

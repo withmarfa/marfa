@@ -50,8 +50,10 @@ export interface BlobStore {
    */
   put(hash: string, source: BlobSource): Promise<void>;
   /**
-   * The bytes, or a range of them, as a stream. `null` when absent. Once
-   * `signal` aborts, the store gives up the request and rejects.
+   * The bytes, or a range of them, as a stream. `null` when the store is
+   * reachable and holds no such blob; a store that cannot be reached rejects
+   * with {@link BlobStoreUnreachable}, because it says nothing of the blob.
+   * Once `signal` aborts, the store gives up the request and rejects.
    */
   get(
     hash: string,
@@ -59,14 +61,20 @@ export interface BlobStore {
     signal?: AbortSignal,
   ): Promise<BlobRead | null>;
   /**
-   * Presence, with the size the store reports. `null` when absent. Once
-   * `signal` aborts, the store gives up the request and rejects.
+   * Presence, with the size the store reports. `null` when the store is
+   * reachable and holds no such blob; a store that cannot be reached rejects
+   * with {@link BlobStoreUnreachable}. Once `signal` aborts, the store gives
+   * up the request and rejects.
    */
   has(
     hash: string,
     signal?: AbortSignal,
   ): Promise<{ size_bytes: number } | null>;
-  /** Idempotent: an absent blob is not an error. */
+  /**
+   * Idempotent: an absent blob is not an error. A store that cannot be
+   * reached rejects with {@link BlobStoreUnreachable}, because its bytes
+   * are then not gone.
+   */
   delete(hash: string): Promise<void>;
   /**
    * A time-limited link a client fetches the bytes from without a
@@ -106,6 +114,19 @@ export class BlobHashMismatch extends Error {
   constructor(hash: string, actual: string) {
     super(`bytes named ${hash} hashed to ${actual}`);
     this.name = "BlobHashMismatch";
+  }
+}
+
+/**
+ * Thrown by a store that cannot be reached, or that is not the store the
+ * instance attached: a folder that went away, a mount point left empty by a
+ * drive that did not mount, a folder another store marked. Every name is
+ * absent there, so an absent name proves nothing about a copy.
+ */
+export class BlobStoreUnreachable extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "BlobStoreUnreachable";
   }
 }
 
@@ -295,8 +316,9 @@ export class DiskBlobStore implements BlobStore {
     try {
       handle = await open(this.pathFor(hash), "r");
     } catch (err) {
-      if (isEnoent(err)) return null;
-      throw err;
+      if (!isEnoent(err)) throw err;
+      await this.confirmReachable();
+      return null;
     }
     let size: number;
     try {
@@ -342,8 +364,9 @@ export class DiskBlobStore implements BlobStore {
     try {
       size = (await stat(this.pathFor(hash))).size;
     } catch (err) {
-      if (isEnoent(err)) return null;
-      throw err;
+      if (!isEnoent(err)) throw err;
+      await this.confirmReachable();
+      return null;
     }
     signal?.throwIfAborted();
     return { size_bytes: size };
@@ -354,7 +377,44 @@ export class DiskBlobStore implements BlobStore {
       await unlink(this.pathFor(hash));
     } catch (err) {
       if (!isEnoent(err)) throw err;
+      await this.confirmReachable();
     }
+  }
+
+  /**
+   * Called when a name came back absent, so that only a store that is
+   * present answers "absent". The marker is what says so: it is written
+   * when the folder first becomes a store and is never removed, so a
+   * folder without it, or with another store's, is not this store.
+   */
+  private async confirmReachable(): Promise<void> {
+    const markerPath = join(this.locator, MARKER);
+    let raw: string;
+    try {
+      raw = await readFile(markerPath, "utf8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        throw new BlobStoreUnreachable(
+          "the disk store's folder or its marker is missing",
+        );
+      }
+      throw err;
+    }
+    if (markerId(raw) !== this.storeId) {
+      throw new BlobStoreUnreachable(
+        "the disk store's marker does not name the store attached here",
+      );
+    }
+  }
+}
+
+function markerId(raw: string): string | null {
+  try {
+    const { id } = JSON.parse(raw) as { id?: unknown };
+    return typeof id === "string" ? id : null;
+  } catch {
+    return null;
   }
 }
 

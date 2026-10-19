@@ -3,9 +3,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createReadStream, unlinkSync } from "node:fs";
 import {
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
@@ -14,7 +16,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { BlobHashMismatch, DiskBlobStore, resolveRange } from "./blob-store.js";
+import {
+  BlobHashMismatch,
+  BlobStoreUnreachable,
+  DiskBlobStore,
+  resolveRange,
+} from "./blob-store.js";
 
 const dirs: string[] = [];
 
@@ -301,6 +308,97 @@ describe("DiskBlobStore", () => {
       expect(await store.has(hashOf(bytes))).toBeNull();
       await expect(store.delete(hashOf(bytes))).resolves.toBeUndefined();
     });
+  });
+});
+
+describe("a DiskBlobStore that cannot be reached", () => {
+  /** An attached store holding one blob, and that blob's name. */
+  async function holding(): Promise<{
+    store: DiskBlobStore;
+    hash: string;
+    absent: string;
+  }> {
+    const store = new DiskBlobStore(join(await freshDir(), "blobs"));
+    await store.attach();
+    const bytes = Buffer.from("kept on a drive that can go");
+    const hash = hashOf(bytes);
+    await store.put(hash, {
+      stream: Readable.from(bytes),
+      size_bytes: bytes.length,
+    });
+    return { store, hash, absent: hashOf(Buffer.from("never stored")) };
+  }
+
+  async function answersForEveryVerb(
+    store: DiskBlobStore,
+    hash: string,
+  ): Promise<void> {
+    await expect(store.get(hash)).rejects.toBeInstanceOf(BlobStoreUnreachable);
+    await expect(store.has(hash)).rejects.toBeInstanceOf(BlobStoreUnreachable);
+    await expect(store.delete(hash)).rejects.toBeInstanceOf(
+      BlobStoreUnreachable,
+    );
+  }
+
+  it("answers absent for a name a present store does not hold, which is the witness for the rest", async () => {
+    const { store, absent } = await holding();
+    expect(await store.get(absent)).toBeNull();
+    expect(await store.has(absent)).toBeNull();
+    await expect(store.delete(absent)).resolves.toBeUndefined();
+  });
+
+  it("rejects, rather than answers absent, once the folder is gone, and answers again when it returns", async () => {
+    const { store, hash, absent } = await holding();
+    const away = `${store.locator}.away`;
+    await rename(store.locator, away);
+    await answersForEveryVerb(store, hash);
+    await answersForEveryVerb(store, absent);
+
+    await rename(away, store.locator);
+    const read = await store.get(hash);
+    expect((await collect(read!.stream)).toString()).toBe(
+      "kept on a drive that can go",
+    );
+    expect(await store.get(absent)).toBeNull();
+  });
+
+  it("rejects when the folder is there but empty, as a mount point is without its drive", async () => {
+    const { store, hash } = await holding();
+    const away = `${store.locator}.away`;
+    await rename(store.locator, away);
+    await mkdir(store.locator);
+    await answersForEveryVerb(store, hash);
+
+    await rm(store.locator, { recursive: true });
+    await rename(away, store.locator);
+    expect(await store.has(hash)).not.toBeNull();
+  });
+
+  it("rejects when the folder is another store's, or its marker cannot be read as one", async () => {
+    const { store, hash, absent } = await holding();
+    const marker = join(store.locator, ".marfa-store");
+    const own = await readFile(marker, "utf8");
+
+    // A name the folder does hold is still served: the bytes are there.
+    await writeFile(marker, '{"id":"another-store"}\n');
+    expect(await store.has(hash)).not.toBeNull();
+    await answersForEveryVerb(store, absent);
+    await writeFile(marker, "not json");
+    await answersForEveryVerb(store, absent);
+
+    await writeFile(marker, own);
+    expect(await store.has(hash)).not.toBeNull();
+  });
+
+  it("deletes nothing of a blob it cannot reach", async () => {
+    const { store, hash } = await holding();
+    const away = `${store.locator}.away`;
+    await rename(store.locator, away);
+    await expect(store.delete(hash)).rejects.toBeInstanceOf(
+      BlobStoreUnreachable,
+    );
+    await rename(away, store.locator);
+    expect(await store.has(hash)).not.toBeNull();
   });
 });
 

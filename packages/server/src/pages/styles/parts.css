@@ -1127,6 +1127,14 @@ button.row:hover .rt {
 .disclosure[open] > summary {
   margin-bottom: var(--space-2);
 }
+.input.code {
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.input.code::placeholder {
+  text-transform: none;
+}
 
 @media (max-width: 640px) {
   .menu.fly {

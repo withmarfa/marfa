@@ -4,12 +4,28 @@ import type { Child } from "hono/jsx";
 
 export interface MomentCardProps {
   title: string;
+  /** Where the moment sits in a sequence: step `current` of `total`. */
+  steps?: { current: number; total: number };
   lede?: Child;
   /** Announces the lede to a screen reader when the page loads. */
   ledeRole?: "status" | "alert";
   /** A line under the card. */
   foot?: Child;
   children?: Child;
+}
+
+function StepIndicator(props: { current: number; total: number }) {
+  return (
+    <div
+      class="steps"
+      role="img"
+      aria-label={`Step ${String(props.current)} of ${String(props.total)}`}
+    >
+      {Array.from({ length: props.total }, (_, index) => (
+        <span class={index < props.current ? "on" : undefined} />
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -22,6 +38,7 @@ export function MomentCard(props: MomentCardProps) {
     <main class="center" id="main" tabindex={-1}>
       <div class="card">
         <div class="stack">
+          {props.steps !== undefined && <StepIndicator {...props.steps} />}
           <div class="marks" aria-hidden="true">
             <span class="tile marfa">M</span>
           </div>

@@ -17,7 +17,9 @@ pub struct ExportArgs {
     /// `ndjson` for items one per line, `archive` for the whole instance.
     #[arg(long)]
     pub format: Option<ExportFormat>,
-    /// Where to write. Omitted, the export goes to stdout.
+    /// Where to write. Omitted, the export goes to stdout. The path is
+    /// replaced only by an export that ends whole, and for an archive only by
+    /// one that lacks no blobs.
     #[arg(long, value_name = "PATH")]
     pub output: Option<PathBuf>,
     /// A type identifier; its subtypes are included.
@@ -69,7 +71,6 @@ pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     match &args.output {
         Some(path) => {
             let written = write_whole(path, &mut reader)?;
-            reader.whole()?;
             out.report(
                 &json!({ "path": path, "size_bytes": written, "content_type": content_type }),
                 || {
@@ -90,10 +91,16 @@ pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     }
 }
 
-/// Writes the export to a file beside `path` and names it `path` only once
-/// the stream has ended whole, so an export cut short leaves nothing that
-/// passes for a backup.
-fn write_whole(path: &Path, reader: &mut impl Read) -> Result<u64, CliError> {
+/// Writes the export to a file beside `path`, then names that file `path`
+/// only once the stream has ended whole and, for an archive, lists no missing
+/// blobs, so an export cut short, or one that lacks files, never replaces an
+/// earlier backup at `path`.
+///
+/// An archive that lacks blobs is kept whole beside `path` as
+/// `<path>.incomplete`, replacing only an earlier file of that name, and is
+/// answered as [`CliError::ArchiveKeptApart`]. An archive whose manifest
+/// cannot be read is not an archive, so it is removed like a cut stream.
+fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, CliError> {
     let name = path
         .file_name()
         .ok_or_else(|| CliError::Invalid(format!("{} names no file", path.display())))?;
@@ -113,24 +120,56 @@ fn write_whole(path: &Path, reader: &mut impl Read) -> Result<u64, CliError> {
     let written = match copied {
         Ok(written) => written,
         Err(error) => {
-            let removed = match std::fs::remove_file(&partial) {
-                Ok(()) => "and the partial file was removed".to_string(),
-                Err(_) => format!("and the partial file is left at {}", partial.display()),
-            };
             return Err(CliError::Io(io::Error::new(
                 error.kind(),
                 format!(
-                    "{error}: the export ended early, so nothing was written to {}, {removed}",
-                    path.display()
+                    "{error}: the export ended early, so nothing was written to {}, {}",
+                    path.display(),
+                    removed(&partial)
                 ),
             )));
         }
     };
-    std::fs::rename(&partial, path).map_err(|error| {
-        let _ = std::fs::remove_file(&partial);
-        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-    })?;
-    Ok(written)
+    match reader.whole() {
+        Ok(()) => {
+            std::fs::rename(&partial, path).map_err(|error| {
+                let _ = std::fs::remove_file(&partial);
+                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
+            })?;
+            Ok(written)
+        }
+        Err(CliError::ArchiveLacksBlobs(missing)) => {
+            let incomplete = path.with_file_name(format!("{}.incomplete", name.to_string_lossy()));
+            let target_held = std::fs::symlink_metadata(path).is_ok();
+            // A move that is refused (a directory at the name, say) keeps the
+            // bytes where they are, and the answer still names the blobs.
+            let (kept, refused) = match std::fs::rename(&partial, &incomplete) {
+                Ok(()) => (incomplete.clone(), None),
+                Err(error) => (partial, Some(error.to_string())),
+            };
+            Err(CliError::ArchiveKeptApart {
+                missing,
+                target: path.to_path_buf(),
+                incomplete,
+                kept,
+                target_held,
+                refused,
+            })
+        }
+        Err(error) => Err(CliError::Invalid(format!(
+            "{error}, so nothing was written to {}, {}",
+            path.display(),
+            removed(&partial)
+        ))),
+    }
+}
+
+/// Removes the partial file and says what became of it.
+fn removed(partial: &Path) -> String {
+    match std::fs::remove_file(partial) {
+        Ok(()) => "and the partial file was removed".to_string(),
+        Err(_) => format!("and the partial file is left at {}", partial.display()),
+    }
 }
 
 const TAR_BLOCK: usize = 512;
@@ -311,7 +350,8 @@ mod tests {
         let path = dir.join("backup.tar.gz");
         // The witness: an earlier archive at the path is neither cut nor replaced.
         std::fs::write(&path, b"an earlier archive").unwrap();
-        let error = write_whole(&path, &mut CutShort(100_000)).unwrap_err();
+        let error =
+            write_whole(&path, &mut ManifestTap::new(CutShort(100_000), false)).unwrap_err();
         assert!(matches!(error, CliError::Io(_)), "{error:?}");
         assert!(error.to_string().contains("nothing was written"), "{error}");
         assert!(error.to_string().contains("removed"), "{error}");
@@ -319,10 +359,175 @@ mod tests {
         let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
         assert_eq!(left.len(), 1, "a partial file is left: {left:?}");
 
-        let written = write_whole(&path, &mut io::Cursor::new(b"whole".to_vec())).unwrap();
+        let written = write_whole(
+            &path,
+            &mut ManifestTap::new(io::Cursor::new(b"whole".to_vec()), false),
+        )
+        .unwrap();
         assert_eq!(written, 5);
         assert_eq!(std::fs::read(&path).unwrap(), b"whole");
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn names_in(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    fn written(path: &Path, bytes: &[u8]) -> Result<u64, CliError> {
+        write_whole(
+            path,
+            &mut ManifestTap::new(io::Cursor::new(bytes.to_vec()), true),
+        )
+    }
+
+    #[test]
+    fn keeps_an_archive_that_lacks_blobs_beside_the_path_and_leaves_the_earlier_file() {
+        let hashes: Vec<String> = (0..12).map(|n| format!("sha256:{n:02}")).collect();
+        let listed = hashes
+            .iter()
+            .map(|hash| format!(r#""{hash}":{{}}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let lacking = archive(&format!(
+            r#"{{"version":0,"blobs":{{}},"missing_blobs":{{{listed}}}}}"#
+        ));
+        let whole = archive(r#"{"version":0,"blobs":{"sha256:aa":{}},"missing_blobs":{}}"#);
+
+        let dir = scratch();
+        let path = dir.join("nightly.tar.gz");
+        let incomplete = dir.join("nightly.tar.gz.incomplete");
+
+        // The earlier complete archive stays byte for byte, an earlier file
+        // of the incomplete name is the only thing replaced.
+        std::fs::write(&path, &whole).unwrap();
+        std::fs::write(&incomplete, b"an earlier incomplete archive").unwrap();
+        let error = written(&path, &lacking).unwrap_err();
+        match &error {
+            CliError::ArchiveKeptApart {
+                missing,
+                target,
+                incomplete: wanted,
+                kept,
+                target_held,
+                refused,
+            } => {
+                assert_eq!(missing, &hashes);
+                assert_eq!((target, wanted, kept), (&path, &incomplete, &incomplete));
+                assert!(refused.is_none());
+                assert!(target_held);
+            }
+            other => panic!("expected the archive kept apart, got {other:?}"),
+        }
+        let message = error.to_string();
+        assert!(message.contains(&path.display().to_string()), "{message}");
+        assert!(
+            message.contains(&incomplete.display().to_string()),
+            "{message}"
+        );
+        assert!(message.contains("sha256:09 and 2 more"), "{message}");
+        assert!(message.contains("still holds the file"), "{message}");
+        assert_eq!(error.exit(), crate::error::Exit::Refused);
+        assert_eq!(std::fs::read(&path).unwrap(), whole);
+        assert_eq!(std::fs::read(&incomplete).unwrap(), lacking);
+        assert_eq!(
+            names_in(&dir),
+            ["nightly.tar.gz", "nightly.tar.gz.incomplete"]
+        );
+
+        // The witness: a whole archive replaces the path and leaves no
+        // partial file; the earlier incomplete archive is not its to remove.
+        let newer = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
+        assert_eq!(written(&path, &newer).unwrap(), newer.len() as u64);
+        assert_eq!(std::fs::read(&path).unwrap(), newer);
+        assert_eq!(
+            names_in(&dir),
+            ["nightly.tar.gz", "nightly.tar.gz.incomplete"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn keeps_an_archive_that_lacks_blobs_beside_a_path_where_nothing_was_and_says_so() {
+        let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
+        let dir = scratch();
+        let path = dir.join("first.tar.gz");
+        let error = written(&path, &lacking).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                CliError::ArchiveKeptApart {
+                    target_held: false,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        let message = error.to_string();
+        assert!(message.contains("nothing was written to"), "{message}");
+        assert!(message.contains("nothing there lacks files"), "{message}");
+        assert!(!path.exists(), "an archive that lacks files is at the path");
+        assert_eq!(
+            std::fs::read(dir.join("first.tar.gz.incomplete")).unwrap(),
+            lacking
+        );
+        assert_eq!(names_in(&dir), ["first.tar.gz.incomplete"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reports_the_blobs_and_keeps_the_bytes_when_the_incomplete_name_cannot_be_taken() {
+        let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
+        let whole = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
+        let dir = scratch();
+        let path = dir.join("nightly.tar.gz");
+        let incomplete = dir.join("nightly.tar.gz.incomplete");
+        std::fs::write(&path, &whole).unwrap();
+        std::fs::create_dir(&incomplete).unwrap();
+        let error = written(&path, &lacking).unwrap_err();
+        let CliError::ArchiveKeptApart {
+            missing,
+            kept,
+            refused,
+            ..
+        } = &error
+        else {
+            panic!("expected the archive kept apart, got {error:?}");
+        };
+        assert_eq!(missing, &["sha256:aa"]);
+        assert!(refused.is_some(), "{error:?}");
+        assert_eq!(error.exit(), crate::error::Exit::Refused);
+        assert_eq!(error.code(), "blobs_missing");
+        let message = error.to_string();
+        assert!(message.contains("sha256:aa"), "{message}");
+        assert!(message.contains("could not be moved"), "{message}");
+        assert!(
+            message.contains(&incomplete.display().to_string()),
+            "{message}"
+        );
+        // The bytes are where the message says, the path and the directory
+        // are as they were.
+        assert_eq!(std::fs::read(kept).unwrap(), lacking);
+        assert_eq!(std::fs::read(&path).unwrap(), whole);
+        assert!(incomplete.is_dir());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn leaves_the_path_and_no_partial_file_when_the_manifest_cannot_be_read() {
+        let dir = scratch();
+        let path = dir.join("backup.tar.gz");
+        std::fs::write(&path, b"an earlier archive").unwrap();
+        let error = written(&path, b"not gzip").unwrap_err();
+        assert!(matches!(error, CliError::Invalid(_)), "{error:?}");
+        assert!(error.to_string().contains("nothing was written"), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
+        assert_eq!(names_in(&dir), ["backup.tar.gz"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

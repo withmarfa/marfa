@@ -80,7 +80,7 @@ describe("owner and setup routes", () => {
     const cookie = setCookie.split(";")[0]!;
     const page = await app.request("/setup", { headers: { cookie } });
     expect(page.headers.get("cache-control")).toContain("no-store");
-    expect(await page.text()).toContain('<form id="owner-form">');
+    expect(await page.text()).toContain('id="owner-form"');
     expect(
       (await app.request("/setup/exchange", json({ ticket }, { origin })))
         .status,

@@ -1388,9 +1388,17 @@ When an edge is created after the headers of `GET /export?format=archive` have a
 
 When `GET /export?format=archive` returns a complete archive, the server MUST ensure that the archive passes `POST /restore` validation into an empty store running the same build with the exporting instance's `MARFA_MAX_BULK_REQUEST_BYTES`, without skipping any carried item or edge.
 
-**Reason:** pages can observe different committed states, and `schema.write` permits replacements that invalidate earlier rows (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
+**Reason:** pages can observe different committed states, and `schema.write` permits replacements that leave an earlier row that a restore refuses, such as a type that becomes an event while a row holds a rule no calendar read can unfold (`types/evolve-schema-write`). The setting is the exporting instance's because the archive is that instance's backup, restored into it under the same setting: a judgment against the default would refuse a row that the instance's write operations accepted, or pass a row that its restore refuses. The guarantee excludes destination conflicts and other settings of the destination; missing blobs retain their declared missing status.
 
 **Tests:** `compliance/export-write-order.test.ts › restores an archive after writes land between its item pages`, `› restores a custom type retyped away and deleted between archive pages`.
+
+### `search-and-filters/archive-rows-shape-free`
+
+When `GET /export?format=archive` selects an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse the export because the item lacks a field its type requires, holds a value its type's field does not accept, or is of a type that is not registered.
+
+**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a platform type that this build no longer ships as an orphan`.
 
 ### `search-and-filters/archive-validation-retry`
 
@@ -1446,6 +1454,38 @@ If a read fails after the body of `GET /export?format=archive` has begun, then t
 
 **Tests:** `compliance/export-faults.test.ts › ends the response with an error, so the archive is cut short and cannot be taken for a whole one, and leaves nothing on disk`.
 
+### `search-and-filters/export-credential-ended`
+
+When the key or signed-in app that a `GET /export` request was admitted on is revoked, passes its expiry or is disconnected while the response is open, the server MUST end the response with an error and not with a clean end, in both formats and while an archive sends a blob.
+
+**Reason:** what a key holds open ends with it (`keys-and-oauth/revoke-immediate`), and a response that ended cleanly after its credential ended would read as a whole copy.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is revoked`, `› ends with an error when its key passes its expiry`, `› ends with an error when the app that opened it is disconnected`, `› ends with an error when its key is revoked while a blob is being sent`.
+
+### `search-and-filters/export-credential-narrowed`
+
+If the credential that a `GET /export` request was admitted on is narrowed while the response is open, so that it no longer reads something the export has still to send, then the server MUST end the response with an error and not with a clean end, in both formats.
+
+**Reason:** an export that left out what the credential can no longer read would be a copy that is incomplete without saying so, and an archive has already promised its rows and blobs in its manifest.
+
+**Tests:** `compliance/export-credential.test.ts › ends with an error when its key is narrowed to types the export does not carry`.
+
+### `search-and-filters/export-narrowed-reaches`
+
+When the credential that a `GET /export` request was admitted on is narrowed while the response is open, and it still reads everything the export has still to send, the server MUST send the rest of the export, in both formats.
+
+**Reason:** a narrowing that takes away nothing the export has still to send changes nothing the export has promised.
+
+**Tests:** `compliance/export-credential.test.ts › arrives whole when its credential stands, which is the witness for the cases below`, `› arrives whole when its key is narrowed to what the export still carries`.
+
+### `search-and-filters/archive-selection-key`
+
+If the key that a `GET /export?format=archive` request was admitted on is revoked before the response begins, then the server MUST answer `401 unauthorized` without sending archive bytes.
+
+**Reason:** the export reads and checks the whole selection before its first byte, and the answer is the one the next request on the key gets.
+
+**Tests:** `compliance/export-credential.test.ts › is refused 401 when its key is revoked while the selection is read`.
+
 ## Restore
 
 `POST /restore` takes an archive that `GET /export?format=archive` wrote, with direct owner or local authority, and answers counts of what it wrote and skipped.
@@ -1494,11 +1534,75 @@ When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT w
 
 ### `search-and-filters/cli-export-lacking`
 
-When `marfa export --format archive` has written an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
+When `marfa export --format archive` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
 
-**Reason:** the archive is kept, because it holds everything else, and the exit says it is not a whole backup.
+**Reason:** the exit says the archive is not a whole backup.
 
-**Tests:** `cli/archive-blobs.test.ts › writes the archive and exits 1 with blobs_missing, naming the blob`.
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-lacking-kept`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` can be replaced, then the CLI MUST keep the whole archive at `<path>.incomplete`, replacing only an earlier file of that name.
+
+**Reason:** the archive holds everything else, and may hold the only copy of a file the server has since lost, so it is kept where the person can get it back and is named as incomplete.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-refused`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, if `<path>.incomplete` cannot be replaced, then the CLI MUST keep the whole archive in a hidden partial file beside `<path>`.
+
+**Reason:** the bytes are kept where the person can get them back, and the exit, the `blobs_missing` code and the hashes of `search-and-filters/cli-export-lacking` still reach the person.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-refused-named`
+
+When `marfa export --format archive --output <path>` has kept an archive that lacks blobs in a hidden partial file because `<path>.incomplete` cannot be replaced, the CLI MUST name that file and the reason in its message.
+
+**Reason:** the person learns from the message alone where the archive is and why it is not at the incomplete name.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
+
+### `search-and-filters/cli-export-lacking-path`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST NOT write to `<path>`.
+
+**Reason:** a file at the path is the last complete backup when the command is run on a schedule, and a script that reads the path must never get an archive that lacks files. An earlier file stays byte for byte, and where none was, none is made.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-named`
+
+When `marfa export --format archive --output <path>` has kept an archive that lacks blobs at `<path>.incomplete`, the CLI MUST name `<path>` and `<path>.incomplete` in its message.
+
+**Reason:** the person learns from the message alone where the incomplete archive is.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-lacking-path-state`
+
+When `marfa export --format archive --output <path>` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST say in its message whether `<path>` still holds an earlier file or was not written.
+
+**Reason:** the person learns that the path was left alone, and whether a backup is still there.
+
+**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
+
+### `search-and-filters/cli-export-whole`
+
+When `marfa export --output <path>` receives an export that ends whole and, for an archive, has a readable manifest that names no blobs in `missing_blobs`, the CLI MUST replace `<path>` with it.
+
+**Reason:** the earlier backup is replaced only by one that is at least as complete.
+
+**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
+
+### `search-and-filters/cli-export-whole-clean`
+
+When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no partial file beside it.
+
+**Reason:** a file left behind would be mistaken by a later run, or a person, for a backup. An older `<path>.incomplete` is not a partial file of this run, and is left as it was.
+
+**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
 
 ### `search-and-filters/cli-restore-lacking`
 
@@ -1511,6 +1615,14 @@ When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the
 If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave the path as it was before the command and exit 3.
 
 **Reason:** a file cut short at the path would pass for a backup until a restore needed it.
+
+**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
+
+### `search-and-filters/cli-export-cut-clean`
+
+If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave no partial file beside the path.
+
+**Reason:** a file cut short, kept anywhere the person looks for backups, would pass for one. Only a process killed outright leaves its partial file, which no code can prevent.
 
 **Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
 
@@ -1598,7 +1710,7 @@ If an archive registers a type with a key `types/unknown-key` refuses, or an edg
 
 When `POST /restore` takes an archive that carries no row, the server MUST answer `200` with `imported` of 0.
 
-**Reason:** an archive of nothing is not an empty body.
+**Reason:** an archive of nothing is not an empty body, and its members are present and empty, which `search-and-filters/restore-members` tells from missing.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
 
@@ -1607,6 +1719,14 @@ When `POST /restore` takes an archive that carries no row, the server MUST answe
 If the body of `POST /restore` is empty, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an empty body, and takes an archive of nothing`.
+
+### `search-and-filters/restore-members`
+
+If an archive lacks `manifest.json`, `items.ndjson`, `edges.ndjson` or `types.ndjson`, then the server MUST answer `400 validation_error` naming each missing entry in the message and in `details.entries`.
+
+**Reason:** an export writes all four even when it holds no row (`search-and-filters/archive-entries`), so a missing entry is a damaged archive or a file that is no archive, and an archive of nothing is told from it by its entries being empty (`search-and-filters/restore-nothing`). Without the check a restore answers `200` with counts of zero for a file it never read.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive without %s, naming it, and writes nothing`, `› refuses a gzip-compressed tar that is no archive, naming every member it lacks`.
 
 ### `search-and-filters/restore-not-archive`
 
@@ -1754,6 +1874,54 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 
 **Tests:** `compliance/archive-history.test.ts › restores a snapshot the type's current shape would refuse, as it was`.
 
+### `search-and-filters/restore-rows-shape-free`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
+
+**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/drift`); a restore takes those as archived, as it takes an item of any type that is not one the build ships, whether or not the instance still carries the type's row (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+
+### `search-and-filters/restore-rows-properties-kept`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST store its properties as the archive holds them.
+
+**Reason:** the properties are the person's own, and a restore that rewrote them to a shape the type has now would change the backup it restores.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`, `› restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
+
+### `search-and-filters/restore-schema-version-kept`
+
+When `POST /restore` writes an item, the server MUST store the `schema_version` that the archive records for it.
+
+**Reason:** `schema_version` is the `version` the item's type had when the item was created, and Marfa never changes it. Stamping the type's present version on a row written under an earlier one would say the row has a field it lacks.
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
+
+### `search-and-filters/restore-rows-orphan`
+
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships and whose type is not registered once the archive's own types are, the server MUST store the item under that type.
+
+**Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
+
+**Tests:** `compliance/restore-rows-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`, `› restores an item of a platform type that this build no longer ships as an orphan`.
+
+### `search-and-filters/restore-item-type`
+
+If an archived item's `type` is missing or is not a type identifier, then the server MUST answer `400 validation_error` naming the item's ID in the message.
+
+**Reason:** a forced delete leaves an item under an identifier a type was registered with (`search-and-filters/restore-rows-orphan`), so an identifier that none could have been is an archive that no instance wrote.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
+
+### `search-and-filters/restore-item-properties`
+
+If an archived item's `properties` are present and are not an object, then the server MUST answer `400 invalid_properties` naming the item's ID in the message.
+
+**Reason:** a restore that took them would store a row whose properties no read can return as an object.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item whose type is no identifier or whose properties are no object, and writes nothing`.
+
 ### `search-and-filters/restore-snapshot-held`
 
 If an archive records a snapshot ID that existing history already holds, then the server MUST answer `409 conflict`.
@@ -1783,6 +1951,58 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 **Reason:** the body streams to disk as an upload's does, so an archive that carries a blob larger than the cap restores.
 
 **Tests:** `compliance/restore-archive.test.ts › restores an archive carrying a blob larger than the request cap, byte for byte, and leaves out an entry that does not hash to its name`, `compliance/adversarial.test.ts › refuses a request over the body cap with request_too_large`.
+
+### `search-and-filters/restore-duration`
+
+While a part of the body of `POST /restore` arrives at least once in every `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, the server MUST NOT end the request for the time the body takes.
+
+**Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
+
+**Tests:** `compliance/upload-timing.test.ts › restores an archive whose body takes 66 seconds to arrive, a part at a time`.
+
+### `search-and-filters/restore-idle`
+
+If no byte of the body of `POST /restore` arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-idle-unwritten`
+
+When the server answers `POST /restore` with `408 request_timeout`, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/upload-timing.test.ts › ends a restore with 408 request_timeout, writes nothing and removes what it spooled`.
+
+### `search-and-filters/restore-sign-in-age`
+
+If the owner's browser session signed in more than five minutes before a `POST /restore` started, then the server MUST answer `403 forbidden` without waiting for the body to finish arriving.
+
+**Reason:** restoring can write server-managed records (`search-and-filters/restore-operator`), so it needs a recent sign-in. Judging it when the request starts refuses a stale session before the owner has sent the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › refuses with 403 forbidden an owner who signed in six minutes before the request started, as soon as the request starts`.
+
+### `search-and-filters/restore-sign-in-start`
+
+If the owner's browser session signed in within five minutes before a `POST /restore` started, then the server MUST NOT refuse the request because more than five minutes have passed since the sign-in when the body finishes arriving.
+
+**Reason:** the sign-in is judged at the moment the request starts, both before the body is read and when the restore is written, so an upload that begins inside the window is not discarded for taking longer than the window. Any other operation that needs a recent sign-in judges it when it runs.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › restores an archive from an owner who signed in four minutes before the request started and whose body finished arriving two minutes later`.
+
+### `search-and-filters/restore-session-ended`
+
+If the owner's browser session ends before the body of a `POST /restore` finishes arriving, then the server MUST answer `401 unauthorized`.
+
+**Reason:** judging the sign-in at the start does not extend the session. A sign-out, or a session that has expired, stops the restore however recent the sign-in was.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › answers 401 unauthorized, though the sign-in was recent when the request started`.
+
+### `search-and-filters/restore-session-unwritten`
+
+When the server answers `POST /restore` with `401 unauthorized` because the owner's browser session ended during the upload, the server MUST NOT write any item, type registration or blob of the archive.
+
+**Tests:** `compliance/restore-upload-sign-in.test.ts › writes nothing of the archive`.
 
 ### `search-and-filters/restore-blob-bytes`
 

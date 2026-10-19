@@ -8,6 +8,7 @@ import {
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
@@ -425,7 +426,12 @@ export class TextEnrichmentSweeper {
       return textError === null ? "extracted" : "failed";
     } catch (err) {
       const message = errorMessage(err);
-      await record("failed", message.slice(0, 500)).catch(() => {
+      // A store that cannot be reached says nothing of this file, so the
+      // attempt is given back: a drive away for a few sweeps must not park
+      // every offered file at its last attempt for good.
+      const counted =
+        err instanceof BlobStoreUnreachable ? attempts - 1 : attempts;
+      await record("failed", message.slice(0, 500), counted).catch(() => {
         // The item may have been deleted mid-extraction, taking the FK
         // target with it. Losing the bookkeeping row for a gone item is
         // the correct outcome.
@@ -518,10 +524,22 @@ export class TextEnrichmentSweeper {
   }
 }
 
-/** The whole blob from the first attached store that holds it. */
+/**
+ * The whole blob from the first attached store that holds it. `null` when
+ * every store answered and none holds it; a store that could not answer
+ * says nothing of the bytes, so when none holds them and one failed, the
+ * failure is thrown.
+ */
 async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
+  let failure: { error: unknown } | undefined;
   for (const store of blobs.stores) {
-    const read = await store.get(hash);
+    let read;
+    try {
+      read = await store.get(hash);
+    } catch (error) {
+      failure ??= { error };
+      continue;
+    }
     if (!read) continue;
     const chunks: Buffer[] = [];
     for await (const chunk of read.stream as AsyncIterable<Buffer>) {
@@ -529,6 +547,7 @@ async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
     }
     return Buffer.concat(chunks);
   }
+  if (failure) throw failure.error;
   return null;
 }
 
