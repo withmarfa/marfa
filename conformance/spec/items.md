@@ -676,35 +676,43 @@ When two writes to one item race, the server MUST judge each against the item an
 
 ### `items/write-race-key-narrowed`
 
-When a change to a key's grants that removes its write grant on a type the write needs commits before an item write bearing that key begins to write, the server MUST refuse the write `403 type_not_permitted`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition` or `POST /items/{id}/purge`.
+When a change to a key's grants that leaves it read but not write on a type the write needs commits before an item write bearing that key begins to write, the server MUST refuse the write `403 type_not_permitted`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition` or `POST /items/{id}/purge`.
 
 **Reason:** a key is judged as it stands when the write commits, not as it stood when the request was admitted, so a narrowing the owner has saved never lets one more write through.
 
 **Tests:** `compliance/item-write-live-key.test.ts › refuses a create 403 type_not_permitted when its key is narrowed to read after the write is held`, `› refuses an update 403 type_not_permitted when its key is narrowed to read after the write is held`, `› refuses a delete 403 type_not_permitted when its key is narrowed to read after the write is held`, `› refuses a purge 403 type_not_permitted when its key is narrowed to read after the write is held`, `› refuses a restore 403 type_not_permitted when its key is narrowed to read after the write is held`, `› refuses a transition 403 type_not_permitted when its key is narrowed to read after the write is held`.
 
+### `items/write-race-key-hidden`
+
+When a change to a key's grants that leaves it no read on the type of the item a write addresses commits before a write bearing that key begins to write, the server MUST refuse the write `404 item_not_found`, for a write through `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition` or `POST /items/{id}/purge`.
+
+**Reason:** a key that cannot read a type is told nothing of its rows, so the refusal is the one it meets with no race.
+
+**Tests:** `compliance/item-write-live-key.test.ts › refuses an update 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a delete 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a purge 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a restore 404 item_not_found when its key loses read on the item's type after the write is held`, `› refuses a transition 404 item_not_found when its key loses read on the item's type after the write is held`.
+
 ### `items/write-race-key-narrowed-atomic`
 
-When a change to a key's grants that removes its write grant on a type an entry needs commits before a `POST /items/bulk` page under `atomic: true` begins to write, the server MUST answer the page as `items/bulk-atomic` says, with `type_not_permitted` in `details.code`.
+When a change to a key's grants that leaves it read but not write on a type an entry needs commits before a `POST /items/bulk` page under `atomic: true` begins to write, the server MUST answer the page as `items/bulk-atomic` says, with `type_not_permitted` in `details.code`.
 
 **Tests:** `compliance/item-write-live-key.test.ts › refuses an atomic bulk page 403 bulk_atomic_rollback with type_not_permitted in details.code when its key is narrowed to read after the write is held`.
 
 ### `items/write-race-key-narrowed-entry`
 
-When a change to a key's grants that removes its write grant on a type an entry needs commits before an entry of a `POST /items/bulk` page under `atomic: false` begins to write, the server MUST report the entry `errored` with `error.code` `type_not_permitted`.
+When a change to a key's grants that leaves it read but not write on a type an entry needs commits before an entry of a `POST /items/bulk` page under `atomic: false` begins to write, the server MUST report the entry `errored` with `error.code` `type_not_permitted`.
 
 **Tests:** `compliance/item-write-live-key.test.ts › errors a best-effort bulk entry type_not_permitted when its key is narrowed to read after the write is held`, `› errors a later best-effort bulk entry type_not_permitted when its key is narrowed to read after an earlier entry is written`.
 
 ### `items/write-race-key-revoked`
 
-When the revocation of a key commits before an item write bearing that key begins to write, the server MUST refuse the write `401 unauthorized`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition`, `POST /items/{id}/purge`, a `POST /items/bulk` page under `atomic: true`, or the first entry of a `POST /items/bulk` page under `atomic: false`.
+When the revocation of a key commits before an item write bearing that key begins to write, the server MUST refuse the write `401 unauthorized`, for a write through `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/{id}/restore`, `POST /items/{id}/transition`, `POST /items/{id}/purge`, a `POST /items/bulk` page under `atomic: true`, or a `POST /items/bulk` page under `atomic: false` before any of its entries has been written.
 
 **Reason:** `keys-and-oauth/revoke-immediate` holds for a request already admitted when the key is revoked.
 
-**Tests:** `compliance/item-write-live-key.test.ts › refuses a create 401 when its key is revoked after the write is held`, `› refuses an update 401 when its key is revoked after the write is held`, `› refuses a delete 401 when its key is revoked after the write is held`, `› refuses a purge 401 when its key is revoked after the write is held`, `› refuses a restore 401 when its key is revoked after the write is held`, `› refuses a transition 401 when its key is revoked after the write is held`, `› refuses an atomic bulk page 401 when its key is revoked after the write is held`, `› refuses a best-effort bulk page 401 when its key is revoked before its first entry is written`.
+**Tests:** `compliance/item-write-live-key.test.ts › refuses a create 401 when its key is revoked after the write is held`, `› refuses an update 401 when its key is revoked after the write is held`, `› refuses a delete 401 when its key is revoked after the write is held`, `› refuses a purge 401 when its key is revoked after the write is held`, `› refuses a restore 401 when its key is revoked after the write is held`, `› refuses a transition 401 when its key is revoked after the write is held`, `› refuses an atomic bulk page 401 when its key is revoked after the write is held`, `› refuses a best-effort bulk page 401 when its key is revoked before its first entry is written`, `› refuses a best-effort bulk page 401 when its key is revoked after a refused first entry and before its second`.
 
 ### `items/write-race-key-revoked-entry`
 
-When the revocation of a key commits after an earlier entry of a `POST /items/bulk` page under `atomic: false` has committed and before a later entry begins to write, the server MUST report the later entry `errored` with `error.code` `unauthorized`.
+When the revocation of a key commits after an earlier entry of a `POST /items/bulk` page under `atomic: false` has been written and before a later entry begins to write, the server MUST report the later entry `errored` with `error.code` `unauthorized`.
 
 **Tests:** `compliance/item-write-live-key.test.ts › errors a later best-effort bulk entry unauthorized when its key is revoked after an earlier entry is written`.
 
