@@ -1481,9 +1481,9 @@ impl Http {
             return Err(crate::read_view::invalid());
         }
         // A body that does not parse as JSON says nothing against the copy's
-        // read view, and reading it again fails the same way. A body that parses and
-        // does not fit what a certified answer carries is a proof the copy
-        // cannot accept.
+        // read view, and reading it again fails the same way. A body that
+        // parses and does not fit what a certified answer carries is a proof
+        // the copy cannot accept.
         if conditional.is_none() {
             return serde_json::from_str(&text)
                 .map_err(|error| crate::error::unreadable(url.path(), &error));
