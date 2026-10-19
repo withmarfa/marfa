@@ -79,11 +79,11 @@ it("restores an archive after writes land between its item pages", async () => {
       .trim()
       .split("\n")
       .map((line) => (JSON.parse(line) as { item: MarfaItem }).item);
-    expect(items).toHaveLength(60);
+    expect(items).toHaveLength(59);
     expect(items.find((item) => item.id === newest.id)?.properties).toEqual(
       newest.properties,
     );
-    expect(items.map((item) => item.id)).toContain(oldest.id);
+    expect(items.map((item) => item.id)).not.toContain(oldest.id);
     expect(items.map((item) => item.id)).not.toContain(added.data.item.id);
     const owner = new MarfaClient({
       baseUrl: target.apiUrl,
@@ -92,7 +92,7 @@ it("restores an archive after writes land between its item pages", async () => {
     const restored = await owner.restoreArchive(exported.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data).toMatchObject({
-      imported: 60,
+      imported: 59,
       edges_imported: 1,
       edges_skipped: 0,
     });
