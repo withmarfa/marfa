@@ -10,7 +10,7 @@ use marfa_core::{CoreError, FirstSync, Folder, Removal, SendReport, SyncReport, 
 use crate::autostart::{self, AutostartCommand};
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
-use crate::error::CliError;
+use crate::error::{CliError, Exit};
 use crate::interrupt;
 use crate::logfile;
 use crate::output::{self, Printer};
@@ -90,7 +90,8 @@ pub enum FoldersCommand {
         dir: PathBuf,
     },
     /// Scan, drain, catch up, pull, and send the placements the pull queued:
-    /// everything a folder does, once.
+    /// everything a folder does, once. Exits 3 where a write is left unsent or
+    /// the catch-up failed, and 5 where the server refused the credential.
     Push {
         /// The folder.
         dir: PathBuf,
@@ -175,8 +176,19 @@ pub enum FoldersCommand {
     },
 }
 
-pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), CliError> {
-    match command {
+/// A push that left a write undelivered, or could not catch up with the
+/// server, has not finished its work: the environment's exit says to try
+/// again. A refused credential is the credential's.
+fn sync_exit(drain: &marfa_core::DrainReport, caught_up: bool) -> Exit {
+    match output::drain_exit(drain) {
+        Exit::Done if !caught_up => Exit::Environment,
+        exit => exit,
+    }
+}
+
+pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<Exit, CliError> {
+    let mut exit = Exit::Done;
+    let done = match command {
         FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
@@ -366,6 +378,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 scan: scanned,
                 drain: drained,
             } = folder.send_only()?;
+            exit = output::drain_exit(&drained.report);
             output::report(
                 &serde_json::json!({
                     "send_only": true,
@@ -413,9 +426,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         &serde_json::json!({ "first_sync": first_sync_json(Some(&plan), false, None) }),
                         json,
                         || first_sync_lines(&dir, Some(&plan), false).join("\n"),
-                    );
+                    )
+                    .map(|()| Exit::Done);
                 }
             };
+            exit = sync_exit(&drained.report, catch_up.is_ok());
             let (caught, failed) = match catch_up {
                 Ok(caught) => (serde_json::to_value(caught)?, None),
                 Err(error) => (
@@ -498,7 +513,8 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             named,
             json,
         ),
-    }
+    };
+    done.map(|()| exit)
 }
 
 fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliError> {
@@ -610,6 +626,13 @@ fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
     let mut lines = vec![output::counts(&drained.report)];
     lines.extend(Conflicts::default().say(folder, &drained.report));
     lines.extend(output::undelivered(&drained.report));
+    if drained.report.undelivered > 0
+        && let Some(wait) = drained.report.retry_after_seconds
+    {
+        lines.push(format!(
+            "the server asked for {wait}s before the next drain; push again after that to send the rest"
+        ));
+    }
     if let Some(stopped) = &drained.report.stopped {
         lines.push(stopped.clone());
     }
@@ -1121,6 +1144,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             (
                 report.lost,
                 "bound to an item that is gone and unchanged since, so not sent",
+            ),
+            (
+                report.waiting,
+                "queued earlier and not delivered yet",
             ),
             (
                 report.unreached,

@@ -259,6 +259,7 @@ impl Folder {
         let mut gate = Gate::new(Instant::now());
         let mut telling = Telling::default();
         let mut last_full: Option<Instant> = None;
+        let mut send_again_at: Option<Instant> = None;
         let mut lists = self.settings().and_then(|settings| settings.lists()).ok();
         loop {
             if stop.load(Ordering::SeqCst) {
@@ -308,7 +309,10 @@ impl Folder {
             }
             // No "was there a change" flag: it would stop the journal being
             // swept in a folder that went quiet after a delete.
-            if !gate.due(Instant::now()) {
+            // No pass runs while the server's rate limit lasts, since a write
+            // sent before it ends is refused again: changes on disk wait
+            // unscanned and nothing is pulled.
+            if send_again_at.is_some_and(|at| Instant::now() < at) || !gate.due(Instant::now()) {
                 continue;
             }
             let full = full_due(last_full, Instant::now());
@@ -329,7 +333,7 @@ impl Folder {
                     }
                     continue;
                 }
-                other => other?,
+                other => send_again_at = other?.map(|wait| Instant::now() + wait),
             }
             telling.settled();
             gate.passed(Instant::now());
@@ -348,11 +352,11 @@ impl Folder {
         telling: &mut Telling,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
         health: &Mutex<FollowHealth>,
-    ) -> Result<(), WatchError<E>> {
+    ) -> Result<Option<Duration>, WatchError<E>> {
         let asking = || asked.load(Ordering::SeqCst);
         let settings = self.send_settings_edit()?;
         if asking() {
-            return Ok(());
+            return Ok(None);
         }
         let scan = self.scan_watching(full, SETTLE)?;
         // Told once, and every tick looks again, so the watch goes on where
@@ -362,10 +366,10 @@ impl Folder {
             if let Some(event) = telling.waiting(settings, scan) {
                 tell(event).map_err(WatchError::Told)?;
             }
-            return Ok(());
+            return Ok(None);
         }
         if asking() {
-            return Ok(());
+            return Ok(None);
         }
         let generation = health.lock().expect("follow health lock").generation;
         let drain = self.drain_in(true)?;
@@ -378,7 +382,7 @@ impl Folder {
             tell(event).map_err(WatchError::Told)?;
         }
         if asking() {
-            return Ok(());
+            return Ok(None);
         }
         let pull = self.pull()?;
         let problem = drain
@@ -432,10 +436,11 @@ impl Folder {
         }
         drop(progress);
         let refused = credential_refused(&drain);
+        let wait = rate_limit_wait(&drain.report);
         if let Some(event) = event {
             tell(event).map_err(WatchError::Told)?;
         }
-        refused.map_or(Ok(()), |error| Err(WatchError::CredentialRefused(error)))
+        refused.map_or(Ok(wait), |error| Err(WatchError::CredentialRefused(error)))
     }
 }
 
@@ -539,6 +544,15 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
         }
         wait_unless_stopped(ended, handover::LOOK);
     }
+}
+
+/// How long the server asked the watch to leave its writes alone, where a
+/// pass left some undelivered: no pass runs until it is over.
+fn rate_limit_wait(drain: &crate::DrainReport) -> Option<Duration> {
+    if drain.stopped.is_some() || drain.undelivered == 0 {
+        return None;
+    }
+    drain.retry_after_seconds.map(Duration::from_secs)
 }
 
 fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {
@@ -922,6 +936,24 @@ mod tests {
             backoff = next;
         }
         assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+    }
+
+    #[test]
+    fn a_pass_that_left_writes_under_a_rate_limit_is_followed_when_it_ends() {
+        let mut limited = drained().report;
+        limited.undelivered = 4;
+        limited.unavailable = Some("the server asked to be left alone".into());
+        limited.retry_after_seconds = Some(3);
+        assert_eq!(rate_limit_wait(&limited), Some(Duration::from_secs(3)));
+        let mut sent = limited.clone();
+        sent.undelivered = 0;
+        assert_eq!(rate_limit_wait(&sent), None, "nothing is left to send");
+        let mut unnamed = limited.clone();
+        unnamed.retry_after_seconds = None;
+        assert_eq!(rate_limit_wait(&unnamed), None, "the server named no wait");
+        let mut refused = limited;
+        refused.stopped = Some("the server refused the credential".into());
+        assert_eq!(rate_limit_wait(&refused), None);
     }
 
     #[test]

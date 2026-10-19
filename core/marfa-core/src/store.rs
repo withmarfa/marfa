@@ -1517,6 +1517,28 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
     )
 }
 
+/// The items with a create or edit the server has yet to answer: none
+/// answered and none dead, since a dead write is not sent again unless it
+/// is released.
+pub fn items_awaiting_their_write(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT item_id FROM queue
+          WHERE kind IN (?1, ?2) AND item_id IS NOT NULL
+            AND (verdict IS NULL OR verdict = ?3)",
+    )?;
+    let items = statement
+        .query_map(
+            [
+                WriteKind::CreateItem.as_str(),
+                WriteKind::UpdateItem.as_str(),
+                Verdict::Blocked.as_str(),
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(items)
+}
+
 /// The bytes the cache keeps for the queue: those of every upload not yet
 /// taken, and those of every taken upload a write that may still be sent
 /// waits on, which a drain under another credential sends again

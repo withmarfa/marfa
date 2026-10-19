@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  answers,
   copyItemEvent,
   copyReplay,
   wireItem,
@@ -240,6 +241,7 @@ describe("a push that only sends", () => {
       "the write the server could not take was dropped, or not reported",
     ).toBeGreaterThanOrEqual(1);
     expect(offline.value.drain.answered).toBe(0);
+    expect(offline.value.exit).toBe(3);
     expect(sentCreates(harness)).toEqual([]);
     const waiting = await harness.folder.status();
     expect(waiting.ok && waiting.value.files).toMatchObject([
@@ -251,5 +253,29 @@ describe("a push that only sends", () => {
     expect(sentTitles(harness)).toEqual(["Mine"]);
     expect(sentUpdates(harness)).toEqual([]);
     expect(existsSync(join(harness.dir, "Server note.md"))).toBe(false);
+  });
+  it("leaves the write a rate limit refused for the next run, without waiting", async () => {
+    harness = await folderHarness("send-only-rate-limit", { rows });
+    let attempts = 0;
+    scriptFolderWrites(harness, {
+      creating: (answer) => {
+        attempts += 1;
+        return attempts === 1 ? answers.rateLimited() : answer;
+      },
+    });
+    put(harness, "mine.md", typed("Mine"));
+    const sent = await harness.folder.pushSendOnly();
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    if (!sent.ok) return;
+    expect(
+      [attempts, sent.value.drain.undelivered, sent.value.exit],
+      "the run waited out the rate limit and drained again",
+    ).toEqual([1, 1, 3]);
+    const again = await harness.folder.pushSendOnly();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect([attempts, again.value.drain.undelivered, again.value.exit]).toEqual(
+      [2, 0, 0],
+    );
   });
 });

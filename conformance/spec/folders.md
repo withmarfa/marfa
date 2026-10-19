@@ -3904,6 +3904,14 @@ When a scan identifies a missing folder file as moved to another registered fold
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
+### `folders/moved-carried-id-utf16`
+
+When a file in another registered folder starts with a UTF-16 byte-order mark, or with a frontmatter fence encoded as UTF-16 and no mark, a device MUST read the file's carried ID as UTF-16 text.
+
+**Reason:** An editor that saves a moved file again as UTF-16 changes both its identity and its bytes, so its carried ID is all that shows where it came from. Read as UTF-8, the move is taken for a deletion and the item is deleted on the server.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file moved to another folder and saved again as UTF-16`.
+
 ### `folders/peer-owned-bytes-not-move`
 
 When another folder’s equal bytes belong to a different item, a device MUST NOT identify that file as the missing file’s move.
@@ -3945,6 +3953,14 @@ When a missing folder file could be in unreadable registered folders or several 
 When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST name the uncertainty in `unsure`.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
+
+### `folders/uncertain-move-not-text`
+
+When another registered folder holds a file whose bytes can be read but are not UTF-8, a device MUST treat that folder's inventory as complete.
+
+**Reason:** The file is held on its own (`folders/unreadable-no-write`), so it is no doubt about where another folder's missing file went, and a deletion of a missing file that waited on it would wait for as long as the file stays.
+
+**Tests:** `device/folders-one-mac.test.ts › confirms a large removal while another folder holds files that are not text`, `device/folders-one-mac.test.ts › holds a file that is not text on its own, and takes it in once it can be read`.
 
 ### `folders/moved-arrival-bytes`
 
@@ -4874,7 +4890,85 @@ If a folder sync's first drain stops because the server refuses the credential, 
 
 If a folder sync's first drain leaves a write undelivered, then a device MUST NOT drain again after that sync's pull.
 
-**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`, `device/folders.test.ts › leaves the writes a rate limit refused for the next push, without waiting`.
+
+### `folders/push-rate-limit-no-wait`
+
+If a folder sync's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST end the sync without waiting for that time, and keep the write queued.
+
+**Reason:** A sync holds the folder's writer for as long as it runs, so a sync that waited out the server would keep every other command from the folder for a time the server sets, and could not be interrupted. The caller, or a watch, tries again.
+
+**Tests:** `device/folders.test.ts › leaves the writes a rate limit refused for the next push, without waiting`.
+
+### `folders/push-rate-limit-no-wait-send-only`
+
+If a send-only run's drain leaves a write undelivered and reports `retry_after_seconds`, then a device MUST end the run without waiting for that time, and keep the write queued.
+
+**Tests:** `device/folders-send-only.test.ts › leaves the write a rate limit refused for the next run, without waiting`.
+
+### `folders/watch-rate-limit-pause`
+
+When a folder watch's pass leaves a write undelivered and its drain reports `retry_after_seconds`, a device MUST NOT start another pass of that watch until that time has passed.
+
+**Reason:** A write sent before the time has passed is refused again, and spends the key's rate limit.
+
+**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`.
+
+### `folders/push-exit-undelivered`
+
+When a folder push ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.
+
+**Reason:** A script or a person cannot tell a push that sent everything from one that left writes queued by its summary alone.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`, `device/folders.test.ts › does not drain again after a push whose first drain left a write undelivered`.
+
+### `folders/push-exit-send-only`
+
+When a send-only run ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.
+
+**Tests:** `device/folders-send-only.test.ts › keeps its writes queued where the server cannot be reached, and sends them at the next run`.
+
+### `folders/push-exit-credential`
+
+When a folder push or a send-only run ends with its drain stopped by a refused credential, the CLI MUST exit 5.
+
+**Tests:** `device/folders.test.ts › does not drain again after a push whose first drain a refused credential stopped`.
+
+### `folders/push-exit-catchup-failed`
+
+When a folder push's catch-up fails environmentally, the CLI MUST exit 3.
+
+**Tests:** `device/folders.test.ts › pulls at a push that cannot reach the server, and says the catch-up failed`.
+
+### `folders/scan-waiting`
+
+When a folder scan finds a file whose bytes are as they were bound and whose write the server has not answered, a device MUST count it in the report's `waiting` and not in `unchanged`.
+
+**Reason:** A file whose write the server never took is not agreed with the server, and a summary that called it unchanged hides the writes still to send.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
+
+### `folders/scan-waiting-not-dead`
+
+When a folder scan finds a file whose bytes are as they were bound and whose only unanswered write is dead, a device MUST count it in `unchanged` and not in `waiting`.
+
+**Reason:** A dead write is not sent again unless someone releases it, so nothing waits to be delivered.
+
+**Tests:** `device/folders.test.ts › counts a file whose create died unchanged, not waiting`.
+
+### `folders/scan-waiting-said`
+
+When a folder scan counts a file `waiting`, the CLI MUST say how many in its text report.
+
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
+
+### `folders/not-a-folder-refused`
+
+If a folder command that works a folder is given a directory no folder follows, then the CLI MUST refuse it `invalid` with exit 1, and work nothing.
+
+**Reason:** A script that runs `folders push` on a path it believes is a folder must be able to tell that nothing was sent.
+
+**Tests:** `device/folders.test.ts › ends every command on a directory that is not a folder with the refused exit`.
 
 ### `folders/push-placement-retry`
 

@@ -278,18 +278,36 @@ fn id_of_file(mut file: std::fs::File) -> Option<String> {
     id_of_reader(file).ok().flatten()
 }
 
-/// Read only the frontmatter, preserving an I/O failure as uncertainty.
+type CodeUnit = fn([u8; 2]) -> u16;
+
+/// Read only the frontmatter, preserving an I/O failure as uncertainty. A
+/// line that is not UTF-8 is read as the folder's own scan reads it, with its
+/// ASCII id line intact, so bytes that are not text hold no id and are not
+/// an I/O failure. A file that opens with a UTF-16 byte-order mark, or with
+/// a frontmatter fence in UTF-16 and no mark, is read as UTF-16, so a moved
+/// file saved again that way still shows where it came from.
 fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
-    let mut lines = BufReader::new(reader).lines();
-    let Some(line) = lines.next().transpose()? else {
+    let mut reader = BufReader::new(reader);
+    let (wide, mark): (Option<CodeUnit>, usize) = match reader.fill_buf()? {
+        [0xff, 0xfe, ..] => (Some(u16::from_le_bytes), 2),
+        [0xfe, 0xff, ..] => (Some(u16::from_be_bytes), 2),
+        [b'-', 0, b'-', 0, b'-', 0, ..] => (Some(u16::from_le_bytes), 0),
+        [0, b'-', 0, b'-', 0, b'-', ..] => (Some(u16::from_be_bytes), 0),
+        _ => (None, 0),
+    };
+    reader.consume(mark);
+    let mut next = || match wide {
+        Some(unit) => wide_line(&mut reader, unit),
+        None => narrow_line(&mut reader),
+    };
+    let Some(line) = next()? else {
         return Ok(None);
     };
     let first = line.strip_prefix(super::document::MARK).unwrap_or(&line);
     if first.trim_end() != "---" {
         return Ok(None);
     }
-    for line in lines {
-        let line = line?;
+    while let Some(line) = next()? {
         if line.trim_end() == "---" {
             return Ok(None);
         }
@@ -299,6 +317,46 @@ fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
         }
     }
     Ok(None)
+}
+
+fn narrow_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
+    let mut line = Vec::new();
+    if reader.read_until(b'\n', &mut line)? == 0 {
+        return Ok(None);
+    }
+    let line = String::from_utf8_lossy(&line);
+    Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
+}
+
+/// A line of UTF-16 code units, each read by `unit`; a byte left over at the
+/// end is no code unit and is dropped.
+fn wide_line(
+    reader: &mut impl BufRead,
+    unit: fn([u8; 2]) -> u16,
+) -> std::io::Result<Option<String>> {
+    let mut units = Vec::new();
+    let mut pair = [0u8; 2];
+    let mut ended = false;
+    loop {
+        match reader.read_exact(&mut pair) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                ended = true;
+                break;
+            }
+            Err(error) => return Err(error),
+        }
+        let read = unit(pair);
+        if read == u16::from(b'\n') {
+            break;
+        }
+        units.push(read);
+    }
+    if ended && units.is_empty() {
+        return Ok(None);
+    }
+    let line = String::from_utf16_lossy(&units);
+    Ok(Some(line.trim_end_matches('\r').to_string()))
 }
 
 pub(super) enum Look {
@@ -635,6 +693,92 @@ mod tests {
         assert!(
             listed.is_some_and(|peer| peer.root_dir.is_none()),
             "a folder listed where a link now leads into this one was not kept as a peer it cannot read"
+        );
+    }
+
+    #[test]
+    fn a_file_that_is_not_text_leaves_the_other_folder_complete() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let mut utf16: Vec<u8> = vec![0xff, 0xfe];
+        for unit in "---\nmarfa_id: n9\n---\nbody\n".encode_utf16() {
+            utf16.extend(unit.to_le_bytes());
+        }
+        std::fs::write(root.join("utf16.md"), &utf16).unwrap();
+        let mut big_endian: Vec<u8> = vec![0xfe, 0xff];
+        for unit in "---\r\nmarfa_id: \"n8\"\r\n---\r\nb\u{e9}\u{1f600}\n".encode_utf16() {
+            big_endian.extend(unit.to_be_bytes());
+        }
+        std::fs::write(root.join("utf16be.md"), &big_endian).unwrap();
+        // With no mark, the fence alone says the bytes are UTF-16.
+        std::fs::write(root.join("bare.md"), &utf16[2..]).unwrap();
+        std::fs::write(root.join("barebe.md"), &big_endian[2..]).unwrap();
+        // Cut off inside a code unit.
+        std::fs::write(root.join("cut.md"), &utf16[..7]).unwrap();
+        std::fs::write(
+            root.join("latin1.md"),
+            b"---\nmarfa_id: n2\ntitle: caf\xe9\n---\nbody\n",
+        )
+        .unwrap();
+        let peer = Peer {
+            root: root.clone(),
+            root_dir: Some(Directory::open(&root).unwrap()),
+            folder: None,
+            members: OnceCell::new(),
+            walked: OnceCell::new(),
+            bound: OnceCell::new(),
+        };
+        let walked = peer.walked();
+        assert_eq!(walked.files.len(), 6);
+        assert_eq!(
+            walked.partial, None,
+            "a file whose bytes are not text made the whole folder unreadable"
+        );
+        let id = |key: &str| {
+            walked
+                .files
+                .iter()
+                .find(|file| file.key == key)
+                .and_then(|file| file.id.as_deref())
+        };
+        assert_eq!(
+            id("utf16.md"),
+            Some("n9"),
+            "a file saved as UTF-16 hid the id that shows where it moved from"
+        );
+        assert_eq!(id("utf16be.md"), Some("n8"));
+        assert_eq!(
+            id("bare.md"),
+            Some("n9"),
+            "a file saved as UTF-16 with no mark hid the id that shows where it moved from"
+        );
+        assert_eq!(id("barebe.md"), Some("n8"));
+        assert_eq!(id("cut.md"), None);
+        assert_eq!(id("latin1.md"), Some("n2"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_the_system_will_not_read_still_leaves_the_other_folder_partial() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let shut = root.join("shut.md");
+        std::fs::write(&shut, "---\nmarfa_id: n3\n---\nbody\n").unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let peer = Peer {
+            root: root.clone(),
+            root_dir: Some(Directory::open(&root).unwrap()),
+            folder: None,
+            members: OnceCell::new(),
+            walked: OnceCell::new(),
+            bound: OnceCell::new(),
+        };
+        let partial = peer.walked().partial.clone();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(
+            partial.is_some(),
+            "the witness: a file that cannot be read at all is doubt"
         );
     }
 
