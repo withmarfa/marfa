@@ -134,6 +134,8 @@ export function Select(props: SelectProps) {
 export interface SwitchProps {
   id: string;
   name?: string;
+  /** What the form sends when the switch is on. */
+  value?: string;
   checked?: boolean;
   disabled?: boolean;
   /** The accessible name, when no visible label points at the switch. */
@@ -148,6 +150,7 @@ export function Switch(props: SwitchProps) {
       role="switch"
       id={props.id}
       name={props.name}
+      value={props.value}
       checked={props.checked}
       disabled={props.disabled}
       aria-label={props.label}

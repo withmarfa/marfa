@@ -9,6 +9,8 @@ interface RowCommon {
   title: string;
   description?: string;
   descriptionTone?: "danger";
+  /** A short mark after the title, such as "New". */
+  badge?: string;
   value?: string;
   valueTone?: "danger";
 }
@@ -75,7 +77,12 @@ export function Row(props: RowProps) {
   );
   const text = (
     <>
-      <div class="rt">{props.title}</div>
+      <div class="rt">
+        {props.title}
+        {props.badge !== undefined && (
+          <span class="badge new">{props.badge}</span>
+        )}
+      </div>
       {description}
     </>
   );
@@ -158,4 +165,43 @@ export function RowGroup(props: RowGroupProps) {
  */
 export function ClosingAction(props: { children?: Child }) {
   return <div class="closing">{props.children}</div>;
+}
+
+export interface DisclosureProps {
+  title: string;
+  description?: string;
+  /** A short mark after the title, such as "New". */
+  badge?: string;
+  /** Opens the rows when the page loads. */
+  open?: boolean;
+  /** Rows shown beneath the title once it is open. */
+  children?: Child;
+}
+
+/**
+ * A row that opens in place to show more rows, with no script: the browser
+ * opens and closes it, and a keyboard does the same with Enter or Space.
+ */
+export function Disclosure(props: DisclosureProps) {
+  return (
+    <details class="disclosure" open={props.open}>
+      <summary class={props.description ? "row has-d" : "row"}>
+        <div class="grow">
+          <div class="rt">
+            {props.title}
+            {props.badge !== undefined && (
+              <span class="badge new">{props.badge}</span>
+            )}
+          </div>
+          {props.description !== undefined && (
+            <div class="rd">{props.description}</div>
+          )}
+        </div>
+        <span class="chev">
+          <Icon name="chevron" />
+        </span>
+      </summary>
+      <div class="sub">{props.children}</div>
+    </details>
+  );
 }

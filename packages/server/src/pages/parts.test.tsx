@@ -20,7 +20,7 @@ import {
   Section,
 } from "./parts/layout.js";
 import { ListToolbar, Pager, Tabs } from "./parts/list.js";
-import { ClosingAction, Row, RowGroup } from "./parts/rows.js";
+import { ClosingAction, Disclosure, Row, RowGroup } from "./parts/rows.js";
 import { PageShell } from "./parts/shell.js";
 import { pageAssetUrl } from "./assets.js";
 import { paginate } from "./navigation.js";
@@ -171,6 +171,22 @@ describe("layout", () => {
     expect(attrs(out, /<main /).id).toBe("main");
   });
 
+  it("names the asking app beside Marfa's mark by its first letter, and only when given one", () => {
+    const withApp = html(<MomentCard title="Allow" app="harbor" />);
+    expect(withApp).toContain('<span class="tile">H</span>');
+    expect(withApp.indexOf('class="tile"')).toBeLessThan(
+      withApp.indexOf('class="tile marfa"'),
+    );
+    expect(html(<MomentCard title="Allow" />)).not.toContain('class="tile"');
+    // An app named in markup is text, and a name with nothing to show is a question mark.
+    expect(html(<MomentCard title="Allow" app="<b>" />)).toContain(
+      '<span class="tile">&lt;</span>',
+    );
+    expect(html(<MomentCard title="Allow" app=" " />)).toContain(
+      '<span class="tile">?</span>',
+    );
+  });
+
   it("leaves out the lede and foot it was not given", () => {
     const out = html(<MomentCard title="Signed out" />);
     expect(out).not.toContain('class="lede"');
@@ -292,6 +308,39 @@ describe("rows", () => {
   });
 });
 
+describe("a row that opens in place", () => {
+  it("is a native disclosure a keyboard can open, closed unless told otherwise", () => {
+    const closed = html(
+      <Disclosure title="Already allowed" description="It keeps this.">
+        <Row title="Notes" value="Read only" />
+      </Disclosure>,
+    );
+    expect(closed).toContain('<details class="disclosure">');
+    expect(closed).toContain('<summary class="row has-d">');
+    expect(closed).toContain('<div class="rt">Already allowed</div>');
+    expect(closed).toContain('<div class="rd">It keeps this.</div>');
+    expect(closed).toContain('<div class="sub">');
+    expect(closed).not.toMatch(/<details[^>]* open/);
+    expect(
+      html(
+        <Disclosure title="x" open>
+          y
+        </Disclosure>,
+      ),
+    ).toMatch(/<details[^>]* open/);
+  });
+
+  it("shows a badge after the title of a row or a disclosure", () => {
+    expect(html(<Row title="Notes" badge="New" />)).toContain(
+      '<div class="rt">Notes<span class="badge new">New</span></div>',
+    );
+    expect(html(<Disclosure title="More" badge="New" />)).toContain(
+      '<span class="badge new">New</span>',
+    );
+    expect(html(<Row title="Notes" />)).not.toContain("badge");
+  });
+});
+
 describe("controls", () => {
   it("makes a link that looks like a button, and a button that is not a submit by default", () => {
     expect(
@@ -373,6 +422,12 @@ describe("controls", () => {
     });
     expect("checked" in on).toBe(true);
     expect("checked" in attrs(html(<Switch id="s" />), /<input /)).toBe(false);
+  });
+
+  it("sends the value a switch was given when it is on", () => {
+    expect(
+      attrs(html(<Switch id="s" name="scopes" value="keys.mint" />), /<input /),
+    ).toMatchObject({ name: "scopes", value: "keys.mint" });
   });
 });
 

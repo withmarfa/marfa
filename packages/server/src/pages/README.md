@@ -27,8 +27,12 @@ There is no client framework and no client-side rendering.
   one-line `<noscript>` notice. A page that works in full without script (the
   signed-out and problem pages) sets it to false, so it loads no script and
   does not say it needs one.
-- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and `Divider`.
-- **Rows:** `RowGroup`, `Row` and `ClosingAction`.
+- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and
+  `Divider`. A `MomentCard` that an app is asking through names it with `app`,
+  and shows its first letter beside Marfa's mark.
+- **Rows:** `RowGroup`, `Row`, `Disclosure` and `ClosingAction`. A `Row` or
+  a `Disclosure` takes a `badge` such as "New". A `Disclosure` is a row that
+  opens in place to show more rows; the browser does it, with no script.
 - **Controls and fields:** `Button`, `Select`, `Switch`, `TextField`,
   `PasswordField`, `SearchField` and `FormFoot`.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
