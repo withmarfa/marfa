@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
 import { pageAssetUrl } from "../assets.js";
 

@@ -36,6 +36,7 @@ export const ROOT_FILTERS: readonly string[] = [
   "routes/oidc-labels.test.ts",
   "pages/assets.test.ts",
   "pages/color-literals.test.ts",
+  "pages/jsx-pragma.test.ts",
   "routes/one-auth-layout.test.ts",
   "routes/rollback-event-doors.test.ts",
   "routes/wire-shape-declarations.test.ts",

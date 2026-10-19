@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * What a person sees at the end of a browser logout.
  *

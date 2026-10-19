@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * A page that uses every part, for the tests that look at the parts together.
  * Production code does not import it.

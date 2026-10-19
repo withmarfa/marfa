@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
 import { localHref } from "../href.js";
 import { Icon } from "../icons.js";

@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 import { describe, expect, it } from "vitest";
 import { raw } from "hono/html";
 import { Breadcrumb } from "./parts/breadcrumb.js";

@@ -67,6 +67,11 @@ Keep these in every page you build.
 
 ## Add a page
 
+1. Start the `.tsx` file with the two JSX pragma lines that every other one
+   starts with (`@jsxRuntime automatic` and `@jsxImportSource hono/jsx`).
+   Tests that start a child process from outside this package read no
+   `tsconfig.json`, so each file names its runtime itself;
+   `jsx-pragma.test.ts` checks it.
 1. Write the page as a function that returns `PageShell` with the parts, and
    render it with `renderDocument`:
 
@@ -89,12 +94,12 @@ Keep these in every page you build.
    }
    ```
 
-2. Pass `c.var.cspNonce` from the route. `PageShell` throws without a valid
+1. Pass `c.var.cspNonce` from the route. `PageShell` throws without a valid
    nonce.
-3. Register the page so the picker and the search link to it:
+1. Register the page so the picker and the search link to it:
    `PAGE_REGISTRY.register("keys", { href, hasItems, settings })`. Do this where
    the route is mounted.
-4. Add a test that renders the page and checks its behavior (status, text,
+1. Add a test that renders the page and checks its behavior (status, text,
    links, roles), not its class names.
 
 ### Pages that are not built yet

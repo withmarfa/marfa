@@ -62,9 +62,19 @@ function links(html: string): { href: string; text: string }[] {
   return [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)]
     .map(([, href, inner]) => ({
       href: href ?? "",
-      text: (inner ?? "").replace(/<[^>]+>/g, "").trim(),
+      text: textOf(inner ?? ""),
     }))
     .filter((link) => link.text !== "Skip to content");
+}
+
+/** The text of a fragment: every tag removed, repeated until none is left. */
+function textOf(fragment: string): string {
+  let text = fragment;
+  for (let previous = ""; previous !== text;) {
+    previous = text;
+    text = text.replace(/<[^>]*>/g, "");
+  }
+  return text.trim();
 }
 
 function heading(html: string): string {

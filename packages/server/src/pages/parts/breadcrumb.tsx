@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
 import { PAGE_SIZE } from "../navigation.js";

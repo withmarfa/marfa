@@ -1,3 +1,5 @@
+/** @jsxRuntime automatic */
+/** @jsxImportSource hono/jsx */
 /**
  * The page a browser gets when a navigation fails.
  *
