@@ -789,6 +789,50 @@ describe("what a restore answers", () => {
     expect(kept.data.edge.properties).toEqual({ label: "x", weight: "heavy" });
   });
 
+  it("counts an edge that POST /edges would refuse under the code of its refusal", async () => {
+    const [a, b] = [uuidv7(), uuidv7()];
+    const [fits, loop, unknown] = [uuidv7(), uuidv7(), uuidv7()];
+    const archive = withEntry(
+      itemsArchive(
+        [a, b].map((id) => ({
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `refused ${id}` },
+        })),
+      ),
+      "edges.ndjson",
+      [
+        { id: fits, source_id: a, target_id: b, edge_type: "references" },
+        { id: loop, source_id: a, target_id: a, edge_type: "references" },
+        {
+          id: unknown,
+          source_id: b,
+          target_id: a,
+          edge_type: `restorerefused.${ctx.runId}`,
+        },
+      ]
+        .map((edge) => `${JSON.stringify({ edge })}\n`)
+        .join(""),
+    );
+    trackItem(ctx, a);
+    trackItem(ctx, b);
+    const restored = await owner.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(restored.data).toMatchObject({
+      imported: 2,
+      edges_imported: 1,
+      edges_skipped: 2,
+    });
+    expect(restored.data.edges_skipped_reasons).toEqual({
+      edge_cycle: 1,
+      edge_type_not_found: 1,
+    });
+    expect((await client.getEdge(fits)).status).toBe(200);
+    expect((await client.getEdge(loop)).status).toBe(404);
+    expect((await client.getEdge(unknown)).status).toBe(404);
+  });
+
   it("refuses an archive that registers a type or an edge type this instance holds differently, naming each, and writes nothing", async () => {
     const ids = {
       type: `user.restoreconflict${ctx.runId}`,

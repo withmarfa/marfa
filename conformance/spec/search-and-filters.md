@@ -1492,9 +1492,11 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 
 ### `search-and-filters/restore-edge-skips`
 
-When `POST /restore` skips an edge because the instance already holds it, because an endpoint is missing or because the line is malformed, the server MUST count it in `edges_skipped_reasons` under `already_present`, `endpoint_missing` or `malformed` respectively.
+When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_reasons` under exactly one of these reasons: `already_present` when the instance already holds the edge, `endpoint_missing` when, once the archive's items are written, the instance holds no item under an endpoint's id, in the bin or out of it, `malformed` when the line does not give both endpoints and the edge type as strings, and otherwise the error code that `POST /edges` would answer for the edge.
 
-**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
+**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin` and `edges/properties-restore-kept` say otherwise, and skips an edge it refuses rather than refusing the archive.
+
+**Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
 ### `search-and-filters/restore-items-kept`
 
@@ -1507,6 +1509,14 @@ When `POST /restore` writes an item, the server MUST keep its id, its tags and i
 When `POST /restore` writes the edges between restored items, the server MUST keep them in both directions.
 
 **Tests:** `compliance/export-roundtrip.test.ts › reconstructs edges between restored items, in both directions`.
+
+### `search-and-filters/restore-edges-bin`
+
+When `POST /restore` reads an edge whose endpoint is an item in the bin, the server MUST NOT skip the edge for that endpoint.
+
+**Reason:** an export that names `state=any` carries the bin (`search-and-filters/export-state-any`), and an edge stays while its item is in the bin (`edges/list-bin`), and for someone moving to a new instance the archive is the only copy of that edge. `POST /edges` still refuses a new edge to an item in the bin (`edges/create-end-in-bin`).
+
+**Tests:** `compliance/export-roundtrip.test.ts › reconstructs the edges of an item in the bin, in both directions`.
 
 ### `search-and-filters/restore-duplicate`
 

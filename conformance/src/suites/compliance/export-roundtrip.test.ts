@@ -158,4 +158,83 @@ describe("export → purge → restore round trip", () => {
     expect(inbound.ok).toBe(true);
     expect(inbound.data.data.some((e) => e.id === edgeId)).toBe(true);
   });
+
+  it("reconstructs the edges of an item in the bin, in both directions", async () => {
+    const ids: string[] = [];
+    for (const name of ["before", "binned", "after"]) {
+      const created = await client.createItem(
+        createNote({
+          source: ctx.source,
+          source_id: `rt-bin-${name}-${ctx.runId}`,
+        }),
+      );
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      ids.push(created.data.item.id);
+    }
+    const [before, binned, after] = ids as [string, string, string];
+
+    const edges = [];
+    for (const [from, to] of [
+      [before, binned],
+      [binned, after],
+    ] as const) {
+      const created = await client.createEdge({
+        source_id: from,
+        target_id: to,
+        edge_type: "references",
+        properties: { context: `bin round trip from ${from}` },
+      });
+      expect(created.ok).toBe(true);
+      trackEdge(ctx, created.data.edge.id);
+      edges.push(created.data.edge);
+    }
+
+    expect((await client.deleteItem(binned)).ok).toBe(true);
+    const archive = await client.exportArchive({
+      source: ctx.source,
+      state: "any",
+    });
+    expect(archive.ok).toBe(true);
+
+    for (const id of [before, after]) {
+      expect((await client.deleteItem(id)).ok).toBe(true);
+    }
+    for (const id of ids) {
+      expect((await client.purgeItem(id)).ok).toBe(true);
+    }
+    for (const edge of edges) {
+      expect((await client.getEdge(edge.id)).status).toBe(404);
+    }
+
+    const restored = await owner.restoreArchive(archive.data);
+    expect(restored.ok).toBe(true);
+    // The archive also carries this file's other rows, which earlier tests
+    // left restored, so their edges come back as already present.
+    expect(
+      Object.keys(restored.data.edges_skipped_reasons).filter(
+        (reason) => reason !== "already_present",
+      ),
+    ).toEqual([]);
+    expect(restored.data.edges_imported).toBeGreaterThanOrEqual(2);
+    expect((await client.getItem(binned)).status).toBe(404);
+
+    for (const edge of edges) {
+      const read = await client.getEdge(edge.id);
+      expect(read.status, edge.id).toBe(200);
+      expect(read.data.edge).toEqual(edge);
+    }
+    const outbound = await client.listItemEdges(binned);
+    expect(outbound.data.data.map((e) => e.id)).toEqual([edges[1]!.id]);
+    const inbound = await client.listItemBackrefs(binned);
+    expect(inbound.data.data.map((e) => e.id)).toEqual([edges[0]!.id]);
+
+    // Out of the bin, the item has the edges it held there.
+    expect((await client.restoreItem(binned)).ok).toBe(true);
+    for (const edge of edges) {
+      const read = await client.getEdge(edge.id);
+      expect(read.status, edge.id).toBe(200);
+      expect(read.data.edge).toEqual(edge);
+    }
+  });
 });

@@ -662,6 +662,7 @@ export interface RestoreArchiveResponse {
   duplicates: number;
   edges_imported: number;
   edges_skipped: number;
+  edges_skipped_reasons: Record<string, number>;
   blobs_imported: number;
   blobs_missing: string[];
 }
