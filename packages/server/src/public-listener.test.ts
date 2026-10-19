@@ -22,7 +22,7 @@ it("holds an assigned port and serves only a startup response before activation"
   const listener = await reservePublicListener(config);
   listeners.push(listener);
   expect(config.port).toBeGreaterThan(0);
-  expect(config.authBaseUrl).toBe(`http://localhost:${String(config.port)}`);
+  expect(config.authBaseUrl).toBe(`http://127.0.0.1:${String(config.port)}`);
   const url = `http://127.0.0.1:${String(config.port)}`;
   expect((await fetch(url)).status).toBe(503);
   listener.activate(() => new Response("ready"));

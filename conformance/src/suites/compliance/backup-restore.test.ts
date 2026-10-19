@@ -1,6 +1,5 @@
 import { randomBytes } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -39,18 +38,6 @@ afterAll(async () => {
   }
   await original.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
-
-async function freePort(): Promise<number> {
-  return new Promise((resolvePort, reject) => {
-    const probe = createServer();
-    probe.once("error", reject);
-    probe.listen(0, () => {
-      const address = probe.address();
-      const port = typeof address === "object" && address ? address.port : 0;
-      probe.close(() => resolvePort(port));
-    });
-  });
-}
 
 interface Written {
   id: string;
@@ -125,7 +112,7 @@ function imageOf(server: FreshServer): string {
 async function bootRestored(
   image: string,
 ): Promise<{ client: MarfaClient; apiUrl: string }> {
-  await bootServer({ state: image, port: await freePort() });
+  await bootServer({ state: image });
   const env = parseEnvFile(readFileSync(join(image, "env"), "utf8"));
   const baseUrl = env.MARFA_API_URL;
   if (!baseUrl) throw new Error("the restored boot wrote no server address");

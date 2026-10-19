@@ -95,6 +95,11 @@ production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
+By default the server binds port 0 on `127.0.0.1`, keeping the assigned listener
+open. The adapter reads the assigned port from this boot's readiness log record
+before requesting `/health`; it does not probe and release a free port.
+A restart ignores earlier readiness records. An explicitly occupied IPv4 port
+fails the boot instead of accepting another listener's health response.
 
 `pnpm marfa:down` stops the server and removes its instance state, so every `up` is
 a fresh instance. A database that outlives the bucket it was pointed at
@@ -178,7 +183,8 @@ rule is refused as that chapter says. The adapter sets these itself, and a
 value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket,
-  `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL`.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_AUTH_BASE_URL`
+  is unset so the server derives it from its assigned loopback port.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.

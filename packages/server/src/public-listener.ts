@@ -24,7 +24,7 @@ export async function reservePublicListener(config: AppConfig) {
     throw new Error("Public listener has no TCP address");
   config.port = address.port;
   if (config.authBaseUrlFromPort)
-    config.authBaseUrl = `http://localhost:${String(address.port)}`;
+    config.authBaseUrl = `http://${config.listenHost === "127.0.0.1" ? "127.0.0.1" : "localhost"}:${String(address.port)}`;
   return {
     server,
     activate(fetch: Parameters<typeof getRequestListener>[0]) {
