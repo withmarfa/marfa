@@ -8,8 +8,9 @@
  * before anyone is signed in. Steps 3 to 6 are the owner's, reached after the
  * claim has signed them in.
  *
- * Every form posts to the server and works without a script. The script only
- * moves a refusal into the page that is open, instead of replacing it.
+ * Every form posts to the server and works without a script. The script moves
+ * a refusal into the open page instead of replacing it, and exchanges a setup
+ * link. Adding a passkey needs the script.
  */
 import type { Child } from "hono/jsx";
 import { renderDocument } from "../pages/render.js";

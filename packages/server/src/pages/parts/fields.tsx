@@ -25,7 +25,7 @@ export interface TextFieldProps {
   requiredMessage?: string;
   /** Sits on the label's line, at the right: a "Forgot?" link. */
   labelEnd?: Child;
-  /** A value to copy by hand: monospace, upper case as typed. */
+  /** A value copied by hand, such as a setup code: monospace, shown in upper case. */
   code?: boolean;
   /** Takes focus when the page loads, for a field the server marked invalid. */
   autofocus?: boolean;
