@@ -1,3 +1,4 @@
+import { drainKeyUsage } from "../key-usage.js";
 import { validateRequestAuthority } from "../../auth/request-authority.js";
 import { readSnapshotRunner } from "./read-snapshot.js";
 import { inStorageSpan } from "../../otel/storage-span.js";
@@ -289,6 +290,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       return { changes: result.rowsAffected };
     },
     async close() {
+      await drainKeyUsage(storage, true);
       // Operational last-used stamps remain asynchronous; audits are awaited
       // by their owning operation and have no detached shutdown work.
       await oauthProviderStore.drain();

@@ -163,7 +163,6 @@
   "middleware/auth.ts": {
     "boundary": "Existing operational exemption: credential last-used stamps only; credential lifecycle changes use the audited provider boundary.",
     "calls": {
-      "KeyStore.updateLastUsed": 1,
       "OauthProviderStore.updateLastUsedAt": 1
     }
   },
@@ -503,6 +502,12 @@
     "calls": {
       "OwnerStore.update": 1,
       "runAuditedTransaction": 1
+    }
+  },
+  "storage/key-usage.ts": {
+    "boundary": "Operational exemption: bounded background API-key usage stamps; validity depends on revocation and expiry, never on last use.",
+    "calls": {
+      "KeyStore.updateLastUsed": 1
     }
   }
 }

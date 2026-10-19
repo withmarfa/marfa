@@ -1,115 +1,89 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackKey, cleanup } from "../../utils/setup.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
+let server: FreshServer;
 let client: MarfaClient;
-let ctx: TestContext;
-let apiUrl: string;
+let management: MarfaClient;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
-    "compliance",
-    "key-last-used",
-  ));
-});
+  server = await bootFreshServer("key-last-used");
+  client = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: server.workingKey,
+  });
+  management = new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: server.managementKey,
+  });
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await cleanup(ctx);
+  await server?.stop();
 });
+
+async function mint(source: string) {
+  const response = await client.createKey({
+    label: source,
+    source,
+    type_permissions: { "*": "read" },
+  });
+  expect(response.status).toBe(201);
+  expect(response.data.last_used_at).toBeNull();
+  return response.data;
+}
+
+async function use(key: string) {
+  const scoped = new MarfaClient({ baseUrl: server.apiUrl, apiKey: key });
+  const response = await scoped.listItems({ limit: 1 });
+  expect(response.status).toBe(200);
+}
+
+async function recorded(id: string) {
+  const list = await management.listKeys();
+  expect(list.status).toBe(200);
+  const found = list.data.data.find((key) => key.id === id);
+  expect(found).toBeDefined();
+  return found!.last_used_at;
+}
 
 describe("API key last_used_at compliance", () => {
   it("new key has null or absent last_used_at", async () => {
-    const keyResp = await client.createKey({
-      label: `klu-new-${ctx.runId}`,
-      source: `${ctx.source}-${`klu-new-${ctx.runId}`}`,
-      type_permissions: { "*": "read" },
-    });
-    expect(keyResp.ok).toBe(true);
-    trackKey(ctx, keyResp.data.id);
-    expect(keyResp.data.last_used_at).toBeNull();
+    const key = await mint("klu-new");
+    expect(await recorded(key.id)).toBeNull();
   });
 
   it("last_used_at is set after first use", async () => {
-    const keyResp = await client.createKey({
-      label: `klu-used-${ctx.runId}`,
-      source: `${ctx.source}-${`klu-used-${ctx.runId}`}`,
-      type_permissions: { "*": "read" },
-    });
-    expect(keyResp.ok).toBe(true);
-    trackKey(ctx, keyResp.data.id);
-
-    const scopedClient = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: keyResp.data.key,
-    });
-    const useResp = await scopedClient.listItems({ limit: 1 });
-    expect(useResp.ok).toBe(true);
-
-    // Brief wait for debounced write to complete
-    await new Promise((r) => setTimeout(r, 500));
-
-    const list = await client.listKeys();
-    expect(list.ok).toBe(true);
-
-    const found = list.data.data.find((k) => k.id === keyResp.data.id);
-    expect(found).toBeDefined();
-    expect(typeof found!.last_used_at).toBe("string");
+    const key = await mint("klu-used");
+    const before = Date.now();
+    await use(key.key);
+    const after = Date.now();
+    await expect
+      .poll(() => recorded(key.id), { timeout: 5000 })
+      .toEqual(expect.any(String));
+    const stamp = Date.parse((await recorded(key.id))!);
+    expect(stamp).toBeGreaterThanOrEqual(before);
+    expect(stamp).toBeLessThanOrEqual(after);
   });
 
   it("last_used_at is a valid ISO 8601 timestamp", async () => {
-    const keyResp = await client.createKey({
-      label: `klu-valid-${ctx.runId}`,
-      source: `${ctx.source}-${`klu-valid-${ctx.runId}`}`,
-      type_permissions: { "*": "read" },
-    });
-    expect(keyResp.ok).toBe(true);
-    trackKey(ctx, keyResp.data.id);
-
-    const scopedClient = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: keyResp.data.key,
-    });
-    await scopedClient.listItems({ limit: 1 });
-
-    await new Promise((r) => setTimeout(r, 500));
-
-    const list = await client.listKeys();
-    expect(list.ok).toBe(true);
-
-    const found = list.data.data.find((k) => k.id === keyResp.data.id);
-    expect(found).toBeDefined();
-    expect(found!.last_used_at).toBeDefined();
-
-    expect(found!.last_used_at).toMatch(
-      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/,
-    );
-    const parsed = new Date(found!.last_used_at!);
-    expect(parsed.getTime()).not.toBeNaN();
+    const key = await mint("klu-valid");
+    await use(key.key);
+    await expect
+      .poll(() => recorded(key.id), { timeout: 5000 })
+      .toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/);
+    expect(Number.isNaN(Date.parse((await recorded(key.id))!))).toBe(false);
   });
 
   it("last_used_at appears in list response", async () => {
-    const keyResp = await client.createKey({
-      label: `klu-list-${ctx.runId}`,
-      source: `${ctx.source}-${`klu-list-${ctx.runId}`}`,
-      type_permissions: { "*": "read" },
-    });
-    expect(keyResp.ok).toBe(true);
-    trackKey(ctx, keyResp.data.id);
-
-    const scopedClient = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: keyResp.data.key,
-    });
-    await scopedClient.listItems({ limit: 1 });
-
-    await new Promise((r) => setTimeout(r, 500));
-
-    const list = await client.listKeys();
-    expect(list.ok).toBe(true);
-
-    const found = list.data.data.find((k) => k.id === keyResp.data.id);
-    expect(found).toBeDefined();
-    expect("last_used_at" in found!).toBe(true);
+    const key = await mint("klu-list");
+    await use(key.key);
+    await expect
+      .poll(() => recorded(key.id), { timeout: 5000 })
+      .toEqual(expect.any(String));
   });
 });

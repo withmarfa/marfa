@@ -326,25 +326,33 @@ When a write meets a write lock that is released inside the instance's busy budg
 
 ### `errors/contention-read`
 
-If a credentialed read is the first request a key makes in an hour and the write that records the key's use cannot get the write lock within the busy budget, then the server MUST answer the read `503 write_contention`.
+When an otherwise permitted read uses a valid API key while another writer holds the write lock, the server MUST serve the read without waiting for the write that records the key's use.
 
-**Reason:** the server records a key's first use in each hour before the operation runs, so every operation a key sends can meet the lock.
+**Reason:** Usage bookkeeping does not establish authority; waiting for it would make a long restore deny reads to every key whose usage record is due.
 
-**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+**Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-retry`
 
-If the server refuses a request `503 write_contention` at the write that records a key's use, then the server MUST set the key's `last_used_at` on the next request of that key that it serves.
+When an API key authenticates another request more than one second after its usage write failed, the store accepts writes and usage recording is not overloaded, the server MUST retry recording that use asynchronously.
 
-**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+**Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
 
 ### `errors/contention-stamp-once`
 
 When the server has set a key's `last_used_at` in an hour and has not restarted since, the server MUST serve the key's later reads in that hour while another writer holds the write lock.
 
-**Reason:** only a completed record of a key's use spares the next request that write.
+**Reason:** A recorded use is coalesced for one hour; neither a cold nor a warm usage record determines whether a read succeeds.
 
-**Tests:** `compliance/write-contention.test.ts › refuses a read too, because the credential gate stamps a key's first use`.
+**Tests:** `compliance/write-contention.test.ts › serves cold and warm key reads promptly while another writer is held (%s)`.
+
+### `errors/contention-session-use`
+
+When an otherwise permitted read uses a live browser session while another writer holds the write lock, the server MUST serve the read without waiting for the session's usage renewal.
+
+**Reason:** A failed renewal leaves the stored expiry unchanged, so contention cannot extend a session's authority or make a readable request depend on a usage write.
+
+**Tests:** `compliance/write-contention.test.ts › serves a session read without waiting for renewal and keeps its durable idle expiry`.
 
 ### `errors/contention-housekeeping`
 

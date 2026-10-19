@@ -4117,7 +4117,7 @@ export interface components {
             created_at: string;
             /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
             expires_at: string | null;
-            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
+            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
             last_used_at: string | null;
         };
         /**
@@ -4174,7 +4174,7 @@ export interface components {
             created_at: string;
             /** @description When the key stops working, in UTC, or `null` if it doesn't expire. */
             expires_at: string | null;
-            /** @description When the key was last used, in UTC, or `null` if never. Marfa updates it at most once an hour. */
+            /** @description When the key's use was last recorded, in UTC, or `null` if none is recorded. Marfa records usage asynchronously at most once an hour; a busy or unavailable store can delay or drop a record. */
             last_used_at: string | null;
         };
         /** @description An error response. */

@@ -1,3 +1,4 @@
+import { recordKeyUsage } from "../storage/key-usage.js";
 import {
   rememberReplayRequirement,
   rememberItemSubject,
@@ -138,13 +139,7 @@ const OAUTH_SOURCE_PREFIX = "oauth:";
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
-/**
- * Soft cap on the in-process `lastUsedCache`. Each entry is a
- * (string id, number timestamp) pair — a few dozen bytes; 32k entries
- * caps memory at well under 1MB and accommodates the largest realistic
- * hot-key set on a single instance. Eviction is FIFO (oldest insertion);
- * touched entries are re-inserted to refresh their position.
- */
+/** Bound cached grants; evict the oldest insertion when the cache is full. */
 const LAST_USED_CACHE_MAX = 32_768;
 
 export function hashApiKey(raw: string, salt: string): string {
@@ -211,7 +206,7 @@ export function touchLastUsedCache(
  * `DEBOUNCE_MS`. That makes the debounce authoritative across
  * instances. This in-memory cache stays to skip a DB round-trip when
  * the calling instance has already stamped inside the window — same
- * role as the api-key middleware's closure-local cache.
+ * role as the per-store API-key usage queue's cache.
  */
 const oauthLastUsedCache = new Map<string, number>();
 
@@ -257,8 +252,8 @@ export async function stampOAuthGrantLastUsedByGrantKey(
 }
 
 /** Test helper: drops every entry from the OAuth grant debounce cache.
- *  Tests stamping a grant directly or exercising the refresh / userinfo
- *  paths use this between cases to avoid carryover. */
+ *  Tests stamping a grant directly or through bearer authentication use
+ *  this between cases to avoid carryover. */
 export function _clearOAuthLastUsedCacheForTesting(): void {
   oauthLastUsedCache.clear();
 }
@@ -361,12 +356,6 @@ export function oauthGrantOf(
  * {@link requireDeclaredCredential} for it.
  */
 export function authMiddleware(storage: Storage, salt: string) {
-  // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
-  // OAuth grants get their throttle from `oauthLastUsedCache` (module-
-  // scoped) so route-handler stampers can share the same window.
-  const lastUsedCache = new Map<string, number>();
-  const pendingLastUsed = new Map<string, Promise<void>>();
-
   return createMiddleware<AppEnv>(async (c, next) => {
     c.set("authority", undefined);
     c.set("boundCredential", undefined);
@@ -459,27 +448,7 @@ export function authMiddleware(storage: Storage, salt: string) {
       c.set("apiKey", toRequestApiKey(stored));
       c.set("authType", "api_key");
 
-      // The DB floor uses a strict older-than comparison, so the cache must
-      // wait until more than DEBOUNCE_MS has elapsed before another attempt.
-      const cacheKey = `key:${stored.id}`;
-      const now = clock.monotonicMs();
-      const lastTracked = lastUsedCache.get(cacheKey);
-      let pending = pendingLastUsed.get(cacheKey);
-      if (
-        !pending &&
-        (lastTracked === undefined || now - lastTracked > DEBOUNCE_MS)
-      ) {
-        pending = storage.keys
-          .updateLastUsed(stored.id)
-          .then(() => {
-            touchLastUsedCache(lastUsedCache, cacheKey, now);
-          })
-          .finally(() => {
-            pendingLastUsed.delete(cacheKey);
-          });
-        pendingLastUsed.set(cacheKey, pending);
-      }
-      if (pending) await pending;
+      recordKeyUsage(storage, stored.id);
 
       return next();
     }

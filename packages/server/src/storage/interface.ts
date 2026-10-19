@@ -1291,7 +1291,7 @@ export interface KeyStore {
    * The key's webhook subscriptions are deleted in the same transaction.
    */
   revoke(id: string): Promise<KeyRevokeOutcome>;
-  updateLastUsed(id: string): Promise<void>;
+  updateLastUsed(id: string, usedAt?: string): Promise<void>;
   count(): Promise<number>;
   /**
    * Hard-delete at most 200 keys that died before `cutoffIso`, by their

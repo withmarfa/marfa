@@ -342,3 +342,49 @@ describe("a browser session's idle week", () => {
     expect((await use(c, cookie)).status).toBe(200);
   });
 });
+
+it("admits an idle-session read promptly while another writer prevents renewal", async () => {
+  at(T0 - DAY);
+  const c = await context();
+  at(T0);
+  const cookie = await signIn(c);
+  at(T0 + DAY);
+  let entered!: () => void;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const freed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const writer = c.storage.runInTransaction(async () => {
+    entered();
+    await freed;
+  });
+  let reading: Promise<Response> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await held;
+    reading = use(c, cookie);
+    const response = await Promise.race([
+      reading,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error("session use waited for the writer"));
+        }, 1000);
+      }),
+    ]);
+    expect(response.status).toBe(200);
+    expect(maxAge(response, cookie)).toBeUndefined();
+  } finally {
+    clearTimeout(timer);
+    release();
+    await writer;
+    await reading;
+  }
+  const renewed = await use(c, cookie);
+  expect(renewed.status).toBe(200);
+  expect(maxAge(renewed, cookie)).toBe(COOKIE_SECONDS);
+  at(T0 + DAY + WEEK + 2 * MINUTE);
+  expect((await use(c, cookie)).status).toBe(401);
+});
