@@ -58,7 +58,10 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
-import { signInAgainBeforeConsent } from "./sign-in-again.js";
+import {
+  answerSignInAgain,
+  signInAgainBeforeConsent,
+} from "./sign-in-again.js";
 import { forwardHeaders } from "./forward-headers.js";
 
 /**
@@ -967,7 +970,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // has to read the ticked set before the status flips. A narrowing that
     // finds the row no longer pending is a race with a deny in another tab,
     // and is told it did not take effect.
-    const { ok } = await withConsentLock(
+    const outcome = await withConsentLock(
       clientId,
       sessionResult.session.user.id,
       () =>
@@ -1068,8 +1071,14 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         ),
     ).catch((error: unknown) => {
       if (error instanceof DeviceApprovalRefused) return { ok: false };
-      throw error;
+      return answerSignInAgain(
+        c,
+        error,
+        `/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+      );
     });
+    if (outcome instanceof Response) return outcome;
+    const { ok } = outcome;
     if (!ok) {
       // Race: someone else flipped it in between. Surface as already-resolved.
       return c.redirect(

@@ -1,9 +1,12 @@
 import type { Context } from "hono";
-import { needsRecentSignIn } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, needsRecentSignIn } from "@withmarfa/shared";
 import {
   isRecentOwnerAuthentication,
+  SIGN_IN_AGAIN_MESSAGE,
   type AppEnv,
 } from "../middleware/auth.js";
+import { prefersHtml } from "./http-error-page.js";
+import { setNoStore } from "./no-store.js";
 
 /** The sign-in page, asking for the password again and returning to `returnTo`. */
 export function signInAgainPath(returnTo: string): string {
@@ -27,4 +30,26 @@ export function signInAgainBeforeConsent(
   if (isRecentOwnerAuthentication(c) || !needsRecentSignIn(requested, held))
     return null;
   return c.redirect(signInAgainPath(returnTo), 302);
+}
+
+/**
+ * The answer to a consent decision a stale session was refused: a browser
+ * that submitted the form is sent back to sign in again and then to the screen
+ * it was on, and every other caller gets the refusal as it was thrown.
+ */
+export function answerSignInAgain(
+  c: Context<AppEnv>,
+  refusal: unknown,
+  returnTo: string,
+): Response {
+  if (
+    refusal instanceof MarfaError &&
+    refusal.code === ErrorCode.FORBIDDEN &&
+    refusal.message === SIGN_IN_AGAIN_MESSAGE &&
+    prefersHtml(c.req.header("accept"))
+  ) {
+    setNoStore(c);
+    return c.redirect(signInAgainPath(returnTo), 303);
+  }
+  throw refusal;
 }

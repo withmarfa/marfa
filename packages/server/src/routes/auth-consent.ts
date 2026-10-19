@@ -120,7 +120,10 @@ import {
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
-import { signInAgainBeforeConsent } from "./sign-in-again.js";
+import {
+  answerSignInAgain,
+  signInAgainBeforeConsent,
+} from "./sign-in-again.js";
 
 /**
  * Query parameter carrying a consent-page error banner code back from the
@@ -765,7 +768,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         },
         () => audit,
       );
-    });
+    }).catch((error: unknown) =>
+      answerSignInAgain(c, error, `/auth/authorize?${oauthQuery}`),
+    );
   });
 
   return app;

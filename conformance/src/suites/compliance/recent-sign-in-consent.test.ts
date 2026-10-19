@@ -80,10 +80,15 @@ async function pass(ms: number): Promise<void> {
   await server.advanceClock(ms);
 }
 
-/** A browser session more than five minutes old, and one made just now. */
+/**
+ * A browser session more than five minutes old, and one made just now. The
+ * time passed is longer than the fifteen minutes the device code lookups of
+ * one owner are counted over, so a case never spends the lookups of the one
+ * before it.
+ */
 async function staleAndFresh(): Promise<{ stale: string; fresh: string }> {
   const stale = await signIn();
-  await pass(6 * MINUTE);
+  await pass(16 * MINUTE);
   return { stale, fresh: await signIn() };
 }
 
@@ -91,11 +96,13 @@ function ownerPost(
   path: string,
   cookie: string,
   form: URLSearchParams,
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   return fetch(`${server.apiUrl}${path}`, {
     method: "POST",
     redirect: "manual",
     headers: {
+      ...headers,
       cookie,
       origin,
       "content-type": "application/x-www-form-urlencoded",
@@ -116,6 +123,37 @@ async function refused(response: Response): Promise<void> {
   expect(response.status).toBe(403);
   expect(response.headers.get("x-error-code")).toBe("forbidden");
   await response.body?.cancel();
+}
+
+/** What a browser sends with a form it submits. */
+const BROWSER = {
+  accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+};
+
+/** Signs in through the sign-in form the way a redirect to it asks. */
+async function signInThrough(
+  cookie: string,
+  location: string,
+): Promise<{ cookie: string; returnTo: string }> {
+  const returnTo = new URL(location, server.apiUrl).searchParams.get(
+    "return_to",
+  )!;
+  const submitted = await ownerPost(
+    "/auth/sign-in",
+    cookie,
+    new URLSearchParams({
+      email: TEST_OWNER.email,
+      password: TEST_OWNER.password,
+      return_to: returnTo,
+    }),
+  );
+  expect(submitted.status).toBe(302);
+  expect(submitted.headers.get("location")).toBe(returnTo);
+  const fresh = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    submitted.headers.get("set-cookie") ?? "",
+  )?.[1];
+  expect(fresh).toBeTruthy();
+  return { cookie: fresh!, returnTo };
 }
 
 const SIGN_IN_PREFIX = "/auth/sign-in?prompt=login&return_to=";
@@ -179,6 +217,7 @@ function deviceApproval(
   device: Device,
   cookie: string,
   scopes: readonly string[],
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   return ownerPost(
     "/auth/device/consent",
@@ -188,6 +227,7 @@ function deviceApproval(
       ["decision", "approve"],
       ...scopes.map((scope): [string, string] => ["scopes", scope]),
     ]),
+    headers,
   );
 }
 
@@ -318,6 +358,57 @@ describe("approving a device", () => {
       ]),
     );
   });
+
+  it("sends a browser that approves a device code for a permission or a write on a screen left open past five minutes to sign in again, and back to the code", async () => {
+    const { stale } = await staleAndFresh();
+    for (const scope of ["keys.manage", "core.note:write"]) {
+      const device = await deviceCode(`core.note:read ${scope}`);
+      const scopes = ["core.note:read", scope];
+      const refusedBrowser = await deviceApproval(
+        device,
+        stale,
+        scopes,
+        BROWSER,
+      );
+      expect(refusedBrowser.status, scope).toBe(303);
+      const location = refusedBrowser.headers.get("location")!;
+      expect(location, scope).toBe(
+        `${SIGN_IN_PREFIX}${encodeURIComponent(
+          `/auth/device/consent?user_code=${device.userCode}`,
+        )}`,
+      );
+      await refusedBrowser.body?.cancel();
+      const { cookie, returnTo } = await signInThrough(stale, location);
+      const landed = await ownerGet(returnTo, cookie);
+      expect(landed.status, scope).toBe(200);
+      await landed.body?.cancel();
+      const approved = await deviceApproval(device, cookie, scopes, BROWSER);
+      expect(approved.status, scope).toBe(200);
+      await approved.body?.cancel();
+      expect(scopesOf((await devicePoll(device)).scope), scope).toEqual(
+        [...scopes].sort(),
+      );
+    }
+  });
+
+  it("refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const device = await deviceCode("core.note:read keys.manage");
+    const scopes = ["core.note:read", "keys.manage"];
+    await refused(
+      await deviceApproval(device, stale, scopes, {
+        accept: "application/json",
+      }),
+    );
+    // The witnesses: the browser form is sent on, and a fresh session
+    // approves the same code.
+    const browser = await deviceApproval(device, stale, scopes, BROWSER);
+    expect(browser.status).toBe(303);
+    await browser.body?.cancel();
+    const approved = await deviceApproval(device, fresh, scopes);
+    expect(approved.status).toBe(200);
+    await approved.body?.cancel();
+  });
 });
 
 describe("the device screen", () => {
@@ -414,6 +505,7 @@ function decision(
   consent: URL,
   cookie: string,
   scopes: readonly string[],
+  headers: Record<string, string> = {},
 ): Promise<Response> {
   return ownerPost(
     "/auth/authorize/decision",
@@ -423,6 +515,7 @@ function decision(
       ["oauth_query", consent.search.slice(1)],
       ...scopes.map((scope): [string, string] => ["scopes", scope]),
     ]),
+    headers,
   );
 }
 
@@ -489,6 +582,55 @@ describe("approving an app", () => {
     const held = await consentFor(app, scope, first, { prompt: "consent" });
     expect(
       await codeOf(await decision(held.url, first, scope.split(" "))),
+    ).toBeTruthy();
+  });
+
+  it("sends a browser that approves a request for a permission or a write on a screen left open past five minutes to sign in again, and back to the request", async () => {
+    const { stale } = await staleAndFresh();
+    for (const gated of ["keys.manage", "core.note:write"]) {
+      const scope = `core.note:read ${gated}`;
+      const app = await registerApp(server, scope);
+      const { url } = await consentFor(app, scope, stale);
+      const refusedBrowser = await decision(
+        url,
+        stale,
+        scope.split(" "),
+        BROWSER,
+      );
+      expect(refusedBrowser.status, gated).toBe(303);
+      const location = refusedBrowser.headers.get("location")!;
+      expect(location, gated).toBe(
+        `${SIGN_IN_PREFIX}${encodeURIComponent(`${url.pathname}${url.search}`)}`,
+      );
+      await refusedBrowser.body?.cancel();
+      const { cookie, returnTo } = await signInThrough(stale, location);
+      const landed = await ownerGet(returnTo, cookie);
+      expect(landed.status, gated).toBe(200);
+      await landed.body?.cancel();
+      expect(
+        await codeOf(await decision(url, cookie, scope.split(" "), BROWSER)),
+        gated,
+      ).toBeTruthy();
+    }
+  });
+
+  it("refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const scope = "core.note:read keys.manage";
+    const app = await registerApp(server, scope);
+    const { url } = await consentFor(app, scope, stale);
+    await refused(
+      await decision(url, stale, scope.split(" "), {
+        accept: "application/json",
+      }),
+    );
+    // The witnesses: the browser form is sent on, and a fresh session
+    // approves the same request.
+    const browser = await decision(url, stale, scope.split(" "), BROWSER);
+    expect(browser.status).toBe(303);
+    await browser.body?.cancel();
+    expect(
+      await codeOf(await decision(url, fresh, scope.split(" "))),
     ).toBeTruthy();
   });
 });

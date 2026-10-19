@@ -6,7 +6,13 @@ import {
   type AppEnv,
   type DirectAuthority,
 } from "../middleware/auth.js";
-import { signInAgainBeforeConsent, signInAgainPath } from "./sign-in-again.js";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import { SIGN_IN_AGAIN_MESSAGE } from "../middleware/auth.js";
+import {
+  answerSignInAgain,
+  signInAgainBeforeConsent,
+  signInAgainPath,
+} from "./sign-in-again.js";
 
 const MINUTE = 60_000;
 
@@ -119,5 +125,56 @@ describe("signInAgainBeforeConsent", () => {
   it("sends a request with no direct authority to sign in again", async () => {
     const response = await ask(undefined, ["keys.manage"]);
     expect(response.status).toBe(302);
+  });
+});
+
+describe("answerSignInAgain", () => {
+  const BROWSER = "text/html,application/xhtml+xml,application/json;q=0.9";
+
+  function answer(
+    refusal: unknown,
+    accept: string | undefined,
+  ): Promise<Response> {
+    const app = new Hono<AppEnv>();
+    app.onError((error) => new Response(error.message, { status: 403 }));
+    app.post("/", (c) => answerSignInAgain(c, refusal, "/screen?a=1"));
+    return Promise.resolve(
+      app.request("/", {
+        method: "POST",
+        headers: accept === undefined ? {} : { accept },
+      }),
+    );
+  }
+
+  const stale = new MarfaError(ErrorCode.FORBIDDEN, SIGN_IN_AGAIN_MESSAGE);
+
+  it("sends a browser to sign in again and back to the screen with 303", async () => {
+    const response = await answer(stale, BROWSER);
+    expect(response.status).toBe(303);
+    expect(response.headers.get("location")).toBe(
+      signInAgainPath("/screen?a=1"),
+    );
+  });
+
+  it("rethrows the refusal for a caller that does not prefer a page", async () => {
+    for (const accept of [undefined, "*/*", "application/json"]) {
+      const response = await answer(stale, accept);
+      expect(response.status, String(accept)).toBe(403);
+      expect(await response.text()).toBe(SIGN_IN_AGAIN_MESSAGE);
+    }
+  });
+
+  it("rethrows any other refusal, whatever the caller prefers", async () => {
+    for (const other of [
+      new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "This credential does not hold keys.manage",
+      ),
+      new MarfaError(ErrorCode.UNAUTHORIZED, SIGN_IN_AGAIN_MESSAGE),
+      new Error(SIGN_IN_AGAIN_MESSAGE),
+    ]) {
+      const response = await answer(other, BROWSER);
+      expect(response.status, other.message).toBe(403);
+    }
   });
 });

@@ -119,13 +119,12 @@ export function isRecentOwnerAuthentication(c: Context<AppEnv>): boolean {
   );
 }
 
+export const SIGN_IN_AGAIN_MESSAGE = "Sign in again to perform this operation";
+
 export function requireRecentOwnerAuthentication(c: Context<AppEnv>): void {
   requireDirectAuthority(c);
   if (!isRecentOwnerAuthentication(c)) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "Sign in again to perform this operation",
-    );
+    throw new MarfaError(ErrorCode.FORBIDDEN, SIGN_IN_AGAIN_MESSAGE);
   }
   rememberRecentAuthentication();
 }
