@@ -167,7 +167,7 @@ export interface ItemCreate {
   capture_latitude?: number;
   capture_longitude?: number;
   blob_proof?: BlobProof;
-  /** An archive restore: a row that is not of a `core` or `system` type is
+  /** An archive restore: a row that is not of a `core` or `system` type that this build ships is
    *  stored as the archive holds it, in whatever shape, and under a type that
    *  need not be registered (`search-and-filters/restore-rows-shape-free`). */
   as_archived?: true;

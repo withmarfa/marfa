@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { listTarGzEntries } from "../../utils/archive.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -260,5 +261,64 @@ describe("a restore of rows whose type no longer shapes them", () => {
     const restoredAgain = await owner(third).restoreArchive(second);
     expect(restoredAgain.status, JSON.stringify(restoredAgain.error)).toBe(200);
     expect(await held(working(third), ids)).toEqual(read);
+  }, 180_000);
+
+  it("restores an item of a platform type that this build no longer ships as an orphan, and holds one it ships to its shape", async () => {
+    const source = working(origin);
+    const retired = "core.retired_thing";
+    expect(
+      (
+        await source.registerType({
+          id: "user.retired_thing",
+          fields: { name: { type: "string" as const, required: true } },
+        })
+      ).status,
+    ).toBe(201);
+    const made = await source.createItem({
+      type: "user.retired_thing",
+      properties: { name: "held by a retired type" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+
+    // No door registers a platform type: the stored file is edited so the
+    // type is a platform row that the build does not ship, which is what an
+    // instance is left with when a build retires a type its items still hold.
+    await origin.restart(() => {
+      withInstanceDatabase(origin.sqlitePath, (db) => {
+        db.prepare(
+          "UPDATE types SET id = ?1, origin = 'platform', family = 'core', schema = json_set(schema, '$.id', ?1) WHERE id = 'user.retired_thing'",
+        ).run(retired);
+        db.prepare(
+          "UPDATE items SET type = ? WHERE type = 'user.retired_thing'",
+        ).run(retired);
+      });
+    });
+    const manager = new MarfaClient({
+      baseUrl: origin.apiUrl,
+      apiKey: origin.managementKey,
+    });
+    const drift = await manager.listPlatformTypeDrift();
+    expect(drift.data.data.find((row) => row.id === retired)).toMatchObject({
+      item_count: 1,
+    });
+    const exported = await archiveOf(working(origin));
+    // The archive carries the instance's own registrations, not this one.
+    expect(
+      listTarGzEntries(exported)
+        .find((m) => m.name === "types.ndjson")!
+        .body.toString(),
+    ).not.toContain(retired);
+
+    const restored = await owner(destination).restoreArchive(exported);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({ imported: 1 });
+    const reader = working(destination);
+    expect(await held(reader, [id])).toEqual(await held(working(origin), [id]));
+    const unknown = await reader.updateItem(id, {
+      version: 1,
+      properties: { name: "changed" },
+    });
+    expect(unknown.error?.error.code).toBe("unknown_type");
   }, 180_000);
 });

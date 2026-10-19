@@ -1394,7 +1394,7 @@ When `GET /export?format=archive` returns a complete archive, the server MUST en
 
 ### `search-and-filters/archive-rows-shape-free`
 
-When `GET /export?format=archive` selects an item that is not of a `core` or `system` type, the server MUST NOT refuse the export because the item lacks a field its type requires, holds a value its type's field does not accept, or is of a type that is not registered.
+When `GET /export?format=archive` selects an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse the export because the item lacks a field its type requires, holds a value its type's field does not accept, or is of a type that is not registered.
 
 **Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an item (`search-and-filters/restore-rows-shape-free`, `search-and-filters/restore-rows-orphan`). A type gains a required field while its rows stand (`types/field-gained`), and a forced delete leaves the rows of a type (`types/delete-force`), so an instance that refused to export them could not be backed up.
 
@@ -1772,15 +1772,15 @@ The server MUST NOT hold a restored snapshot's properties to the current shape o
 
 ### `search-and-filters/restore-rows-shape-free`
 
-When `POST /restore` writes an item that is not of a `core` or `system` type, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST NOT refuse it because its properties lack a field its type requires or hold a value its type's field does not accept.
 
-**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type is fixed by the build that wrote the archive and read by the server's own code, so its rows keep to it. A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
+**Reason:** a type gains a required field while its rows stand (`types/field-gained`), so an archive that an export wrote can hold a row that its type no longer accepts, and an export that the same build cannot restore is not a usable backup (`search-and-filters/restore-no-count-limit`). The current rows are held to the shape they had as a snapshot's properties are (`search-and-filters/restore-history-shape-free`). A `core` or `system` type that this build ships is read by the server's own code and cannot be deleted or replaced, so its rows keep to it. An instance can also hold items of a platform type this build no longer ships (`GET /platform-types/drift`); a restore takes those as it takes any item of an unregistered type (`search-and-filters/restore-rows-orphan`). A property that no type declares is still refused where strict mode names the type (`search-and-filters/restore-strict`), and an event's schedule is still judged (`occurrences/schedule-unreadable`).
 
 **Tests:** `compliance/restore-rows-shape.test.ts › restores an item that lacks a field its type now requires, as the archive holds it, and still holds an ordinary write to the type`.
 
 ### `search-and-filters/restore-rows-properties-kept`
 
-When `POST /restore` writes an item that is not of a `core` or `system` type, the server MUST store its properties as the archive holds them.
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships, the server MUST store its properties as the archive holds them.
 
 **Reason:** the properties are the person's own, and a restore that rewrote them to a shape the type has now would change the backup it restores.
 
@@ -1796,7 +1796,7 @@ When `POST /restore` writes an item, the server MUST store the `schema_version` 
 
 ### `search-and-filters/restore-rows-orphan`
 
-When `POST /restore` writes an item that is not of a `core` or `system` type and whose type is not registered once the archive's own types are, the server MUST store the item under that type.
+When `POST /restore` writes an item that is not of a `core` or `system` type that this build ships and whose type is not registered once the archive's own types are, the server MUST store the item under that type.
 
 **Reason:** a forced delete removes a type and keeps its items (`types/delete-force`), and an export carries them without the type. The item is restored as such a row stands: its properties, tier, time and natural key refuse a write until a type is registered (`types/orphan-write`), and it is read, listed and searched (`types/orphan-read`) and has its tags, extensions and lifecycle state written (`types/orphan-kept-writable`) as it was. A type registered again holds its later writes (`types/orphan-reregistered`).
 

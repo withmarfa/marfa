@@ -1846,6 +1846,32 @@ describe("POST /restore of rows their type no longer shapes", () => {
     expect(await ctx.storage.items.getIncludingTrashed(good)).not.toBeNull();
   });
 
+  it("takes an item of a core type this build does not ship as an orphan, and still holds one it ships to its shape", async () => {
+    const retired = generateId();
+    const shipped = generateId();
+    const res = await restoreLines([
+      row({
+        id: retired,
+        type: "core.retired_thing",
+        properties: { anything: "goes" },
+      }),
+    ]);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await ctx.storage.items.getIncludingTrashed(retired)).toMatchObject({
+      type: "core.retired_thing",
+      properties: { anything: "goes" },
+    });
+
+    // The witness: a core type the build ships still refuses a row that
+    // breaks its shape, for the same kind of line.
+    const refused = await restoreLines([
+      row({ id: shipped, type: "core.note", properties: {} }),
+    ]);
+    expect(refused.status).toBe(400);
+    expect((await errorOf(refused)).code).toBe("invalid_properties");
+    expect(await ctx.storage.items.getIncludingTrashed(shipped)).toBeNull();
+  });
+
   it("refuses a row of an event type whose rule no calendar read can unfold, though it takes the rest of the type's shape as it is", async () => {
     const series = `user.series_${generateId().slice(-8)}`;
     const registration = JSON.stringify({

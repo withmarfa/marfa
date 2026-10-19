@@ -698,17 +698,21 @@ function creatableItem(
 
 /**
  * Whether a restore holds a row of `type` to the shape the type has: a `core`
- * or `system` type is fixed by the build that wrote the archive and read by
- * the server's own code, and cannot be deleted or replaced.
+ * or `system` type this build ships is fixed by the build and read by the
+ * server's own code, and cannot be deleted or replaced. A row of such a family
+ * whose type this build no longer ships is an orphan like any other.
  */
 function restoreHoldsShape(type: string): boolean {
-  return isPlatformTypeFamily(type.split(".")[0]);
+  return (
+    isPlatformTypeFamily(type.split(".")[0]) &&
+    getTypeSchema(type) !== undefined
+  );
 }
 
 /**
  * What a restore refuses of an item line before it reads the database: a type
  * that is no identifier and properties that are no object. A row of a `core`
- * or `system` type is then judged as a create is. Any other row is refused
+ * or `system` type this build ships is then judged as a create is. Any other row is refused
  * only a malformed id or `occurred_at` and a schedule no calendar read can
  * unfold; its properties come back as the archive holds them, whatever shape
  * its type has now and whether or not the type is registered, because a type
@@ -812,10 +816,7 @@ export class SqliteItemStore implements ItemStore {
       // since the check above leaves the registry before its delete commits,
       // and a row written now would name a type nothing holds.
       const current = getTypeSchema(input.type);
-      if (
-        !current &&
-        (input.as_archived !== true || restoreHoldsShape(input.type))
-      ) {
+      if (!current && input.as_archived !== true) {
         throw new MarfaError(
           ErrorCode.UNKNOWN_TYPE,
           `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,

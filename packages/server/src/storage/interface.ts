@@ -665,7 +665,7 @@ export interface WriterInput {
 
 /**
  * **Server-internal, and set by a restore alone.** A row that is not of a
- * `core` or `system` type is stored as the archive holds it, whatever shape
+ * `core` or `system` type that this build ships is stored as the archive holds it, whatever shape
  * its type has now or whether the type is registered at all
  * (`search-and-filters/restore-rows-shape-free`). Every other create is held
  * to the type it names. Never caller-supplied.
