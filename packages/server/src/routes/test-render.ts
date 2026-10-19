@@ -9,7 +9,6 @@
 import { renderAuthLayout as layout } from "./auth-layout.js";
 import { renderAuthErrorPage as authError } from "./auth-error.js";
 import { renderConsentScreen as consent } from "./consent.js";
-import { renderDevicePage as device } from "./device-pages.js";
 import {
   renderDeviceConsentScreen as deviceConsent,
   renderDeviceDecisionPage as deviceDecision,
