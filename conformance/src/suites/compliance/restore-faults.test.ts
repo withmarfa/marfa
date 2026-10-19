@@ -18,6 +18,7 @@ import {
   blobFolder,
   clientsFor,
   diskPath,
+  DISK_ONLY,
   runJob,
 } from "../../utils/own-blob-server.js";
 import { parseSse, type SseEvent } from "../../utils/sse.js";
@@ -46,7 +47,10 @@ let operator: MarfaClient;
 let working: MarfaClient;
 
 beforeAll(async () => {
-  server = await bootFreshServer("restore-faults");
+  // On the disk store alone: with a second store, replication reads and
+  // writes blob bytes in the background and can take a blob fault armed for
+  // the request under test.
+  server = await bootFreshServer("restore-faults", DISK_ONLY);
   ({ operator, working } = clientsFor(server));
 }, FRESH_SERVER_TIMEOUT_MS);
 

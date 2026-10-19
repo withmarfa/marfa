@@ -14,6 +14,7 @@ import {
   blobFolder,
   clientsFor,
   diskPath,
+  DISK_ONLY,
 } from "../../utils/own-blob-server.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
@@ -39,7 +40,11 @@ let operator: MarfaClient;
 let working: MarfaClient;
 
 beforeAll(async () => {
+  // On the disk store alone: with a second store, replication reads and
+  // writes blob bytes in the background and can take a blob fault armed for
+  // the request under test.
   server = await bootFreshServer("disk-space-faults", {
+    ...DISK_ONLY,
     MARFA_DISK_RESERVE_BYTES: String(RESERVE),
   });
   ({ operator, working } = clientsFor(server));
@@ -297,6 +302,9 @@ describe("a write that meets a volume with no room", () => {
     const refused = await ownerClient().restoreArchive(archive);
     expect(refused.status, JSON.stringify(refused.error)).toBe(507);
     expect(refused.error?.error.code).toBe("insufficient_storage");
+    expect(
+      (await server.faults()).find((f) => f.name === "fail:blob-write")?.fired,
+    ).toBe(1);
     expect((await working.getItem(id)).status).toBe(404);
     expect(existsSync(diskPath(server, blobHash(entry)))).toBe(false);
 

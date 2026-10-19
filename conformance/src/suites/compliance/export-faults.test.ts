@@ -9,7 +9,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { blobFolder, clientsFor } from "../../utils/own-blob-server.js";
+import {
+  blobFolder,
+  clientsFor,
+  DISK_ONLY,
+} from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -30,7 +34,10 @@ let working: MarfaClient;
 const hashes: string[] = [];
 
 beforeAll(async () => {
-  server = await bootFreshServer("export-faults");
+  // On the disk store alone: with a second store, replication reads and
+  // writes blob bytes in the background and can take a blob fault armed for
+  // the request under test.
+  server = await bootFreshServer("export-faults", DISK_ONLY);
   ({ working } = clientsFor(server));
   for (let blob = 0; blob < 2; blob++) {
     const upload = await working.uploadBlob(

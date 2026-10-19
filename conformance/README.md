@@ -277,6 +277,14 @@ without an action counts every write.
 cannot fail a point as described says so by refusing its name, and the fixtures
 that need it fail rather than skip.
 
+The blob points count a reach by any store and by any caller, including the
+target's own background work. With two stores attached, replication reads a
+blob from one store and writes it to the other, so it can take a `fail:blob-*`
+fault before the request under test reaches the point. A fixture that arms a
+blob fault boots a server with the disk store alone (`DISK_ONLY` in
+`src/utils/own-blob-server.ts`), or waits until replication has nothing left
+to copy, as `blob-cleanup-faults.test.ts` does.
+
 A webhook receiver's answers are the harness's own (`src/utils/webhook-receiver.ts`);
 the target does not fake them.
 
