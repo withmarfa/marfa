@@ -1,3 +1,4 @@
+import { mkdtemp, rename, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DrizzleQueryError } from "drizzle-orm";
@@ -21,6 +22,7 @@ import { loadConfig } from "../config.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
+import { DiskBlobStore } from "../storage/blob-store.js";
 
 /**
  * What "answered rather than hung" is allowed to cost.
@@ -350,6 +352,53 @@ describe("GET /health failing status", () => {
     );
     expect(status).toBe(503);
     expect(body.components.blob_storage?.status).toBe("down");
+  });
+});
+
+describe("GET /health with a real disk store whose folder is gone", () => {
+  it("answers blob storage down and 503 while the folder is away, with no path in the text, and ok once it returns", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "health-blobs-"));
+    try {
+      const disk = new DiskBlobStore(join(dir, "blobs"));
+      await disk.attach();
+      const app = healthRoutes(
+        buildStorage(() => Promise.resolve(3)),
+        { disk } as unknown as BlobLayer,
+        {},
+        okProbes(),
+        instanceReader,
+      );
+      const ask = async () => {
+        const res = await app.request("/");
+        return {
+          status: res.status,
+          body: (await res.json()) as {
+            status: string;
+            components: Record<string, { status: string; error?: string }>;
+          },
+        };
+      };
+
+      // The witness: the folder present, blob storage is ok.
+      const before = await ask();
+      expect(before.status).toBe(200);
+      expect(before.body.components.blob_storage?.status).toBe("ok");
+
+      await rename(disk.locator, `${disk.locator}.away`);
+      const away = await ask();
+      expect(away.status).toBe(503);
+      expect(away.body.status).toBe("down");
+      expect(away.body.components.blob_storage?.status).toBe("down");
+      expect(away.body.components.blob_storage?.error).toBeDefined();
+      expect(away.body.components.blob_storage?.error).not.toContain(dir);
+
+      await rename(`${disk.locator}.away`, disk.locator);
+      const after = await ask();
+      expect(after.status).toBe(200);
+      expect(after.body.components.blob_storage?.status).toBe("ok");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

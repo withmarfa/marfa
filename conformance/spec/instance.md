@@ -404,9 +404,11 @@ If the database refuses the write that the `database_write` probe makes, with an
 
 ### `instance/health-blob-down`
 
-If the disk store refuses to look for a blob, then the server MUST answer the `blob_storage` component of `GET /health` as `down`.
+If the disk store refuses to look for a blob, or its folder or its `.marfa-store` marker is missing, then the server MUST answer the `blob_storage` component of `GET /health` as `down`.
 
-**Tests:** `compliance/health.test.ts › answers 503 with blob storage down when the disk store refuses, and 200 once it answers`.
+**Reason:** a store that cannot be reached is not healthy because it holds no blob: every name is absent from a folder that is gone.
+
+**Tests:** `compliance/health.test.ts › answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns`.
 
 ### `instance/health-contention-degraded`
 
@@ -442,7 +444,7 @@ If the bytes available on either the database's volume or the disk store's volum
 
 **Reason:** only a measured shortage is a failure.
 
-**Tests:** `compliance/health.test.ts › answers the disk component degraded, never down, and the status 200 when the free space of the blob folder's volume cannot be read, and ok once it can`.
+**Tests:** `compliance/health.test.ts › answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns`.
 
 ### `instance/health-write-reuse`
 

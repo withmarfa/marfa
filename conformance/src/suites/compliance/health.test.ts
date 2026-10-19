@@ -451,15 +451,17 @@ describe("GET /health when the free space cannot be read", () => {
     };
   }
 
-  it("answers the disk component degraded, never down, and the status 200 when the free space of the blob folder's volume cannot be read, and ok once it can", async () => {
+  it("answers the disk component degraded, never down, and blob storage down, when the blob folder is gone, and ok once it returns", async () => {
     // The witness: the same folder, present, is measured and is `ok`.
     const before = await ask();
     expect(before.httpStatus).toBe(200);
     expect(before.body.status).toBe("ok");
     expect(before.body.components.disk?.status).toBe("ok");
+    expect(before.body.components.blob_storage?.status).toBe("ok");
 
-    // A folder that is gone cannot be measured. The database's volume cannot
-    // be made unreadable the same way without taking the database with it.
+    // A folder that is gone cannot be measured, and cannot be asked for a
+    // blob either. The database's volume cannot be made unreadable the same
+    // way without taking the database with it.
     const blobs = join(dirname(own.sqlitePath), "blobs");
     const away = `${blobs}-away`;
     renameSync(blobs, away);
@@ -469,14 +471,21 @@ describe("GET /health when the free space cannot be read", () => {
     } finally {
       renameSync(away, blobs);
     }
-    expect(unknown.httpStatus).toBe(200);
-    expect(unknown.body.status).toBe("degraded");
+    // Free space unknown is not down, so the disk component alone stays
+    // `degraded`. The status is 503 for the other component: a blob folder
+    // that is gone is blob storage that is down.
     expect(unknown.body.components.disk?.status).toBe("degraded");
     expect(unknown.body.components.disk?.error).toMatch(/^free space unknown/);
-    expect(othersOf(unknown, "disk")).toEqual(["ok", "ok", "ok"]);
+    expect(unknown.body.components.blob_storage?.status).toBe("down");
+    expect(unknown.body.components.blob_storage?.error).not.toContain(blobs);
+    expect(othersOf(unknown, "disk")).toEqual(["down", "ok", "ok"]);
+    expect(unknown.body.status).toBe("down");
+    expect(unknown.httpStatus).toBe(503);
 
     const after = await ask();
     expect(after.httpStatus).toBe(200);
+    expect(after.body.status).toBe("ok");
     expect(after.body.components.disk?.status).toBe("ok");
+    expect(after.body.components.blob_storage?.status).toBe("ok");
   }, 120_000);
 });

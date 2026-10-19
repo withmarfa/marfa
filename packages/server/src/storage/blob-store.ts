@@ -396,14 +396,14 @@ export class DiskBlobStore implements BlobStore {
       const code = (err as NodeJS.ErrnoException | undefined)?.code;
       if (code === "ENOENT" || code === "ENOTDIR") {
         throw new BlobStoreUnreachable(
-          `the disk store's folder or its marker at ${markerPath} is missing`,
+          "the disk store's folder or its marker is missing",
         );
       }
       throw err;
     }
     if (markerId(raw) !== this.storeId) {
       throw new BlobStoreUnreachable(
-        `the marker at ${markerPath} does not name the store attached here`,
+        "the disk store's marker does not name the store attached here",
       );
     }
   }

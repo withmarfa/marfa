@@ -118,7 +118,7 @@ The image's health check reads `GET /health`, which answers without a credential
 | `database`       | Reads a row.                                                      | The database refuses the read.                                      | It gives no answer within two seconds, as a held database does. |
 | `database_write` | Commits one write, at most once every ten seconds.                | The database refuses the write, as a full or read-only volume does. | It commits nothing within two seconds.                          |
 | `disk`           | Measures the room on the volume of the database and of the blobs. | Less than 1 MiB is available.                                       | Less than 64 MiB is available, or the room could not be read.   |
-| `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses.                                             | It gives no answer within two seconds.                          |
+| `blob_storage`   | Asks the disk store for a blob.                                   | The disk store refuses, or its folder or marker is gone.            | It gives no answer within two seconds.                          |
 
 A `degraded` instance still answers `200`, because it is still serving. A caller with no credential gets each component's status and no error text. A credential with `instance.read`, or direct owner or local authority, gets the text too, which is the database's or the operating system's own words and can carry paths. `conformance/spec/instance.md` states the rules.
 
