@@ -436,6 +436,20 @@ dialog.palette::backdrop {
   height: 1px;
   background: var(--divider);
 }
+/* A small link under a form's main button: where focus goes after the button. */
+.form-link {
+  text-align: center;
+}
+.form-link a {
+  color: var(--fg2);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+}
+.form-link a:hover {
+  color: var(--fg);
+  text-decoration-color: currentColor;
+}
 .muted {
   color: var(--fg2);
 }

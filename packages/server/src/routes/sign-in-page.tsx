@@ -60,14 +60,18 @@ export interface SignInPageParams {
 
 const PASSKEY_STILL_WORKS = "or sign in with a passkey";
 
+/** The id `PasswordField` gives its error, which the email field points at too. */
+const PASSWORD_ERROR_ID = "sign-in-password-err";
+
 /**
- * What a refused attempt says. The wrong-credentials line names neither the
- * email nor the password, because the server does not say which was wrong.
+ * What a refused attempt says, under the password field. The
+ * wrong-credentials line names neither the email nor the password, because
+ * the server does not say which was wrong.
  */
 function messageFor(error: string, retryAfter: number | undefined): string {
   switch (error) {
     case "invalid_credentials":
-      return "That email or password is wrong. Try again.";
+      return "That email or password is wrong.";
     case "missing_field":
       return "Enter your email and password.";
     case "too_many_attempts":
@@ -87,6 +91,11 @@ export function renderSignInPage(params: SignInPageParams): string {
       ? messageFor(params.error, params.retryAfter)
       : undefined;
   const typedEmail = params.email !== undefined && params.email !== "";
+  // A wrong password does not say which of the two was wrong, and an empty
+  // email is the one that is missing, so both read as invalid.
+  const emailInvalid =
+    params.error === "invalid_credentials" ||
+    (params.error === "missing_field" && !typedEmail);
 
   const lede = params.app ? (
     <>
@@ -122,7 +131,8 @@ export function renderSignInPage(params: SignInPageParams): string {
             required
             value={params.email ?? ""}
             autocomplete="username"
-            autofocus={message === undefined && !typedEmail}
+            autofocus={!typedEmail}
+            invalidBy={emailInvalid ? PASSWORD_ERROR_ID : undefined}
           />
           <PasswordField
             id="sign-in-password"
@@ -131,18 +141,9 @@ export function renderSignInPage(params: SignInPageParams): string {
             full
             required
             autocomplete="current-password"
-            autofocus={message === undefined && typedEmail}
-            labelEnd={
-              <a class="small" href={localHref("/auth/forgot-password")}>
-                Forgot password?
-              </a>
-            }
+            autofocus={typedEmail}
+            error={message}
           />
-          {message !== undefined && (
-            <div id="sign-in-message" tabindex={-1} autofocus>
-              <Notice tone="error">{message}</Notice>
-            </div>
-          )}
           <Button
             kind="primary"
             type="submit"
@@ -151,6 +152,9 @@ export function renderSignInPage(params: SignInPageParams): string {
           >
             Sign in
           </Button>
+          <p class="small form-link">
+            <a href={localHref("/auth/forgot-password")}>Forgot password?</a>
+          </p>
         </form>
         <div class="stack" data-passkey-signin hidden>
           <Divider>or</Divider>

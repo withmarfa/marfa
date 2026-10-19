@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { pageAssetUrl } from "../pages/assets.js";
 import {
   pageField,
+  pageFieldError,
   pageForms,
   pageLinks,
   visibleText,
@@ -17,7 +18,7 @@ import { renderSignInPage } from "./test-render.js";
  *   - 200 + text/html + form action/method correct
  *   - return_to round-trips through the form's hidden field
  *   - the form posts email and password, and is a plain post with no script
- *   - error query param surfaces as a message with role=alert, focused
+ *   - error query param surfaces as the password field's error, with focus on it
  *   - validateReturnTo rejects open-redirect attempts
  *   - POST /auth/sign-in with bad credentials redirects with error code
  */
@@ -83,6 +84,20 @@ describe("renderSignInPage", () => {
     });
   });
 
+  it("lists what takes focus in reading order, with no tabindex: email, password, Sign in, Forgot password, the passkey button", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    const stops = [
+      /name="email"/,
+      /name="password"/,
+      /type="submit"/,
+      /href="\/auth\/forgot-password"/,
+      /data-hook="passkey-signin"/,
+    ].map((pattern) => html.search(pattern));
+    expect(stops.every((at) => at >= 0)).toBe(true);
+    expect([...stops].sort((a, b) => a - b)).toEqual(stops);
+    expect(html).not.toMatch(/<(?:input|a|button)\b[^>]*tabindex/);
+  });
+
   it("escapes HTML in returnTo to prevent template injection", () => {
     const html = renderSignInPage({
       returnTo: '/foo"><script>alert(1)</script>',
@@ -93,28 +108,61 @@ describe("renderSignInPage", () => {
     );
   });
 
-  it("says a wrong email or password is wrong, without naming a field, and moves focus to the message", () => {
+  it("says a wrong email or password is wrong under the password field, marks both fields invalid and moves focus to the password", () => {
     const html = renderSignInPage({
       returnTo: "/",
       error: "invalid_credentials",
       email: "dana@example.com",
     });
-    expect(visibleText(html)).toContain("That email or password is wrong");
-    expect(html).toMatch(/role="alert"/);
-    // Neither field is marked as the invalid one.
-    expect(html).not.toContain("aria-invalid");
-    // Focus lands on the message, not on a field.
-    expect(html).toMatch(/<div[^>]*id="sign-in-message"[^>]*autofocus/);
-    expect(html).toMatch(/<div[^>]*id="sign-in-message"[^>]*tabindex="-1"/);
+    expect(pageFieldError(html, "password")).toBe(
+      "That email or password is wrong.",
+    );
+    // The server does not say which of the two was wrong, so both are marked,
+    // and the email field points at the same message.
+    expect(pageField(html, "email")).toMatchObject({
+      invalid: true,
+      describedBy: pageField(html, "password")?.describedBy,
+    });
+    expect(pageField(html, "password")?.invalid).toBe(true);
+    // The password has to be typed again, so it takes focus; the email, which
+    // came back, does not.
+    expect(pageField(html, "password")?.autofocus).toBe(true);
     expect(pageField(html, "email")?.autofocus).toBe(false);
-    expect(pageField(html, "password")?.autofocus).toBe(false);
+    // The error is said once, on the field, and not again in a box.
+    expect(html.match(/That email or password is wrong/g)).toHaveLength(1);
+  });
+
+  it("asks for what is missing under the password field and focuses the email when it is the empty one", () => {
+    const noEmail = renderSignInPage({ returnTo: "/", error: "missing_field" });
+    expect(pageFieldError(noEmail, "password")).toBe(
+      "Enter your email and password.",
+    );
+    expect(pageField(noEmail, "email")).toMatchObject({
+      invalid: true,
+      autofocus: true,
+    });
+    const noPassword = renderSignInPage({
+      returnTo: "/",
+      error: "missing_field",
+      email: "dana@example.com",
+    });
+    expect(pageField(noPassword, "email")?.invalid).toBe(false);
+    expect(pageField(noPassword, "password")).toMatchObject({
+      invalid: true,
+      autofocus: true,
+    });
+  });
+
+  it("marks no field invalid and shows no error on a fresh page", () => {
+    const html = renderSignInPage({ returnTo: "/" });
+    expect(html).not.toContain("aria-invalid");
+    expect(pageFieldError(html, "password")).toBeUndefined();
   });
 
   it("focuses the email field on a fresh page, and the password field when the email came back", () => {
     const fresh = renderSignInPage({ returnTo: "/" });
     expect(pageField(fresh, "email")?.autofocus).toBe(true);
     expect(pageField(fresh, "password")?.autofocus).toBe(false);
-    expect(fresh).not.toContain("sign-in-message");
     const typed = renderSignInPage({ returnTo: "/", email: "a@example.com" });
     expect(pageField(typed, "email")?.autofocus).toBe(false);
     expect(pageField(typed, "password")?.autofocus).toBe(true);
@@ -125,8 +173,9 @@ describe("renderSignInPage", () => {
       returnTo: "/",
       error: "some_unknown_code",
     });
-    expect(visibleText(html)).toContain("Something went wrong");
-    expect(html).toMatch(/role="alert"/);
+    expect(pageFieldError(html, "password")).toBe(
+      "Something went wrong. Try again.",
+    );
   });
 
   describe("when sign-in is refused for too many attempts", () => {
@@ -155,8 +204,24 @@ describe("renderSignInPage", () => {
         );
     });
 
-    it("says a passkey still signs in", () => {
-      expect(locked(120)).toContain("sign in with a passkey");
+    it("says a passkey still signs in, in the same sentence as the wait", () => {
+      expect(locked(120)).toContain(
+        "Try again in 2 minutes, or sign in with a passkey.",
+      );
+    });
+
+    it("puts the lockout under the password field, and does not mark the email field invalid", () => {
+      const html = renderSignInPage({
+        returnTo: "/",
+        error: "too_many_attempts",
+        retryAfter: 600,
+        email: "dana@example.com",
+      });
+      expect(pageFieldError(html, "password")).toBe(
+        "Too many attempts. Try again in 10 minutes, or sign in with a passkey.",
+      );
+      expect(pageField(html, "email")?.invalid).toBe(false);
+      expect(pageField(html, "password")?.autofocus).toBe(true);
     });
 
     it("never invents a number when it was given no wait", () => {
@@ -325,7 +390,7 @@ describe("GET /auth/sign-in", () => {
     expect(pageField(await res.text(), "return_to")?.value).toBe(returnTo);
   });
 
-  it("surfaces error code from query as a role=alert message", async () => {
+  it("surfaces the error code from the query as the password field's error", async () => {
     ctx = await createTestContext();
     const res = await request(
       ctx.app,
@@ -333,9 +398,9 @@ describe("GET /auth/sign-in", () => {
       "/auth/sign-in?error=invalid_credentials",
       { headers: { origin: ORIGIN } },
     );
-    const html = await res.text();
-    expect(html).toContain('role="alert"');
-    expect(visibleText(html)).toContain("That email or password is wrong");
+    expect(pageFieldError(await res.text(), "password")).toBe(
+      "That email or password is wrong.",
+    );
   });
 
   // -------------------------------------------------------------------

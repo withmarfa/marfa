@@ -46,6 +46,10 @@ export interface PageField {
   type: string | undefined;
   value: string | undefined;
   autofocus: boolean;
+  /** Marked invalid for a person using assistive technology. */
+  invalid: boolean;
+  /** The id of the text that describes the field, such as its error. */
+  describedBy: string | undefined;
 }
 
 /** Every named input, select and textarea, in the order the page lists them. */
@@ -61,6 +65,8 @@ export function pageFields(html: string): PageField[] {
       type: attributes.get("type"),
       value: attributes.get("value"),
       autofocus: attributes.has("autofocus"),
+      invalid: attributes.get("aria-invalid") === "true",
+      describedBy: attributes.get("aria-describedby"),
     });
   }
   return fields;
@@ -69,6 +75,20 @@ export function pageFields(html: string): PageField[] {
 /** The field a form posts under `name`, or `undefined` when the page has none. */
 export function pageField(html: string, name: string): PageField | undefined {
   return pageFields(html).find((field) => field.name === name);
+}
+
+/**
+ * The words that describe the field posted under `name`, such as the error
+ * under it, or `undefined` when it has none. Found the way assistive
+ * technology finds them, through the field's `aria-describedby`.
+ */
+export function pageFieldError(html: string, name: string): string | undefined {
+  const id = pageField(html, name)?.describedBy?.split(/\s+/)[0];
+  if (id === undefined) return undefined;
+  const element = new RegExp(
+    `<(\\w+)\\b(?:[^>"']|"[^"]*"|'[^']*')*\\sid="${id.replace(/[^\w-]/g, "")}"(?:[^>"']|"[^"]*"|'[^']*')*>([\\s\\S]*?)</\\1>`,
+  ).exec(html);
+  return element?.[2] === undefined ? undefined : visibleText(element[2]);
 }
 
 export interface PageForm {

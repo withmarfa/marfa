@@ -102,6 +102,23 @@ const focused = (page: Page) =>
     return el ? (el.getAttribute("name") ?? el.id) : "";
   });
 
+/** What has keyboard focus, as a person would name it: a field by its name, anything else by its words. */
+const focusedStop = (page: Page) =>
+  page.evaluate(() => {
+    const el = document.activeElement;
+    return el ? (el.getAttribute("name") ?? el.textContent.trim()) : "";
+  });
+
+/** Presses Tab `count` times and names each place focus lands. */
+async function tabStops(page: Page, count: number): Promise<string[]> {
+  const stops: string[] = [];
+  for (let i = 0; i < count; i++) {
+    await page.keyboard.press("Tab");
+    stops.push(await focusedStop(page));
+  }
+  return stops;
+}
+
 async function signInWith(page: Page, password: string): Promise<void> {
   await page.getByLabel("Email").fill(OWNER.email);
   await page.getByLabel("Password", { exact: true }).fill(password);
@@ -134,8 +151,7 @@ describe("signing in", () => {
         // The page puts the cursor in the email field.
         expect(await focused(page)).toBe("email");
         await page.keyboard.type(OWNER.email);
-        for (let i = 0; i < 3 && (await focused(page)) !== "password"; i++)
-          await page.keyboard.press("Tab");
+        await page.keyboard.press("Tab");
         expect(await focused(page)).toBe("password");
         await page.keyboard.type(OWNER.password);
         await page.keyboard.press("Enter");
@@ -149,30 +165,71 @@ describe("signing in", () => {
   );
 
   inBrowser(
-    "says a wrong password is wrong without naming a field, moves focus to the message and keeps the email",
+    "says a wrong password is wrong under the password field, marks both fields, moves focus to the password and keeps the email",
     async () => {
       const { page, context, problems } = await open();
       try {
         await page.goto(`${main.origin}/auth/sign-in`);
         await signInWith(page, WRONG);
         await page.waitForURL(/error=invalid_credentials/);
-        const message = page.getByRole("alert");
+        const message = page.getByText("That email or password is wrong.");
         await message.waitFor();
-        expect(await message.textContent()).toContain(
-          "That email or password is wrong",
-        );
-        expect(await focused(page)).toBe("sign-in-message");
-        expect(await page.getByLabel("Email").inputValue()).toBe(OWNER.email);
-        expect(
-          await page.getByLabel("Password", { exact: true }).inputValue(),
-        ).toBe("");
-        expect(await page.locator("[aria-invalid]").count()).toBe(0);
+        const email = page.getByLabel("Email");
+        const password = page.getByLabel("Password", { exact: true });
+        // The message describes the password field, and the email field too,
+        // since the server does not say which of the two was wrong.
+        const describedBy = await message.getAttribute("id");
+        expect(describedBy).not.toBeNull();
+        for (const field of [email, password]) {
+          expect(await field.getAttribute("aria-invalid")).toBe("true");
+          expect(await field.getAttribute("aria-describedby")).toBe(
+            describedBy,
+          );
+        }
+        expect(await page.locator('[aria-invalid="true"]').count()).toBe(2);
+        // The password has to be typed again, so focus is there.
+        expect(await focused(page)).toBe("password");
+        expect(await email.inputValue()).toBe(OWNER.email);
+        expect(await password.inputValue()).toBe("");
 
         // The retry needs only the password.
-        await page.getByLabel("Password", { exact: true }).fill(OWNER.password);
+        await page.keyboard.type(OWNER.password);
         await page.keyboard.press("Enter");
         await page.waitForURL(`${main.origin}/`);
         expect(problems).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "puts Forgot password after the Sign in button, so Tab follows the order on the screen",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${main.origin}/auth/sign-in`);
+        expect(await focusedStop(page)).toBe("email");
+        expect(await tabStops(page, 4)).toEqual([
+          "password",
+          "Sign in",
+          "Forgot password?",
+          "Sign in with a passkey",
+        ]);
+        // The link sits under the button, not on the password label's line.
+        const boxes = {
+          link: await page
+            .getByRole("link", { name: "Forgot password?" })
+            .boundingBox(),
+          submit: await page
+            .getByRole("button", { name: "Sign in", exact: true })
+            .boundingBox(),
+          password: await page
+            .getByLabel("Password", { exact: true })
+            .boundingBox(),
+        };
+        expect(boxes.link?.y).toBeGreaterThan(boxes.submit?.y ?? Infinity);
+        expect(boxes.submit?.y).toBeGreaterThan(boxes.password?.y ?? Infinity);
       } finally {
         await context.close();
       }
@@ -285,9 +342,15 @@ describe("signing in", () => {
 
         await signInWith(page, WRONG);
         await page.waitForURL(/error=invalid_credentials/);
-        await page.getByRole("alert").waitFor();
-        // The browser's own autofocus puts the cursor on the message.
-        expect(await page.locator("#sign-in-message:focus").count()).toBe(1);
+        await page.getByText("That email or password is wrong.").waitFor();
+        // The browser's own autofocus puts the cursor on the password.
+        expect(await focused(page)).toBe("password");
+        // Without a script, Tab still follows the screen.
+        expect(await tabStops(page, 2)).toEqual([
+          "Sign in",
+          "Forgot password?",
+        ]);
+        await page.getByLabel("Password", { exact: true }).focus();
 
         await page.getByLabel("Password", { exact: true }).fill(OWNER.password);
         await page
@@ -354,14 +417,22 @@ describe("the lock", () => {
         await page.goto(`${locked.origin}/auth/sign-in`);
         await signInWith(page, OWNER.password);
         await page.waitForURL(/error=too_many_attempts/);
-        const message = page.getByRole("alert");
+        const message = page.getByText(/^Too many attempts\./);
         await message.waitFor();
         // The address limit's fifteen minutes, rounded up from what is left.
         expect(await message.textContent()).toMatch(
-          /Too many attempts\. Try again in (14|15) minutes, or sign in with a passkey\./,
+          /^Too many attempts\. Try again in (14|15) minutes, or sign in with a passkey\.$/,
         );
-        expect(await message.textContent()).not.toContain("is wrong");
-        expect(await focused(page)).toBe("sign-in-message");
+        // It sits under the password field, and the email is not marked.
+        expect(
+          await page
+            .getByLabel("Password", { exact: true })
+            .getAttribute("aria-invalid"),
+        ).toBe("true");
+        expect(
+          await page.getByLabel("Email").getAttribute("aria-invalid"),
+        ).toBe(null);
+        expect(await focused(page)).toBe("password");
         expect(new URL(page.url()).searchParams.get("retry_after")).toMatch(
           /^\d+$/,
         );
@@ -747,10 +818,10 @@ describe("every page, at every width and in both schemes", () => {
         }
         expect(order).toEqual([
           "email",
-          "Forgot password?",
           "password",
           "Show password",
           "Sign in",
+          "Forgot password?",
           "Sign in with a passkey",
         ]);
         expect(noRing).toEqual([]);

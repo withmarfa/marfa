@@ -13,6 +13,12 @@ export interface TextFieldProps {
   hint?: Child;
   /** Shown instead of the hint, and marks the field invalid. */
   error?: Child;
+  /**
+   * Marks the field invalid with no message of its own, for a refusal that
+   * covers more than one field. Names the id of the message that explains it,
+   * which sits under another field.
+   */
+  invalidBy?: string;
   autocomplete?: string;
   required?: boolean;
   readonly?: boolean;
@@ -36,10 +42,22 @@ interface FieldFrameProps {
   children?: Child;
 }
 
-function describedBy(props: { id: string; hint?: Child; error?: Child }) {
+function describedBy(props: {
+  id: string;
+  hint?: Child;
+  error?: Child;
+  invalidBy?: string;
+}) {
   if (props.error !== undefined) return `${props.id}-err`;
-  if (props.hint !== undefined) return `${props.id}-hint`;
-  return undefined;
+  const ids = [
+    props.invalidBy,
+    props.hint !== undefined ? `${props.id}-hint` : undefined,
+  ].filter((id) => id !== undefined);
+  return ids.length > 0 ? ids.join(" ") : undefined;
+}
+
+function isInvalid(props: { error?: Child; invalidBy?: string }): boolean {
+  return props.error !== undefined || props.invalidBy !== undefined;
 }
 
 function FieldFrame(props: FieldFrameProps) {
@@ -89,7 +107,7 @@ export function TextField(props: TextFieldProps) {
         readonly={props.readonly}
         maxlength={props.maxlength}
         autofocus={props.autofocus}
-        aria-invalid={props.error !== undefined ? "true" : undefined}
+        aria-invalid={isInvalid(props) ? "true" : undefined}
         aria-describedby={describedBy(props)}
         data-validate-msg={props.validateMessage}
       />
@@ -115,7 +133,7 @@ export function PasswordField(props: PasswordFieldProps) {
           autocomplete={props.autocomplete}
           required={props.required}
           autofocus={props.autofocus}
-          aria-invalid={props.error !== undefined ? "true" : undefined}
+          aria-invalid={isInvalid(props) ? "true" : undefined}
           aria-describedby={describedBy(props)}
           data-validate-msg={props.validateMessage}
         />
