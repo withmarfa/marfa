@@ -72,7 +72,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /setup/claim":
     "first-party owner setup, accepting its form or JSON submission",
   "POST /setup/exchange":
-    "first-party JSON exchange of setup proof for a browser session",
+    "first-party exchange of setup proof for a browser session, accepting its form or JSON submission",
+  "POST /setup/name": "a same-origin form post that names the instance",
   "POST /auth/owner/password": "a same-origin owner password form post",
   "POST /inbound/{token}": "a sender's delivery, whatever bytes it sent",
   "POST /auth/sign-in": "a form post",

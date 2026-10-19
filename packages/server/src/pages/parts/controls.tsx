@@ -2,7 +2,7 @@
 /** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
 import { localHref } from "../href.js";
-import { Icon } from "../icons.js";
+import { Icon, type IconName } from "../icons.js";
 
 export type ButtonKind =
   "primary" | "quiet" | "outline" | "danger" | "danger-quiet" | "icon-only";
@@ -25,6 +25,12 @@ export interface ButtonProps {
   form?: string;
   name?: string;
   value?: string;
+  /** An icon before the label. */
+  icon?: IconName;
+  /** Starts hidden, for a button the script shows once it knows it can work. */
+  hidden?: boolean;
+  /** Names the button to the browser module that drives it. */
+  hook?: string;
   children?: Child;
 }
 
@@ -38,7 +44,10 @@ export function Button(props: ButtonProps) {
         href={localHref(props.href, { relative: true })}
         aria-label={props.label}
         title={props.kind === "icon-only" ? props.label : undefined}
+        hidden={props.hidden}
+        data-hook={props.hook}
       >
+        {props.icon !== undefined && <Icon name={props.icon} />}
         {props.children}
       </a>
     );
@@ -56,7 +65,10 @@ export function Button(props: ButtonProps) {
       form={props.form}
       name={props.name}
       value={props.value}
+      hidden={props.hidden}
+      data-hook={props.hook}
     >
+      {props.icon !== undefined && <Icon name={props.icon} />}
       {props.children}
     </button>
   );

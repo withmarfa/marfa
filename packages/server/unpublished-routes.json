@@ -28,6 +28,8 @@
   "GET /setup": "first-party owner setup page",
   "POST /setup/claim": "same-origin owner setup form submission",
   "POST /setup/exchange": "single-use browser handoff exchange",
+  "GET /setup/{step}": "the owner's setup steps after claiming",
+  "POST /setup/name": "same-origin owner form submission that names the instance",
   "GET /auth/owner/manage": "trusted owner management page",
   "GET /auth/owner/restore": "trusted owner archive restore page",
   "GET /auth/owner/password": "owner password form",

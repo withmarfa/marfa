@@ -16,7 +16,8 @@
  */
 const FALLBACK = "Working...";
 
-type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+export type Control =
+  HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
 const fieldOf = (control: Control): HTMLElement | null =>
   control.closest<HTMLElement>(".field");
@@ -24,7 +25,8 @@ const fieldOf = (control: Control): HTMLElement | null =>
 function messageFor(control: Control): string {
   const custom = control.getAttribute("data-validate-msg");
   const validity = control.validity;
-  if (validity.valueMissing) return "Please fill this in.";
+  if (validity.valueMissing)
+    return control.getAttribute("data-required-msg") ?? "Please fill this in.";
   if (validity.typeMismatch && control.getAttribute("type") === "email")
     return "Enter a valid email address.";
   if (validity.tooShort && "minLength" in control)
@@ -34,7 +36,8 @@ function messageFor(control: Control): string {
   return control.validationMessage || "Check this field.";
 }
 
-function clearError(control: Control): void {
+/** Remove a message `showFieldError` or the validation pass made. */
+export function clearFieldError(control: Control): void {
   const field = fieldOf(control);
   if (!field) return;
   control.removeAttribute("aria-invalid");
@@ -55,7 +58,12 @@ function describe(control: Control, id: string | null): void {
   else control.removeAttribute("aria-describedby");
 }
 
-function showError(control: Control): void {
+/**
+ * Show `text` under the field and mark it invalid. The server's refusal of a
+ * value the browser accepted (a wrong code, a taken address) goes through here
+ * too, so every message sits in the same place and clears the same way.
+ */
+export function showFieldError(control: Control, text?: string): void {
   const field = fieldOf(control);
   if (!field) return;
   control.setAttribute("aria-invalid", "true");
@@ -69,7 +77,7 @@ function showError(control: Control): void {
     field.append(message);
     describe(control, message.id);
   }
-  message.textContent = messageFor(control);
+  message.textContent = text ?? messageFor(control);
 }
 
 /** Check every visible field in `container`; the first invalid one, if any. */
@@ -86,9 +94,9 @@ function validate(container: HTMLElement): Control | null {
     )
       continue;
     if (control.checkValidity()) {
-      clearError(control);
+      clearFieldError(control);
     } else {
-      showError(control);
+      showFieldError(control);
       firstInvalid ??= control;
     }
   }
@@ -134,7 +142,8 @@ function onSubmit(event: SubmitEvent): void {
   }, 0);
 }
 
-function resetSubmitState(form: HTMLFormElement): void {
+/** Make a form that was sending submittable again. */
+export function resetSubmitState(form: HTMLFormElement): void {
   delete form.dataset.submitting;
   for (const button of form.querySelectorAll<HTMLElement>(
     "button, input[type=submit]",
@@ -168,7 +177,7 @@ export function initForms(): void {
       control.getAttribute("aria-invalid") &&
       control.checkValidity()
     )
-      clearError(control);
+      clearFieldError(control);
   });
 
   document.addEventListener("change", (event) => {
