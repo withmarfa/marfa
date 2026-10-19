@@ -228,6 +228,31 @@ describe("the whole sequence", () => {
     60_000,
   );
 
+  inBrowser("puts the Copy label back after two quick clicks", async () => {
+    await withInstance(async ({ origin }) => {
+      const { context, page } = await open();
+      try {
+        await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+          origin,
+        });
+        await page.goto(`${origin}/setup`);
+        await page.getByText("Where's my setup code?").click();
+        const copy = page.getByRole("button", {
+          name: "Copy marfa --socket PATH setup code",
+        });
+        await copy.click();
+        await textOf(copy).toBe("Copied");
+        await copy.click();
+        await textOf(copy).toBe("Copied");
+        // Both timers have run by now, and the label is the one it started with.
+        await page.waitForTimeout(2500);
+        expect(await copy.textContent()).toBe("Copy");
+      } finally {
+        await context.close();
+      }
+    });
+  });
+
   inBrowser("accepts a code typed in groups and any case", async () => {
     await withInstance(async ({ origin, ctx }) => {
       const { context, page } = await open();

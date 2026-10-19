@@ -10,11 +10,11 @@ export function initCopy(): void {
     "[data-copy]",
   )) {
     button.hidden = false;
+    const label = button.textContent;
     button.addEventListener("click", () => {
       void navigator.clipboard
         .writeText(button.dataset.copy ?? "")
         .then(() => {
-          const label = button.textContent;
           button.textContent = "Copied";
           setTimeout(() => {
             button.textContent = label;
