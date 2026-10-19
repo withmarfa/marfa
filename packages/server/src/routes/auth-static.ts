@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { AUTH_CSS } from "./auth-static/auth-css.js";
 import { PASSWORD_TOGGLE_JS } from "./auth-static/password-toggle-js.js";
 import { SUBMIT_STATE_JS } from "./auth-static/submit-state-js.js";
+import { PAGE_ASSETS } from "../pages/assets.js";
 
 function makeAsset(body: string, contentType: string) {
   const version = createHash("sha1").update(body).digest("hex");
@@ -29,6 +30,14 @@ const SUBMIT_STATE = makeAsset(
 );
 
 const ASSETS = {
+  "pages.css": makeAsset(
+    PAGE_ASSETS["pages.css"].body,
+    PAGE_ASSETS["pages.css"].contentType,
+  ),
+  "pages.js": makeAsset(
+    PAGE_ASSETS["pages.js"].body,
+    PAGE_ASSETS["pages.js"].contentType,
+  ),
   "auth.css": CSS,
   "password-toggle.js": PASSWORD_TOGGLE,
   "submit-state.js": SUBMIT_STATE,

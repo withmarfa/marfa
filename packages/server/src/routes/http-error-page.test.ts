@@ -1,4 +1,4 @@
-import { authAssetUrl } from "./auth-static.js";
+import { pageAssetUrl } from "../pages/assets.js";
 /**
  * A browser navigation that fails gets a page; everything else gets JSON.
  *
@@ -17,7 +17,10 @@ import { authAssetUrl } from "./auth-static.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { prefersHtml } from "./http-error-page.js";
+import {
+  prefersHtml,
+  renderHttpErrorPage as renderWithNonce,
+} from "./http-error-page.js";
 import { renderHttpErrorPage } from "./test-render.js";
 
 let ctx: TestContext | undefined;
@@ -54,28 +57,79 @@ describe("prefersHtml", () => {
   });
 });
 
+/** The `href` and text of every link in a page. */
+function links(html: string): { href: string; text: string }[] {
+  return [...html.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)]
+    .map(([, href, inner]) => ({
+      href: href ?? "",
+      text: (inner ?? "").replace(/<[^>]+>/g, "").trim(),
+    }))
+    .filter((link) => link.text !== "Skip to content");
+}
+
+function heading(html: string): string {
+  return /<h1[^>]*>([\s\S]*?)<\/h1>/.exec(html)?.[1] ?? "";
+}
+
 describe("the rendered page", () => {
-  it("uses the shared layout and carries no request-supplied text", () => {
+  it("is a full document in the page system, with a way back", () => {
     const html = renderHttpErrorPage(404);
-    expect(html).toContain(`href="${authAssetUrl("auth.css")}"`);
-    expect(html).toContain("<title>Page not found</title>");
+    expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
+    expect(html).toContain(
+      `<link rel="stylesheet" href="${pageAssetUrl("pages.css")}" nonce="test-nonce"`,
+    );
+    expect(html).toContain(
+      `src="${pageAssetUrl("pages.js")}" nonce="test-nonce"`,
+    );
+    expect(html).toContain("<title>That page isn&#39;t here</title>");
+    expect(links(html)).toEqual([{ href: "/", text: "Go to Home" }]);
+    expect(html).toContain("Error 404");
+  });
+
+  it("carries no request-supplied text", () => {
     // Parameterless beyond the status, deliberately: an error page is
     // reachable on any path with any query, so every value from the request
     // is a value an attacker chose. Fixed copy is what makes it safe.
-    expect(renderHttpErrorPage(404)).toBe(html);
+    expect(renderHttpErrorPage(404)).toBe(renderHttpErrorPage(404));
   });
 
   it("says something different for the classes a person can act on", () => {
     // A person does not need to know which of forty codes fired. They need
     // to know whether the thing exists, whether they may have it, and
-    // whether waiting helps — so the copy keys on the status class.
-    const notFound = renderHttpErrorPage(404);
-    const forbidden = renderHttpErrorPage(403);
-    const rateLimited = renderHttpErrorPage(429);
-    const server = renderHttpErrorPage(500);
-    const all = [notFound, forbidden, rateLimited, server];
-    expect(new Set(all).size).toBe(4);
-    expect(server).toContain("ours, not yours");
+    // whether waiting helps, so the copy keys on the status class.
+    const pages = [404, 403, 429, 500].map((status) =>
+      renderHttpErrorPage(status),
+    );
+    expect(new Set(pages.map(heading)).size).toBe(4);
+    for (const html of pages) {
+      expect(heading(html)).not.toBe("");
+      expect(html).toContain('role="alert"');
+      expect(links(html).some((link) => link.href === "/")).toBe(true);
+    }
+    expect(renderHttpErrorPage(401)).toBe(
+      renderHttpErrorPage(403).replace("Error 403", "Error 401"),
+    );
+    expect(heading(renderHttpErrorPage(503))).toBe(heading(pages[3]!));
+    expect(heading(renderHttpErrorPage(409))).not.toBe(heading(pages[3]!));
+  });
+
+  it("offers Try again on a server fault only when the request can be repeated", () => {
+    const retry = renderWithNonce(500, "test-nonce", { retry: true });
+    expect(links(retry)).toEqual([
+      { href: "", text: "Try again" },
+      { href: "/", text: "Go to Home" },
+    ]);
+    // Witness for the two assertions below: the option does change the page.
+    expect(links(renderWithNonce(500, "test-nonce"))).toEqual([
+      { href: "/", text: "Go to Home" },
+    ]);
+    expect(links(renderWithNonce(404, "test-nonce", { retry: true }))).toEqual([
+      { href: "/", text: "Go to Home" },
+    ]);
+  });
+
+  it("refuses to render without the response's nonce", () => {
+    expect(() => renderWithNonce(404, "")).toThrow(/nonce/);
   });
 });
 
@@ -88,7 +142,8 @@ describe("content negotiation end to end", () => {
     expect(res.status).toBe(404);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
-    expect(html).toContain(`href="${authAssetUrl("auth.css")}"`);
+    expect(html).toContain(`href="${pageAssetUrl("pages.css")}"`);
+    expect(links(html)).toEqual([{ href: "/", text: "Go to Home" }]);
   });
 
   it("an unmatched path gives an API client the documented JSON", async () => {
@@ -118,6 +173,28 @@ describe("content negotiation end to end", () => {
     });
     expect(res.status).toBe(401);
     expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("x-error-code")).toBe("unauthorized");
+    expect(links(await res.text())).toEqual([
+      { href: "/", text: "Go to Home" },
+    ]);
+  });
+
+  it("carries the policy that names the page's nonce", async () => {
+    ctx = await createTestContext();
+    const res = await request(ctx.app, "GET", "/items", {
+      headers: { accept: "text/html" },
+    });
+    const nonce = /script-src 'nonce-([^']+)'/.exec(
+      res.headers.get("content-security-policy") ?? "",
+    )?.[1];
+    expect(nonce).toBeTruthy();
+    const html = await res.text();
+    expect(html).toContain(
+      `href="${pageAssetUrl("pages.css")}" nonce="${nonce!}"`,
+    );
+    expect(html).toContain(
+      `src="${pageAssetUrl("pages.js")}" nonce="${nonce!}"`,
+    );
   });
 
   it("keeps the headers middleware prepared before the throw", async () => {

@@ -14,22 +14,26 @@
  * tab, which is the difference between a small configuration bug and a
  * logout that looks broken.
  */
+import { renderDocument } from "../pages/render.js";
+import { Button } from "../pages/parts/controls.js";
+import { MomentCard } from "../pages/parts/layout.js";
+import { PageShell } from "../pages/parts/shell.js";
 
-import { renderAuthLayout } from "./auth-layout.js";
-import { confirmIcon } from "./auth-html.js";
+const TITLE = "You're signed out";
 
 /** Renders the end-of-logout page as a full HTML document. */
 export function renderSignedOutPage(nonce: string): string {
-  const bodyHtml = `
-    ${confirmIcon("check")}
-    <h1 class="title">You're signed out</h1>
-    <p class="sub" role="status">Your session on this device has ended. You can close this tab, or sign in again from the app you were using.</p>
-  `;
-
-  return renderAuthLayout({
-    title: "You're signed out",
-    bodyHtml,
-    centered: true,
-    nonce,
-  });
+  return renderDocument(
+    <PageShell title={TITLE} nonce={nonce}>
+      <MomentCard
+        title={TITLE}
+        lede="Your session on this device has ended. Sign in again to carry on."
+        ledeRole="status"
+      >
+        <Button kind="primary" wide href="/auth/sign-in">
+          Sign in
+        </Button>
+      </MomentCard>
+    </PageShell>,
+  );
 }
