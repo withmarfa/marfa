@@ -3509,14 +3509,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        BlobStoreUnavailableRefusal: {
+        BlobStoreUnavailableOrWriteContentionRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "blob_store_unavailable";
+                code: "blob_store_unavailable" | "write_contention";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -4277,23 +4277,6 @@ export interface components {
                  * @enum {string}
                  */
                 code: "request_too_large";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
-        BlobStoreUnavailableOrWriteContentionRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "blob_store_unavailable" | "write_contention";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -14533,7 +14516,10 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description - `blob_store_unavailable`: no store that holds this blob answered, so Marfa could not tell whether it still has the bytes. Try again later. */
+            /**
+             * @description - `blob_store_unavailable`: no store that holds this blob answered, so Marfa couldn't tell whether it still has the bytes. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14545,7 +14531,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BlobStoreUnavailableRefusal"];
+                    "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
                 };
             };
             /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */

@@ -305,11 +305,14 @@ const bytesResponses = {
   503: {
     content: {
       "application/json": {
-        schema: makeErrorResponseSchema(["blob_store_unavailable"]),
+        schema: makeErrorResponseSchema([
+          "blob_store_unavailable",
+          "write_contention",
+        ]),
       },
     },
     description:
-      "- `blob_store_unavailable`: no store that holds this blob answered, so Marfa could not tell whether it still has the bytes. Try again later.",
+      "- `blob_store_unavailable`: no store that holds this blob answered, so Marfa couldn't tell whether it still has the bytes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
   },
 };
 
