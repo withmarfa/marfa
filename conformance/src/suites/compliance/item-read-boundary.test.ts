@@ -188,6 +188,146 @@ it("authorizes hydrated occurrences after a concurrent retype", async () => {
   expect(await witness.text()).toContain("private-body");
 });
 
+it("authorizes occurrence parent relationships with their source state", async () => {
+  const createEvent = async (properties: Record<string, unknown>) => {
+    const response = await call("POST", "/items", {
+      type: "core.event",
+      properties,
+    });
+    expect(response.status).toBe(201);
+    return (
+      (await response.json()) as { item: { id: string; version: number } }
+    ).item;
+  };
+  const series = await createEvent({
+    title: "public series",
+    starts_at: "2028-04-01T10:00:00Z",
+    recurrence: ["RRULE:FREQ=DAILY;COUNT=2"],
+  });
+  const exception = await createEvent({
+    title: "public exception",
+    starts_at: "2028-04-02T12:00:00Z",
+    original_starts_at: "2028-04-02T10:00:00Z",
+  });
+  const read = (key = reader) =>
+    call(
+      "GET",
+      "/occurrences?from=2028-04-01T00:00:00Z&to=2028-04-03T00:00:00Z",
+      undefined,
+      key,
+    );
+  const baseline = await read();
+  expect(baseline.status).toBe(200);
+  expect(await baseline.text()).toContain(series.id);
+  await server.setFault("hold:read-hydration");
+  const pending = read();
+  try {
+    await server.waitForHold("hold:read-hydration");
+    await makePrivate(series, "fixture.private_event");
+    const created = await call("POST", "/edges", {
+      source_id: series.id,
+      target_id: exception.id,
+      edge_type: "parent-of",
+    });
+    expect(created.status).toBe(201);
+    const { edge } = (await created.json()) as { edge: { id: string } };
+    expect(
+      (await call("GET", `/edges/${edge.id}`, undefined, reader)).status,
+    ).toBe(404);
+  } finally {
+    await server.clearFault();
+  }
+  const exceptionRow = async (response: Response) => {
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: { item: { id: string }; series_id?: string; replaces?: string }[];
+    };
+    return body.data.find((row) => row.item.id === exception.id);
+  };
+  for (const response of [await pending, await read()]) {
+    const row = await exceptionRow(response);
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty("series_id");
+    expect(row).not.toHaveProperty("replaces");
+  }
+  expect(await exceptionRow(await read(server.workingKey))).toMatchObject({
+    series_id: series.id,
+    replaces: "2028-04-02T10:00:00.000Z",
+  });
+});
+
+it("withholds occurrence fields derived from an unreadable relationship", async () => {
+  const minted = await fetch(`${server.apiUrl}/keys`, {
+    method: "POST",
+    headers: {
+      Cookie: server.ownerCookie,
+      Origin: new URL(server.apiUrl).origin,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      label: "Events without relationships",
+      source: "events-only",
+      type_permissions: { "core.event": "read" },
+      edge_permissions: {},
+      permissions: [],
+    }),
+  });
+  expect(minted.status).toBe(201);
+  const noEdges = ((await minted.json()) as { key: string }).key;
+  const items: string[] = [];
+  for (const properties of [
+    {
+      title: "readable series",
+      starts_at: "2028-05-01T10:00:00Z",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=2"],
+    },
+    {
+      title: "readable exception",
+      starts_at: "2028-05-02T12:00:00Z",
+      original_starts_at: "2028-05-02T10:00:00Z",
+    },
+  ]) {
+    const created = await call("POST", "/items", {
+      type: "core.event",
+      properties,
+    });
+    expect(created.status).toBe(201);
+    items.push(((await created.json()) as { item: { id: string } }).item.id);
+  }
+  const [seriesId, exceptionId] = items;
+  const created = await call("POST", "/edges", {
+    source_id: seriesId,
+    target_id: exceptionId,
+    edge_type: "parent-of",
+  });
+  expect(created.status).toBe(201);
+  const { edge } = (await created.json()) as { edge: { id: string } };
+  expect(
+    (await call("GET", `/edges/${edge.id}`, undefined, noEdges)).status,
+  ).toBe(404);
+  const exceptionRow = async (key: string) => {
+    const response = await call(
+      "GET",
+      "/occurrences?from=2028-05-01T00:00:00Z&to=2028-05-03T00:00:00Z",
+      undefined,
+      key,
+    );
+    expect(response.status).toBe(200);
+    const { data } = (await response.json()) as {
+      data: { item: { id: string }; series_id?: string; replaces?: string }[];
+    };
+    return data.find((row) => row.item.id === exceptionId);
+  };
+  expect(await exceptionRow(reader)).toMatchObject({
+    series_id: seriesId,
+    replaces: "2028-05-02T10:00:00.000Z",
+  });
+  const row = await exceptionRow(noEdges);
+  expect(row).toBeDefined();
+  expect(row).not.toHaveProperty("series_id");
+  expect(row).not.toHaveProperty("replaces");
+});
+
 it("keeps extensions, history, lookup and edge hydration in the authorized state", async () => {
   for (const surface of [
     "extensions",

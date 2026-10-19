@@ -31,11 +31,11 @@ import { faultsArmed, holdAt } from "../control/faults.js";
  * An event's `properties` is the upstream record in full, attendees and
  * description and conference data included, so retaining the projection
  * rather than the row is the difference between a couple of hundred
- * bytes and several kilobytes each. Whole items are read exactly once,
- * for the occurrences actually being returned, after the occurrence
- * ceiling has already refused anything larger — so the number of items
- * held at once is bounded by `MAX_OCCURRENCES` rather than by how much is
- * stored.
+ * bytes and several kilobytes each. Parent sources are read in bounded
+ * batches to authorize relationships, then dropped before expansion.
+ * Whole items retained for the response are read only after the occurrence
+ * ceiling has refused anything larger, so their number is bounded by
+ * `MAX_OCCURRENCES` rather than by how much is stored.
  *
  * Five bounds do the rest of that work and none of them refuses a calendar
  * for being large:
@@ -101,7 +101,7 @@ import {
   resolveEnforcement,
   typeAnswersSubtreeFilter,
 } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -122,6 +122,7 @@ import {
 import { instantColumnValues } from "../storage/instant-columns.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { sourceFilterIncludesItem } from "../storage/filter-sql.js";
+import { edgeKindReadable } from "./_edge-visibility.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -710,6 +711,8 @@ async function fetchItemsBatched(
 async function groupExceptionsBySeries(
   storage: Storage,
   exceptions: readonly RecurrenceException[],
+  readable: (edge: Edge, source: Item) => boolean,
+  signal: AbortSignal,
 ): Promise<Map<string, RecurrenceException[]>> {
   const byId = new Map<string, RecurrenceException>();
   for (const exception of exceptions) byId.set(exception.id, exception);
@@ -718,33 +721,36 @@ async function groupExceptionsBySeries(
   const bySeries = new Map<string, RecurrenceException[]>();
   for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
     const slice = ids.slice(i, i + ID_BATCH_SIZE);
-    const chunk = await storage.edges.listToTargetsBatched(
-      slice,
-      // One parent is all a `parent-of` exception has; asking for a
-      // second would only widen what a malformed graph could return.
-      1,
+    // The scan proves earlier access, not permission to disclose a later
+    // relationship. Release this snapshot before expansion or the next batch.
+    await storage.runInReadSnapshot(
+      async () => {
+        const chunk = await storage.edges.listToTargetsBatched(slice, 1);
+        const parents = slice.flatMap((id) =>
+          (chunk.get(id) ?? []).filter(
+            (edge) => edge.edge_type === "parent-of",
+          ),
+        );
+        const sources = await storage.items.getMany([
+          ...new Set(parents.map((edge) => edge.source_id)),
+        ]);
+        for (const edge of parents) {
+          const source = sources.get(edge.source_id);
+          if (
+            source?.state !== "active" ||
+            !readable(edge, source) ||
+            projectSeries(source) === undefined
+          )
+            continue;
+          const exception = byId.get(edge.target_id);
+          if (exception === undefined) continue;
+          const list = bySeries.get(source.id) ?? [];
+          list.push(exception);
+          bySeries.set(source.id, list);
+        }
+      },
+      { signal },
     );
-    // Walked over the slice rather than over the map the store answered
-    // with, because that is what makes each chunk's edges unreachable
-    // once the next chunk is asked for — the retention property this
-    // function exists for, not a determinism one.
-    //
-    // Determinism is real here and comes from somewhere else: the scan
-    // hands these ids over in the store's keyset order, which is a total
-    // order. Iterating the returned map instead would preserve that too,
-    // since it is keyed by the same ids, so the slice walk is not what
-    // keeps the order.
-    for (const exceptionId of slice) {
-      const seriesId = chunk
-        .get(exceptionId)
-        ?.find((edge) => edge.edge_type === "parent-of")?.source_id;
-      if (seriesId === undefined) continue;
-      const exception = byId.get(exceptionId);
-      if (exception === undefined) continue;
-      const list = bySeries.get(seriesId) ?? [];
-      list.push(exception);
-      bySeries.set(seriesId, list);
-    }
   }
   return bySeries;
 }
@@ -1031,7 +1037,7 @@ export function occurrenceRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(occurrencesRoute, async (c) => {
-    requireAuth(c);
+    const key = requireAuth(c);
     const query = c.req.valid("query");
 
     const from = readInstant(query.from, "from");
@@ -1125,9 +1131,16 @@ export function occurrenceRoutes(
     // and an exception is an ordinary shape — a calendar where several
     // hundred meetings have each been moved once is a busy calendar, not
     // a pathological one.
+    if (faultsArmed()) await holdAt("read-hydration");
     const exceptionsBySeries = await groupExceptionsBySeries(
       storage,
       exceptionSeeds,
+      (edge, source) =>
+        edgeKindReadable(key, edge) &&
+        mayReadRow(c, source) &&
+        typeAnswersSubtreeFilter(source.type, EVENT_TYPE) &&
+        sourceFilterIncludesItem(enforcement.source_filter, source),
+      c.req.raw.signal,
     );
 
     /** Iterations spent on expansions that returned no occurrence,
@@ -1343,8 +1356,8 @@ export function occurrenceRoutes(
     // A stored exception names its series and the slot it replaced whether
     // or not this window holds that slot, so an exception shown at its own
     // time carries both even where the expansion above never reached it.
-    // Only a series the scan read is named: an edge can point at a row this
-    // credential may not read.
+    // The scan establishes series membership; grouping separately authorizes
+    // each relationship against its source in the same read.
     const exceptionSlots = new Map<
       string,
       { series_id: string; replaces: string }
@@ -1392,10 +1405,8 @@ export function occurrenceRoutes(
       });
     }
 
-    // The only place a whole row is read, and it is reached only for the
-    // occurrences being returned. One row can answer many occurrences, so
-    // the ids are deduplicated on the way in.
-    if (faultsArmed()) await holdAt("read-hydration");
+    // Only returned occurrences retain whole rows. One row can answer many
+    // occurrences, so the ids are deduplicated on the way in.
     const shownById = await fetchItemsBatched(
       storage,
       pending.map((occurrence) => occurrence.item_id),

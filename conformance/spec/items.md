@@ -10,7 +10,7 @@ When the server returns item data or related metadata, extensions, edges, histor
 
 **Reason:** a retype between authorization and hydration must not disclose data added while the item is unreadable to the caller.
 
-**Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
+**Tests:** `compliance/item-read-boundary.test.ts › keeps item and metadata reads in the state that authorized them during a retype`, `› authorizes hydrated occurrences after a concurrent retype`, `› authorizes occurrence parent relationships with their source state`, `› keeps extensions, history, lookup and edge hydration in the authorized state`.
 
 ## Every write
 
