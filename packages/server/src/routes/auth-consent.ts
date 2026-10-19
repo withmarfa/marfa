@@ -91,6 +91,7 @@ import {
   isValidScope,
   isReservedRoot,
   grantCoversScope,
+  needsRecentSignIn,
   subtreeWildcardRoot,
   GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
@@ -119,6 +120,7 @@ import {
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
+import { signInAgainBeforeConsent } from "./sign-in-again.js";
 
 /**
  * Query parameter carrying a consent-page error banner code back from the
@@ -519,6 +521,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       );
     }
 
+    // Before the screen is shown: approving what it offers would be refused
+    // to a session that signed in too long ago, so the person is sent to
+    // sign in again rather than shown a screen that cannot be completed.
+    const signInAgain = signInAgainBeforeConsent(
+      c,
+      scopeLiterals,
+      priorScopes,
+      `${url.pathname}?${oauthQuery}`,
+    );
+    if (signInAgain) return signInAgain;
+
     // The plain-English line per scope row, from the one source the device
     // approval screen reads too.
     const descriptions = buildScopeDescriptions(parsed);
@@ -719,18 +732,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
                 clientId,
                 session.user.id,
               )) ?? [];
-            if (
-              formScopes.some(
-                (scope) =>
-                  [
-                    "instance.read",
-                    "instance.maintain",
-                    "connectors.manage",
-                    "blobs.manage",
-                    "keys.manage",
-                  ].includes(scope) && !prior.includes(scope),
-              )
-            )
+            if (needsRecentSignIn(formScopes, prior))
               requireRecentOwnerAuthentication(c);
           }
           const proxyResp = await proxyConsentDecision(

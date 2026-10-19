@@ -5,7 +5,12 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { readInstanceName } from "../instance-name.js";
-import { MarfaError, ErrorCode, parseScope } from "@withmarfa/shared";
+import {
+  MarfaError,
+  ErrorCode,
+  needsRecentSignIn,
+  parseScope,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
@@ -53,6 +58,7 @@ import {
   renderDeviceDecisionPage,
 } from "./device-pages.js";
 import { setNoStore } from "./no-store.js";
+import { signInAgainBeforeConsent } from "./sign-in-again.js";
 import { forwardHeaders } from "./forward-headers.js";
 
 /**
@@ -362,6 +368,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   router.delete("/grants/:id", async (c) => {
     // The same axis as `GET /grants`: `grants.manage` to act at all.
     requirePermission(c, "grants.manage");
+    if (c.get("authority")?.kind === "owner")
+      requireRecentOwnerAuthentication(c);
     const id = c.req.param("id");
     const item = await storage.items.get(id);
     if (item?.type !== "system.connection") {
@@ -803,6 +811,16 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       .filter(
         (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
       );
+    const signInAgain = signInAgainBeforeConsent(
+      c,
+      scopeList(verdict.scope),
+      await storage.oauthProvider?.getPriorConsent(
+        client.clientId,
+        sessionResult.session.user.id,
+      ),
+      `${url.pathname}${url.search}`,
+    );
+    if (signInAgain) return signInAgain;
     // The same copy `/auth/authorize` renders, from the same function, so
     // which answer a person gets does not depend on which screen the flow
     // put them on.
@@ -962,18 +980,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 clientId,
                 sessionResult.session.user.id,
               )) ?? [];
-            if (
-              approvedScopes.some(
-                (scope) =>
-                  [
-                    "instance.read",
-                    "instance.maintain",
-                    "connectors.manage",
-                    "blobs.manage",
-                    "keys.manage",
-                  ].includes(scope) && !prior.includes(scope),
-              )
-            )
+            if (needsRecentSignIn(approvedScopes, prior))
               requireRecentOwnerAuthentication(c);
             // The write the device's initiation could not make: nobody was
             // signed in then. Inside the approval's transaction, so an
