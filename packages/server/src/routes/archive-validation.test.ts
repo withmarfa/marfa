@@ -138,6 +138,59 @@ it("refuses a cycle as restore skips it, naming the edge that closes it", async 
   });
 });
 
+const refusalOf = (lineFiles: ReturnType<typeof selection>) =>
+  validate(lineFiles).then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+
+it("takes an edge of an edge type nothing registers, the witness for the refusals below", async () => {
+  await expect(
+    validate(selection(3, [[1, 2, "user.forgotten-link"]])),
+  ).resolves.toBeUndefined();
+});
+
+it.each([
+  [
+    "a second copy of the same triple",
+    [
+      [1, 2, "user.forgotten-link"],
+      [1, 2, "user.forgotten-link"],
+    ] as [number, number, string][],
+    { id: edgeIdAt(2), code: "edge_constraint_violation" },
+  ],
+  [
+    "a loop",
+    [
+      [1, 2, "user.forgotten-link"],
+      [3, 3, "user.forgotten-link"],
+    ] as [number, number, string][],
+    { id: edgeIdAt(2), code: "edge_cycle" },
+  ],
+])(
+  "still refuses an edge of an unregistered type that is %s, as restore skips it",
+  async (_what, edges, row) => {
+    const refused = await refusalOf(selection(3, edges));
+    expect(refused).toBeInstanceOf(SelectionRefusal);
+    expect((refused as SelectionRefusal).row).toMatchObject({
+      kind: "edge",
+      type: "user.forgotten-link",
+      ...row,
+    });
+  },
+);
+
+it("still holds an edge of a registered type to its constraints", async () => {
+  // `in-collection` names its permitted targets; a note is not one.
+  const refused = await refusalOf(selection(3, [[1, 2, "in-collection"]]));
+  expect(refused).toBeInstanceOf(SelectionRefusal);
+  expect((refused as SelectionRefusal).row).toMatchObject({
+    kind: "edge",
+    type: "in-collection",
+    code: "edge_constraint_violation",
+  });
+});
+
 it("names the item a restore refuses, with its type, field and code", async () => {
   const lineFiles = selection(3, []);
   const event = (id: string, recurrence: string) =>

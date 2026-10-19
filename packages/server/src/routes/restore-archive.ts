@@ -21,7 +21,8 @@
  * it was archived at, with its original dates and readable item history.
  * An item that is not of a `core` or `system` type that this build ships
  * keeps the properties the archive holds, whatever shape its type has now and
- * whether or not the type is registered.
+ * whether or not the type is registered, and an edge whose edge type is not
+ * registered is kept as the archive holds it.
  *
  * Paired with GET /export?format=archive.
  */
@@ -720,6 +721,7 @@ async function restoreRows(
         }
         unlogged.push(
           await storage.edges.createRaw({
+            as_archived: true,
             ...dates,
             ...(edgeId !== undefined && { id: edgeId }),
             // Same rule as the item path above. Both doors move

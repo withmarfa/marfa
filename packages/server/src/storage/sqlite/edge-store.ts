@@ -113,8 +113,10 @@ export class SqliteEdgeStore implements EdgeStore {
     await this.db.transaction(async (tx) => {
       // Asked of the table inside the write lock, because a door's own
       // check can run before an edge type's delete commits, and an edge
-      // written after that commit would name nothing.
+      // written after that commit would name nothing. A restore keeps an
+      // edge whose type is gone, as the archive holds it.
       const registered =
+        input.as_archived === true ||
         isCoreEdgeType(input.edge_type) ||
         (await tx
           .select({ id: edgeTypes.id })

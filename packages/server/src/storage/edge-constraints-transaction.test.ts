@@ -40,15 +40,13 @@ const check = () =>
 
 describe("the edge checker", () => {
   it("judges an edge inside a write transaction", async () => {
-    const schemas = await ctx.storage.runInTransaction(check);
-    expect(schemas.map((schema) => schema.id)).toEqual(["parent-of"]);
+    await expect(ctx.storage.runInTransaction(check)).resolves.toBeUndefined();
   });
 
   it("judges an edge inside a savepoint of one", async () => {
-    const schemas = await ctx.storage.runInTransaction(() =>
-      ctx.storage.runInTransaction(check),
-    );
-    expect(schemas.map((schema) => schema.id)).toEqual(["parent-of"]);
+    await expect(
+      ctx.storage.runInTransaction(() => ctx.storage.runInTransaction(check)),
+    ).resolves.toBeUndefined();
   });
 
   it("refuses to run outside a transaction", async () => {

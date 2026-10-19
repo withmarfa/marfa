@@ -112,7 +112,6 @@ type RowAt = Pick<RefusedRow, "kind" | "id" | "type"> & {
 /** The field a restore's refusal names, read from its details. */
 function fieldOf(error: MarfaError): string | null {
   if (error.code === ErrorCode.UNKNOWN_TYPE) return "type";
-  if (error.code === ErrorCode.EDGE_TYPE_NOT_FOUND) return "edge_type";
   const details = error.details ?? {};
   if (typeof details.field === "string") return details.field;
   const [first] = Array.isArray(details.errors)

@@ -1117,6 +1117,22 @@ When `DELETE /items/{id}` names an item that holds an edge of a shipped type oth
 
 **Tests:** `correctness/edges/edges-cascade.test.ts › supersedes defaults to orphan: deleting head leaves predecessor intact`, `› about defaults to orphan: deleting source leaves target intact`, `› attached-to defaults to orphan: deleting the host leaves the attachment intact`, `› references defaults to orphan: deleting the referenced target leaves the source intact`.
 
+### `edges/orphan-delete`
+
+While an edge's type is not registered, when `DELETE /items/{id}` names an item at one end of the edge, the server MUST leave the other end of the edge active.
+
+**Reason:** the cascade of an edge is the `cascade_on_delete` of its registration (`edges/cascade-custom`), and an edge with no registration has none. The edge row stays while its item is in the bin, as an edge of an `orphan` type does (`edges/orphan-shipped`).
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
+
+### `edges/orphan-delete-unblocked`
+
+While an edge's type is not registered, the server MUST NOT refuse `DELETE /items/{id}` for an item at either end because of the edge.
+
+**Reason:** an edge blocks a delete by the `cascade_on_delete` of its registration (`edges/block-named`), and an edge with no registration has none.
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
+
 ### `edges/block-named`
 
 If `DELETE /items/{id}` or a transition into the bin is refused `400 edge_constraint_violation` for `block` edges whose edge type and both ends the key may read, then the server MUST name each of them in `details.blocking_edges`, wherever in the cascade it stands.
@@ -1472,6 +1488,14 @@ When `DELETE /edge-types/{id}` deletes a registration that stored edges name, th
 **Reason:** forcing orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
 
 **Tests:** `compliance/edge-types.test.ts › refuses to delete an edge type while edges of it exist, and orphans them on force`.
+
+### `edges/orphan-read`
+
+While an edge's type is not registered, the server MUST return the edge from `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` of an item read.
+
+**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and a row nothing can describe is still a row a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
+
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 
 ### `edges/types-delete-unused`
 

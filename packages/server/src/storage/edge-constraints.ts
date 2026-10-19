@@ -170,7 +170,11 @@ export interface EdgeProposal {
 /**
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
- * 1. Edge type exists (core or custom registry).
+ * 1. Edge type exists (core or custom registry). `replay`, for the edges an
+ *    archive recorded, takes an edge whose type is not registered, as a
+ *    forced delete leaves it, and judges it by 2, 6 and the self-loop of 7
+ *    alone: with no schema there is no constraint, cardinality or property
+ *    to hold it to, and every type with a cycle check is shipped.
  * 2. Source and target items both exist outside the bin, and the caller
  *    may read both types: an end it may not read is answered as missing.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
@@ -191,7 +195,6 @@ export interface EdgeProposal {
  *
  * Throws `MarfaError` on the first failure encountered in input order, matching
  * the sequential-validation behavior the single-edge entry point exposed.
- * Returns the resolved edge-type schemas in input order.
  *
  * Refuses to run outside a write transaction: the graph it judges is the one
  * the caller's write changes, and outside that write's transaction another
@@ -202,9 +205,9 @@ export async function assertEdgesCanBeCreated(
   proposals: EdgeProposal[],
   mayRead: (type: string) => boolean,
   opts: { replay?: boolean; replacing?: Edge } = {},
-): Promise<EdgeTypeSchema[]> {
+): Promise<void> {
   storage.assertInWriteTransaction();
-  return assertEdgesFitGraph(storage, proposals, mayRead, opts);
+  await assertEdgesFitGraph(storage, proposals, mayRead, opts);
 }
 
 /** The reads `assertEdgesFitGraph` makes of the graph it judges. */
@@ -230,20 +233,21 @@ export async function assertEdgesFitGraph(
   proposals: EdgeProposal[],
   mayRead: (type: string) => boolean,
   opts: { replay?: boolean; replacing?: Edge } = {},
-): Promise<EdgeTypeSchema[]> {
-  if (proposals.length === 0) return [];
+): Promise<void> {
+  if (proposals.length === 0) return;
   const { edges: edgeStore, items: itemStore } = storage;
 
   // Zip each proposal with its schema once, so no downstream loop has to
-  // realign the two lists.
+  // realign the two lists. The schema is undefined only for a replayed edge
+  // whose type is not registered.
   interface ResolvedProposal {
     p: EdgeProposal;
-    schema: EdgeTypeSchema;
+    schema: EdgeTypeSchema | undefined;
   }
   const resolved: ResolvedProposal[] = [];
   for (const p of proposals) {
     const schema = getEdgeTypeSchema(p.edge_type);
-    if (!schema) {
+    if (!schema && opts.replay !== true) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
         `Unknown edge type: ${p.edge_type}`,
@@ -276,6 +280,8 @@ export async function assertEdgesFitGraph(
     if (!target || !mayRead(target.type)) {
       throw edgeTargetNotFound(p.target_id);
     }
+    // A replayed edge of an unregistered type has no constraint to meet.
+    if (schema === undefined) continue;
     // Endpoint types resolve through the registry, exactly as the edge type
     // itself did above, so a constraint naming a runtime-registered type
     // resolves like one naming a shipped type.
@@ -341,6 +347,7 @@ export async function assertEdgesFitGraph(
     { target_id: string; edge_type: string }
   >();
   for (const { p, schema } of resolved) {
+    if (schema === undefined) continue;
     const needsSource =
       schema.cardinality === "one-to-one" ||
       schema.cardinality === "many-to-one";
@@ -428,7 +435,7 @@ export async function assertEdgesFitGraph(
     const totalSource = dbSourceCount + batchSourceCount;
     const totalTarget = dbTargetCount + batchTargetCount;
 
-    switch (schema.cardinality) {
+    switch (schema?.cardinality) {
       case "one-to-one": {
         if (totalSource > 0) {
           throw new MarfaError(
@@ -483,7 +490,9 @@ export async function assertEdgesFitGraph(
         break;
       }
       case "many-to-many":
-        // No uniqueness beyond the exact-duplicate guard handled above.
+      case undefined:
+        // No uniqueness beyond the exact-duplicate guard handled above, and
+        // none at all for an edge whose type is not registered.
         break;
     }
 
@@ -522,8 +531,6 @@ export async function assertEdgesFitGraph(
       pendingByType.set(p.edge_type, pending);
     }
   }
-
-  return resolved.map((r) => r.schema);
 }
 
 /** Thin single-edge wrapper — preserves the pre-batch call shape. */
@@ -531,15 +538,8 @@ export async function assertEdgeCanBeCreated(
   storage: Storage,
   input: EdgeProposal,
   mayRead: (type: string) => boolean,
-): Promise<EdgeTypeSchema> {
-  const schemas = await assertEdgesCanBeCreated(storage, [input], mayRead);
-  const [only] = schemas;
-  if (!only) {
-    throw new Error(
-      "assertEdgesCanBeCreated returned empty schema list for single-edge input",
-    );
-  }
-  return only;
+): Promise<void> {
+  await assertEdgesCanBeCreated(storage, [input], mayRead);
 }
 
 /** Lightweight row-shape → Edge helper. */

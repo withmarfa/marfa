@@ -8,6 +8,7 @@ import {
   MarfaError,
   ErrorCode,
   isTier,
+  isValidEdgeTypeIdentifier,
   TIERS,
   validateTransition,
   SYSTEM_DEFAULT_STATE,
@@ -310,6 +311,14 @@ export function edgeRefusal(
   const text = wellFormedRefusal("edges", edge.id, line, index);
   if (text) return text;
   archiveDates("edge", edge, index);
+  const { edge_type: edgeType } = edge;
+  if (typeof edgeType === "string" && !isValidEdgeTypeIdentifier(edgeType)) {
+    return new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid edge ${String(edge.id)} in edges.ndjson parsed row ${String(index + 1)}: edge_type must be an edge-type identifier`,
+      { edge_id: edge.id, row: index + 1, field: "edge_type" },
+    );
+  }
   return (
     archiveScalarRefusal("edge", edge, index) ??
     oversizedProperties(

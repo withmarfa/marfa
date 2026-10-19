@@ -3,10 +3,11 @@
  *
  * Full archive restore requires direct authority, but a supplied file
  * still needs validation. A
- * replay through the raw edge insert (no registry lookup, no endpoint-type
- * constraints, no cardinality, no cycle check, no self-edge guard, no
- * duplicate guard) would let a hand-edited archive plant relationships the
- * API refuses, and count them as imported.
+ * replay through the raw edge insert (no endpoint-type constraints, no
+ * cardinality, no cycle check, no self-edge guard, no duplicate guard) would
+ * let a hand-edited archive plant relationships the API refuses, and count
+ * them as imported. An edge whose type is not registered is the exception a
+ * forced delete makes: it is kept, and judged by what needs no type.
  *
  * Driven with edge types whose constraints show, not only `references`,
  * which is many-to-many with `["*"]` on both ends: the one core edge type
@@ -136,7 +137,11 @@ async function restoreInto(
 async function restoreEdges(
   edgeLines: string[],
   itemTypes: Record<string, string> = {},
-): Promise<{ result: RestoreResult; edgeCount: number }> {
+): Promise<{
+  result: RestoreResult;
+  edgeCount: number;
+  edges: { source_id: string; target_id: string; edge_type: string }[];
+}> {
   const ctx = await newContext();
   const archive = await buildArchive({
     itemLines: [
@@ -150,7 +155,7 @@ async function restoreEdges(
   expect(res.status).toBe(200);
   const result = (await res.json()) as RestoreResult;
   const edges = await ctx.storage.edges.list({});
-  return { result, edgeCount: edges.data.length };
+  return { result, edgeCount: edges.data.length, edges: edges.data };
 }
 
 describe("restore validates the edges it writes", () => {
@@ -165,15 +170,65 @@ describe("restore validates the edges it writes", () => {
     expect(edgeCount).toBe(1);
   });
 
-  it("refuses an edge type nothing has registered", async () => {
-    const { result, edgeCount } = await restoreEdges([
+  it("keeps an edge of an edge type nothing has registered, as the archive holds it", async () => {
+    const { result, edgeCount, edges } = await restoreEdges([
       edgeLine({ source_id: A, target_id: B, edge_type: "acme.invented" }),
     ]);
-    expect(result.edges_imported).toBe(0);
-    expect(result.edges_skipped_reasons).toMatchObject({
-      edge_type_not_found: 1,
+    expect(result.edges_imported).toBe(1);
+    expect(result.edges_skipped).toBe(0);
+    expect(edgeCount).toBe(1);
+    expect(edges[0]).toMatchObject({
+      source_id: A,
+      target_id: B,
+      edge_type: "acme.invented",
     });
-    expect(edgeCount).toBe(0);
+  });
+
+  it("still refuses an edge of an unregistered type that has no endpoint, a second copy of one it holds, or a loop", async () => {
+    const ghost = "01912345-0000-7000-8000-00000000dead";
+    const { result, edges } = await restoreEdges([
+      edgeLine({ source_id: A, target_id: B, edge_type: "acme.invented" }),
+      edgeLine({ source_id: A, target_id: B, edge_type: "acme.invented" }),
+      edgeLine({ source_id: B, target_id: ghost, edge_type: "acme.invented" }),
+      edgeLine({ source_id: C, target_id: C, edge_type: "acme.invented" }),
+    ]);
+    expect(result.edges_imported).toBe(1);
+    expect(result.edges_skipped_reasons).toEqual({
+      edge_constraint_violation: 1,
+      endpoint_missing: 1,
+      edge_cycle: 1,
+    });
+    expect(edges).toHaveLength(1);
+  });
+
+  it("refuses an archive whose edge names no edge-type identifier, and writes nothing", async () => {
+    const ctx = await newContext();
+    const archive = (edgeType: string) =>
+      buildArchive({
+        itemLines: [noteLine(A, "a"), noteLine(B, "b")],
+        edgeLines: [
+          edgeLine({ source_id: A, target_id: B, edge_type: "acme.invented" }),
+          edgeLine({ source_id: B, target_id: A, edge_type: edgeType }),
+        ],
+      });
+    for (const edgeType of ["Not An Edge Type", "../escape", ""]) {
+      const refused = await restoreInto(ctx, await archive(edgeType));
+      expect(refused.status, edgeType).toBe(400);
+      const { error } = (await refused.json()) as {
+        error: { code: string; message: string };
+      };
+      expect(error.code, edgeType).toBe("validation_error");
+      expect(error.message, edgeType).toContain("edge_type");
+      expect((await ctx.storage.edges.list({})).data, edgeType).toEqual([]);
+      expect(
+        await ctx.storage.items.getIncludingTrashed(A),
+        edgeType,
+      ).toBeNull();
+    }
+    // The witness: the same archive with an identifier restores.
+    const restored = await restoreInto(ctx, await archive("acme.other-link"));
+    expect(restored.status).toBe(200);
+    expect((await ctx.storage.edges.list({})).data).toHaveLength(2);
   });
 
   it("refuses an edge from an item to itself", async () => {
@@ -245,7 +300,7 @@ describe("restore validates the edges it writes", () => {
 
   it("says why it skipped, not only how many", async () => {
     const { result } = await restoreEdges([
-      edgeLine({ source_id: A, target_id: B, edge_type: "acme.invented" }),
+      edgeLine({ source_id: A, target_id: A, edge_type: "references" }),
       edgeLine({
         source_id: A,
         target_id: "01912345-0000-7000-8000-00000000dead",
@@ -256,7 +311,7 @@ describe("restore validates the edges it writes", () => {
     // cannot tell an operator which they got.
     expect(result.edges_skipped).toBe(2);
     expect(result.edges_skipped_reasons).toEqual({
-      edge_type_not_found: 1,
+      edge_cycle: 1,
       endpoint_missing: 1,
     });
   });

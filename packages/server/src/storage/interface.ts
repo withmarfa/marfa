@@ -689,9 +689,20 @@ export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 /** An item line's dates, with when the row last came back from the bin. */
 export type ArchivedItemDates = ArchivedDates & { restored_at?: string };
 
+/**
+ * **Server-internal, and set by a restore alone.** An edge whose type is not
+ * registered is stored as the archive holds it, as a forced delete leaves one
+ * (`search-and-filters/restore-edges-unregistered`). Every other create
+ * names a registered edge type. Never caller-supplied.
+ */
+export interface ArchivedEdgeInput {
+  as_archived?: true;
+}
+
 export type StoredCreateEdgeInput = CreateEdgeInput &
   RestoredRowInput &
   ArchivedDates &
+  ArchivedEdgeInput &
   BlobProofInput;
 /**
  * The store's update input, which differs from the door's in one field.
