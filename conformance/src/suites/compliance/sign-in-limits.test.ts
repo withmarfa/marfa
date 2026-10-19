@@ -16,21 +16,25 @@ import { issuerOrigin } from "../../utils/signed-in.js";
  */
 let shared: FreshServer;
 let account: FreshServer;
+let timed: FreshServer;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [shared, account] = await Promise.all([
+  [shared, account, timed] = await Promise.all([
     bootFreshServer("sign-in-limits", { TRUSTED_PROXY_HEADER: CLIENT_HEADER }),
     bootFreshServer("sign-in-limits-account", {
       TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     }),
+    bootFreshServer("sign-in-limits-timed", {
+      TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    }),
   ]);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, 3 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled([shared.stop(), account.stop()]);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  await Promise.allSettled([shared.stop(), account.stop(), timed.stop()]);
+}, 3 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
@@ -188,5 +192,40 @@ describe("device code lookups", () => {
     expect(await enter(shared, "QQ999999", "198.51.100.9")).toContain(
       "error=too_many_attempts",
     );
+  }, 120_000);
+
+  it("names the later end when a lookup meets a spent address limit and a spent instance limit", async () => {
+    // The instance's window opens first, so it ends first.
+    await enter(timed, "QQ300000", "198.51.100.1");
+    await timed.advanceClock(10 * 60_000);
+    // This address spends its own ten in a window that ends nine minutes
+    // after the instance's has ended.
+    for (let i = 0; i < 10; i++)
+      expect(
+        await enter(timed, `QQ31000${String(i)}`, "203.0.113.9"),
+      ).toContain("error=invalid_code");
+    await timed.advanceClock(6 * 60_000);
+    // The instance's window ended and opens again, and ten other addresses
+    // fill its hundred.
+    for (let a = 1; a <= 10; a++)
+      for (let i = 0; i < 10; i++)
+        expect(
+          await enter(
+            timed,
+            `QQ4${String(a).padStart(2, "0")}${String(i).padStart(3, "0")}`,
+            `198.51.100.${String(a + 20)}`,
+          ),
+        ).toContain("error=invalid_code");
+
+    // The address limit refuses this address for nine more minutes and the
+    // instance limit for fifteen, so the wait is the fifteen.
+    const refused = new URL(
+      await enter(timed, "QQ500000", "203.0.113.9"),
+      timed.apiUrl,
+    );
+    expect(refused.searchParams.get("error")).toBe("too_many_attempts");
+    const wait = Number(refused.searchParams.get("retry_after"));
+    expect(wait).toBeGreaterThan(14 * 60);
+    expect(wait).toBeLessThanOrEqual(15 * 60);
   }, 120_000);
 });

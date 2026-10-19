@@ -1861,7 +1861,7 @@ If a device code lookup is refused by a device lookup limit, then the server MUS
 
 **Reason:** The anonymous address limit, the anonymous instance limit and the two owner limits each end at their own time, and a lookup refused by one can meet another that is spent for longer, so the page can say how long to wait only if the redirect names the later end.
 
-**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`.
+**Tests:** `compliance/sign-in-surface.test.ts › limits anonymous device code entry per address and owner consent per owner`, `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes, and keeps the budget after restart`, `compliance/sign-in-limits.test.ts › names the later end when a lookup meets a spent address limit and a spent instance limit`.
 
 ### `keys-and-oauth/device-lookup-page`
 
