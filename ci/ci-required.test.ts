@@ -845,13 +845,20 @@ describe("what a draft runs", () => {
 /**
  * The jobs of `ci.yml` that are not one job of the classifier's: the
  * conformance shards run as one matrix job, `Conformance` collects them into
- * one verdict, `Full CI` collects every job for the ruleset and
- * `report-failure` reports a failed night. `ci/full-ci-gate.test.ts` and
- * `ci/nightly-report.test.ts` pin the last two.
+ * one verdict, the workspace's tests run as three shards of one job that
+ * reads the answers for `workspace` and `full`, `Full CI` collects every job
+ * for the ruleset and `report-failure` reports a failed night.
+ * `ci/sqlite-shards.test.ts`, `ci/full-ci-gate.test.ts` and
+ * `ci/nightly-report.test.ts` pin the last three.
  */
 const CONFORMANCE_SHARD_JOB = "conformance-shards";
 const CONFORMANCE_GATE = "conformance";
-const NOT_CLASSIFIED = [CONFORMANCE_GATE, "gate", "report-failure"];
+const NOT_CLASSIFIED = [
+  CONFORMANCE_GATE,
+  "ci-sqlite-tests",
+  "gate",
+  "report-failure",
+];
 
 describe("each job reads its own answer", () => {
   it("ci.yml runs a job only when the classifier says so, and every one when it cannot tell", () => {
@@ -925,18 +932,12 @@ describe("each job reads its own answer", () => {
       "pnpm build",
       "pnpm typecheck",
       "pnpm lint",
-      "actions/cache@v6",
-      'MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts',
     ]);
-    // The tests and what only they use wait until the pull request is ready.
-    for (const step of after.slice(0, 3)) {
+    for (const step of after) {
       expect(step.if).toBe("${{ needs.changes.outputs.workspace != 'false' }}");
     }
-    for (const step of after.slice(3)) {
-      expect(step.if).toBe(
-        "${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}",
-      );
-    }
+    // The tests wait until the pull request is ready: they are the shards of
+    // `CI (SQLite) tests`, which `ci/sqlite-shards.test.ts` pins.
     // A draft passes here with the rest skipped; `Draft CI` keeps it from
     // merging, so no step of any job fails a draft for being one.
     const draftSteps = (all: Workflow["jobs"]) =>
