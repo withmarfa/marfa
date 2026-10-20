@@ -930,6 +930,7 @@ const invocations: Record<string, () => string[]> = {
   "keys update": () => ["--label", "l", ID],
   "config get": () => [],
   "config replace": () => ["--body", "{}"],
+  "config update": () => ["--body", "{}"],
   "types drift": () => [],
   "types prune": () => ["core.note"],
   export: () => [],

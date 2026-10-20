@@ -5,7 +5,7 @@ import { safeJsonParse } from "./json-utils.js";
 /** The settings key the instance configuration is held under. */
 export const INSTANCE_CONFIG_KEY = "instance_config";
 
-/** The instance configuration `GET/PUT /config` reads and writes,
+/** The instance configuration `GET /config`, `PUT /config` and `PATCH /config` read and write,
  *  or `null` when nothing has been written. */
 export async function readInstanceConfig(
   settings: SettingsStore,
