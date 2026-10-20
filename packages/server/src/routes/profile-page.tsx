@@ -88,7 +88,7 @@ export function ProfilePage(props: ProfilePageParams) {
       <div class="stack-24">
         <PageHeader
           title="Profile"
-          lede="Your name, email and picture. Apps see them only if you let them."
+          lede="Your name and email. Apps see them only if you let them."
         />
         <div data-notice="done" hidden>
           <Notice>

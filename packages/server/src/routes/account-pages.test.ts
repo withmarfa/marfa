@@ -38,7 +38,7 @@ describe("the Profile page", () => {
   it("shows the name and the email, each with a way to change it", () => {
     const text = visibleText(profile());
     expect(text).toContain(
-      "Your name, email and picture. Apps see them only if you let them.",
+      "Your name and email. Apps see them only if you let them.",
     );
     expect(text).toContain("Ada Lovelace");
     expect(text).toContain("ada@example.net. You sign in with it.");
