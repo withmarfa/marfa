@@ -1420,6 +1420,8 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
 
+## Document versions
+
 ### `folders/version-line`
 
 When a pull writes a Markdown file, a device MUST write `marfa_version` naming the item version rendered.
