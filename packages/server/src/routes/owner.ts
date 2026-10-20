@@ -315,7 +315,7 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser session signed in more than five minutes ago can end only its own sign-in.",
+    "Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
