@@ -47,7 +47,7 @@ const KEPT_AS: Record<string, string> = {
 };
 
 function refusal(source: string): string {
-  return `Must be a whole number that a 64-bit float keeps digit for digit, not ${source}, which it keeps as ${KEPT_AS[source] ?? "?"}. Send it as a string.`;
+  return `Must be a whole number that Marfa serves back with the same digits, not ${source}, which it serves as ${KEPT_AS[source] ?? "?"}. Send it as a string.`;
 }
 
 async function expectRefused(
@@ -174,6 +174,108 @@ describe("a whole number a float would change, at every door that writes item pr
     });
   });
 
+  describe.each(REFUSED)("%s in an edge and an extension", (source) => {
+    async function note(): Promise<string> {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "an end" } },
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { item: { id: string } }).item.id;
+    }
+
+    async function edgesOf(id: string): Promise<number> {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/items/${id}/edges?edge_type=about&limit=100`,
+        { key: ctx.workingKey },
+      );
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { data: unknown[] }).data.length;
+    }
+
+    it("POST /edges refuses it in the properties and creates no edge", async () => {
+      const [from, to] = [await note(), await note()];
+      const res = await send(
+        "POST",
+        "/edges",
+        `{"edge_type":"about","source_id":"${from}","target_id":"${to}","properties":${properties(source).nested}}`,
+      );
+      await expectRefused(res, "id64.list.1.deep", source);
+      expect(await edgesOf(from)).toBe(0);
+    });
+
+    it("PATCH /edges/{id} refuses it and leaves the edge as it was", async () => {
+      const [from, to] = [await note(), await note()];
+      const created = await request(ctx.app, "POST", "/edges", {
+        key: ctx.workingKey,
+        body: {
+          edge_type: "about",
+          source_id: from,
+          target_id: to,
+          properties: { note: "kept" },
+        },
+      });
+      const { edge } = (await created.json()) as {
+        edge: { id: string; version: number };
+      };
+      const res = await send(
+        "PATCH",
+        `/edges/${edge.id}`,
+        `{"version":${String(edge.version)},"properties":${properties(source).undeclared}}`,
+      );
+      await expectRefused(res, "id64", source);
+      const after = await request(ctx.app, "GET", `/edges/${edge.id}`, {
+        key: ctx.workingKey,
+      });
+      expect(
+        (
+          (await after.json()) as {
+            edge: { version: number; properties: unknown };
+          }
+        ).edge,
+      ).toMatchObject({ version: edge.version, properties: { note: "kept" } });
+    });
+
+    it("POST /edges/bulk refuses the whole batch and names the entry", async () => {
+      const [from, to, other] = [await note(), await note(), await note()];
+      const res = await send(
+        "POST",
+        "/edges/bulk",
+        `{"edges":[{"edge_type":"about","source_id":"${from}","target_id":"${to}"},{"edge_type":"about","source_id":"${from}","target_id":"${other}","properties":${properties(source).nested}}]}`,
+      );
+      const body = await expectRefused(res, "id64.list.1.deep", source);
+      expect(body.error.details?.index).toBe(1);
+      expect(await edgesOf(from)).toBe(0);
+    });
+
+    it("PUT /items/{id}/extensions/{namespace} refuses it in the data and stores nothing", async () => {
+      const id = await note();
+      const res = await send(
+        "PUT",
+        `/items/${id}/extensions/mine`,
+        properties(source).nested,
+      );
+      await expectRefused(res, "id64.list.1.deep", source);
+      const read = async () =>
+        await (
+          await request(ctx.app, "GET", `/items/${id}/extensions`, {
+            key: ctx.workingKey,
+          })
+        ).text();
+      expect(await read()).not.toContain("id64");
+      // The witness: the same door stores the data once it holds a safe number.
+      const stored = await send(
+        "PUT",
+        `/items/${id}/extensions/mine`,
+        '{"id64":9007199254740991}',
+      );
+      expect(stored.status, await stored.clone().text()).toBe(200);
+      expect(await read()).toContain("id64");
+    });
+  });
+
   describe("what is kept", () => {
     it.each([
       ["9007199254740991", 9007199254740991],
@@ -225,11 +327,19 @@ describe("the doors the guard holds", () => {
       readFileSync(new URL("../../../openapi.json", import.meta.url), "utf8"),
     ) as { paths: Record<string, Record<string, unknown>> };
     // Reaching a member named `properties` or `patch` is how a body carries a
-    // bag of properties; an edge's bag is the edge's own and is not judged.
+    // bag of properties, and a body that is an object of any members is a bag
+    // itself: an extension's data.
     const bags = (schema: unknown, at: string[] = []): string[][] => {
       if (typeof schema !== "object" || schema === null) return [];
       const node = schema as Record<string, unknown>;
       const found: string[][] = [];
+      if (
+        at.length === 0 &&
+        node.properties === undefined &&
+        typeof node.additionalProperties === "object"
+      ) {
+        found.push([]);
+      }
       for (const [name, child] of Object.entries(
         (node.properties ?? {}) as Record<string, unknown>,
       )) {
@@ -250,7 +360,6 @@ describe("the doors the guard holds", () => {
     };
     const published = new Set<string>();
     for (const [path, methods] of Object.entries(document.paths)) {
-      if (path.startsWith("/edges")) continue;
       for (const [method, operation] of Object.entries(methods)) {
         const schema = (
           inlineOpenApiRefs(operation, document) as {

@@ -206,7 +206,9 @@ const setExtensionRoute = createRoute({
         "application/json": {
           schema: z
             .record(z.string(), z.unknown())
-            .describe("The namespace's new data, as a JSON object."),
+            .describe(
+              "The namespace's new data, as a JSON object. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
+            ),
         },
       },
     },

@@ -18608,7 +18608,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": {},
-                "description": "The namespace's new data, as a JSON object."
+                "description": "The namespace's new data, as a JSON object. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string."
               }
             }
           }
@@ -20588,7 +20588,7 @@
                   "properties": {
                     "type": "object",
                     "additionalProperties": {},
-                    "description": "The edge's properties. Leave it out for none."
+                    "description": "The edge's properties. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string."
                   }
                 },
                 "required": [
@@ -21450,7 +21450,7 @@
                   "properties": {
                     "type": "object",
                     "additionalProperties": {},
-                    "description": "Properties to merge over the edge's. Required unless an end moves."
+                    "description": "Properties to merge over the edge's. Required unless an end moves. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string."
                   },
                   "source_id": {
                     "type": "string",
@@ -22356,7 +22356,7 @@
                         "properties": {
                           "type": "object",
                           "additionalProperties": {},
-                          "description": "The edge's properties. On an existing edge they merge over its own. Leave it out for none."
+                          "description": "The edge's properties. On an existing edge they merge over its own. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string."
                         },
                         "version": {
                           "type": "integer",

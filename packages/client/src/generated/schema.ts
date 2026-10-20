@@ -10866,7 +10866,7 @@ export interface operations {
                     target_id: string;
                     /** @description The identifier of the edge type, such as `parent-of`. */
                     edge_type: string;
-                    /** @description The edge's properties. Leave it out for none. */
+                    /** @description The edge's properties. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string. */
                     properties?: {
                         [key: string]: unknown;
                     };
@@ -11500,7 +11500,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description Properties to merge over the edge's. Required unless an end moves. */
+                    /** @description Properties to merge over the edge's. Required unless an end moves. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string. */
                     properties?: {
                         [key: string]: unknown;
                     };
@@ -11740,7 +11740,7 @@ export interface operations {
                         target_id: string;
                         /** @description The identifier of the edge type, such as `parent-of`. */
                         edge_type: string;
-                        /** @description The edge's properties. On an existing edge they merge over its own. Leave it out for none. */
+                        /** @description The edge's properties. On an existing edge they merge over its own. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string. */
                         properties?: {
                             [key: string]: unknown;
                         };

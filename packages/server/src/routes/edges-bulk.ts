@@ -93,7 +93,7 @@ const BulkEdgeInputItemSchema = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "The edge's properties. On an existing edge they merge over its own. Leave it out for none.",
+        "The edge's properties. On an existing edge they merge over its own. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
       ),
     /** The version this entry was based on, where the triple resolves an
      *  edge that already exists. Optional for the same reason it is optional

@@ -6,11 +6,12 @@ import {
 } from "@withmarfa/shared";
 
 /**
- * Where a write door carries the properties of an item in its body, as the
- * names of the members and indices that reach them, `*` for any index. A
- * door that writes item properties and is not here keeps `JSON.parse`'s
- * rounding of a whole number (`item-property-numbers.test.ts` holds this
- * list to the published bodies).
+ * Where a write door carries a bag of an item's values in its body (its
+ * properties, an edge's properties or an extension's data), as the names of
+ * the members and indices that reach them, `*` for any index, and none where
+ * the body is the bag. A door that writes such a bag and is not here keeps
+ * `JSON.parse`'s rounding of a whole number (`item-property-numbers.test.ts`
+ * holds this list to the published bodies).
  */
 export const ITEM_PROPERTY_BAGS: readonly {
   method: string;
@@ -24,6 +25,10 @@ export const ITEM_PROPERTY_BAGS: readonly {
   { method: "POST", path: "/items/bulk-actions", at: ["patch"] },
   { method: "POST", path: "/folders", at: ["defaults", "properties"] },
   { method: "PATCH", path: "/folders/{id}", at: ["defaults", "properties"] },
+  { method: "POST", path: "/edges", at: ["properties"] },
+  { method: "PATCH", path: "/edges/{id}", at: ["properties"] },
+  { method: "POST", path: "/edges/bulk", at: ["edges", "*", "properties"] },
+  { method: "PUT", path: "/items/{id}/extensions/{namespace}", at: [] },
 ];
 
 const DOORS = ITEM_PROPERTY_BAGS.map(({ method, path, at }) => ({
@@ -33,7 +38,7 @@ const DOORS = ITEM_PROPERTY_BAGS.map(({ method, path, at }) => ({
 }));
 
 /**
- * Refuses a write whose item properties hold a whole number that a 64-bit
+ * Refuses a write whose item properties, edge properties or extension data hold a whole number that a 64-bit
  * float cannot hold as written, before the door reads the body. `JSON.parse`
  * rounds such a number, so the door would store a value the caller did not
  * send (`items/property-number-exact`).
