@@ -48,8 +48,15 @@ const CONSOLE_PAGES = [
   "/auth/owner/passkeys",
 ];
 
-/** The value of two settings that hold a secret, which no console page may carry. */
+/**
+ * A secret setting's value, which no console page may carry. The setting is
+ * one the server does not contact at boot, so the object store the run
+ * attaches is reached as it is configured.
+ */
 const SECRET_SETTING = "sentinel-credential-value-0123456789abcdef";
+
+/** A setting that is not a secret and changes nothing the server does here. */
+const WITNESS_TIMEOUT = "7321";
 
 let server: FreshServer | undefined;
 let origin: string;
@@ -57,9 +64,8 @@ let origin: string;
 beforeAll(async () => {
   server = await bootFreshServer("console-pages", {
     TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-    S3_ACCESS_KEY_ID: SECRET_SETTING,
-    S3_SECRET_ACCESS_KEY: SECRET_SETTING,
-    S3_REGION: "witness-region",
+    ERROR_WEBHOOK_URL: `https://alerts.example.test/hook/${SECRET_SETTING}`,
+    MARFA_ERROR_WEBHOOK_TIMEOUT_MS: WITNESS_TIMEOUT,
   });
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -264,12 +270,14 @@ describe("the pages for activity and all settings", () => {
         expect(setting, setting.name).not.toHaveProperty("value");
     }
     const named = (name: string) => data.find((s) => s.name === name);
-    expect(named("S3_ACCESS_KEY_ID")).toMatchObject({
+    expect(named("ERROR_WEBHOOK_URL")).toMatchObject({
       secret: true,
       set: true,
     });
     expect(named("MARFA_AUTH_SECRET")).toMatchObject({ secret: true });
-    expect(named("S3_REGION")).toMatchObject({ secret: false });
+    expect(named("MARFA_ERROR_WEBHOOK_TIMEOUT_MS")).toMatchObject({
+      secret: false,
+    });
 
     const pages = [body];
     pages.push(await (await get("/", { ...BROWSER, cookie })).text());
@@ -290,7 +298,7 @@ describe("the pages for activity and all settings", () => {
       pages.push(await res.text());
     }
     // Witness: the page does carry a setting that is not a secret.
-    expect(pages.join("\n")).toContain("witness-region");
+    expect(pages.join("\n")).toContain(WITNESS_TIMEOUT);
     for (const page of pages) expect(page).not.toContain(SECRET_SETTING);
   });
 });

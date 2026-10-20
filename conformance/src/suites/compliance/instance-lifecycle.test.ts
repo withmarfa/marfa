@@ -1461,7 +1461,8 @@ describe("starting with a setting outside its rule", () => {
       "S3_ENDPOINT",
       "not a URL",
       "nope",
-      'S3_ENDPOINT must be an absolute http or https URL (got "nope")',
+      // An address can carry a credential, so the refusal gives no value.
+      "S3_ENDPOINT must be an absolute http or https URL",
     ],
   ];
 

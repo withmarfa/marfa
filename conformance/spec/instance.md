@@ -1232,9 +1232,9 @@ If a setting that does not hold a secret is outside its rule, then the server MU
 
 If a setting that holds a secret is outside its rule, then the server MUST NOT print its value anywhere in its refusal.
 
-**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `S3_SECRET_ACCESS_KEY`.
+**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `API_KEY_SALT`, `MARFA_AUTH_SECRET`, `S3_ENDPOINT` and `S3_SECRET_ACCESS_KEY`, since an address can carry a credential.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
+**Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
 
 ### `instance/settings-secret-padded`
 
