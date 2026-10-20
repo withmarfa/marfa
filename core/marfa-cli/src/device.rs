@@ -1197,7 +1197,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         source_id: source,
                         target_id: target,
                         edge_type: type_,
-                        properties: properties(&props)?,
+                        properties: item_properties(&props)?,
                         id,
                     };
                     output::queued_one(&core.create_edge(&draft)?, json)
@@ -1210,7 +1210,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     target,
                 } => {
                     let edit = EdgeEdit {
-                        properties: properties(&props)?,
+                        properties: item_properties(&props)?,
                         base_version: version,
                         source_id: source,
                         target_id: target,

@@ -250,12 +250,14 @@ fn a_url_is_trimmed_in_the_row_and_in_the_queued_write_as_the_server_keeps_it() 
 }
 
 #[test]
-fn a_url_the_standard_refuses_is_refused_and_one_it_takes_is_not() {
+fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
     let core = copy(&Scripted::start());
     for refused in [
         "not a url",
         "\u{85}https://example.com",
         "http://xn--é/",
+        "http://xn--",
+        "http://xn--%41",
         "   ",
     ] {
         let error = core
@@ -268,7 +270,7 @@ fn a_url_the_standard_refuses_is_refused_and_one_it_takes_is_not() {
         );
     }
     assert!(core.queue().unwrap().is_empty());
-    for taken in ["http://xn--", "https://xn--/", "http://a.b.c.xn--pokxncvks"] {
+    for taken in ["http://xn--mnchen-3ya.de", "https://xn--80ak6aa92e.com/"] {
         let queued = core
             .create_item(&bookmark(serde_json::json!({ "url": taken })))
             .unwrap();
@@ -305,7 +307,7 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
                 assert_eq!(
                     message,
                     format!(
-                        "{field}: Must be a whole number that a 64-bit float keeps digit for digit, not {value}, which it keeps as {kept_as}. Send it as a string."
+                        "{field}: Must be a whole number that Marfa serves back with the same digits, not {value}, which it serves as {kept_as}. Send it as a string."
                     )
                 );
             } else {
@@ -315,4 +317,40 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
         }
     }
     assert_eq!(core.queue().unwrap().len(), kept);
+}
+
+#[test]
+fn a_float_a_binding_hands_over_is_held_in_the_digits_the_server_serves() {
+    // The Node and Swift bindings hand a JavaScript number or a `Double` over
+    // as a float, never as an integer, so no whole number reaches the core as
+    // `1152921504606846976` from them.
+    let core = copy(&Scripted::start());
+    let float = |number: f64| serde_json::Number::from_f64(number).unwrap();
+    for (number, served) in [
+        (2f64.powi(60), "1152921504606847000"),
+        (-(2f64.powi(60)), "-1152921504606847000"),
+        (9_007_199_254_740_992.0, "9007199254740992"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+    ] {
+        let queued = core
+            .create_item(&bookmark(
+                serde_json::json!({ "n": float(number), "list": [float(number)] }),
+            ))
+            .unwrap();
+        let id = queued.item_id.clone().unwrap();
+        let row: String = core
+            .conn()
+            .unwrap()
+            .query_row("SELECT properties FROM items WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(row, format!(r#"{{"n":{served},"list":[{served}]}}"#));
+        // The witness that the text differs and the number does not: the write
+        // carries the float as it was given, which the server reads as the
+        // same number.
+        let payload = payload_of(&core, &queued);
+        assert_eq!(payload["properties"]["n"].as_f64(), Some(number));
+    }
 }

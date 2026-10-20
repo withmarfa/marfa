@@ -111,6 +111,7 @@ impl BodySource {
                 ));
             }
         };
+        marfa_core::refuse_inexact_integers(&text)?;
         serde_json::from_str(&text)
             .map_err(|error| CliError::Invalid(format!("the body is not JSON: {error}")))
     }
@@ -164,6 +165,7 @@ impl PropertyArgs {
 }
 
 pub fn object(text: &str, flag: &str) -> Result<Map<String, Value>, CliError> {
+    marfa_core::refuse_inexact_integers(text)?;
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => Ok(map),
         Ok(_) => Err(CliError::Invalid(format!("{flag} takes a JSON object"))),

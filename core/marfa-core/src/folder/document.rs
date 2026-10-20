@@ -6,6 +6,7 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 use crate::body::text::links;
 use crate::error::CoreError;
+use crate::integers;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
@@ -136,10 +137,13 @@ fn frontmatter(text: &str) -> Front<'_> {
                 let Some(key) = key.as_str() else {
                     return Front::Unreadable(format!("a key that is not text: {key:?}"));
                 };
-                let Some(value) = from_yaml(value) else {
-                    return Front::Unreadable(format!("{key} holds a value no item can"));
+                match from_yaml(value, &mut vec![key.to_string()]) {
+                    Ok(value) => fields.insert(key.to_string(), value),
+                    Err(Unholdable::Value) => {
+                        return Front::Unreadable(format!("{key} holds a value no item can"));
+                    }
+                    Err(Unholdable::Number(reason)) => return Front::Unreadable(reason),
                 };
-                fields.insert(key.to_string(), value);
             }
         }
         // A rule, a list or a setext heading, and a rule: Markdown.
@@ -303,7 +307,10 @@ pub fn read_map(text: &str) -> Result<Map<String, Value>, String> {
             .as_str()
             .ok_or_else(|| format!("a key that is not text: {key:?}"))?;
         let value =
-            from_yaml(value).ok_or_else(|| format!("{key} holds an alias or a bad value"))?;
+            from_yaml(value, &mut vec![key.to_string()]).map_err(|refused| match refused {
+                Unholdable::Value => format!("{key} holds an alias or a bad value"),
+                Unholdable::Number(reason) => reason,
+            })?;
         map.insert(key.to_string(), value);
     }
     Ok(map)
@@ -317,34 +324,74 @@ pub fn write_map(map: &Map<String, Value>) -> Result<String, CoreError> {
     Ok(format!("{}\n", rendered.trim_start_matches("---\n")))
 }
 
-/// A YAML value as an item's property. `None` where it cannot be carried as
-/// it is, which makes the frontmatter unreadable.
-fn from_yaml(value: &Yaml) -> Option<Value> {
-    Some(match value {
-        Yaml::Real(text) => match text.parse::<f64>() {
-            Ok(number) => serde_json::Number::from_f64(number)
-                .map(Value::Number)
-                // An infinity or a NaN: YAML has them and JSON does not, so
-                // the text is kept rather than the value being lost.
-                .unwrap_or_else(|| Value::String(text.clone())),
-            Err(_) => Value::String(text.clone()),
-        },
-        Yaml::Integer(number) => Value::Number((*number).into()),
+/// Why a YAML value is not an item's property.
+enum Unholdable {
+    /// An alias, a bad value, or a key that is not text.
+    Value,
+    /// A whole number whose digits the server would not serve back, with what
+    /// a write is told of it.
+    Number(String),
+}
+
+/// Whether `text`, a YAML number the loader could not hold in 64 bits, is a
+/// whole number: digits only, with an optional sign.
+fn whole_number(text: &str) -> Option<&str> {
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    (!digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| text.strip_prefix('+').unwrap_or(text))
+}
+
+/// A YAML value as an item's property, at `path` for a refusal to name it.
+fn from_yaml(value: &Yaml, path: &mut Vec<String>) -> Result<Value, Unholdable> {
+    Ok(match value {
+        Yaml::Real(text) => {
+            // The loader reads a whole number beyond 64 bits as a real, and the
+            // float it rounds to is no longer the number written.
+            if let Some(source) = whole_number(text)
+                && !integers::kept(source)
+            {
+                return Err(Unholdable::Number(integers::refusal_message(path, source)));
+            }
+            match text.parse::<f64>() {
+                Ok(number) => serde_json::Number::from_f64(number)
+                    .map(Value::Number)
+                    // An infinity or a NaN: YAML has them and JSON does not, so
+                    // the text is kept rather than the value being lost.
+                    .unwrap_or_else(|| Value::String(text.clone())),
+                Err(_) => Value::String(text.clone()),
+            }
+        }
+        Yaml::Integer(number) => {
+            let source = number.to_string();
+            if !integers::kept(&source) {
+                return Err(Unholdable::Number(integers::refusal_message(path, &source)));
+            }
+            Value::Number((*number).into())
+        }
         Yaml::String(text) => Value::String(text.clone()),
         Yaml::Boolean(yes) => Value::Bool(*yes),
         Yaml::Array(items) => {
-            Value::Array(items.iter().map(from_yaml).collect::<Option<Vec<_>>>()?)
+            let mut held = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                path.push(index.to_string());
+                held.push(from_yaml(item, path)?);
+                path.pop();
+            }
+            Value::Array(held)
         }
         Yaml::Hash(hash) => {
             let mut map = Map::new();
             for (key, value) in hash {
-                map.insert(key.as_str()?.to_string(), from_yaml(value)?);
+                let key = key.as_str().ok_or(Unholdable::Value)?;
+                path.push(key.to_string());
+                map.insert(key.to_string(), from_yaml(value, path)?);
+                path.pop();
             }
             Value::Object(map)
         }
         Yaml::Null => Value::Null,
         // The loader resolves every alias, so neither arrives from a document.
-        Yaml::Alias(_) | Yaml::BadValue => return None,
+        Yaml::Alias(_) | Yaml::BadValue => return Err(Unholdable::Value),
     })
 }
 
@@ -890,6 +937,38 @@ mod tests {
         let empty = read("---\n---\nbody\n");
         assert_eq!(empty.body, "body\n");
         assert!(empty.front.is_empty() && empty.unreadable.is_none());
+    }
+
+    #[test]
+    fn a_whole_number_a_float_would_change_holds_the_document() {
+        for number in [
+            "9999999999999999999",
+            "1152921504606846976",
+            "-1152921504606846976",
+        ] {
+            let document = read(&format!("---\nid: {number}\n---\nThe body.\n"));
+            let reason = document.unreadable.as_deref().unwrap_or_default();
+            assert!(
+                reason.starts_with("id: Must be a whole number that Marfa serves back"),
+                "{number} was kept in a file's frontmatter: {reason:?}"
+            );
+            assert!(reason.contains(number), "{reason}");
+        }
+        let nested = read("---\nouter:\n  - id: 9999999999999999999\n---\nThe body.\n");
+        assert!(
+            nested
+                .unreadable
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("outer.0.id: ")),
+            "{:?}",
+            nested.unreadable
+        );
+
+        for number in ["1152921504606847000", "9007199254740991", "12", "1.5e300"] {
+            let document = read(&format!("---\nid: {number}\n---\nThe body.\n"));
+            let witness = &document.unreadable;
+            assert!(witness.is_none(), "{number} was refused: {witness:?}");
+        }
     }
 
     #[test]

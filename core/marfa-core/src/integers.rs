@@ -35,17 +35,22 @@ pub(crate) fn kept(source: &str) -> bool {
 /// digits the float would be served as, where it has any.
 fn message(source: &str) -> String {
     let kept = served_as(source).map_or_else(String::new, |served| {
-        format!(", which it keeps as {served}")
+        format!(", which it serves as {served}")
     });
     format!(
-        "Must be a whole number that a 64-bit float keeps digit for digit, not {source}{kept}. Send it as a string."
+        "Must be a whole number that Marfa serves back with the same digits, not {source}{kept}. Send it as a string."
     )
+}
+
+/// What a write is told of the whole number `source` at `path`.
+pub(crate) fn refusal_message(path: &[String], source: &str) -> String {
+    format!("{}: {}", path.join("."), message(source))
 }
 
 fn refusal(path: &[String], source: &str) -> CoreError {
     CoreError::Validation {
         code: "invalid_properties".into(),
-        message: format!("{}: {}", path.join("."), message(source)),
+        message: refusal_message(path, source),
     }
 }
 
@@ -218,10 +223,10 @@ mod tests {
         ] {
             let expected = match kept_as {
                 Some(kept_as) => format!(
-                    "Must be a whole number that a 64-bit float keeps digit for digit, not {source}, which it keeps as {kept_as}. Send it as a string."
+                    "Must be a whole number that Marfa serves back with the same digits, not {source}, which it serves as {kept_as}. Send it as a string."
                 ),
                 None => format!(
-                    "Must be a whole number that a 64-bit float keeps digit for digit, not {source}. Send it as a string."
+                    "Must be a whole number that Marfa serves back with the same digits, not {source}. Send it as a string."
                 ),
             };
             assert_eq!(message(source), expected);
@@ -242,7 +247,7 @@ mod tests {
         assert_eq!(code, "invalid_properties");
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string."
+            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
         );
     }
 
@@ -263,7 +268,7 @@ mod tests {
         };
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string."
+            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
         );
     }
 

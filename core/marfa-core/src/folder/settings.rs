@@ -194,7 +194,8 @@ impl Settings {
         )?;
         named(
             "defaults.properties",
-            crate::validation::property_names(&self.defaults.properties),
+            crate::validation::property_names(&self.defaults.properties)
+                .and_then(|()| crate::integers::refuse_in_value(&self.defaults.properties)),
         )?;
         self.lists()?;
         if let Some(fraction) = self.removal_threshold.fraction
@@ -444,7 +445,10 @@ mod tests {
     fn a_setting_the_server_would_refuse_is_named_with_the_way_to_change_it() {
         let refused = |properties: Value| match read(properties) {
             Err(CoreError::Validation { code, message }) => {
-                assert_eq!(code, "validation_error");
+                assert!(
+                    matches!(code.as_str(), "validation_error" | "invalid_properties"),
+                    "{code}"
+                );
                 message
             }
             other => panic!("{other:?}"),
@@ -468,6 +472,10 @@ mod tests {
                 json!({ "defaults": { "properties": { "": 1 } } }),
                 "defaults.properties",
             ),
+            (
+                json!({ "defaults": { "properties": { "id": 1_152_921_504_606_846_976_i64 } } }),
+                "defaults.properties",
+            ),
         ] {
             let message = refused(properties);
             assert!(message.contains(setting), "{message}");
@@ -477,6 +485,12 @@ mod tests {
         assert!(
             read(json!({
                 "defaults": { "tags": ["a".repeat(128)], "properties": { "named": 1 } }
+            }))
+            .is_ok()
+        );
+        assert!(
+            read(json!({
+                "defaults": { "properties": { "id": 1_152_921_504_606_847_000_i64 } }
             }))
             .is_ok()
         );

@@ -1678,6 +1678,7 @@ impl Core {
         }
         let edit = &edit;
         refuse_edge_move(&conn, &held, edit)?;
+        integers::refuse_in_value(&edit.properties)?;
         if edit.is_empty() {
             return Ok(None);
         }
@@ -1843,6 +1844,9 @@ impl Core {
             return Err(CoreError::Invalid(
                 "an extension write names no namespace, and the namespace is where it goes".into(),
             ));
+        }
+        if kind == WriteKind::WriteExtension {
+            integers::refuse_inexact_integers(payload)?;
         }
         if !store::item_held(&conn, id)? {
             return Err(CoreError::NotFound {
@@ -2879,6 +2883,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<Qu
         validation::id("id", id)?;
     }
     refuse_self_loop(&draft.source_id, &draft.target_id)?;
+    integers::refuse_in_value(&draft.properties)?;
     if !store::takes_edge(
         tx,
         &draft.source_id,
@@ -3848,6 +3853,90 @@ mod tests {
         assert_eq!(queued(&core), 6);
         // What was queued reads back, so no later read of the queue fails.
         assert_eq!(core.queue().unwrap().len(), 6);
+    }
+
+    #[test]
+    fn a_whole_number_a_float_would_change_is_refused_in_an_edge_and_an_extension() {
+        let core = held_copy();
+        store::put_server_item(
+            &core.conn().unwrap(),
+            &store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z"),
+            Some(&[]),
+            &crate::catalog::Catalog::empty(),
+        )
+        .unwrap();
+        let edge = |properties: serde_json::Value| EdgeDraft {
+            source_id: "row".into(),
+            target_id: "other".into(),
+            edge_type: "references".into(),
+            properties: properties.as_object().unwrap().clone(),
+            ..Default::default()
+        };
+        let edge_edit = |properties: serde_json::Value| EdgeEdit {
+            properties: properties.as_object().unwrap().clone(),
+            base_version: Some(1),
+            ..EdgeEdit::default()
+        };
+        let refused = |result: Result<()>, where_: &str| match result {
+            Err(CoreError::Validation { code, message }) => {
+                assert_eq!(code, "invalid_properties", "{where_}");
+                assert!(
+                    message.contains("Must be a whole number that Marfa serves back"),
+                    "{where_}: {message}"
+                );
+            }
+            other => panic!("{where_} was not refused: {other:?}"),
+        };
+        refused(
+            core.create_edge(&edge(
+                serde_json::json!({ "weight": 9_999_999_999_999_999_999_u64 }),
+            ))
+            .map(|_| ()),
+            "a new edge",
+        );
+        refused(
+            core.create_edge(&edge(
+                serde_json::json!({ "n": { "list": [1_152_921_504_606_846_976_i64] } }),
+            ))
+            .map(|_| ()),
+            "a new edge, nested",
+        );
+        refused(
+            core.update_edge(
+                "link",
+                &edge_edit(serde_json::json!({ "weight": 1_152_921_504_606_846_976_i64 })),
+            )
+            .map(|_| ()),
+            "an edge edit",
+        );
+        for body in [
+            r#"{"weight":9999999999999999999}"#,
+            r#"{"a":{"b":[1152921504606846976]}}"#,
+        ] {
+            refused(
+                core.write_extension("row", "acme.x", body).map(|_| ()),
+                "an extension",
+            );
+        }
+        assert_eq!(core.queue().unwrap().len(), 0, "a refused write was queued");
+
+        // The witnesses: a number a float keeps, and a string of the digits.
+        core.create_edge(&edge(
+            serde_json::json!({ "weight": 1_152_921_504_606_847_000_i64 }),
+        ))
+        .unwrap();
+        core.update_edge(
+            "link",
+            &edge_edit(serde_json::json!({ "weight": "9999999999999999999" })),
+        )
+        .unwrap();
+        core.write_extension(
+            "row",
+            "acme.x",
+            r#"{"weight":1152921504606847000,"s":"9999999999999999999"}"#,
+        )
+        .unwrap();
+        assert_eq!(core.queue().unwrap().len(), 3);
     }
 
     #[test]
