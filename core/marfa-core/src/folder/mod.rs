@@ -125,8 +125,8 @@ fn kept_text(path: &Path, bytes: &[u8]) -> (String, Option<&'static str>) {
     }
 }
 
-/// Measured as the JSON string the text is sent in. The caller asks only for a
-/// text item: a file item's bytes go up outside the request, whatever its name.
+/// Measured as the JSON string the text is sent in; a file item's bytes go up
+/// outside the request.
 fn near_limit(key: &str, text: &str) -> Option<Flagged> {
     if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
         return None;
@@ -1307,59 +1307,6 @@ fn walk_at(
     }
 }
 
-/// The row a file belongs to: the one its identity names, else the one at its
-/// path.
-fn named_row<'a>(
-    mark: Option<&str>,
-    key: &str,
-    by_mark: &HashMap<&str, &'a state::Bound>,
-    by_path: &HashMap<&str, &'a state::Bound>,
-) -> Option<&'a state::Bound> {
-    match mark.and_then(|mark| by_mark.get(mark)) {
-        Some(row) => Some(*row),
-        None => by_path.get(key).copied(),
-    }
-}
-
-/// What a file is, decided before the claim from the folder's rows. The row at
-/// a path is not the file's when another walked file carries that row's
-/// identity: the claim gives the row's item to that file, and a new file at the
-/// path is new.
-struct Rows<'a> {
-    by_mark: HashMap<&'a str, &'a state::Bound>,
-    by_path: HashMap<&'a str, &'a state::Bound>,
-    carried: HashSet<String>,
-}
-
-impl<'a> Rows<'a> {
-    fn new(snapshot: &'a [state::Bound], marks: &HashMap<PathBuf, identity::Identity>) -> Self {
-        Rows {
-            by_mark: snapshot
-                .iter()
-                .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
-                .collect(),
-            by_path: snapshot
-                .iter()
-                .map(|row| (row.path.as_str(), row))
-                .collect(),
-            carried: marks.values().map(identity::Identity::key).collect(),
-        }
-    }
-
-    /// The row a file belongs to: the one its identity names, else the one at
-    /// its path unless a walked file carries that row's identity.
-    fn of(&self, mark: Option<&str>, key: &str) -> Option<&'a state::Bound> {
-        if let Some(row) = mark.and_then(|mark| self.by_mark.get(mark)) {
-            return Some(*row);
-        }
-        self.by_path.get(key).copied().filter(|row| {
-            !row.identity
-                .as_ref()
-                .is_some_and(|own| self.carried.contains(own))
-        })
-    }
-}
-
 fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, identity::Identity> {
     identity::resolve(paths.iter().map(|path| {
         (
@@ -1619,9 +1566,9 @@ impl Folder {
         // during the read differs from what is recorded.
         let mut stats: Vec<(String, String)> = Vec::new();
         let mut unchanged: HashSet<String> = HashSet::new();
-        // Resolved over every file, so a hard link shares no mark.
-        let marks = captured_identities(&paths, &walked);
         if !full {
+            // Resolved over every file, so a hard link shares no mark.
+            let marks = captured_identities(&paths, &walked);
             let conn = self.core.conn()?;
             for (path, key) in paths.iter().zip(&keys) {
                 if let Some(bound) = by_path.get(key.as_str())
@@ -1640,28 +1587,6 @@ impl Folder {
                 }
             }
         }
-        // A file is its item's bytes, never a document, whatever its name says.
-        // Known before the claim, from the rows.
-        let rows = Rows::new(&snapshot, &marks);
-        let kinds: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
-        let row_holds_bytes = |row: &state::Bound| -> Result<bool> {
-            if let Some(known) = kinds.borrow().get(row.item_id.as_str()) {
-                return Ok(*known);
-            }
-            let found = self.file_item(&row.item_id, &catalog)?;
-            kinds.borrow_mut().insert(row.item_id.clone(), found);
-            Ok(found)
-        };
-        let holds_bytes = |path: &Path, key: &str| -> Result<bool> {
-            if !is_document(path) {
-                return Ok(false);
-            }
-            let mark = marks.get(path).map(identity::Identity::key);
-            match rows.of(mark.as_deref(), key) {
-                Some(row) => row_holds_bytes(row),
-                None => Ok(false),
-            }
-        };
         // Markdown files first, so a file only an embed names is sent too.
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
         let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
@@ -1672,8 +1597,7 @@ impl Folder {
             let mut named: HashSet<String> = HashSet::new();
             for at in reading {
                 let (path, key) = (&paths[at], &keys[at]);
-                if !carries_frontmatter(path) || unchanged.contains(key) || holds_bytes(path, key)?
-                {
+                if !carries_frontmatter(path) || unchanged.contains(key) {
                     continue;
                 }
                 let Ok(bytes) = walked
@@ -1745,21 +1669,32 @@ impl Folder {
         report.waiting += waiting;
         report.unchanged += unchanged.len() - waiting;
         // A file already a file item is read whatever the search says, so one
-        // no longer embedded, or moved, is followed rather than journaled. A
-        // row at a document name is a file item's only where its item is one.
-        let bound = |path: &Path, key: &str| -> Result<bool> {
-            let mark = marks.get(path).map(identity::Identity::key);
-            match rows.of(mark.as_deref(), key) {
-                Some(row) => Ok(!is_document(Path::new(&row.path)) || row_holds_bytes(row)?),
-                None => Ok(false),
-            }
+        // no longer embedded, or moved, is followed rather than journaled.
+        let files_bound: Vec<&state::Bound> = snapshot
+            .iter()
+            .filter(|row| !is_document(Path::new(&row.path)))
+            .collect();
+        let bound_paths: HashSet<&str> = files_bound.iter().map(|row| row.path.as_str()).collect();
+        let bound_marks: HashSet<&str> = files_bound
+            .iter()
+            .filter_map(|row| row.identity.as_deref())
+            .collect();
+        let bound = |path: &Path, key: &str| {
+            bound_paths.contains(key)
+                || walked
+                    .opened
+                    .get(path)
+                    .map(|captured| captured.metadata.borrow().clone())
+                    .and_then(|metadata| identity::of(&metadata))
+                    .or_else(|| walked.unread.get(path).copied())
+                    .is_some_and(|found| bound_marks.contains(found.key().as_str()))
         };
         let mut held: Vec<PathBuf> = Vec::new();
         for (path, key) in paths.iter().zip(&keys) {
             if unchanged.contains(key) {
                 continue;
             }
-            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)?
+            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
             {
                 held.push(path.clone());
             } else {
@@ -1786,22 +1721,13 @@ impl Folder {
             let bytes = match early.remove(&path) {
                 Some(bytes) => bytes,
                 None => {
-                    // A file item's bytes settle at any name; a document is
-                    // read at once.
-                    let settle = match settle {
-                        Some(window)
-                            if !is_document(&path)
-                                || holds_bytes(&path, &identity::relative(&self.root, &path)?)? =>
-                        {
-                            Some(window)
-                        }
-                        _ => None,
-                    };
                     let read = walked
                         .opened
                         .get(&path)
                         .ok_or_else(|| std::io::Error::other("file not opened"))
-                        .and_then(|captured| captured.read_settled(settle));
+                        .and_then(|captured| {
+                            captured.read_settled(settle.filter(|_| !is_document(&path)))
+                        });
                     let bytes = match read {
                         Ok(Some(bytes)) => bytes,
                         Ok(None) => {
@@ -2553,7 +2479,10 @@ impl Folder {
             .map(|row| (row.item_id.as_str(), row))
             .collect();
         let named = |file: &Scanned| -> Option<&state::Bound> {
-            named_row(file.mark.as_deref(), &file.key, &by_mark, &by_path)
+            match file.mark.as_deref().and_then(|mark| by_mark.get(mark)) {
+                Some(bound) => Some(bound),
+                None => by_path.get(file.key.as_str()).copied(),
+            }
         };
 
         let mut contests: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -2827,13 +2756,11 @@ impl Folder {
         item_id: &str,
         catalog: &Catalog,
     ) -> Result<Option<Flagged>> {
-        Ok(
-            if file.unreadable.is_some() || self.file_item(item_id, catalog)? {
-                None
-            } else {
-                near_limit(&file.key, &file.text)
-            },
-        )
+        Ok(if self.file_item(item_id, catalog)? {
+            None
+        } else {
+            near_limit(&file.key, &file.text)
+        })
     }
 
     fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
@@ -6901,72 +6828,11 @@ mod tests {
             let report = folder.scan().unwrap();
             assert_eq!(report.renamed, 1, "{name}: {report:?}");
             assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
-            // The status measures the same: the note, not the file item.
-            let status = folder.status().unwrap();
-            let warned = |path: &str| {
-                let file = status.files.iter().find(|file| file.path == path);
-                file.unwrap_or_else(|| panic!("{path} has no status"))
-                    .warning
-                    .is_some()
-            };
-            assert!(warned("note.md"), "the status did not warn of the note");
-            assert!(!warned(name), "the status warned of {name}, a file item");
             // Edited at the document name, it still goes up as bytes.
             std::fs::write(dir.path().join(name), [bytes, b"."].concat()).unwrap();
             let report = folder.scan().unwrap();
             assert_eq!(report.updated, 1, "{name}: {report:?}");
             assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
-        }
-    }
-
-    fn status_of(folder: &Folder, path: &str) -> status::FileStatus {
-        folder
-            .status()
-            .unwrap()
-            .files
-            .into_iter()
-            .find(|file| file.path == path)
-            .unwrap_or_else(|| panic!("{path} has no status"))
-    }
-
-    #[test]
-    fn a_file_item_renamed_to_a_document_name_is_not_held_by_the_status() {
-        for (label, bytes, flag) in [
-            // Lone continuation bytes, none of them UTF-8.
-            ("bytes that are not UTF-8", vec![0x81; 4096], "encoding"),
-            (
-                "frontmatter that does not parse",
-                b"---\ntitle: [unclosed\n---\nbody\n".to_vec(),
-                "unreadable",
-            ),
-        ] {
-            let (dir, folder) = scanned_folder();
-            std::fs::write(dir.path().join("archive.bin"), &bytes).unwrap();
-            let first = folder.scan().unwrap();
-            assert_eq!(first.created, 1, "{label}: {first:?}");
-            let item_id = status_of(&folder, "archive.bin").item_id.unwrap();
-            std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
-            // The witness: a new document with the same bytes is held.
-            std::fs::write(dir.path().join("fresh.md"), &bytes).unwrap();
-            let fresh = status_of(&folder, "fresh.md");
-            assert_eq!((fresh.status, fresh.flag), ("held", Some(flag)), "{label}");
-
-            let before = status_of(&folder, "notes.md");
-            assert_eq!(
-                (before.status, before.flag),
-                ("waiting", None),
-                "{label}: the status holds a file item the scan takes by its identity"
-            );
-            let report = folder.scan().unwrap();
-            assert_eq!(report.renamed, 1, "{label}: {report:?}");
-            let flagged: Vec<&str> = report.flagged.iter().map(|f| f.path.as_str()).collect();
-            assert_eq!(flagged, ["fresh.md"], "{label}");
-            let after = status_of(&folder, "notes.md");
-            assert_eq!(after.item_id.as_deref(), Some(item_id.as_str()), "{label}");
-            assert!(
-                after.status != "held" && after.flag.is_none(),
-                "{label}: {after:?}"
-            );
         }
     }
 
@@ -7072,88 +6938,59 @@ mod tests {
     }
 
     #[test]
-    fn a_new_note_where_a_moved_file_item_was_is_not_made_to_wait() {
-        let (_dir, folder, file_item) =
-            note_where_a_file_item_was("---\ntitle: Fresh\n---\nwords\n");
-        let report = folder
-            .scan_watching(true, Duration::from_secs(3600))
-            .unwrap();
-        // The witness: the moved file item itself settles as any does.
-        assert_eq!(report.settling, ["moved.md"], "{report:?}");
-        assert_eq!(report.created, 1, "{report:?}");
-        let fresh = state::bound_at(&folder.core.conn().unwrap(), "notes.md")
-            .unwrap()
-            .unwrap();
-        assert_ne!(fresh.item_id, file_item);
-    }
+    fn a_note_that_takes_a_file_items_name_is_not_sent_as_its_bytes() {
+        // A watch pass settles first; a plain scan does not.
+        for watching in [true, false] {
+            let (dir, folder) = scanned_folder();
+            let bytes = vec![0x84; 4096];
+            std::fs::write(dir.path().join("archive.bin"), &bytes).unwrap();
+            std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 2);
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
+            assert_eq!(folder.scan().unwrap().renamed, 1);
+            let bound = |path: &str| state::bound_at(&folder.core.conn().unwrap(), path).unwrap();
+            let file_item = bound("notes.md").unwrap();
+            let note_item = bound("note.md").unwrap().item_id;
+            assert_ne!(file_item.item_id, note_item);
 
-    #[test]
-    fn a_file_item_at_a_document_name_waits_for_the_settle_window() {
-        let (dir, folder) = scanned_folder();
-        std::fs::write(dir.path().join("archive.bin"), [0x83; 4096]).unwrap();
-        assert_eq!(folder.scan().unwrap().created, 1);
-        std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
-        assert_eq!(folder.scan().unwrap().renamed, 1);
-        let hash = |folder: &Folder, path: &str| {
-            state::bound_at(&folder.core.conn().unwrap(), path)
-                .unwrap()
-                .map(|bound| bound.content_hash)
-        };
-        let before = hash(&folder, "notes.md").unwrap();
+            // The note's file, with its id line, written whole at another
+            // path and put over the file item's file: a new inode at
+            // `notes.md`. The note's old file is gone.
+            let note = format!("---\nmarfa_id: {note_item}\n---\na note\n").into_bytes();
+            std::fs::write(dir.path().join("note.tmp"), &note).unwrap();
+            std::fs::rename(dir.path().join("note.tmp"), dir.path().join("notes.md")).unwrap();
+            std::fs::remove_file(dir.path().join("note.md")).unwrap();
 
-        // Still being written: a copy in progress changes the file as it goes.
-        let growing = [0x81; 8192];
-        std::fs::write(dir.path().join("notes.md"), growing).unwrap();
-        // The witnesses: a file that is no document waits as well, and a note
-        // is read at once.
-        std::fs::write(dir.path().join("witness.bin"), [7, 7, 2]).unwrap();
-        std::fs::write(dir.path().join("fresh.md"), "a note\n").unwrap();
-        let report = folder
-            .scan_watching(true, Duration::from_secs(3600))
-            .unwrap();
-        let mut settling = report.settling.clone();
-        settling.sort_unstable();
-        assert_eq!(settling, ["notes.md", "witness.bin"], "{report:?}");
-        assert_eq!((report.created, report.updated), (1, 0), "{report:?}");
-        assert_eq!(hash(&folder, "notes.md").unwrap(), before);
-        assert!(hash(&folder, "witness.bin").is_none());
-
-        // Once it has settled, it is sent.
-        let report = folder.scan().unwrap();
-        assert_eq!(report.updated, 1, "{report:?}");
-        assert_eq!(hash(&folder, "notes.md").unwrap(), state::hash(&growing));
-    }
-
-    #[test]
-    fn a_file_item_at_a_document_name_embeds_nothing() {
-        let (dir, folder) = scanned_folder_with(
-            serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
-            None,
-        );
-        // The search holds notes and audio, so an image goes only where a
-        // note embeds it.
-        std::fs::write(dir.path().join("y.png"), [7, 7, 3]).unwrap();
-        std::fs::write(dir.path().join("x.png"), [7, 7, 4]).unwrap();
-        std::fs::write(dir.path().join("note.md"), "![[y.png]]\n").unwrap();
-        std::fs::write(dir.path().join("archive.mp3"), "![[x.png]]\n").unwrap();
-        let report = folder.scan().unwrap();
-        assert_eq!(report.created, 3, "{report:?}");
-        let bound = |folder: &Folder, path: &str| {
-            state::bound_at(&folder.core.conn().unwrap(), path)
-                .unwrap()
-                .is_some()
-        };
-        // The witness: a note's embed is sent.
-        assert!(bound(&folder, "y.png"), "the note's embed was not sent");
-        assert!(!bound(&folder, "x.png"));
-
-        std::fs::rename(dir.path().join("archive.mp3"), dir.path().join("notes.md")).unwrap();
-        let report = folder.scan().unwrap();
-        assert_eq!(report.renamed, 1, "{report:?}");
-        assert!(
-            !bound(&folder, "x.png"),
-            "an embed in a file item's bytes was followed"
-        );
+            let mut missing = 0;
+            if watching {
+                let report = folder
+                    .scan_watching(true, Duration::from_secs(3600))
+                    .unwrap();
+                missing += report.missing;
+            }
+            let report = folder.scan().unwrap();
+            missing += report.missing;
+            assert_eq!(missing, 0, "watching {watching}: the note went missing");
+            let now = bound("notes.md").unwrap();
+            assert_eq!(now.item_id, note_item, "watching {watching}: {report:?}");
+            assert!(now.held.is_none(), "watching {watching}: {:?}", now.held);
+            assert_eq!(
+                now.content_hash,
+                state::hash(&note),
+                "watching {watching}: the file is not the note"
+            );
+            let held = folder.core.get(&file_item.item_id).unwrap().unwrap();
+            let item = folder.core.get(&note_item).unwrap().unwrap();
+            let catalog = Catalog::load(&folder.core.conn().unwrap()).unwrap();
+            assert!(bytes_of(&held, &catalog).is_some());
+            assert_eq!(item.r#type, "core.note", "watching {watching}");
+            assert_ne!(item.state, ItemState::Trashed, "watching {watching}");
+            assert_eq!(
+                item.properties.get("body").and_then(Value::as_str),
+                Some("a note\n"),
+                "watching {watching}: the note lost its body"
+            );
+        }
     }
 
     #[test]

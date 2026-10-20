@@ -1390,7 +1390,7 @@ When a non-document file contains bytes that are not valid UTF-8 or include NUL,
 
 ### `folders/file-item-doc-name-sent`
 
-When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
+When the bytes of a non-empty file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
 
 **Reason:** the item's kind, not the file's name, says how its bytes are read, and a pull can place a file item at a document name. Frontmatter that does not parse and bytes that are not UTF-8 are then the file item's own content.
 
@@ -1398,19 +1398,11 @@ When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`, in an
 
 ### `folders/file-item-doc-name-unflagged`
 
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, a device MUST NOT flag it `unreadable` or `encoding`.
+When a scan finds a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item, a device MUST NOT flag the file `unreadable` or `encoding`.
 
 **Reason:** a flag holds a document whose text the device cannot read, and a file item's bytes are not read as text. A document not bound to a file item, a new file included, is still held by `folders/unreadable-yaml` and `folders/encoding-flag`.
 
 **Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
-
-### `folders/file-item-doc-name-status`
-
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, by its identity or by its path while no other file carries the identity of the binding at that path, a device MUST NOT report its status as `held`.
-
-**Reason:** the status reports what the next scan does, and a scan sends the bytes of a file item whatever they hold. A file renamed to a document name is still the file item's, so the status cannot decide by the name alone. A document not bound to a file item is still reported by `folders/status-encoding` and `folders/status-unreadable-document`.
-
-**Tests:** `device/folders-placement.test.ts › does not hold a file item renamed to a document name, whatever its bytes are (%s)`.
 
 ### `folders/file-item-doc-name-emptied`
 
@@ -1427,24 +1419,6 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 **Reason:** one file waiting for its bytes fails no pass. An emptied document is still sent as an empty document.
 
 **Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
-
-### `folders/file-item-doc-name-settle`
-
-When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item change within the folder watch’s 250-millisecond settle window, a device MUST defer reading its bytes until a later pass after it settles.
-
-**Reason:** the item decides how a file's bytes are read, so the settle window that `folders/binary-waits-for-settle` gives a file item applies at a document name as well. A document is read at once.
-
-**Tests:** `device/folders-placement.test.ts › sends a file item at a document name only once it stops changing`.
-
-### `folders/file-item-doc-name-no-embeds`
-
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, a device MUST NOT read embed syntax in its bytes.
-
-**Reason:** a file item's bytes are not a document's body, so a link in them names no attachment.
-
-**Tests:** `device/folders-placement.test.ts › follows no embed in a file item's bytes at a document name`.
-
-## Document versions
 
 ### `folders/version-line`
 
@@ -2162,7 +2136,7 @@ When an embedded file needs uploading, a device MUST leave its size-limit decisi
 
 When a file with a `.md` or `.markdown` extension in any letter case is not bound to a file item, a device MUST read its Markdown metadata.
 
-**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`, `device/folders-placement.test.ts › reads a new note written where a moved file item was as a note`, `device/folders-placement.test.ts › reads a new note written where a moved file item was at once, while the file item waits`.
+**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`, `device/folders-placement.test.ts › reads a new note written where a moved file item was as a note`.
 
 ### `folders/id-rename`
 
@@ -5548,13 +5522,13 @@ When a device reads a folder’s status, a device MUST report each reached file 
 
 ### `folders/status-unreadable-document`
 
-When the frontmatter of a new folder document that is not bound to a file item by its path or identity cannot be parsed or names a refused own field, a device MUST report its status as `held` with flag `unreadable` before binding it.
+When a new folder document’s frontmatter cannot be parsed or names a refused own field, a device MUST report its status as `held` with flag `unreadable` before binding it.
 
 **Tests:** `device/folders.test.ts › reports each file's status`.
 
 ### `folders/status-encoding`
 
-When a new folder document that is not bound to a file item by its path or identity is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
+When a new folder document is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 

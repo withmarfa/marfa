@@ -4,9 +4,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::edge_types::EdgeTypes;
-use super::{
-    Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state, text_of,
-};
+use super::{Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state};
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
@@ -132,8 +130,6 @@ impl Folder {
             .iter()
             .map(|row| (row.path.as_str(), row))
             .collect();
-        let marks = super::captured_identities(&paths, &walked);
-        let rows = super::Rows::new(&snapshot, &marks);
         let mut seen: HashSet<String> = HashSet::new();
         let mut files: Vec<FileStatus> = Vec::new();
         for held in named.flagged {
@@ -150,17 +146,6 @@ impl Folder {
                 .opened
                 .get(path)
                 .and_then(|captured| captured.read().ok());
-            // A file is its item's bytes, never a document, whatever its name
-            // says, as the scan finds out before its claim. An item is read
-            // only when the answer matters: for an unbound document, and for a
-            // text near the limit.
-            let mark = marks.get(path).map(identity::Identity::key);
-            let file_item = || -> Result<bool> {
-                match rows.of(mark.as_deref(), key) {
-                    Some(row) => self.file_item(&row.item_id, &catalog),
-                    None => Ok(false),
-                }
-            };
             let mut entry = match by_path.get(key.as_str()) {
                 Some(bound) => self.bound_status(
                     bound,
@@ -173,21 +158,13 @@ impl Folder {
                     key,
                     path,
                     bytes.as_deref(),
-                    &file_item,
                     (&settings, &catalog, &edge_types),
-                )?,
+                ),
             };
-            // Only a text item is sent in a request, and only text is measured.
-            let near = bytes
+            entry.warning = bytes
                 .as_deref()
-                .filter(|_| is_document(path))
-                .and_then(|bytes| text_of(bytes).ok())
-                .and_then(|text| near_limit(key, text));
-            if let Some(near) = near
-                && !file_item()?
-            {
-                entry.warning = Some(near.reason);
-            }
+                .and_then(|bytes| near_limit(key, &String::from_utf8_lossy(bytes)))
+                .map(|flagged| flagged.reason);
             files.push(entry);
         }
         for bound in &snapshot {
@@ -343,16 +320,13 @@ impl Folder {
         key: &str,
         path: &Path,
         bytes: Option<&[u8]>,
-        file_item: &dyn Fn() -> Result<bool>,
         (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
-    ) -> Result<FileStatus> {
+    ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
         if !is_document(path) && bytes.is_some_and(<[u8]>::is_empty) {
-            return Ok(entry.because("empty", "is empty, and a file item holds bytes"));
+            return entry.because("empty", "is empty, and a file item holds bytes");
         }
-        // Held by the scan before anything binds it, so read as the scan reads:
-        // a file item renamed to a document's name is claimed by its identity
-        // and sent as its bytes, whatever they hold.
+        // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
             && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
                 Err(reason) => Some(reason.to_string()),
@@ -363,18 +337,17 @@ impl Folder {
                         .or_else(|| super::fields::read(&read.front, edge_types).err())
                 }
             })
-            && !file_item()?
         {
             let flagged = Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
-            return Ok(FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason));
+            return FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason);
         }
         if self.pushes(path, settings, catalog) {
-            return Ok(waits(FileStatus::new(key, None, "waiting"), vec!["scan"]));
+            return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);
         }
-        Ok(entry.because(
+        entry.because(
             "search",
             "the search holds no type this file would be, so it is left alone",
-        ))
+        )
     }
 
     fn wait_of(&self, row: &QueuedWrite) -> &'static str {

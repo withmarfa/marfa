@@ -180,6 +180,10 @@ pub fn read(text: &str) -> Document {
     }
 }
 
+/// The longest value a `marfa_id` line can hold, in bytes, quotes included. An
+/// id is 36 bytes; a value past this is not one, and is not decoded.
+const ID_LIMIT: usize = 256;
+
 /// The `marfa_id` line of frontmatter that does not parse, read as text.
 pub fn id_line(text: &str) -> Option<String> {
     id_line_of(text.as_bytes())
@@ -187,7 +191,7 @@ pub fn id_line(text: &str) -> Option<String> {
 
 /// `id_line` over bytes that may not be text. It judges the frontmatter one
 /// line at a time and stops at its closing fence, so a large file that is not
-/// a document is not copied: a line is decoded only if it names the id.
+/// a document is not copied: a line is decoded only if it names an id.
 pub fn id_line_of(bytes: &[u8]) -> Option<String> {
     let bytes = bytes
         .strip_prefix(MARK.encode_utf8(&mut [0; 4]).as_bytes())
@@ -205,6 +209,10 @@ pub fn id_line_of(bytes: &[u8]) -> Option<String> {
             return None;
         }
         if let Some(id) = line.strip_prefix(b"marfa_id:") {
+            let id = id.trim_ascii();
+            if id.len() > ID_LIMIT {
+                return None;
+            }
             let id = String::from_utf8_lossy(id);
             return Some(id.trim().trim_matches(['"', '\'']).to_string())
                 .filter(|id| !id.is_empty());
@@ -417,11 +425,13 @@ mod tests {
         };
         // A line of any length is judged like any other.
         let padded_fence = format!("---\ntitle: x\n---{}\nmarfa_id: 02b\n", " ".repeat(1 << 17));
-        let long_id = format!("---\nmarfa_id: {}\n---\n", "a".repeat(1 << 17));
+        let long_id = format!("---\nmarfa_id: {}\n---\n", "a".repeat(ID_LIMIT));
+        let padded_id = format!("---\nmarfa_id: {}01a\n---\n", " ".repeat(1 << 17));
         let long_other = format!("---\ntitle: {}\nmarfa_id: 01a\n---\n", "a".repeat(1 << 17));
         for text in [
             padded_fence.as_str(),
             long_id.as_str(),
+            padded_id.as_str(),
             long_other.as_str(),
             "---\nmarfa_id: 01a\n---\nbody\n",
             "---\r\ntitle: x\r\nmarfa_id: \"01a\"\r\n---\r\n",
@@ -440,6 +450,31 @@ mod tests {
             assert_eq!(id_line_of(text.as_bytes()), by_text(text), "{shown:?}");
             assert_eq!(id_line(text), by_text(text), "{shown:?}");
         }
+    }
+
+    #[test]
+    fn a_value_longer_than_an_id_can_be_is_no_id() {
+        let line = |value: &[u8]| {
+            let mut bytes = b"---\nmarfa_id: ".to_vec();
+            bytes.extend(value);
+            bytes.extend(b"\n---\n");
+            id_line_of(&bytes)
+        };
+        // The witness: a value at the limit is read, quoted or not.
+        let longest = "a".repeat(ID_LIMIT);
+        assert_eq!(line(longest.as_bytes()), Some(longest.clone()));
+        assert_eq!(
+            line(format!("\"{}\"", &longest[2..]).as_bytes()),
+            Some(longest[2..].into())
+        );
+        // One past it is no id, as is a value of bytes that are not text, and
+        // a later id line is not read in its place.
+        assert_eq!(line("a".repeat(ID_LIMIT + 1).as_bytes()), None);
+        assert_eq!(line(&vec![0x80; 1 << 20]), None);
+        let mut twice = b"---\nmarfa_id: ".to_vec();
+        twice.extend(vec![b'a'; 1 << 20]);
+        twice.extend(b"\nmarfa_id: 01a\n---\n");
+        assert_eq!(id_line_of(&twice), None);
     }
 
     #[test]
