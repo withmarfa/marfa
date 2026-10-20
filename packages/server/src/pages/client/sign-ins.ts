@@ -24,6 +24,7 @@ const endHref = (id: string, revokeKeys: boolean): string =>
 /** How a change went, for the page to act on. */
 type Outcome =
   | { state: "done" }
+  | { state: "gone" }
   | { state: "cancelled" }
   | { state: "signed-out" }
   | { state: "refused"; text: string }
@@ -31,8 +32,8 @@ type Outcome =
 
 /**
  * Sends `send`, asking the person to confirm it's them if the sign-in is too
- * old. A sign-in or browser that is already gone is the state the person asked
- * for, so a `404` is done.
+ * old. A `404` means the sign-in or browser was already gone, which is the
+ * state the person asked for, but nothing was changed by this send.
  */
 async function sendChange(
   send: () => Promise<Response>,
@@ -42,13 +43,17 @@ async function sendChange(
   try {
     const response = await sendConfirmed(send, why, opener);
     if (response === null) return { state: "cancelled" };
-    if (response.ok || response.status === 404) return { state: "done" };
+    if (response.ok) return { state: "done" };
+    if (response.status === 404) return { state: "gone" };
     if (response.status === 401) return { state: "signed-out" };
     return { state: "refused", text: await refusalText(response) };
   } catch {
     return { state: "failed" };
   }
 }
+
+const finished = (outcome: Outcome): boolean =>
+  outcome.state === "done" || outcome.state === "gone";
 
 /** Shows an outcome that is not a success, in `slot` under `root`. Answers whether the page is on its way elsewhere. */
 function report(outcome: Outcome, root: ParentNode, slot: string): boolean {
@@ -96,7 +101,13 @@ async function disconnect(dialog: HTMLDialogElement): Promise<void> {
       dialog.dataset.confirmWhy ?? "Confirm it's you.",
       button,
     );
-    if (outcome.state === "done") {
+    // The keys are revoked in the same step as the sign-in, so a sign-in that
+    // was already gone revoked none of them.
+    if (outcome.state === "gone" && revokeKeys) {
+      showNotice(dialog, "disconnect-gone");
+      return;
+    }
+    if (finished(outcome)) {
       keepFlash(FLASH, `Disconnected ${name}`);
       leaving = true;
       location.assign(APPS_HREF);
@@ -136,7 +147,7 @@ async function signOutOne(
       page.dataset.signOutWhy ?? "Confirm it's you.",
       button,
     );
-    if (outcome.state === "done") {
+    if (finished(outcome)) {
       keepFlash(FLASH, `Signed out ${name}`);
       leaving = true;
       location.reload();
@@ -172,7 +183,7 @@ async function signOutOthers(dialog: HTMLDialogElement): Promise<void> {
       dialog.dataset.confirmWhy ?? "Confirm it's you.",
       button,
     );
-    if (outcome.state === "done") {
+    if (finished(outcome)) {
       keepFlash(FLASH, "Signed out the other browsers");
       leaving = true;
       location.reload();

@@ -37,7 +37,7 @@ import {
 import type { RegistryItem } from "../pages/registry.js";
 import { renderDocument } from "../pages/render.js";
 import { AccessView, type AccessViewProps } from "./access-view.js";
-import { KeyRows, type KeyListRow } from "./key-pages.js";
+import { KEYS_HREF, KeyRows, type KeyListRow } from "./key-pages.js";
 
 export const APPS_HREF = "/auth/owner/apps";
 
@@ -50,11 +50,19 @@ const APPS_TRAIL = { label: "Connected apps", href: APPS_HREF } as const;
 /** What the Kind select offers. */
 export type KindFilter = AppKind | "all";
 
+/** What each kind is called, in the Kind select, a row's line and the Kind detail. */
+export const KIND_WORDS: Record<AppKind, string> = {
+  app: "App",
+  web: "Web page",
+  cli: "Command line",
+};
+
 export const KIND_OPTIONS: readonly { value: KindFilter; label: string }[] = [
-  { value: "all", label: "All apps" },
-  { value: "app", label: "Apps" },
-  { value: "web", label: "Web pages" },
-  { value: "cli", label: "Command line" },
+  { value: "all", label: "All kinds" },
+  ...Object.entries(KIND_WORDS).map(([value, label]) => ({
+    value: value as AppKind,
+    label,
+  })),
 ];
 
 interface PageBase {
@@ -132,7 +140,7 @@ function emptyList(params: AppListParams) {
   return (
     <EmptyState
       title="None of this kind"
-      description="Choose All apps to see the rest."
+      description="Choose All kinds to see the rest."
     />
   );
 }
@@ -241,6 +249,12 @@ export interface AppPageParams extends PageBase {
 const keyCount = (n: number): string =>
   `${String(n)} ${n === 1 ? "key" : "keys"}`;
 
+/** What Disconnect ends, which is not the keys the app made unless you revoke them. */
+const endWords = (made: number): string =>
+  made === 0
+    ? "It loses access at once."
+    : "Its sign-in ends at once. The keys it made keep working unless you revoke them.";
+
 export function AppPage(props: AppPageParams) {
   const made = props.keys.length;
   return (
@@ -293,7 +307,7 @@ export function AppPage(props: AppPageParams) {
       <ClosingAction>
         <Row
           title={`Disconnect ${props.name}`}
-          description="It loses access at once. It asks again the next time it needs it."
+          description={`${endWords(made)} It asks again the next time it needs access.`}
           buttons={
             <Button kind="danger-quiet" opens="app-disconnect-dialog">
               Disconnect
@@ -304,7 +318,7 @@ export function AppPage(props: AppPageParams) {
       <Dialog
         id="app-disconnect-dialog"
         title={`Disconnect ${props.name}?`}
-        description="It loses access at once, and asks again the next time it needs it."
+        description={`${endWords(made)} It asks again the next time it needs access.`}
         data={{
           "app-id": props.id,
           "app-name": props.name,
@@ -340,6 +354,15 @@ export function AppPage(props: AppPageParams) {
               }
             />
           </RowGroup>
+        )}
+        {made > 0 && (
+          <div data-notice="disconnect-gone" hidden>
+            <Notice tone="error">
+              {props.name} was already disconnected, so its keys were not
+              revoked. You can revoke them from <a href={KEYS_HREF}>API keys</a>
+              .
+            </Notice>
+          </div>
         )}
         <div data-notice="disconnect-problem" hidden>
           <Notice tone="error">

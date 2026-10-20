@@ -1,7 +1,11 @@
-import type { ApiKey, Item } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type { AuditLogEntry, Storage } from "../storage/interface.js";
+import type {
+  AuditLogEntry,
+  Storage,
+  StoredApiKey,
+} from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
 import type { WrittenBy } from "./version-writer.js";
@@ -57,7 +61,7 @@ export async function listActiveAppGrants(storage: Storage): Promise<Item[]> {
 export async function keysMintedByApp(
   storage: Storage,
   opts: { clientId: string | undefined },
-): Promise<ApiKey[]> {
+): Promise<StoredApiKey[]> {
   if (!opts.clientId) return [];
   const keys = await storage.keys.list();
   return keys.filter((k) => k.oauth_client_id === opts.clientId);

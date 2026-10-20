@@ -182,7 +182,7 @@ describe("the connected apps list", () => {
     await seedOauthBearer(ctx, ["core.note:read"], { clientName: "Notes" });
     const { html } = await page("/auth/owner/apps?kind=cli");
     expect(visibleText(html)).toContain("None of this kind");
-    expect(visibleText(html)).toContain("Choose All apps to see the rest.");
+    expect(visibleText(html)).toContain("Choose All kinds to see the rest.");
     expect(rowsOf(html)).toEqual([]);
   });
 
@@ -312,6 +312,8 @@ describe("an app's own page", () => {
     );
     expect(without).toContain("Disconnect Reader?");
     expect(without).not.toContain("Also revoke the keys it made");
+    expect(without).toContain("It loses access at once.");
+    expect(without).not.toContain("keep working");
     await appKey(app.clientId, "one");
     await appKey(app.clientId, "two");
     const withKeys = visibleText(
@@ -319,6 +321,10 @@ describe("an app's own page", () => {
     );
     expect(withKeys).toContain("Also revoke the keys it made");
     expect(withKeys).toContain("2 keys would stop working");
+    expect(withKeys).toContain(
+      "Its sign-in ends at once. The keys it made keep working unless you revoke them.",
+    );
+    expect(withKeys).not.toContain("It loses access at once.");
   });
 
   it("is not there for an app that was disconnected or never was", async () => {

@@ -226,6 +226,46 @@ describe("Connected apps", () => {
     }
   });
 
+  inBrowser(
+    "says the keys were not revoked when the app was already disconnected, and is done when they were not asked for",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const app = await seedOauthBearer(ctx, ["core.note:read"], {
+          clientName: "Gone already",
+        });
+        const id = await appKey(app.clientId);
+        await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+        // Disconnected from another window while this page was open.
+        const elsewhere = await ctx.ownerRequest(
+          `/owner/sign-ins/${app.grantId}`,
+          { method: "DELETE" },
+        );
+        expect(elsewhere.status).toBe(200);
+        const dialog = await openDisconnect(page, "Gone already");
+        await dialog.getByRole("button", { name: "Disconnect" }).focus();
+        await page.keyboard.press("Enter");
+        const notice = dialog.getByText("was already disconnected");
+        await notice.waitFor();
+        expect(await dialog.innerText()).toContain("its keys were not revoked");
+        await dialog.getByRole("link", { name: "API keys" }).waitFor();
+        expect(page.url()).toBe(`${origin}/auth/owner/apps/${app.grantId}`);
+        expect(await ctx.storage.keys.get(id)).not.toBeNull();
+        // The witness: with the switch off the same 404 is the state asked for.
+        await dialog
+          .getByRole("switch", { name: "Also revoke the keys it made" })
+          .focus();
+        await page.keyboard.press("Space");
+        await dialog.getByRole("button", { name: "Disconnect" }).focus();
+        await page.keyboard.press("Enter");
+        await page.waitForURL(`${origin}/auth/owner/apps`);
+        await page.getByText("Disconnected Gone already").waitFor();
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
   inBrowser("finds an app by name with the keyboard alone", async () => {
     const { page, context } = await open();
     try {

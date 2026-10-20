@@ -12,8 +12,10 @@ import {
   type AppKind,
   type ConnectedApp,
 } from "../auth/connected-apps.js";
-import { listActiveAppGrants } from "../auth/grant-lifecycle.js";
-import { keysInReach } from "../auth/key-reach.js";
+import {
+  keysMintedByApp,
+  listActiveAppGrants,
+} from "../auth/grant-lifecycle.js";
 import { ownersLiveApp } from "../auth/sign-ins.js";
 import * as clock from "../clock.js";
 import { readInstanceName } from "../instance-name.js";
@@ -32,6 +34,7 @@ import { describeHeld } from "./access-model.js";
 import { readAccessWords } from "./access-view.js";
 import {
   APPS_HREF,
+  KIND_WORDS,
   appHref,
   renderAppListPage,
   renderAppPage,
@@ -77,13 +80,12 @@ const hostOf = (origin: string): string => {
 
 /** What kind of app it is, for a row's line: "Web page at reader.example". */
 function kindWords(app: ConnectedApp): string {
-  if (app.kind === "cli") return "Command line";
-  if (app.kind === "app") return "App";
+  if (app.kind !== "web") return KIND_WORDS[app.kind];
   const [first, ...more] = app.origins.map(hostOf);
-  if (first === undefined) return "Web page";
+  if (first === undefined) return KIND_WORDS.web;
   return more.length === 0
-    ? `Web page at ${first}`
-    : `Web page at ${first} and ${String(more.length)} more`;
+    ? `${KIND_WORDS.web} at ${first}`
+    : `${KIND_WORDS.web} at ${first} and ${String(more.length)} more`;
 }
 
 export function appRoutes(storage: Storage) {
@@ -159,12 +161,7 @@ export function appRoutes(storage: Storage) {
     const details: AppDetail[] = [
       {
         title: "Kind",
-        value:
-          app.kind === "cli"
-            ? "Command line"
-            : app.kind === "web"
-              ? "Web page"
-              : "App",
+        value: KIND_WORDS[app.kind],
       },
       ...(app.origins.length > 0
         ? [
@@ -180,13 +177,13 @@ export function appRoutes(storage: Storage) {
         value: lastUsedValue(timeOf(app.lastUsedAt), now),
       },
     ];
-    const made = (await keysInReach(storage, c).list())
-      .filter((key) => key.oauth_client_id === app.clientId)
-      .sort(
-        (a, b) =>
-          b.created_at.localeCompare(a.created_at) ||
-          a.label.localeCompare(b.label),
-      );
+    const made = (
+      await keysMintedByApp(storage, { clientId: app.clientId })
+    ).sort(
+      (a, b) =>
+        b.created_at.localeCompare(a.created_at) ||
+        a.label.localeCompare(b.label),
+    );
     const siblings: RegistryItem[] = (await listConnectedApps(storage, owner))
       .sort((a, b) => a.name.localeCompare(b.name))
       .slice(0, MAX_SIBLINGS)
