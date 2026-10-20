@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { buildAccess, CHOOSE_TYPES, resolveSelection } from "./access-model.js";
+import {
+  buildAccess,
+  CHOOSE_TYPES,
+  describeHeld,
+  resolveSelection,
+} from "./access-model.js";
 import { grantCoversScope, parseScope } from "@withmarfa/shared";
-import type { ParsedScope } from "@withmarfa/shared";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 
 const scope = (literal: string): ParsedScope => {
   const parsed = parseScope(literal);
@@ -851,5 +856,102 @@ describe("buildAccess", () => {
         "*:read",
       ]);
     });
+  });
+});
+
+describe("types that share a label", () => {
+  const bundles: PermissionBundle[] = [];
+  const chooseTypes = [
+    { id: "core.note", label: "Note" },
+    { id: "core.task", label: "Task" },
+    { id: "aic.ticket.task", label: "Task" },
+  ];
+
+  it("gives each type of a shared label its identifier under the label, and a type with a label of its own none", () => {
+    const model = buildAccess({
+      scopes: [scope("*:read"), scope("*:write")],
+      held: undefined,
+      chooseTypes,
+      bundles,
+    });
+    expect(
+      model.data[0]?.choose?.rows.map((r) => [r.title, r.description]),
+    ).toEqual([
+      ["Note", undefined],
+      ["Task", "core.task"],
+      ["Task", "aic.ticket.task"],
+    ]);
+  });
+
+  it("keeps what a row already says beside the identifier", () => {
+    const model = buildAccess({
+      scopes: [scope("*:read"), scope("*:write")],
+      held: ["core.task:read"],
+      chooseTypes,
+      bundles,
+    });
+    expect(
+      model.data[0]?.choose?.rows.map((r) => [r.title, r.description]),
+    ).toEqual([
+      ["Note", undefined],
+      ["Task", "core.task. Now: Read only"],
+      ["Task", "aic.ticket.task"],
+    ]);
+  });
+
+  it("names the identifier on the rows for a request that names both types", () => {
+    const model = buildAccess({
+      scopes: [scope("core.task:read"), scope("aic.ticket.task:write")],
+      held: undefined,
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles,
+    });
+    expect(model.data.map((r) => [r.title, r.description])).toEqual([
+      ["Task", "core.task"],
+      ["Task", "aic.ticket.task"],
+    ]);
+  });
+
+  it("leaves a type alone when only one row of that label is on the page, even where the app holds and asks for it", () => {
+    const model = buildAccess({
+      scopes: [scope("core.task:write")],
+      held: ["core.task:read"],
+      bundles,
+    });
+    expect(model.data.map((r) => r.description)).toEqual(["Now: Read only"]);
+    expect(model.held).toEqual([{ title: "Task", value: "Read only" }]);
+  });
+
+  it("tells apart what is held, in the box on the approval pages and on the pages that only show it", () => {
+    const words = { typeLabels: { "aic.ticket.task": "Task" } };
+    const held = describeHeld(
+      ["core.task:read", "aic.ticket.task:write", "core.note:read"],
+      words,
+    );
+    expect(held.data).toEqual([
+      { title: "Task", value: "Read only", description: "core.task" },
+      {
+        title: "Task",
+        value: "Read and edit",
+        description: "aic.ticket.task",
+      },
+      { title: "Note", value: "Read only" },
+    ]);
+    expect(held.rows).toEqual(held.data);
+  });
+
+  it("tells a held type from a type the request offers when they share a label", () => {
+    const model = buildAccess({
+      scopes: [scope("aic.ticket.task:read")],
+      held: ["core.task:read"],
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles,
+    });
+    expect(model.held).toEqual([
+      { title: "Task", value: "Read only", description: "core.task" },
+    ]);
+    expect(model.data.map((r) => [r.title, r.description])).toEqual([
+      ["Task", "aic.ticket.task"],
+    ]);
   });
 });

@@ -1431,6 +1431,22 @@ While an app holds scopes for item types and a request names all data, when a pe
 
 **Tests:** `compliance/approval-screens.test.ts › keeps the types an app holds when it asks again for all data, and shows them as held`, `› keeps the types an app holds on the device approval page when it asks again for all data`.
 
+### `keys-and-oauth/approval-same-label`
+
+When the consent screen or the device approval page shows two or more item types under the same label, the server MUST show the identifier of each of those types under its label.
+
+**Reason:** An instance can register a type labeled like a shipped one, such as `core.task` and `aic.ticket.task` both labeled "Task". Rows that read alike give the person nothing to choose between.
+
+**Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`.
+
+### `keys-and-oauth/approval-own-label`
+
+When the consent screen or the device approval page shows an item type under a label that no other type on the page shares, the server MUST NOT show the identifier of that type under its label.
+
+**Reason:** A label that is its own needs no identifier, so the page stays as short as it was.
+
+**Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`, `› shows no identifier where only one type of a label is on the page, though the instance has two`.
+
 ### `keys-and-oauth/access-words`
 
 The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".

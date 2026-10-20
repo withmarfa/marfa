@@ -1114,6 +1114,59 @@ describe("Approve access in a browser, choosing types in place of all data", () 
   );
 });
 
+describe("Approve access in a browser, choosing between types that share a label", () => {
+  inWorld();
+
+  inBrowser(
+    "tells two types called Task apart by identifier, and finds a type by it",
+    async () => {
+      await ctx.storage.types.create({
+        id: "aic.ticket.task",
+        label: "Task",
+        version: 1,
+        fields: {},
+      });
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Same Label App", "*:read *:write");
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        const tasks = b.page.locator("[data-type-row]", {
+          has: b.page.locator(".rt", { hasText: /^Task$/ }),
+        });
+        expect(await tasks.locator(".rd").allTextContents()).toEqual([
+          "core.task",
+          "aic.ticket.task",
+        ]);
+        // A type whose label is its own says nothing more.
+        const notes = b.page.locator("[data-type-row]", {
+          has: b.page.locator(".rt", { hasText: /^Note$/ }),
+        });
+        expect(await notes.locator(".rd").count()).toBe(0);
+
+        const search = b.page.getByRole("searchbox", { name: "Search types" });
+        await search.fill("ticket");
+        expect(
+          await b.page
+            .locator("[data-type-row]:not([hidden]) .rd")
+            .allTextContents(),
+        ).toEqual(["aic.ticket.task"]);
+        await search.fill("core.note");
+        expect(
+          await b.page
+            .locator("[data-type-row]:not([hidden]) .rt")
+            .allTextContents(),
+        ).toEqual(["Note"]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+});
+
 interface DeviceAsk {
   app: Registered;
   userCode: string;

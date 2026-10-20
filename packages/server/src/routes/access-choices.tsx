@@ -112,7 +112,7 @@ function TypeList(props: { choose: ChooseTypes }) {
       {rows.map((row) => (
         <LevelControl
           row={row}
-          search={`${row.title} ${row.noun}`.toLowerCase()}
+          search={`${row.title} ${row.noun} ${row.type ?? ""}`.toLowerCase()}
         />
       ))}
       {many && (
@@ -195,7 +195,11 @@ export function AccessChoices(props: AccessChoicesProps) {
             description={model.summaries.held}
           >
             {model.held.map((row) => (
-              <Row title={row.title} value={row.value} />
+              <Row
+                title={row.title}
+                description={row.description}
+                value={row.value}
+              />
             ))}
             <RowNote>
               Approving never lowers this. To end its access, use Connected

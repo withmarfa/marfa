@@ -1546,3 +1546,58 @@ describe("what the approval pages keep when an app holds types and asks again fo
     ]);
   });
 });
+
+describe("what the approval pages say of item types that share a label", () => {
+  const booted = bootFor("approval-types-same-label");
+  beforeAll(async () => {
+    await booted.up();
+    // The shipped `core.task` is labeled "Task" too.
+    const registered = await fetch(`${server.apiUrl}/types`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${server.workingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        id: "aic.ticket.task",
+        label: "Task",
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status, await registered.clone().text()).toBe(201);
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  /** The rows named `label`, each with what a person reads under the label. */
+  const linesUnder = (html: string, label: string): string[] =>
+    readRows(html)
+      .filter((r) => r.control.label === label)
+      .map((r) =>
+        r.text.slice(r.text.lastIndexOf(label) + label.length).trim(),
+      );
+
+  it("shows each of them with its identifier, and a type with a label of its own without one, on both pages", async () => {
+    for (const [page, html] of await bothPages(ALL)) {
+      expect(linesUnder(html, "Task"), page).toEqual([
+        "core.task",
+        "aic.ticket.task",
+      ]);
+      expect(
+        readRows(html)
+          .filter((r) => r.control.label === "Task")
+          .map((r) => r.control.options.at(-1)?.value),
+        page,
+      ).toEqual(["core.task:write", "aic.ticket.task:write"]);
+      expect(linesUnder(html, "Note"), page).toEqual([""]);
+    }
+  });
+
+  it("shows no identifier where only one type of a label is on the page, though the instance has two", async () => {
+    // The witness for the test above: the same label, asked of one type alone.
+    const one = await consentScreen(
+      await register(ALL),
+      "core.task:read core.note:read",
+    );
+    expect(linesUnder(one.html, "Task")).toEqual([""]);
+  });
+});

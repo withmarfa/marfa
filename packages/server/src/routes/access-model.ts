@@ -118,6 +118,8 @@ export interface LevelRow {
   selected: string;
   /** Present on a row for all data when the person may choose types instead. */
   choose?: ChooseTypes;
+  /** The item type a row chosen in place of all data is for, which a search of the list matches. */
+  type?: string;
 }
 
 /** One thing the app asks for that is simply on or off. */
@@ -135,6 +137,8 @@ export interface SwitchRow {
 /** One thing the app holds, at the level it holds it. */
 export interface HeldRow {
   title: string;
+  /** Set where other rows share the title: what this one stands for. */
+  description?: string;
   value: string;
 }
 
@@ -305,7 +309,9 @@ export function buildAccess(given: AccessInput): AccessModel {
     ...given,
     typeLabels: {
       ...Object.fromEntries(
-        (given.chooseTypes ?? []).map((type) => [type.id, type.label]),
+        (given.chooseTypes ?? []).flatMap((type) =>
+          type.label === undefined ? [] : [[type.id, type.label]],
+        ),
       ),
       ...given.typeLabels,
     },
@@ -340,6 +346,8 @@ export function buildAccess(given: AccessInput): AccessModel {
 
   let counter = 0;
   const nextId = (): string => `access-${String(++counter)}`;
+  /** The pattern each level row stands for, by the row's id. */
+  const patternOf = new Map<string, string>();
 
   const rowFor = (ask: Ask, name?: "types"): LevelRow | null => {
     const floor = levelHeld(held, ask.scope.typePattern);
@@ -366,9 +374,11 @@ export function buildAccess(given: AccessInput): AccessModel {
     const pick = wanted ?? options[0];
     const { title, noun, description } = describe(ask.scope, input);
     const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}`;
+    const id = nextId();
+    patternOf.set(id, ask.scope.typePattern);
     return {
       kind: "level",
-      id: nextId(),
+      id,
       ...(name === undefined ? {} : { name }),
       title,
       noun,
@@ -399,14 +409,13 @@ export function buildAccess(given: AccessInput): AccessModel {
         },
         "types",
       );
-      if (row) rows.push(row);
+      if (row) rows.push({ ...row, type: type.id });
     }
     return rows.length > 0 ? { value: CHOOSE_TYPES, rows } : undefined;
   };
 
   const data: LevelRow[] = [];
   const profile: (LevelRow | SwitchRow)[] = [];
-  const patternOf = new Map<string, string>();
   let offersEdit = false;
   for (const ask of asks.values()) {
     const row = rowFor(ask);
@@ -416,7 +425,6 @@ export function buildAccess(given: AccessInput): AccessModel {
       row.choose = choose;
       row.options.push({ value: CHOOSE_TYPES, label: CHOOSE_TYPES_LABEL });
     }
-    patternOf.set(row.id, ask.scope.typePattern);
     if (
       (ask.scope.kind === "type" || ask.scope.kind === "content") &&
       row.options.some((option) => option.label === LEVEL_LABELS.write)
@@ -425,17 +433,6 @@ export function buildAccess(given: AccessInput): AccessModel {
     if (ask.scope.kind === "profile") profile.push(row);
     else data.push(row);
   }
-  // Two things that read alike are told apart by what they are called in
-  // the registry, so no control is left unread.
-  const seen = new Map<string, number>();
-  for (const row of [...data, ...profile])
-    seen.set(row.title, (seen.get(row.title) ?? 0) + 1);
-  for (const row of [...data, ...profile]) {
-    if (row.kind !== "level" || (seen.get(row.title) ?? 0) < 2) continue;
-    const pattern = patternOf.get(row.id);
-    row.description = [pattern, row.description].filter(Boolean).join(". ");
-  }
-
   const powers = new Map<string, SwitchRow[]>();
   for (const scope of switches) {
     const literal = scopeLiteral(scope);
@@ -474,7 +471,17 @@ export function buildAccess(given: AccessInput): AccessModel {
       ),
     );
 
-  const heldList = describeHeld(held, input);
+  // The rows a person reads together, held and offered, are told apart by
+  // what they stand for wherever they read alike.
+  const offered = [...data, ...profile].flatMap((row) =>
+    row.kind === "level" ? [row, ...(row.choose?.rows ?? [])] : [],
+  );
+  const heldList = describeHeld(
+    held,
+    input,
+    {},
+    offered.map((row) => ({ row, pattern: patternOf.get(row.id) ?? "" })),
+  );
   const empty = {
     data: returning ? "Nothing new turned on" : "No access to your data",
     profile: returning ? "Nothing new turned on" : "No access to your profile",
@@ -546,6 +553,32 @@ export interface HeldAccess {
   summaries: { data: string; profile: string; powers: string };
 }
 
+/** A row of a page beside the pattern it stands for. */
+interface Named {
+  row: { title: string; description?: string };
+  pattern: string;
+}
+
+/**
+ * Where rows a person reads together share a title but stand for different
+ * things, put what each stands for under its title: two item types can share
+ * a label, and a list of "Task" and "Task" leaves the person nothing to tell
+ * them by. A row whose title is its own is left as it is. Call it once for a
+ * page's rows, since a second call would name them twice.
+ */
+function tellApart(named: readonly Named[]): void {
+  const patterns = new Map<string, Set<string>>();
+  for (const { row, pattern } of named)
+    patterns.set(
+      row.title,
+      (patterns.get(row.title) ?? new Set()).add(pattern),
+    );
+  for (const { row, pattern } of named) {
+    if ((patterns.get(row.title)?.size ?? 0) < 2) continue;
+    row.description = [pattern, row.description].filter(Boolean).join(". ");
+  }
+}
+
 /**
  * What a key holds that a scope cannot say: a thing held at no access beside
  * a wider grant, and an extension namespace, which no scope names.
@@ -564,13 +597,18 @@ export interface HeldExtras {
  * Describe the scopes a credential holds: an app's consent or a key's
  * permissions read as scopes ({@link scopesOfKey}). The mechanisms
  * (`openid`, `offline_access`) are no access and are left out.
+ *
+ * `alongside` is the rows the same page offers, so that a held row and an
+ * offered one that read alike are told apart too.
  */
 export function describeHeld(
   held: readonly string[],
   words: Words,
   extras: HeldExtras = {},
+  alongside: readonly Named[] = [],
 ): HeldAccess {
   const rows = new Map<string, HeldRow>();
+  const named: Named[] = [];
   const data: HeldRow[] = [];
   const profile: HeldRow[] = [];
   const powers: HeldPower[] = [];
@@ -598,8 +636,9 @@ export function describeHeld(
     const { title, noun } = describe(scope, words);
     if (isLevelKind(scope)) {
       const level = levelHeld(held, scope.typePattern);
-      const row = { title, value: LEVEL_LABELS[level] };
+      const row: HeldRow = { title, value: LEVEL_LABELS[level] };
       rows.set(key, row);
+      named.push({ row, pattern: scope.typePattern });
       levels.push({ noun, level });
       if (scope.kind === "profile") {
         profile.push(row);
@@ -634,8 +673,9 @@ export function describeHeld(
   const noAccess = { data: [] as string[], profile: [] as string[] };
   for (const [key, { scope, profile: isProfile }] of denied) {
     const { title, noun } = describe(scope, words);
-    const row = { title, value: LEVEL_LABELS.none };
+    const row: HeldRow = { title, value: LEVEL_LABELS.none };
     rows.set(key, row);
+    named.push({ row, pattern: scope.typePattern });
     (isProfile ? profile : data).push(row);
     (isProfile ? noAccess.profile : noAccess.data).push(noun);
   }
@@ -649,6 +689,7 @@ export function describeHeld(
       dataLevels.push({ noun: namespace, level });
     }
   }
+  tellApart([...named, ...alongside]);
   const none = {
     data: "No access to your data",
     profile: "No access to your profile",

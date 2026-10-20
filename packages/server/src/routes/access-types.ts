@@ -1,13 +1,12 @@
 import { parseScope } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
-import { humanizeType } from "./scope-copy.js";
 
 /** One item type a person may choose when an app asks for all data. */
 export interface ChoosableType {
   id: string;
-  /** The type's own singular label. */
-  label: string;
+  /** The type's own singular label, where the registry holds one. */
+  label?: string;
 }
 
 /** The roots whose types are the platform's own bookkeeping, not the person's data. */
@@ -35,10 +34,7 @@ export async function resolveChoosableTypes(
         !NOT_DATA.has(type.id.split(".", 1)[0] ?? "") &&
         (allowed === undefined || allowed.has(`${type.id}:read`)),
     )
-    .map((type) => ({
-      id: type.id,
-      label: type.label ?? humanizeType(type.id),
-    }))
+    .map((type) => ({ id: type.id, label: type.label }))
     .sort(
       (a, b) =>
         Number(!a.id.startsWith("core.")) - Number(!b.id.startsWith("core.")) ||
