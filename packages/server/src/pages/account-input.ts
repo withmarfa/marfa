@@ -3,8 +3,9 @@
  * address, a password and a passkey's name. The browser checks a value with
  * these before sending it, so a person sees the problem at once; the server
  * checks the same values again and its answer is the one that counts
- * (`instance-claim/profile-input`). It touches no DOM and no Node API, so the
- * server and the browser can both import it.
+ * (`instance-claim/profile-input`, `authentication/passkey-rename`). It
+ * touches no DOM and no Node API, so the server and the browser can both
+ * import it.
  */
 
 export const NAME_MAX = 200;
@@ -33,7 +34,7 @@ export const ACCOUNT_WORDS = {
  */
 const HIDDEN =
   // eslint-disable-next-line no-control-regex -- the controls are what it finds
-  /[\u0000-\u001f\u007f-\u009f‪-‮⁦-⁩]|\p{Bidi_Control}/u;
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]|\p{Bidi_Control}/u;
 
 /** The length of `text` in Unicode code points, as the contract counts a name. */
 export function codePoints(text: string): number {

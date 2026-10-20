@@ -275,7 +275,10 @@ describe("Profile", () => {
           ["   ", "Enter a name."],
           ["x".repeat(201), "Use 200 characters or fewer."],
           ["\u{1F600}".repeat(201), "Use 200 characters or fewer."],
-          ["Ada‮Lovelace", "Remove hidden characters, such as line breaks."],
+          [
+            "Ada\u202eLovelace",
+            "Remove hidden characters, such as line breaks.",
+          ],
         ] as const) {
           await field.fill(value);
           await save.click();

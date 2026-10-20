@@ -37,9 +37,9 @@ describe("a name the owner types", () => {
       "Ada\u0000",
       "A\u007fda",
       "A\u0085da",
-      "A‮da",
-      "A⁦da",
-      "A‏da",
+      "A\u202eda",
+      "A\u2066da",
+      "A\u200fda",
     ])
       expect(nameProblem(raw), JSON.stringify(raw)).toBe(
         ACCOUNT_WORDS.hiddenCharacter,
@@ -59,8 +59,8 @@ describe("a name the owner types", () => {
       "\u{1F600}".repeat(201),
       "Ada\n",
       "A\u0007da",
-      "A‮da",
-      "A‏da",
+      "A\u202eda",
+      "A\u200fda",
       "<script>x</script>",
     ];
     for (const value of values)
