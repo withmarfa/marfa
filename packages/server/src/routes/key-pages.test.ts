@@ -184,8 +184,11 @@ describe("Home, for the keys", () => {
     const none = visibleText((await page("/")).html);
     expect(none).toMatch(/Let scripts and tools use Marfa None/);
     await seed("steady");
+    // Noon UTC three calendar days on: the page counts UTC calendar days,
+    // so a time an hour past three days crosses into the fourth after 23:00.
+    const today = Math.floor(Date.now() / DAY) * DAY;
     await seed("backup", {
-      expires_at: new Date(Date.now() + 3 * DAY + 3_600_000).toISOString(),
+      expires_at: new Date(today + 3 * DAY + DAY / 2).toISOString(),
     });
     await seed("far away", {
       expires_at: new Date(Date.now() + 40 * DAY).toISOString(),
