@@ -154,6 +154,7 @@ export async function decide(
   consent: URL,
   accept: boolean,
   scopes: readonly string[],
+  types: readonly string[] = [],
 ): Promise<URL | undefined> {
   const decision = await fetch(`${server.apiUrl}/auth/authorize/decision`, {
     method: "POST",
@@ -167,6 +168,7 @@ export async function decide(
       ["accept", String(accept)],
       ["oauth_query", consent.search.slice(1)],
       ...scopes.map((s): [string, string] => ["scopes", s]),
+      ...types.map((t): [string, string] => ["types", t]),
     ]),
   });
   return sentTo(server, decision);

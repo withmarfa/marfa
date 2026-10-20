@@ -10,6 +10,18 @@
 
 export type Level = "none" | "read" | "write";
 
+/**
+ * The value the all-data control posts when the person chose types instead.
+ * It is no scope: it says the type controls are the choice.
+ */
+export const CHOOSE_TYPES = "choose-types";
+
+/** More types than this and the list gets a search and a way to set them all. */
+export const MANY_TYPES = 8;
+
+/** How many types a long list shows before "Show all". */
+export const SHOWN_TYPES = 5;
+
 export const LEVEL_RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
 /** Whether `level` is above `held`: a choice that adds access. */
@@ -42,10 +54,16 @@ export const lowerFirst = (text: string): string =>
 const NAMED = 4;
 const NAMED_OF_MANY = 3;
 
-function namesOf(nouns: readonly string[]): string {
-  return nouns.length <= NAMED
-    ? listWords(nouns)
-    : `${String(nouns.length)} kinds of data, including ${listWords(nouns.slice(0, NAMED_OF_MANY))}`;
+/**
+ * `total` is how many types a person is choosing among, where they are
+ * choosing types: all but a few of them is "21 of your 21 types", which
+ * says more than a list of names.
+ */
+function namesOf(nouns: readonly string[], total?: number): string {
+  if (nouns.length <= NAMED) return listWords(nouns);
+  if (total !== undefined && nouns.length >= total - NAMED)
+    return `${String(nouns.length)} of your ${String(total)} types`;
+  return `${String(nouns.length)} kinds of data, including ${listWords(nouns.slice(0, NAMED_OF_MANY))}`;
 }
 
 export interface LevelPick {
@@ -62,15 +80,25 @@ export interface LevelPick {
  * read events". A control that adds nothing to what the app holds is left
  * out, so the line says what this approval gives.
  */
-function levelWords(picks: readonly LevelPick[]): string[] {
+function levelWords(picks: readonly LevelPick[], total?: number): string[] {
   const gives = picks.filter((pick) => addsAccess(pick.level, pick.held));
   const edit = gives.filter((pick) => pick.level === "write");
   const read = gives.filter((pick) => pick.level === "read");
   const words: string[] = [];
   if (edit.length > 0)
-    words.push(`read and edit ${namesOf(edit.map((pick) => pick.noun))}`);
+    words.push(
+      `read and edit ${namesOf(
+        edit.map((pick) => pick.noun),
+        total,
+      )}`,
+    );
   if (read.length > 0)
-    words.push(`read ${namesOf(read.map((pick) => pick.noun))}`);
+    words.push(
+      `read ${namesOf(
+        read.map((pick) => pick.noun),
+        total,
+      )}`,
+    );
   return words;
 }
 
@@ -78,8 +106,9 @@ function levelWords(picks: readonly LevelPick[]): string[] {
 export function dataSummary(
   picks: readonly LevelPick[],
   empty: string,
+  total?: number,
 ): string {
-  const words = levelWords(picks);
+  const words = levelWords(picks, total);
   return words.length > 0 ? capitalize(words.join("; ")) : empty;
 }
 

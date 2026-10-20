@@ -1,34 +1,138 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
+import { MANY_TYPES, SHOWN_TYPES } from "../pages/access-summary.js";
+import { Icon } from "../pages/icons.js";
 import {
   DisclosureRow,
   Row,
   RowGroup,
   RowNote,
+  SearchField,
   Select,
   Switch,
 } from "../pages/parts/index.js";
-import type { AccessModel, LevelRow, SwitchRow } from "./access-model.js";
+import {
+  LEVEL_LABELS,
+  type AccessModel,
+  type ChooseTypes,
+  type LevelRow,
+  type SwitchRow,
+} from "./access-model.js";
 
 const EDIT_NOTE = "Edit includes adding and deleting items.";
 
-function LevelControl(props: { row: LevelRow }) {
+function LevelControl(props: {
+  row: LevelRow;
+  /** Marks the all-data control, which the script reads to show the type list. */
+  all?: boolean;
+  /** Text a search of the type list matches. */
+  search?: string;
+}) {
   const { row } = props;
   return (
     <Row
       title={row.title}
       description={row.description}
+      data={
+        props.search === undefined
+          ? undefined
+          : { "type-row": "", search: props.search }
+      }
       control={
         <Select
           id={row.id}
-          name="scopes"
+          name={row.name ?? "scopes"}
           label={row.title}
           value={row.selected}
           options={row.options}
-          data={{ noun: row.noun, held: row.held }}
+          data={{
+            noun: row.noun,
+            held: row.held,
+            ...(props.all ? { all: "" } : {}),
+          }}
         />
       }
     />
+  );
+}
+
+/** What the "Set every type" control can set: the levels some type offers. */
+function setEveryOptions(rows: readonly LevelRow[]) {
+  const offers = (label: string) =>
+    rows.some((row) => row.options.some((option) => option.label === label));
+  return [
+    { value: "", label: "Choose…" },
+    ...(offers(LEVEL_LABELS.write)
+      ? [{ value: "write", label: LEVEL_LABELS.write }]
+      : []),
+    { value: "read", label: LEVEL_LABELS.read },
+    { value: "none", label: LEVEL_LABELS.none },
+  ];
+}
+
+/**
+ * The types a person may choose in place of all data. With no script every
+ * type shows, and says its choice counts only when types are chosen above.
+ * The script shows this only while "Choose types" is chosen, and adds, for a
+ * long list, "Set every type", a search and "Show all", which start hidden
+ * because they do nothing without it.
+ */
+function TypeList(props: { choose: ChooseTypes }) {
+  const { rows } = props.choose;
+  const many = rows.length > MANY_TYPES;
+  return (
+    <div class="type-list" data-choose-types data-total={String(rows.length)}>
+      <p class="sub-note" data-no-script-note>
+        These count only if you choose types above.
+      </p>
+      {many && (
+        <>
+          <Row
+            title="Set every type"
+            hidden
+            data={{ "script-only": "" }}
+            control={
+              <Select
+                label="Set every type"
+                value=""
+                options={setEveryOptions(rows)}
+                data={{ "set-every": "" }}
+              />
+            }
+          />
+          <div class="row" data-script-only hidden>
+            <SearchField name="" placeholder="Search types" full />
+          </div>
+        </>
+      )}
+      {rows.map((row) => (
+        <LevelControl
+          row={row}
+          search={`${row.title} ${row.noun}`.toLowerCase()}
+        />
+      ))}
+      {many && (
+        <>
+          <div class="row" data-types-none hidden>
+            <span class="muted">No type matches.</span>
+          </div>
+          <button
+            class="row more-row"
+            type="button"
+            data-types-more
+            data-shown={String(SHOWN_TYPES)}
+            hidden
+          >
+            <div class="grow">
+              <div class="rt">Show all {String(rows.length)} types</div>
+            </div>
+            <span class="chev">
+              <Icon name="chevron" />
+            </span>
+          </button>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -109,7 +213,10 @@ export function AccessChoices(props: AccessChoicesProps) {
               }}
             >
               {model.data.map((row) => (
-                <LevelControl row={row} />
+                <>
+                  <LevelControl row={row} all={row.choose !== undefined} />
+                  {row.choose && <TypeList choose={row.choose} />}
+                </>
               ))}
               {model.offersEdit && <RowNote>{EDIT_NOTE}</RowNote>}
             </DisclosureRow>

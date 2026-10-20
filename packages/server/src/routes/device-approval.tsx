@@ -28,6 +28,7 @@ import {
   WebOriginNote,
 } from "./access-notes.js";
 import { buildAccess } from "./access-model.js";
+import type { ChoosableType } from "./access-types.js";
 
 export interface DeviceConsentParams {
   instanceName?: string;
@@ -43,6 +44,8 @@ export interface DeviceConsentParams {
   wildcardExpansions?: Record<string, string[]>;
   /** The label of each registered item type named, keyed by type id. */
   typeLabels?: Record<string, string>;
+  /** The types a person may choose in place of all data, when the code names it. */
+  chooseTypes?: readonly ChoosableType[];
   /** The consent the app already holds, or undefined for a first request. */
   priorScopes?: readonly string[];
   /** The email address of the person approving. */
@@ -58,6 +61,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     descriptions: params.descriptions,
     wildcardExpansions: params.wildcardExpansions,
     typeLabels: params.typeLabels,
+    chooseTypes: params.chooseTypes,
     bundles: params.bundles ?? getPermissionBundles(),
   });
   const instance = params.instanceName ?? DEFAULT_INSTANCE_NAME;

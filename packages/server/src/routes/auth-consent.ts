@@ -99,6 +99,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { catchUpClientScopeCeiling } from "../auth/ceiling-catchup.js";
 import { projectGrantOnConsent } from "../auth/grant-lifecycle.js";
 import { browserWriter } from "../auth/version-writer.js";
 import type { MarfaAuth } from "../auth/instance.js";
@@ -106,6 +107,11 @@ import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
 import { resolveSelection } from "./access-model.js";
+import { chooseTypesFor } from "./access-types.js";
+import {
+  canonicalizeOAuthQueryParams,
+  narrowSignedQuery,
+} from "../auth/narrow-signed-query.js";
 import { isExactTypeScope, profileWriteDescription } from "./scope-copy.js";
 import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
@@ -536,6 +542,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       descriptions,
       wildcardExpansions,
       typeLabels,
+      chooseTypes: await chooseTypesFor(deps.storage, clientId, scopeLiterals),
       priorScopes,
       signedInAs: session.user.email,
       bundles,
@@ -654,6 +661,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const submitted = form
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string");
+    // The type controls, which count only when the person chose types in
+    // place of all data (`resolveSelection`).
+    const typeValues = form
+      .getAll("types")
+      .filter((v): v is string => typeof v === "string");
 
     // The proxy and the record it produces are one operation on the same
     // (client, user) grant the silent path also writes, so they share its
@@ -680,8 +692,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           // full, is not a choice: approving it alone grants nothing new, and
           // the plugin would otherwise issue a code for it. The choice is read
           // on the consent the commit sees.
+          const offered = (
+            await chooseTypesFor(deps.storage, clientId, [...signedScopes])
+          ).map((type) => type.id);
           const selection = accept
-            ? resolveSelection([...signedScopes], submitted, prior)
+            ? resolveSelection([...signedScopes], submitted, prior, {
+                values: typeValues,
+                offered,
+              })
             : null;
           if (selection && !selection.ok)
             return c.text(
@@ -693,6 +711,40 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           const scopeStr = formScopes.join(" ");
           if (approving && needsRecentSignIn(formScopes, prior))
             requireRecentOwnerAuthentication(c);
+          // Types chosen under an all-data scope are not written in the
+          // request the provider signed, and it issues only what that
+          // names. So the provider is asked about a request signed again with
+          // the chosen scopes, after its registration names them: both the
+          // new signature and the registration cover only what the all-data
+          // scope the request named already reached. Anything else is refused
+          // before the provider is asked.
+          let decisionQuery = oauthQuery;
+          if (approving && formScopes.some((v) => !signedScopes.has(v))) {
+            const stored =
+              await deps.storage.oauthProvider?.getClient(clientId);
+            const narrowed = await narrowSignedQuery(
+              oauthQuery,
+              formScopes,
+              offered,
+              auth.signingSecret,
+            );
+            if (narrowed === null)
+              return c.text(
+                "The decision names a scope the request did not",
+                400,
+              );
+            await catchUpClientScopeCeiling({
+              storage: deps.storage,
+              clientId,
+              requested: formScopes,
+              ceiling: stored?.scopes ?? null,
+              bundleScopes: new Set(),
+              surface: "authorize",
+              strict: true,
+              covered: true,
+            });
+            decisionQuery = narrowed;
+          }
           const proxyResp = await proxyConsentDecision(
             auth,
             c.req.url,
@@ -701,7 +753,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             {
               accept: approving,
               scope: approving ? scopeStr : undefined,
-              oauthQuery,
+              oauthQuery: decisionQuery,
             },
           );
           if (approving) {
@@ -860,34 +912,6 @@ function failureCopy(
   verdict: Exclude<SignedQueryVerdict, "valid">,
 ): AuthorizeFailure {
   return verdict === "expired" ? "expired" : "unverifiable";
-}
-
-/**
- * Order a parameter set the way the OAuth Provider plugin orders it
- * before signing, so a signature computed here matches one computed
- * there.
- *
- * The plugin canonicalizes because anything between it and the browser —
- * a CDN, a proxy — is free to reorder query parameters in transit, and a
- * signature taken over the arrival order breaks whenever one does. Sort
- * is by key, then by value, so the parameters the plugin repeats still
- * land in a stable sequence.
- */
-function canonicalizeOAuthQueryParams(
-  params: URLSearchParams,
-): URLSearchParams {
-  const canonical = new URLSearchParams();
-  const entries = [...params.entries()].sort(
-    ([keyA, valueA], [keyB, valueB]) => {
-      if (keyA < keyB) return -1;
-      if (keyA > keyB) return 1;
-      if (valueA < valueB) return -1;
-      if (valueA > valueB) return 1;
-      return 0;
-    },
-  );
-  for (const [key, value] of entries) canonical.append(key, value);
-  return canonical;
 }
 
 /**

@@ -19,6 +19,7 @@ import {
   issuerOrigin,
   pkce,
   registerApp,
+  itemsStatus,
   sentTo,
   signIn,
   token,
@@ -130,6 +131,7 @@ async function decideDevice(
   screen: DeviceScreen,
   decision: "approve" | "deny",
   scopes: readonly string[],
+  types: readonly string[] = [],
 ): Promise<Response> {
   return fetch(`${server.apiUrl}/auth/device/consent`, {
     method: "POST",
@@ -143,6 +145,7 @@ async function decideDevice(
       ["user_code", screen.userCode],
       ["decision", decision],
       ...scopes.map((s): [string, string] => ["scopes", s]),
+      ...types.map((t): [string, string] => ["types", t]),
     ]),
   });
 }
@@ -1129,5 +1132,371 @@ describe("what an approval posted to the approval pages grants", () => {
     ).toBe(200);
     const issued = await poll(app, device);
     expect(issued.status).toBe(200);
+  });
+});
+
+const ALL = "*:read *:write";
+const CHOOSE = "choose-types";
+const sorted = (scope: string | undefined) =>
+  (scope ?? "")
+    .split(" ")
+    .filter((s) => s !== "")
+    .sort();
+
+/** The token a chosen set of types is exchanged for through the consent screen. */
+async function browserToken(
+  app: App,
+  asked: string,
+  scopes: readonly string[],
+  types: readonly string[],
+) {
+  const proof = pkce();
+  const landed = await sentTo(
+    server,
+    await authorize(server, authorizeQuery(app.clientId, asked, proof), cookie),
+  );
+  expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+  const sent = await decide(
+    server,
+    origin,
+    cookie,
+    landed!,
+    true,
+    scopes,
+    types,
+  );
+  return { sent, proof };
+}
+
+async function redeem(
+  app: App,
+  sent: URL | undefined,
+  proof: { verifier: string },
+) {
+  const code = sent?.searchParams.get("code");
+  expect(code, String(sent)).toBeTruthy();
+  return token(
+    server,
+    {
+      grant_type: "authorization_code",
+      code: code!,
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    },
+    app,
+  );
+}
+
+describe("what the approval pages offer an app that asks for all data, and what choosing types grants", () => {
+  const booted = bootFor("approval-types-offer");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("offers all data as one choice with the choice to choose types, and a control for each type, on both pages", async () => {
+    for (const [page, html] of await bothPages(ALL)) {
+      const all = selectNamed(html, "All your data");
+      expect(all?.name, page).toBe("scopes");
+      expect(
+        all?.options.map((o) => [o.value, o.label]),
+        page,
+      ).toEqual([
+        ["", "No access"],
+        ["*:read", "Read only"],
+        ["*:write", "Read and edit"],
+        [CHOOSE, "Choose types"],
+      ]);
+      const types = readControls(html).filter((c) => c.name === "types");
+      const ids = types.map((c) =>
+        c.options.at(-1)?.value.replace(/:write$/, ""),
+      );
+      expect(ids.length, page).toBeGreaterThanOrEqual(20);
+      expect(ids, page).toContain("core.note");
+      // The platform's own bookkeeping is no choice of the person's.
+      expect(
+        ids.filter((id) => id?.startsWith("system.")),
+        page,
+      ).toEqual([]);
+      for (const c of types)
+        expect(
+          c.options.map((o) => o.label),
+          page,
+        ).toEqual(["No access", "Read only", "Read and edit"]);
+      // Nothing changed: the page posts all data and no type.
+      expect(defaultSubmission(html, "scopes"), page).toEqual(["*:write"]);
+    }
+  });
+
+  it("offers no choice of types for a request that does not name all data", async () => {
+    for (const [page, html] of await bothPages("core.*:read core.note:read")) {
+      expect(offeredValues(html, "scopes"), page).not.toContain(CHOOSE);
+      expect(
+        readControls(html).filter((c) => c.name === "types"),
+        page,
+      ).toEqual([]);
+    }
+  });
+
+  it("offers a type no higher than the level asked for all data", async () => {
+    for (const [page, html] of await bothPages("*:read")) {
+      for (const c of readControls(html).filter((c) => c.name === "types"))
+        expect(
+          c.options.map((o) => o.label),
+          page,
+        ).toEqual(["No access", "Read only"]);
+    }
+  });
+
+  it("issues a token for exactly the types chosen, and not all data, on the device approval page", async () => {
+    const app = await register(ALL);
+    const screen = await deviceScreen(app, ALL);
+    const approved = await decideDevice(
+      screen,
+      "approve",
+      [CHOOSE],
+      ["core.event:read", "core.task:write"],
+    );
+    expect(approved.status).toBe(200);
+    const issued = await poll(app, screen);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.event:read",
+      "core.task:read",
+      "core.task:write",
+    ]);
+  });
+
+  it("issues a token for all data and none of the type controls when types were not chosen", async () => {
+    const app = await register(ALL);
+    const { sent, proof } = await browserToken(
+      app,
+      ALL,
+      ["*:read"],
+      ["core.note:write", "core.task:read"],
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(sorted(issued.body.scope)).toEqual(["*:read"]);
+    const screen = await deviceScreen(await register(ALL), ALL);
+    expect(
+      (await decideDevice(screen, "approve", ["*:write"], ["core.note:read"]))
+        .status,
+    ).toBe(200);
+  });
+});
+
+describe("what the approval pages refuse an app that asks for all data, and deny when no type is chosen", () => {
+  const booted = bootFor("approval-types-refuse");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("answers choosing types with none turned on as access_denied, as declining is answered, on both pages", async () => {
+    const app = await register(ALL);
+    const { sent } = await browserToken(app, ALL, [CHOOSE], ["", ""]);
+    expect(sent?.searchParams.get("error")).toBe("access_denied");
+    expect(sent?.searchParams.get("code")).toBeNull();
+    const screen = await deviceScreen(await register(ALL), ALL);
+    const denied = await decideDevice(screen, "approve", [CHOOSE], []);
+    expect(denied.status).toBe(200);
+    expect(visibleText(await denied.text())).toMatch(/didn't approve access/i);
+    expect((await poll(app, screen)).status).not.toBe(200);
+  });
+
+  it("refuses a type the request does not reach, and grants nothing, on the consent screen", async () => {
+    // Asked only to read: a type's write is above the level asked.
+    const asked = "*:read";
+    for (const bad of [
+      "core.note:write",
+      "system.connection:read",
+      "core.unheard:read",
+      "core.*:read",
+      "keys.mint",
+    ]) {
+      const { sent } = await browserToken(
+        await register(asked),
+        asked,
+        [CHOOSE],
+        ["core.task:read", bad],
+      );
+      expect(sent, bad).toBeUndefined();
+    }
+    // The witness: the same post without the stray type is granted.
+    const { sent } = await browserToken(
+      await register(asked),
+      asked,
+      [CHOOSE],
+      ["core.task:read"],
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+  });
+
+  it("refuses a type the request does not reach, and grants nothing, on the device approval page", async () => {
+    const asked = "*:read";
+    for (const bad of ["core.note:write", "system.connection:read"]) {
+      const app = await register(asked);
+      const screen = await deviceScreen(app, asked);
+      const refused = await decideDevice(
+        screen,
+        "approve",
+        [CHOOSE],
+        ["core.task:read", bad],
+      );
+      expect(refused.status, bad).toBe(400);
+      // The code is still pending: nothing was granted.
+      expect(["authorization_pending", "slow_down"], bad).toContain(
+        (
+          await token(server, {
+            grant_type: DEVICE_GRANT,
+            device_code: screen.deviceCode,
+            client_id: app.clientId,
+          })
+        ).body.error,
+      );
+    }
+  });
+});
+
+describe("what the approval pages keep when an app holds types and asks again for all data", () => {
+  const booted = bootFor("approval-types-held");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("issues a token for exactly the types chosen, and not all data, on the consent screen", async () => {
+    const app = await register(ALL);
+    const { sent, proof } = await browserToken(
+      app,
+      ALL,
+      [CHOOSE],
+      ["core.note:write", "core.task:read", ""],
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    // A write brings the read the request named, as it does for a type asked by name.
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ]);
+    // The witness that the token is narrow: it reads a note and is no key to anything else.
+    expect(await itemsStatus(server, issued.body.access_token ?? "")).toBe(200);
+  });
+
+  it("keeps the types an app holds when it asks again for all data, and shows them as held", async () => {
+    const app = await register(ALL);
+    const first = await browserToken(app, ALL, [CHOOSE], ["core.note:read"]);
+    expect(first.sent?.searchParams.get("code")).toBeTruthy();
+    const proof = pkce();
+    const again = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, "*:read", proof),
+        cookie,
+      ),
+    );
+    expect(again?.pathname).toBe("/auth/authorize");
+    const page = await (await fetch(again!, { headers: { cookie } })).text();
+    expect(visibleText(page)).toContain("Already allowed");
+    // A type held in full is shown as held and offered no more.
+    const offered = readControls(page)
+      .filter((c) => c.name === "types")
+      .map((c) => c.options.at(-1)?.value);
+    expect(offered).not.toContain("core.note:read");
+    expect(offered).toContain("core.task:read");
+    // Choosing another type keeps the held one.
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      again!,
+      true,
+      [CHOOSE],
+      ["core.task:read"],
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("denies and keeps what an app holds when it asks again for all data and nothing new is chosen", async () => {
+    const app = await register(ALL);
+    await browserToken(app, ALL, [CHOOSE], ["core.note:read"]);
+    const again = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, "*:read", pkce()),
+        cookie,
+      ),
+    );
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      again!,
+      true,
+      [CHOOSE],
+      [""],
+    );
+    expect(sent?.searchParams.get("error")).toBe("access_denied");
+    const still = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(app.clientId, "core.note:read", pkce()),
+        cookie,
+      ),
+    );
+    expect(still?.href.startsWith(CALLBACK), String(still)).toBe(true);
+  });
+
+  it("keeps the types an app holds on the device approval page when it asks again for all data", async () => {
+    const app = await register(ALL);
+    const first = await deviceScreen(app, ALL);
+    expect(
+      (await decideDevice(first, "approve", [CHOOSE], ["core.note:read"]))
+        .status,
+    ).toBe(200);
+    const again = await deviceScreen(app, "*:read");
+    expect(visibleText(again.html)).toContain("Already allowed");
+    expect(
+      (await decideDevice(again, "approve", [CHOOSE], ["core.task:read"]))
+        .status,
+    ).toBe(200);
+    const issued = await poll(app, again);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("refreshes a token for the types chosen without widening them to all data", async () => {
+    const app = await register(`${ALL} offline_access`);
+    const { sent, proof } = await browserToken(
+      app,
+      `${ALL} offline_access`,
+      [CHOOSE, "offline_access"],
+      ["core.task:read"],
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.task:read",
+      "offline_access",
+    ]);
+    const refreshed = await token(
+      server,
+      {
+        grant_type: "refresh_token",
+        refresh_token: issued.body.refresh_token ?? "",
+        client_id: app.clientId,
+      },
+      app,
+    );
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(sorted(refreshed.body.scope)).toEqual([
+      "core.task:read",
+      "offline_access",
+    ]);
   });
 });

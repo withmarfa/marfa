@@ -29,7 +29,7 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
  * approval writes the ones the person ticked, so the registration records
  * what a person has approved the client to ask for.
  */
-import { isValidScope } from "@withmarfa/shared";
+import { grantCoversScope, isValidScope } from "@withmarfa/shared";
 import { publishableBundleScopes } from "./allowlist-withholding.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -103,6 +103,27 @@ export function scopesAwaitingCatchUp(
 }
 
 /**
+ * The requested scopes the ceiling does not name but a scope it names
+ * covers: a type chosen under the all-data scope the client is registered
+ * for. A ceiling is permission to ask, and the provider tests it by exact
+ * membership, so these are named in it before the provider is asked to issue
+ * them. Naming them widens nothing: the scope that covers them was already
+ * there. A null ceiling already tracks the live set and an empty one is a
+ * deliberate ceiling, so neither has anything waiting.
+ */
+export function scopesCoveredByCeiling(
+  ceiling: readonly string[] | null,
+  requested: readonly string[],
+): string[] {
+  if (ceiling === null || ceiling.length === 0) return [];
+  return requested.filter(
+    (scope) =>
+      !ceiling.includes(scope) &&
+      ceiling.some((held) => grantCoversScope([held], scope)),
+  );
+}
+
+/**
  * Widen a stale stored ceiling so it covers the scopes this request names,
  * and answer with the ceiling as it now stands.
  *
@@ -144,6 +165,12 @@ export async function catchUpClientScopeCeiling(opts: {
   bundleScopes: ReadonlySet<string>;
   surface: CeilingCatchUpSurface;
   strict?: boolean;
+  /**
+   * Also name the requested scopes a scope in the ceiling covers
+   * (`scopesCoveredByCeiling`). Only for a decision a signed-in person has
+   * just made.
+   */
+  covered?: boolean;
 }): Promise<readonly string[] | null> {
   const { storage, clientId, requested, ceiling, bundleScopes, surface } = opts;
   const oauth = storage.oauthProvider;
@@ -151,7 +178,12 @@ export async function catchUpClientScopeCeiling(opts: {
   if (ceiling === null) return ceiling;
 
   const held = ceiling;
-  const missing = scopesAwaitingCatchUp(held, requested, bundleScopes);
+  const missing = [
+    ...new Set([
+      ...scopesAwaitingCatchUp(held, requested, bundleScopes),
+      ...(opts.covered ? scopesCoveredByCeiling(held, requested) : []),
+    ]),
+  ];
   if (missing.length === 0) return ceiling;
 
   const widened = [...held, ...missing];

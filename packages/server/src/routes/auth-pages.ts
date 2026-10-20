@@ -62,6 +62,7 @@ import {
   renderDeviceDecisionPage,
 } from "./device-approval.js";
 import { resolveSelection } from "./access-model.js";
+import { chooseTypesFor } from "./access-types.js";
 import { setNoStore } from "./no-store.js";
 import {
   answerSignInAgain,
@@ -902,6 +903,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           parsedScopes,
         ),
+        chooseTypes: await chooseTypesFor(
+          storage,
+          verdict.clientId,
+          scopeList(verdict.scope),
+        ),
         bundles: getPermissionBundles(),
       }),
     );
@@ -973,6 +979,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const submitted = formData
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string");
+    const typeValues = formData
+      .getAll("types")
+      .filter((v): v is string => typeof v === "string");
 
     // Approve: upsert the system.connection projection, narrow the code to
     // the chosen set, and approve it through the plugin.
@@ -1025,6 +1034,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
               requestedScopes,
               submitted,
               prior,
+              {
+                values: typeValues,
+                offered: (
+                  await chooseTypesFor(storage, clientId, requestedScopes)
+                ).map((type) => type.id),
+              },
             );
             if (!selection.ok) return { kind: "refused" } as const;
             if (!selection.chosen) return { kind: "nothing" } as const;
@@ -1049,6 +1064,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 bundleScopes: bundlePublishedScopes(getPermissionBundles()),
                 surface: "device",
                 strict: true,
+                covered: true,
               });
             }
             const created = await createUserAppGrant(

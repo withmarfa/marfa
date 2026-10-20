@@ -26,6 +26,7 @@ import {
   WebOriginNote,
 } from "./access-notes.js";
 import { buildAccess } from "./access-model.js";
+import type { ChoosableType } from "./access-types.js";
 
 export interface ConsentParams {
   instanceName?: string;
@@ -49,6 +50,8 @@ export interface ConsentParams {
   /** The email address of the person approving. */
   signedInAs?: string;
   bundles?: PermissionBundle[];
+  /** The types a person may choose in place of all data, when the request names it. */
+  chooseTypes?: readonly ChoosableType[];
 }
 
 /** Renders the Approve access screen as an HTML document. */
@@ -59,6 +62,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     descriptions: params.descriptions,
     wildcardExpansions: params.wildcardExpansions,
     typeLabels: params.typeLabels,
+    chooseTypes: params.chooseTypes,
     bundles: params.bundles ?? getPermissionBundles(),
   });
   const instance = params.instanceName ?? DEFAULT_INSTANCE_NAME;

@@ -1135,15 +1135,17 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
 **Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
-**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`, `› answers choosing types with none turned on as access_denied, as declining is answered, on both pages`, `› denies and keeps what an app holds when it asks again for all data and nothing new is chosen`.
 
 ### `keys-and-oauth/consent-ticked`
 
 When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
+
+**Reason:** Types chosen in place of all data are a narrowing of the all-data scope, and `keys-and-oauth/authorize-narrowed-types` states them.
 
 **Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what the person chose, though its origin is allowed`.
 
@@ -1172,6 +1174,20 @@ When an authorization request names a scope the instance cannot grant beside sco
 **Reason:** A client that cached an older list of scopes is given what can still be granted, and the token answer's `scope` tells it what it got.
 
 **Tests:** `compliance/oauth-authorize.test.ts › drops a requested scope the instance cannot grant, and authorizes the rest`.
+
+### `keys-and-oauth/authorize-narrowed-types`
+
+When a person approves on the consent screen scopes that the request did not name but an all-data scope the request named covers, the server MUST send the browser to the redirect URI with a code for exactly those scopes.
+
+**Reason:** A type under `*:read` is a narrowing of what was asked, not an addition to it, so it is granted though the request never wrote it. A scope that no named all-data scope covers, such as a write beside `*:read` or a permission, is refused by `keys-and-oauth/approval-types-beyond`, so this grants nothing a request that kept `*:read` would not have granted.
+
+**Tests:** `compliance/approval-screens.test.ts › issues a token for exactly the types chosen, and not all data, on the consent screen`.
+
+### `keys-and-oauth/authorize-narrowed-refresh`
+
+When an app refreshes a token that was issued for types chosen in place of an all-data scope, the server MUST issue the new token for those types and not for the all-data scope.
+
+**Tests:** `compliance/approval-screens.test.ts › refreshes a token for the types chosen without widening them to all data`.
 
 ### `keys-and-oauth/authorize-nothing-grantable`
 
@@ -1249,7 +1265,7 @@ If a browser session that signed in more than five minutes ago opens `/auth/auth
 
 ## What the approval pages offer
 
-The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, so what a form posts is the request narrowed.
+The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data, which are fields named `types` whose values are scopes that an all-data scope the request names covers. So what a form posts is the request narrowed.
 
 ### `keys-and-oauth/approval-one-control`
 
@@ -1372,6 +1388,50 @@ If an approval posted from the consent screen or the device approval page names 
 **Reason:** A form can only narrow the request. A post asking for more than the page showed is refused whole, so not even the scopes beside the extra one are granted.
 
 **Tests:** `compliance/approval-screens.test.ts › refuses a consent decision that names a scope the request did not, and grants nothing`, `› refuses a device approval that names a scope the code did not carry, and leaves the code pending`.
+
+### `keys-and-oauth/approval-all-data-types`
+
+Where a request names the all-data scope `*:read` or `*:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for all data, and one control for each registered item type that is not a `system` type.
+
+**Reason:** "All your data, including types added later" is one choice, and an owner who would give less chooses the types instead. A `system` type holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it.
+
+**Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`.
+
+### `keys-and-oauth/approval-types-levels`
+
+The server MUST NOT offer, for a type chosen in place of all data, a level above the highest level the request names for all data.
+
+**Tests:** `compliance/approval-screens.test.ts › offers a type no higher than the level asked for all data`.
+
+### `keys-and-oauth/approval-types-grant`
+
+When a person approves on the consent screen or the device approval page with types chosen in place of all data, the server MUST issue a token for exactly the types turned on, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds, and not the all-data scope.
+
+**Tests:** `compliance/approval-screens.test.ts › issues a token for exactly the types chosen, and not all data, on the consent screen`, `› issues a token for exactly the types chosen, and not all data, on the device approval page`.
+
+### `keys-and-oauth/approval-types-unchosen`
+
+When a person approves on the consent screen or the device approval page with all data chosen and not types, the server MUST issue a token for the all-data scope and no scope from the type controls.
+
+**Reason:** A page without a script posts every control, so the controls for types that were not chosen are posted too and mean nothing.
+
+**Tests:** `compliance/approval-screens.test.ts › issues a token for all data and none of the type controls when types were not chosen`.
+
+### `keys-and-oauth/approval-types-beyond`
+
+If an approval names, for a type chosen in place of all data, a scope that no all-data scope the request names covers, or a type the page did not offer, then the server MUST answer `400` and grant nothing.
+
+**Reason:** A form can only narrow the request: the write of a type is not covered by a request for `*:read`, and a `system` type or a permission is not a type the person was offered. The post is refused whole, as `keys-and-oauth/approval-beyond-shown` refuses one.
+
+**Tests:** `compliance/approval-screens.test.ts › refuses a type the request does not reach, and grants nothing, on the consent screen`, `› refuses a type the request does not reach, and grants nothing, on the device approval page`.
+
+### `keys-and-oauth/approval-types-keep`
+
+While an app holds scopes for item types and a request names all data, when a person approves on the consent screen or the device approval page, the server MUST keep the scopes the app holds for those types, whether the person kept all data or chose types.
+
+**Reason:** `keys-and-oauth/approval-never-lowers` holds when all data is the ask. A type the app holds in full is shown as held and offered no control, and one it holds in part is offered no level below the one it holds.
+
+**Tests:** `compliance/approval-screens.test.ts › keeps the types an app holds when it asks again for all data, and shows them as held`, `› keeps the types an app holds on the device approval page when it asks again for all data`.
 
 ## A client's registration
 
