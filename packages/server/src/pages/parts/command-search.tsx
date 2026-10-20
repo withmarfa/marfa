@@ -46,9 +46,10 @@ function Options(props: { options: readonly Option[] }) {
  * The search over pages and settings, a modal dialog a script opens with
  * Command-K (Control-K off Apple platforms) from any page. The pages are
  * written here and the script only filters them, so nothing is searched on the
- * server and nothing links to a page that is not built. The settings are too
- * many to send with every page: when the settings page is built, the script
- * reads them from its `.json` answer the first time the dialog opens.
+ * server and nothing links to a page that is not built. The few settings that
+ * other pages register are written here too, but the settings page's own are
+ * too many to send with every page: when that page is built, the script reads
+ * them from its `.json` answer the first time the dialog opens.
  */
 export function CommandSearch(props: CommandSearchProps) {
   const groups = props.registry.groups();
@@ -72,6 +73,19 @@ export function CommandSearch(props: CommandSearchProps) {
     ),
   ];
   const settingsPage = props.registry.page("settings");
+  const settings: Option[] = groups.flatMap((group) =>
+    group.pages
+      .filter((page) => page !== settingsPage)
+      .flatMap((page) =>
+        page.settings.map((setting) => ({
+          id: `cs-setting-${page.id}-${setting.id}`,
+          title: setting.title,
+          href: setting.href,
+          meta: page.title,
+          haystack: `${setting.title} ${setting.description ?? ""} ${setting.id} ${setting.group}`,
+        })),
+      ),
+  );
   const suggested: Option[] = [
     { ...home, id: "cs-suggested-home" },
     ...props.registry.suggested().map((page) => ({
@@ -137,6 +151,7 @@ export function CommandSearch(props: CommandSearchProps) {
             <div class="pal-label" id="cs-label-settings">
               Settings
             </div>
+            <Options options={settings} />
           </div>
           <div class="pal-none" data-search-status hidden></div>
           <div class="pal-none" data-search-none hidden>

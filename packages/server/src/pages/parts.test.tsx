@@ -1122,9 +1122,25 @@ describe("CommandSearch", () => {
     ]);
   });
 
-  it("holds no setting, and names where the script reads them from", () => {
-    const out = render();
-    expect(out).not.toContain("cs-setting-");
+  it("holds the settings other pages register, with their text escaped, and none of the settings page's own", () => {
+    const registry = fixtureRegistry();
+    registry.register("general", {
+      href: "/fixture/general",
+      settings: [
+        {
+          id: "name",
+          title: "Name <b>",
+          group: "General",
+          href: "/fixture/general#name",
+        },
+      ],
+    });
+    const out = html(
+      <CommandSearch registry={registry} home={{ href: "/" }} />,
+    );
+    expect(out).toContain('id="cs-setting-general-name"');
+    expect(out).toContain('data-title="Name &lt;b&gt;"');
+    expect(out).not.toContain("cs-setting-settings-");
     expect(out).not.toContain("Keep items in the trash");
     expect(out).toContain('data-settings-source="/fixture/settings.json"');
   });

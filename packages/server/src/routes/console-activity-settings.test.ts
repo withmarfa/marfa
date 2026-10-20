@@ -97,6 +97,11 @@ describe("All settings", () => {
       (e) => e.name === "AUDIT_RETENTION_DAYS",
     );
     expect(entry).toMatchObject({ live: true, set: true, value: "12 days" });
+    // The live rows lead to General, where the owner changes them.
+    const links = pageLinks(
+      (await page(`/auth/owner/settings/${slug(entry!.group)}`)).html,
+    ).map((l) => l.href);
+    expect(links).toContain("/auth/owner/general");
   });
 
   it("finds a setting from Home's search and refuses a group that does not exist", async () => {
