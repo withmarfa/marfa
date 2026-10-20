@@ -33,6 +33,7 @@ import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
 import { messageOf, sendConfirmed, signInAgain } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
+import { initSaveBar, type SaveBar } from "./save-bar.js";
 
 const KEYS_HREF = "/auth/owner/keys";
 const JSON_HEADERS = {
@@ -164,9 +165,6 @@ function setAvailable(button: HTMLElement | null, available: boolean): void {
   if (available) button.removeAttribute("aria-disabled");
   else button.setAttribute("aria-disabled", "true");
 }
-
-const isAvailable = (button: HTMLElement | null): boolean =>
-  button !== null && button.getAttribute("aria-disabled") !== "true";
 
 /** Opens the row that holds a control, so a script can send focus to it. */
 function reveal(control: HTMLElement): void {
@@ -419,21 +417,15 @@ function initCreate(form: HTMLFormElement): void {
 // A key
 // ---------------------------------------------------------------------------
 
-/** What the controls stand at, to tell whether anything has changed. */
-const stateOf = (form: HTMLFormElement): string =>
-  JSON.stringify([literalsOf(form), field(form, "ends").value]);
-
-function syncEdit(form: HTMLFormElement, initial: string): void {
-  const changed = stateOf(form) !== initial;
-  const save = hook(form, "key-submit");
-  const discard = hook(form, "key-discard");
-  setAvailable(save, changed);
-  setAvailable(discard, changed);
-  const line = form.querySelector<HTMLElement>("[data-reason]");
-  if (line)
-    line.textContent = changed
-      ? "Nothing changes until you save."
-      : (save?.dataset.idle ?? "");
+/**
+ * The controls that decide what a key is given: the type controls count only
+ * while types are chosen in place of all data, as `literalsOf` reads them.
+ */
+function countsToward(form: HTMLFormElement) {
+  return (control: Element): boolean =>
+    !control.closest("[data-choose-types]") ||
+    form.querySelector<HTMLSelectElement>("select[data-all]")?.value ===
+      CHOOSE_TYPES;
 }
 
 function keptDenials(form: HTMLFormElement): Denials {
@@ -519,12 +511,11 @@ async function stoppedText(
 
 async function submitEdit(
   form: HTMLFormElement,
+  bar: SaveBar,
   initialLiterals: string,
 ): Promise<void> {
-  const button = hook(form, "key-submit");
-  if (!(button instanceof HTMLButtonElement) || form.dataset.sending === "1")
-    return;
-  if (!isAvailable(button)) return;
+  const button = bar.save;
+  if (form.dataset.sending === "1" || bar.count() === 0) return;
   hideNotices(form);
   const id = form.dataset.keyId ?? "";
   const body = editBody(form, initialLiterals);
@@ -550,6 +541,7 @@ async function submitEdit(
     if (response.ok) {
       keepFlash("Saved");
       leaving = true;
+      bar.saved();
       location.reload();
       return;
     }
@@ -630,26 +622,12 @@ async function revoke(): Promise<void> {
 }
 
 function initEdit(form: HTMLFormElement): void {
-  const initial = stateOf(form);
-  const initialLiterals = JSON.stringify(literalsOf(form));
-  const sync = (): void => {
-    syncEdit(form, initial);
-  };
-  sync();
-  form.addEventListener("input", sync);
-  form.addEventListener("change", sync);
-  window.addEventListener("pageshow", sync);
-  hook(form, "key-discard")?.addEventListener("click", () => {
-    if (!isAvailable(hook(form, "key-discard"))) return;
-    form.reset();
-    // The access lines follow the controls when the form announces a change.
-    form.dispatchEvent(new Event("change", { bubbles: true }));
-    hideNotices(form);
-    sync();
-  });
   hook(document, "key-revoke")?.addEventListener("click", () => {
     void revoke();
   });
+  const bar = initSaveBar(form, { counts: countsToward(form) });
+  if (!bar) return;
+  const initialLiterals = JSON.stringify(literalsOf(form));
   // Ahead of the page's own submit handling, which would validate and send a
   // plain form this one is not.
   form.addEventListener(
@@ -657,7 +635,7 @@ function initEdit(form: HTMLFormElement): void {
     (event) => {
       event.preventDefault();
       event.stopImmediatePropagation();
-      void submitEdit(form, initialLiterals);
+      void submitEdit(form, bar, initialLiterals);
     },
     true,
   );

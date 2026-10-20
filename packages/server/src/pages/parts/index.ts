@@ -53,14 +53,15 @@ export type {
 export { ListToolbar, Pager, Tabs } from "./list.js";
 export { LocalDate } from "./local-date.js";
 export type { ListToolbarProps, PagerProps, TabsProps } from "./list.js";
-export {
-  ClosingAction,
-  DisclosureRow,
-  Row,
-  RowGroup,
-  RowNote,
+export { DangerRow, DisclosureRow, Row, RowGroup, RowNote } from "./rows.js";
+export type {
+  DangerRowProps,
+  DisclosureRowProps,
+  RowGroupProps,
+  RowProps,
 } from "./rows.js";
-export type { DisclosureRowProps, RowGroupProps, RowProps } from "./rows.js";
+export { SaveBar } from "./save-bar.js";
+export type { SaveBarProps } from "./save-bar.js";
 export { CodeCells } from "./code-cells.js";
 export { PageShell } from "./shell.js";
 export type { PageShellProps } from "./shell.js";

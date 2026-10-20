@@ -470,7 +470,9 @@ describe("keyboard", () => {
       const { page, context } = await open();
       try {
         await page.goto(`${origin}/fixture`);
-        const opener = page.locator('.group [data-dialog-open="confirm"]');
+        const opener = page.locator(
+          '.group:not(.quiet) [data-dialog-open="confirm"]',
+        );
         await opener.focus();
         await page.keyboard.press("Enter");
         await page.locator("dialog#confirm[open]").waitFor();
@@ -545,7 +547,9 @@ describe("keyboard", () => {
         await page
           .locator("[data-picker-button]")
           .waitFor({ state: "visible" });
-        await page.locator('.group [data-dialog-open="confirm"]').click();
+        await page
+          .locator('.group:not(.quiet) [data-dialog-open="confirm"]')
+          .click();
         const field = page.locator("#confirm-note");
         await field.fill("a note worth keeping");
         const box = (await field.boundingBox())!;
@@ -862,7 +866,9 @@ describe("at 375 pixels", () => {
         expect(box!.x).toBeGreaterThanOrEqual(0);
         expect(box!.x + box!.width).toBeLessThanOrEqual(375);
         await page.keyboard.press("Escape");
-        await page.locator('.group [data-dialog-open="confirm"]').click();
+        await page
+          .locator('.group:not(.quiet) [data-dialog-open="confirm"]')
+          .click();
         expect(await overflow(page)).toBeLessThanOrEqual(0);
         await page.keyboard.press("Escape");
         await page.keyboard.press(`${await modifier(page)}+k`);

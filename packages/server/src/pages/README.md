@@ -35,16 +35,17 @@ There is no client framework and no client-side rendering.
 - **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and
   `Divider`. A `MomentCard` that an app is asking through names it with `app`,
   and shows its first letter beside Marfa's mark.
-- **Rows:** `RowGroup`, `Row`, `DisclosureRow`, `RowNote` and `ClosingAction`.
+- **Rows:** `RowGroup`, `Row`, `DisclosureRow`, `RowNote` and `DangerRow`.
   A `Row` or a `DisclosureRow` takes a `badge` such as "New". A `DisclosureRow`
   is a row that opens in place to show more rows, with a line under its title
   that says what they give; the browser opens it, with no script, and `live`
   marks the line for the browser module that rewrites it as they change. A
   `RowNote` is small print at the end of what a row opens to.
 - **Controls and fields:** `Button`, `ButtonPair`, `Select`, `Switch`,
-  `TextField`, `PasswordField`, `SearchField` and `FormFoot`. A `Select` and a
-  `Switch` take `data`, which becomes `data-*` attributes for a browser module.
-  A `ButtonPair` is two buttons of equal width, the main one last.
+  `TextField`, `PasswordField`, `SearchField`, `FormFoot` and `SaveBar`. A
+  `Select` and a `Switch` take `data`, which becomes `data-*` attributes for a
+  browser module. A `ButtonPair` is two buttons of equal width, the main one
+  last.
 - **Codes:** `CodeCells` shows a code for a person to compare with the one on
   their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
@@ -84,8 +85,6 @@ Keep these in every page you build.
 - A `Section` has a heading, a line under it, and at most one control on its
   right: a search, a select or a button.
 - A row ends in exactly one of: a value and chevron, a control, or buttons.
-- An action that ends a page by acting on the whole of it (revoke, sign out the
-  others) is a `ClosingAction`: no box, under a thin line.
 - Use selects. Use `Tabs` only to split one list into its two or three kinds.
 - A list has filters on the left and search on the right (`ListToolbar`), one
   line per row cut short with an ellipsis, and pages of 10 rows by default.
@@ -102,6 +101,24 @@ Keep these in every page you build.
   The page policy enforces the second.
 - A POST form carries `novalidate` and is validated on the server as well,
   because the form module's inline messages are an enhancement.
+
+## Cards and the save bar
+
+- **Every row sits in a card.** Its text and controls sit on the card's inner
+  edges. Only headings and short footnotes sit outside a card.
+- **A destructive or closing action is a `DangerRow`:** one row in a card of
+  its own, with a border and no fill. Its title and description are on the left
+  inner edge and its button is on the right. Use it for revoking a key,
+  disconnecting an app, signing out other browsers and removing a connector or
+  a passkey, and never leave such a row loose on the page.
+- **Save and Discard appear only when something has changed.** A page that
+  edits something that exists ends in a `SaveBar` for its form, last in the
+  page. The bar starts hidden. `initSaveBar` in `client/save-bar.ts` shows it
+  when a control differs from the value the server wrote, counts each such
+  control, and hides it when the form is back as it loaded or has been saved.
+  Discard puts the controls back with `form.reset()`. A page whose controls
+  count only in some states passes `counts`. A form that makes something new
+  ends in its own buttons in a `FormFoot`, and has no bar.
 
 ## Add a page
 
@@ -191,8 +208,8 @@ passkeys pages (`data-account-form`): it checks the value with the words in
 the page's own address again to swap in the region marked `data-live`, so the
 browser never draws a row. `client/local-date.ts` is shared: any page that
 shows a date writes it with `LocalDate`, and the script does the rest.
-`client/index.ts` starts them all. They use the DOM
-only: no `innerHTML`, and styles are set through `element.style` where needed.
+`client/save-bar.ts` is shared: any edit page calls `initSaveBar` for its
+form. `client/index.ts` starts them all. They use the DOM only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
 password toggle, the shortcut hint, Sign out, a list's Rows per page) hidden, and the script shows it, so a
 browser without the script has no control that does nothing.
