@@ -1433,6 +1433,20 @@ While an app holds scopes for item types and a request names all data, when a pe
 
 **Tests:** `compliance/approval-screens.test.ts › keeps the types an app holds when it asks again for all data, and shows them as held`, `› keeps the types an app holds on the device approval page when it asks again for all data`.
 
+### `keys-and-oauth/access-words`
+
+The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".
+
+**Reason:** Access reads the same wherever a person meets it: on these pages, on a key's page, on an app's page and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md` and one description of access in the server builds every page that shows it.
+
+**Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`, `› describes each permission in the same words on both pages and on the key form`.
+
+### `keys-and-oauth/access-words-cli`
+
+Where the CLI prints what a key or an app holds in its readable output, the CLI MUST name each level of access it prints as "Read and edit", "Read only" or "No access", and each permission by the title the approval pages use.
+
+**Tests:** `cli/access-words.test.ts › prints what a key holds in the words the approval pages use`.
+
 ## A client's registration
 
 ### `keys-and-oauth/catch-up-signed-in`

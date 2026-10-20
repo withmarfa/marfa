@@ -2,9 +2,10 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
 use super::{insert_opt, object, pairs};
+use crate::access;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 use crate::values::Tier;
@@ -465,8 +466,36 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
     match &command {
         KeysCommand::Create(_) => print_minted(&answer, out),
         KeysCommand::Revoke { id } => out.report(&answer, || format!("revoked key {id}")),
-        _ => out.value(&answer),
+        KeysCommand::List => out.report(&answer, || listing(&answer)),
+        _ => out.report(&answer, || key_text(&answer)),
     }
+}
+
+/// One line naming a key, then what it holds in the words the pages use.
+fn key_text(key: &Value) -> String {
+    let text = |field: &str| printable(key.get(field).and_then(Value::as_str).unwrap_or(""));
+    let mut line = format!("{}  {}", text("id"), text("label"));
+    if let Some(tier) = key.get("default_tier").and_then(Value::as_str) {
+        line.push_str(&format!("  tier {}", printable(tier)));
+    }
+    match key.get("expires_at").and_then(Value::as_str) {
+        Some(at) => line.push_str(&format!("  expires {}", printable(at))),
+        None => line.push_str("  no expiry"),
+    }
+    access::indented(&line, &access::lines_for_key(key))
+}
+
+/// Each key as `key_text` writes it, one after another.
+fn listing(answer: &Value) -> String {
+    let keys = answer
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if keys.is_empty() {
+        return "(none)".to_string();
+    }
+    keys.iter().map(key_text).collect::<Vec<_>>().join("\n")
 }
 
 /// Checked against the server first, so a wrong key fails here, not later.
@@ -522,10 +551,70 @@ fn read_line(empty: &str) -> Result<String, CliError> {
 
 /// A minted key is shown once, so the plaintext leads the line.
 fn print_minted(answer: &Value, out: &Printer) -> Result<(), CliError> {
-    out.report(answer, || {
-        let key = answer.get("key").and_then(Value::as_str).unwrap_or("");
-        let id = answer.get("id").and_then(Value::as_str).unwrap_or("");
-        let label = answer.get("label").and_then(Value::as_str).unwrap_or("");
-        format!("{key}\nkey {id} ({label}); the plaintext is shown once, keep it now")
-    })
+    out.report(answer, || minted_text(answer))
+}
+
+fn minted_text(answer: &Value) -> String {
+    let key = answer.get("key").and_then(Value::as_str).unwrap_or("");
+    let id = answer.get("id").and_then(Value::as_str).unwrap_or("");
+    let label = answer.get("label").and_then(Value::as_str).unwrap_or("");
+    let first = format!("{key}\nkey {id} ({label}); the plaintext is shown once, keep it now");
+    access::indented(&first, &access::lines_for_key(answer))
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    fn key() -> Value {
+        json!({
+            "id": "key_1",
+            "label": "Reader",
+            "default_tier": "library",
+            "expires_at": null,
+            "permissions": ["audit.read"],
+            "type_permissions": { "core.note": "write", "core.task": "read" },
+            "extension_permissions": {},
+            "edge_permissions": {},
+            "metadata_permissions": {},
+            "profile_permissions": {},
+        })
+    }
+
+    #[test]
+    fn a_key_is_named_and_then_says_what_it_holds() {
+        assert_eq!(
+            key_text(&key()),
+            "key_1  Reader  tier library  no expiry\n  core.note  Read and edit\n  core.task  Read only\n  Powers: Read the activity log"
+        );
+    }
+
+    #[test]
+    fn a_listing_gives_each_key_its_own_access() {
+        let mut second = key();
+        second["id"] = json!("key_2");
+        second["expires_at"] = json!("2030-01-01T00:00:00Z");
+        second["permissions"] = json!([]);
+        second["type_permissions"] = json!({});
+        let text = listing(&json!({ "data": [key(), second], "next_cursor": null }));
+        assert!(text.contains("key_1  Reader  tier library  no expiry\n  core.note"));
+        assert!(
+            text.ends_with(
+                "key_2  Reader  tier library  expires 2030-01-01T00:00:00Z\n  No access"
+            )
+        );
+        assert_eq!(
+            listing(&json!({ "data": [], "next_cursor": null })),
+            "(none)"
+        );
+    }
+
+    #[test]
+    fn a_minted_key_keeps_its_plaintext_line_first() {
+        let mut minted = key();
+        minted["key"] = json!("marfa_k1_secret");
+        let printed = minted_text(&minted);
+        assert!(printed.starts_with("marfa_k1_secret\nkey key_1 (Reader);"));
+        assert!(printed.ends_with("\n  Powers: Read the activity log"));
+    }
 }

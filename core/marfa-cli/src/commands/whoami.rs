@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use crate::access;
 use crate::auth;
 use crate::commands::status;
 use crate::error::CliError;
@@ -92,7 +93,13 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     CredentialSource::Environment => "MARFA_API_KEY",
                     CredentialSource::Keychain => "the keychain",
                 };
-                lines.push(format!("a {kind} from {from}{who}"));
+                let line = format!("a {kind} from {from}{who}");
+                match credential.get("scope").and_then(Value::as_str) {
+                    Some(scope) => {
+                        lines.push(access::indented(&line, &access::lines_for_scope(scope)))
+                    }
+                    None => lines.push(line),
+                }
             }
         }
         lines.join("\n")
