@@ -2441,11 +2441,15 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     // A hand-written duplicate reads once, however its directory is spelled.
     const written = JSON.parse(readFileSync(harness.registry, "utf8")) as {
-      folders: Array<{ dir: string; folder: string }>;
+      folders: Array<{ dir: string; folder: string; root?: string }>;
     };
     const [entry] = written.folders;
     if (entry === undefined) throw new Error("the registry lists nothing");
-    written.folders.push(entry, { dir: harness.dir, folder: entry.folder });
+    written.folders.push(entry, {
+      dir: harness.dir,
+      folder: entry.folder,
+      root: entry.root,
+    });
     writeFileSync(harness.registry, JSON.stringify(written));
     const once = await harness.folder.list();
     expect(once.ok && once.value.length, "an entry was listed twice").toBe(1);
@@ -2549,6 +2553,198 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     if (!swept.ok) return;
     expect(swept.value.scan.moved_away).toBe(1);
     expect(deletesOf(a.server, moved)).toBe(0);
+  });
+
+  /** The registry's entries, as the file holds them. */
+  function registryEntries(
+    registry: string,
+  ): Array<{ dir: string; folder: string; root?: string }> {
+    return (
+      JSON.parse(readFileSync(registry, "utf8")) as {
+        folders: Array<{ dir: string; folder: string; root?: string }>;
+      }
+    ).folders;
+  }
+
+  /** Moves a folder's directory aside and puts an empty one in its place. */
+  function replaceWithEmpty(h: FolderHarness): string {
+    const away = `${realpathSync(h.dir)}-away`;
+    renameSync(h.dir, away);
+    mkdirSync(h.dir);
+    return away;
+  }
+
+  /** Stands an empty directory where the second folder was added, then
+   *  reads or writes the registry at `site` and checks the folder stays
+   *  listed. */
+  async function emptyStandsInPlace(
+    site: "list" | "add" | "pass",
+  ): Promise<void> {
+    const moved = "01a00000-0000-7000-8000-0000000043a1";
+    let more: FolderRow | undefined;
+    const { a, b } = await onOneMac(
+      `root-replaced-${site}`,
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": [
+          {
+            item: { id: moved, properties: { title: "Moved", body: "m\n" } },
+          },
+        ],
+      },
+      (server) => {
+        more = scriptFolderRow(server, {
+          search: { types: ["core.event"] },
+        });
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const away = replaceWithEmpty(b);
+    const dirs = (): string[] =>
+      registryEntries(a.registry)
+        .map((entry) => entry.dir)
+        .sort();
+    const both = [realpathSync(a.dir), realpathSync(b.dir)].sort();
+
+    if (site === "list") {
+      const listed = await a.folder.list();
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      expect(
+        listed.ok && listed.value.map((entry) => entry.dir).sort(),
+        "an empty directory where a folder was added took it off the list",
+      ).toEqual(both);
+    } else if (site === "add") {
+      const third = await folderHarness(`root-replaced-${site}-c`, {
+        sharing: { server: a.server, key: KEY },
+        folder: more,
+        registry: a.registry,
+      });
+      try {
+        expect(
+          dirs(),
+          "adding a folder took off the list one whose directory an empty one replaced",
+        ).toEqual([...both, realpathSync(third.dir)].sort());
+      } finally {
+        await third.stop();
+      }
+    } else {
+      renameSync(join(a.dir, "Moved.md"), join(away, "Moved.md"));
+      expect((await a.folder.push()).ok).toBe(true);
+      await pastTheGrace();
+      const held = await a.folder.push();
+      expect(held.ok, JSON.stringify(held)).toBe(true);
+      if (!held.ok) return;
+      expect(
+        deletesOf(a.server, moved),
+        "a file moved into a folder whose directory an empty one replaced was trashed",
+      ).toBe(0);
+      expect(held.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Moved.md",
+      ]);
+      expect(dirs()).toEqual(both);
+    }
+
+    // The folder is where it was, and the listing never lost it.
+    rmSync(b.dir, { recursive: true });
+    renameSync(away, b.dir);
+    const back = await b.folder.list();
+    expect(back.ok && back.value.length).toBe(site === "add" ? 3 : 2);
+  }
+
+  it("keeps a folder listed in a listing when an empty directory stands where it was added", () =>
+    emptyStandsInPlace("list"));
+
+  it("keeps a folder listed when another folder is added and an empty directory stands where it was added", () =>
+    emptyStandsInPlace("add"));
+
+  it("keeps a folder listed, and a delete held, when an empty directory stands where it was added at a pass that looks for a moved file", () =>
+    emptyStandsInPlace("pass"));
+
+  it("keeps a folder listed when another folder's state stands where it was added", async () => {
+    let more: FolderRow | undefined;
+    const { a, b } = await onOneMac(
+      "root-replaced-other",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {},
+      (server) => {
+        more = scriptFolderRow(server, { search: { types: ["core.event"] } });
+      },
+    );
+    const third = await folderHarness("root-replaced-other-c", {
+      sharing: { server: a.server, key: KEY },
+      folder: more,
+      registry: a.registry,
+    });
+    try {
+      const here = realpathSync(b.dir);
+      const away = `${here}-away`;
+      const there = realpathSync(third.dir);
+      renameSync(b.dir, away);
+      renameSync(third.dir, b.dir);
+      const listed = await a.folder.list();
+      expect(listed.ok, JSON.stringify(listed)).toBe(true);
+      expect(
+        listed.ok && listed.value.map((entry) => entry.dir).sort(),
+        "a directory holding another folder took the entry of the folder added there off the list",
+      ).toEqual([realpathSync(a.dir), here, there].sort());
+      expect(
+        listed.ok && listed.value.find((entry) => entry.dir === here)?.folder,
+        "the entry of the folder added at the path was given to the folder that stands there now",
+      ).toBe(b.settings.id);
+      renameSync(b.dir, there);
+      renameSync(away, b.dir);
+    } finally {
+      await third.stop();
+    }
+  });
+
+  it("lists each folder with the identity of the directory it opened, and keeps one that records none until it lists itself again", async () => {
+    const { a, b } = await onOneMac(
+      "root-recorded",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      {},
+    );
+    const rootOf = new Map(
+      registryEntries(a.registry).map((entry) => [entry.folder, entry.root]),
+    );
+    const roots = [...rootOf.values()];
+    expect(
+      roots.every((root) => typeof root === "string" && root !== ""),
+      "an entry does not record the directory it opened",
+    ).toBe(true);
+    expect(new Set(roots).size, "two folders share one identity").toBe(2);
+
+    // An entry written without one proves nothing about the directory now
+    // at its path, so it stays until its folder lists itself again.
+    const written = JSON.parse(readFileSync(a.registry, "utf8")) as {
+      folders: Array<{ dir: string; folder: string; root?: string }>;
+    };
+    for (const entry of written.folders) delete entry.root;
+    writeFileSync(a.registry, JSON.stringify(written));
+    rmSync(join(a.dir, ".marfa"), { recursive: true, force: true });
+    const kept = await b.folder.list();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    expect(
+      kept.ok && kept.value.map((entry) => entry.folder).sort(),
+      "an entry that records no directory was taken off the list",
+    ).toEqual([a.settings.id, b.settings.id].sort());
+
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(
+      registryEntries(a.registry).find(
+        (entry) => entry.folder === b.settings.id,
+      )?.root,
+      "a folder that passed did not list itself with the directory it opened",
+    ).toBe(rootOf.get(b.settings.id));
+    rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
+    const dropped = await a.folder.list();
+    expect(
+      dropped.ok && dropped.value.map((entry) => entry.folder),
+      "a folder whose state was removed stayed listed once it recorded the directory it opened",
+    ).toEqual([a.settings.id]);
   });
 
   it("keeps a folder it cannot read listed, and holds a delete meanwhile", async () => {

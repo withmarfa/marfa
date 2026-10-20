@@ -3826,11 +3826,35 @@ When a removal takes a listed entry off without deleting folder state because th
 
 **Tests:** `cli/folder.test.ts › takes a listed folder off the list without removing a folder moved into its place`.
 
+### `folders/registry-root-identity`
+
+When a folder is registered, a device MUST record the identity of the directory it admitted beside its directory and folder ID in the machine registry.
+
+**Reason:** The path alone cannot say whether the directory standing there is the one the folder was admitted at.
+
+**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it lists itself again`.
+
 ### `folders/registry-removed-state`
 
-When a registry read finds a readable directory whose folder state was removed, a device MUST remove that directory’s registry entry.
+When a registry read finds that the directory a listed folder was admitted at holds no folder state, a device MUST remove that directory’s registry entry.
 
-**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`.
+**Tests:** `device/folders-one-mac.test.ts › lists a folder under the folder it follows now, once, and drops one whose state was removed`, `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it lists itself again`.
+
+### `folders/registry-replaced-kept`
+
+When a registry read finds that the directory at a listed folder’s path is not the directory the folder was admitted at, a device MUST retain the folder’s entry, whatever the directory at that path holds.
+
+**Reason:** A restore or a sync tool can replace a folder’s directory with another, empty at first, and the original can return. The entry is how the folder resumes, and how another folder holds a delete for a file that moved into it.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a folder listed in a listing when an empty directory stands where it was added`, `device/folders-one-mac.test.ts › keeps a folder listed when another folder is added and an empty directory stands where it was added`, `device/folders-one-mac.test.ts › keeps a folder listed, and a delete held, when an empty directory stands where it was added at a pass that looks for a moved file`, `device/folders-one-mac.test.ts › keeps a folder listed when another folder's state stands where it was added`.
+
+### `folders/registry-unidentified-kept`
+
+When a registry read finds an entry that records no admitted directory, a device MUST retain the entry until its folder registers again.
+
+**Reason:** Nothing shows that the directory at its path is not the one the folder was admitted at.
+
+**Tests:** `device/folders-one-mac.test.ts › lists each folder with the identity of the directory it opened, and keeps one that records none until it lists itself again`.
 
 ### `folders/registry-missing-kept`
 
@@ -4039,6 +4063,12 @@ When a watch of every folder finds that the directories of one or more listed fo
 While a watch of every folder cannot watch a listed folder, a device MUST try the folder again and watch it once it can be watched.
 
 **Tests:** `device/folders-watch-every.test.ts › says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be`.
+
+### `folders/watch-every-root-returns`
+
+When the directory a listed folder was admitted at returns to its path during a watch of every folder, a device MUST keep the folder in step without the folder being added again.
+
+**Tests:** `device/folders-watch-every.test.ts › takes a folder up again once the directory it was added at returns after an empty one stood in its place`.
 
 ### `folders/watch-every-credential-refused`
 
