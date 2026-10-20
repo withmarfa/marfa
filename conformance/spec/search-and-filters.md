@@ -1966,7 +1966,7 @@ If an archived edge's `edge_type` is a string that is not an edge-type identifie
 
 When `POST /restore` meets an edge with an end that is an item of a type that is not registered once the archive's own types are, the server MUST NOT refuse the edge because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
 
-**Reason:** a forced delete removes a type and keeps its items and the edges between them (`types/delete-force`), and the type's parent and roles go with it, so an entry that named the type, its parent or one of its roles can no longer be judged. The edge stands as the archive holds it, whatever entries the list holds, listing a type that is registered or not. `POST /edges` still refuses such an end (`edges/endpoint-unregistered`), and every other refusal of a restored edge is unchanged (`search-and-filters/restore-edge-skips`).
+**Reason:** a forced delete removes a type and keeps its items and the edges between them (`types/delete-force`), and the type's parent and roles go with it, so no entry in the list, whether it names a registered type or not, can be judged against the end. `POST /edges` still refuses such an end (`edges/endpoint-unregistered`), and every other refusal of a restored edge is unchanged (`search-and-filters/restore-edge-skips`).
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`, `› restores an older archive whose item type is not registered, keeping the edge its constraint named the type for`.
 
@@ -1974,7 +1974,7 @@ When `POST /restore` meets an edge with an end that is an item of a type that is
 
 When `POST /restore` meets an edge with an end that is an item of a registered type, the server MUST judge that end against the edge type's constraint list as `POST /edges` does, whether or not the list also names a type that is not registered.
 
-**Reason:** a type that other types name as parent cannot be deleted (`types/delete-subtypes`), so every ancestor of a registered type is registered, and an entry naming a type that is not registered admits no registered type. The witness is an edge of a registered end that the list does not name, which a restore skips as `edge_constraint_violation` beside the edges it keeps.
+**Reason:** a type that other types name as parent cannot be deleted (`types/delete-subtypes`), so every ancestor of a registered type is registered, and an entry naming a type that is not registered admits no registered type.
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
