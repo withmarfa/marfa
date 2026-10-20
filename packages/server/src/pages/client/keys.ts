@@ -484,7 +484,7 @@ function editBody(
 }
 
 const CHANGED_ELSEWHERE =
-  "This key changed in another window. Reload to see it.";
+  "This key changed after this page opened. Reload to see it.";
 const GONE_WORDS =
   "This key was revoked or has ended. Go to API keys to see what is left.";
 

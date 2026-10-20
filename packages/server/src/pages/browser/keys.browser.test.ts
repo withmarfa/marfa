@@ -700,7 +700,7 @@ describe("A key", () => {
   });
 
   inBrowser(
-    "will not save over a key that changed in another window, and saves after a reload",
+    "will not save over a key that changed after the page opened, and saves after a reload",
     async () => {
       const { page, context } = await open();
       try {
@@ -723,7 +723,7 @@ describe("A key", () => {
         const problem = page.locator("[data-notice=problem]");
         await problem.waitFor({ state: "visible" });
         expect(await problem.innerText()).toContain(
-          "This key changed in another window. Reload to see it.",
+          "This key changed after this page opened. Reload to see it.",
         );
         const held = await ctx.storage.keys.get(id);
         expect(held?.permissions).toEqual(["instance.read"]);
