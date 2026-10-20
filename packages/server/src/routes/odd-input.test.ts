@@ -187,6 +187,75 @@ describe("tags", () => {
       }
     }
   });
+
+  it("refuse a dot segment, naming it, while a metadata replace still sheds one held", async () => {
+    const id = await newItem();
+    for (const tag of ["._", "..."]) {
+      const res = await request(ctx.app, "POST", `/items/${id}/tags`, {
+        key: ctx.workingKey,
+        body: { tags: [tag] },
+      });
+      expect(res.status, tag).toBe(200);
+    }
+
+    for (const tag of [".", ".."]) {
+      const doors: [string, string, unknown][] = [
+        [
+          "POST",
+          "/items",
+          { type: "core.note", properties: { body: "x" }, tags: [tag] },
+        ],
+        ["POST", `/items/${id}/tags`, { tags: [tag] }],
+        ["PUT", `/items/${id}/metadata`, { tags: [tag] }],
+        ["PATCH", `/items/${id}/metadata`, { tags: [tag] }],
+        [
+          "POST",
+          "/items/bulk-actions",
+          {
+            filter: { type: "core.note" },
+            dry_run: true,
+            action: "update_tags",
+            add: [tag],
+          },
+        ],
+        [
+          "POST",
+          "/items/bulk",
+          {
+            items: [
+              { type: "core.note", properties: { body: "x" }, tags: [tag] },
+            ],
+          },
+        ],
+        ["POST", "/folders", { title: "dots", defaults: { tags: [tag] } }],
+      ];
+      for (const [method, path, body] of doors) {
+        const res = await request(ctx.app, method, path, {
+          key: ctx.workingKey,
+          body,
+        });
+        expect(res.status, `${method} ${path} with ${tag}`).toBe(400);
+        const text = await res.text();
+        expect(
+          (JSON.parse(text) as { error: { code: string } }).error.code,
+        ).toBe("validation_error");
+        expect(text, `${method} ${path} names ${tag}`).toContain(
+          `A tag must not be \\"${tag}\\"`,
+        );
+      }
+    }
+
+    await ctx.storage.metadata.addTags(id, [".", ".."]);
+    const replaced = await request(ctx.app, "PUT", `/items/${id}/metadata`, {
+      key: ctx.workingKey,
+      body: { tags: ["kept"] },
+    });
+    expect(replaced.status).toBe(200);
+    expect(
+      ((await replaced.json()) as { metadata: { tags: string[] } }).metadata
+        .tags,
+    ).toEqual(["kept"]);
+  });
 });
 
 describe("property names", () => {

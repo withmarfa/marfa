@@ -408,6 +408,14 @@ If a write other than an archive restore carries a tag that is empty, holds only
 
 **Tests:** `compliance/odd-input.test.ts › refuses an empty, blank or over-long tag, and takes one of 128 characters`, `› refuses a tag or property name the item doors refuse`, `› accepts valid tags and property names and refuses invalid ones on each write`.
 
+### `items/tag-dot-segment`
+
+If a write other than an archive restore carries a tag that is exactly `.` or `..`, then the server MUST answer `400 validation_error` with a `details.errors[].message` that names the tag.
+
+**Reason:** a URL parser drops a `.` or `..` path segment, so `DELETE /items/{id}/tags/{tag}` (`items/tags-remove`) could never name such a tag.
+
+**Tests:** `compliance/odd-input.test.ts › refuses a tag that is . or .., naming it, and takes ._ and ...`.
+
 ## Refusals on create
 
 ### `items/create-no-type`

@@ -3006,9 +3006,9 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata merge or replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, blank as JavaScript's `trim` reads blank, exactly `.` or `..`, or longer than 128 UTF-16 code units, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
-**Reason:** a write the server refuses (`items/tag-text`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
+**Reason:** a write the server refuses (`items/tag-text`, `items/tag-dot-segment`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
 **Tests:** `device/name-bounds-live.test.ts › refuses a tag the server refuses, on every door, before it saves or queues anything`, `device/folder-names.test.ts › is flagged with its reason while the files either side of it are saved`.
 

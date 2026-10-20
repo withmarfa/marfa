@@ -880,11 +880,14 @@ export const KeyResponseSchema = z
   .describe("A new API key, with its plaintext `key`.")
   .openapi("KeyResponse");
 
-/** A tag a write may carry: not empty, not blank, and short enough to name
- *  in a URL path. */
-export const TagSchema = maxStringLength(
-  z.string().min(1),
-  MAX_TAG_LENGTH,
-).refine((tag) => tag.trim().length > 0, "A tag must not be blank");
+/** A tag a write may carry: not empty, not blank, and nameable as one URL
+ *  path segment. A URL parser drops a `.` or `..` segment before routing,
+ *  so the removal route could never name one. */
+export const TagSchema = maxStringLength(z.string().min(1), MAX_TAG_LENGTH)
+  .refine((tag) => tag.trim().length > 0, "A tag must not be blank")
+  .refine((tag) => tag !== "." && tag !== "..", {
+    error: (issue) =>
+      `A tag must not be ${JSON.stringify(issue.input)}, which a URL path cannot name`,
+  });
 
 export const WrittenPropertiesSchema = z.record(z.string().min(1), z.unknown());

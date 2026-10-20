@@ -35,6 +35,8 @@ const REFUSED_TAGS: Array<[string, string]> = [
   ["\t  ﻿", "blank in the way JavaScript's trim reads blank"],
   ["a".repeat(129), "129 UTF-16 code units"],
   ["\u{1F600}".repeat(65), "65 characters of two UTF-16 code units each"],
+  [".", "a dot, which a URL path cannot name as a segment"],
+  ["..", "two dots, which a URL path cannot name as a segment"],
 ];
 
 /** Taken by the server, and so by the device. */
