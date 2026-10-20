@@ -177,7 +177,7 @@ of its scopes need a recent one (`gateAttributes`), and its approve button
 opens the dialog first when the person chose one of those too late. `client/index.ts` starts them all. They use the DOM
 only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
-password toggle, the shortcut hint, Sign out) hidden, and the script shows it, so a
+password toggle, the shortcut hint, Sign out, a list's Rows per page) hidden, and the script shows it, so a
 browser without the script has no control that does nothing.
 
 `client/tsconfig.json` gives these files the DOM library, which the rest of the
