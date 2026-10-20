@@ -81,7 +81,7 @@ const listAuditRoute = createRoute({
         .enum(AUDIT_KINDS)
         .optional()
         .describe(
-          `Only return entries of this kind, sorted from \`action\`: \`access\` is ${AUDIT_KIND_WORDS.access}, \`data\` is ${AUDIT_KIND_WORDS.data}, \`settings\` is ${AUDIT_KIND_WORDS.settings}, and \`housekeeping\` is ${AUDIT_KIND_WORDS.housekeeping}.`,
+          `Only return entries of this kind: \`access\` is ${AUDIT_KIND_WORDS.access}, \`data\` is ${AUDIT_KIND_WORDS.data}, \`settings\` is ${AUDIT_KIND_WORDS.settings}, and \`housekeeping\` is ${AUDIT_KIND_WORDS.housekeeping}.`,
         ),
       q: z
         .string()

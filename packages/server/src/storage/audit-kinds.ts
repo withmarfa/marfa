@@ -31,7 +31,7 @@ export const HOUSEKEEPING_ACTIONS: readonly string[] = [
   "blob.copy_replicated",
 ];
 
-/** Families of sign-ins, accounts, keys, folders and the owner's profile. */
+/** Families of sign-ins, keys, folders and the profile. */
 export const ACCESS_FAMILIES: readonly string[] = [
   "auth",
   "owner",
@@ -68,8 +68,8 @@ export function auditSearchWords(q: string): string[] {
 
 /** What `kind` means, for the contract and the API reference. */
 export const AUDIT_KIND_WORDS = {
-  access: "sign-ins, accounts, keys, folders and the owner's profile",
-  data: "items, edges, types, extensions, files, exports and restores",
+  access: "sign-ins, keys, folders and the profile",
+  data: "items, edges, types, files and restores",
   settings: "configuration, webhooks and connectors",
-  housekeeping: "what Marfa does on its own, such as clearing the trash",
+  housekeeping: "what Marfa does on its own",
 } as const satisfies Record<AuditKind, string>;

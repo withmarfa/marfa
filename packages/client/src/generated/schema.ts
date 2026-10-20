@@ -25413,7 +25413,7 @@ export interface operations {
                 resource_type?: string;
                 /** @description Only return entries for the resource with this ID. */
                 resource_id?: string;
-                /** @description Only return entries of this kind, sorted from `action`: `access` is sign-ins, accounts, keys, folders and the owner's profile, `data` is items, edges, types, extensions, files, exports and restores, `settings` is configuration, webhooks and connectors, and `housekeeping` is what Marfa does on its own, such as clearing the trash. */
+                /** @description Only return entries of this kind: `access` is sign-ins, keys, folders and the profile, `data` is items, edges, types, files and restores, `settings` is configuration, webhooks and connectors, and `housekeeping` is what Marfa does on its own. */
                 kind?: "access" | "data" | "settings" | "housekeeping";
                 /** @description Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details. */
                 q?: string;
