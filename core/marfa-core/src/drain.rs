@@ -265,16 +265,12 @@ fn put_verdict(report: &mut DrainReport, replacing: Option<usize>, entry: DrainV
 /// Whether the server asked the caller to slow down, which says nothing of
 /// the write that met it.
 fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
-    fn limited(error: &CoreError) -> bool {
-        match error {
-            CoreError::RenewalFailed(cause) => limited(cause),
-            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. } => true,
-            _ => false,
-        }
-    }
     match answer {
         Ok(answer) => answer.status == 429,
-        Err(error) => limited(error),
+        Err(error) => matches!(
+            error,
+            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. }
+        ),
     }
 }
 
