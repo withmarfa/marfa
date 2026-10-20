@@ -125,9 +125,9 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
       // Focus is back on the button that was pressed, inside the page's own markup.
       await expect
         .poll(() =>
-          page
-            .locator("#mint button")
-            .evaluate((el) => el === document.activeElement),
+          page.evaluate(
+            "document.activeElement === document.querySelector('#mint button')",
+          ),
         )
         .toBe(true);
       expect(await keySources()).not.toContain("cancelled-key");
