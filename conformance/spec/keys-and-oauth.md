@@ -2535,7 +2535,7 @@ If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than 
 
 ### `keys-and-oauth/sign-in-end-self`
 
-When the browser session asking `DELETE /owner/sign-ins/{id}` names its own session, the server MUST end it whatever the session's age.
+When the browser session asking `DELETE /owner/sign-ins/{id}` names its own session and does not set `revoke_keys` to `true`, the server MUST end it whatever the session's age.
 
 **Reason:** Ending the browser's own sign-in only gives up authority, so it needs no recent sign-in, and a page does not ask the owner to confirm it's them first. A confirmation would replace the session the request names.
 
