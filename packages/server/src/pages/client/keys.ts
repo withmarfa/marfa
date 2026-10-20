@@ -518,6 +518,20 @@ async function seeKey(form: HTMLFormElement, id: string): Promise<Seen> {
     : { state: "changed" };
 }
 
+/** A look at the key found it unfit to send over, so nothing was sent. */
+class Stopped extends Error {
+  constructor(readonly seen: Exclude<Seen, { state: "same" }>) {
+    super(seen.state);
+  }
+}
+
+async function stoppedText(
+  seen: Exclude<Seen, { state: "same" }>,
+): Promise<string> {
+  if (seen.state === "refused") return refusalText(seen.response);
+  return seen.state === "gone" ? GONE_WORDS : CHANGED_ELSEWHERE;
+}
+
 async function submitEdit(
   form: HTMLFormElement,
   initialLiterals: string,
@@ -533,32 +547,17 @@ async function submitEdit(
   busy(button, true);
   let leaving = false;
   try {
-    const seen = await seeKey(form, id);
-    if (seen.state === "refused") {
-      if (seen.response.status === 401) {
-        signInAgain();
-        leaving = true;
-        return;
-      }
-      describeProblem(form, await refusalText(seen.response));
-      return;
-    }
-    if (seen.state === "gone") {
-      describeProblem(form, GONE_WORDS);
-      return;
-    }
-    if (seen.state === "changed") {
-      describeProblem(form, CHANGED_ELSEWHERE);
-      return;
-    }
     const response = await sendConfirmed(
-      () =>
-        fetch(`/keys/${encodeURIComponent(id)}`, {
+      async () => {
+        const seen = await seeKey(form, id);
+        if (seen.state !== "same") throw new Stopped(seen);
+        return fetch(`/keys/${encodeURIComponent(id)}`, {
           method: "PATCH",
           credentials: "same-origin",
           headers: JSON_HEADERS,
           body: JSON.stringify(body),
-        }),
+        });
+      },
       form.dataset.confirmWhy ?? "Confirm it's you.",
       button,
     );
@@ -579,8 +578,18 @@ async function submitEdit(
       return;
     }
     describeProblem(form, await refusalText(response));
-  } catch {
-    describeProblem(form, SETUP_WORDS.network);
+  } catch (error) {
+    if (error instanceof Stopped) {
+      const { seen } = error;
+      if (seen.state === "refused" && seen.response.status === 401) {
+        signInAgain();
+        leaving = true;
+      } else {
+        describeProblem(form, await stoppedText(seen));
+      }
+    } else {
+      describeProblem(form, SETUP_WORDS.network);
+    }
   } finally {
     delete form.dataset.sending;
     if (!leaving) busy(button, false);

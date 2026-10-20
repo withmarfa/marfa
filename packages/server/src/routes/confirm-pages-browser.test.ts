@@ -253,6 +253,56 @@ inBrowser("API keys, with a sign-in older than five minutes", () => {
       await context.close();
     }
   });
+
+  it("looks at the key again after the confirmation, and sends nothing if it changed meanwhile", async () => {
+    const { context, page } = await signedIn();
+    try {
+      const made = await context.request.post(`${origin}/keys`, {
+        headers: { origin },
+        data: {
+          label: "Changed while asking",
+          source: "changed-while-asking",
+          permissions: ["instance.read"],
+        },
+      });
+      const { id } = (await made.json()) as { id: string };
+      await page.goto(`${origin}/auth/owner/keys/${id}`);
+      await page
+        .locator("summary", { hasText: "More control over Marfa" })
+        .click();
+      await page.locator('input[value="instance.read"]').uncheck();
+      clock.advanceClock(6 * MINUTE);
+      let patches = 0;
+      page.on("request", (request) => {
+        if (
+          request.method() === "PATCH" &&
+          request.url().endsWith(`/keys/${id}`)
+        )
+          patches += 1;
+      });
+      await page.getByRole("button", { name: "Save changes" }).click();
+      await dialogOf(page).waitFor();
+      expect(patches).toBe(1);
+
+      // Another window gives the key less while the question is open.
+      await ctx.storage.keys.update(id, {
+        type_permissions: { "core.note": "read" },
+      });
+      await confirmWithPassword(page);
+
+      const problem = page.locator("[data-notice=problem]");
+      await problem.waitFor({ state: "visible" });
+      expect(await problem.innerText()).toContain(
+        "This key changed after this page opened. Reload to see it.",
+      );
+      expect(patches).toBe(1);
+      const stored = await ctx.storage.keys.get(id);
+      expect(stored?.permissions).toEqual(["instance.read"]);
+    } finally {
+      clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
 });
 
 inBrowser(
