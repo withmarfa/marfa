@@ -201,7 +201,7 @@ describe("a console page asked for by a browser while the instance is unclaimed"
 });
 
 describe("Home, at the root", () => {
-  it("is shown to the owner's browser, headed by the instance's name and holding a search for pages and settings", async () => {
+  it("is shown to the owner's browser, headed by the instance's name", async () => {
     const cookie = await signedInCookie();
     const { name } = (await (await get("/")).json()) as { name: string };
     const res = await get("/", { ...BROWSER, cookie });
@@ -210,11 +210,20 @@ describe("Home, at the root", () => {
     expect(res.headers.get("vary")).toContain("Accept");
     const html = await res.text();
     expect(/<h1\b[^>]*>([^<]*)<\/h1>/.exec(html)?.[1]).toBe(name);
+    // Witness: a visitor is shown the notice, not the owner's page.
+    expect(visibleText(await (await get("/", BROWSER)).text())).toContain(
+      "running",
+    );
+  });
+
+  it("holds a search for pages and settings", async () => {
+    const cookie = await signedInCookie();
+    const html = await (await get("/", { ...BROWSER, cookie })).text();
     expect(pageField(html, "q")).toBeDefined();
-    // Witness: a visitor is shown neither the search nor the owner's name.
-    const visitor = await (await get("/", BROWSER)).text();
-    expect(pageField(visitor, "q")).toBeUndefined();
-    expect(visibleText(visitor)).toContain("running");
+    // Witness: a visitor is not shown it.
+    expect(
+      pageField(await (await get("/", BROWSER)).text(), "q"),
+    ).toBeUndefined();
   });
 
   it("is not cached", async () => {

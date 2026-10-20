@@ -702,11 +702,19 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 
 ### `instance/root-home`
 
-When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST answer a page headed by the instance's name that holds a search field named `q`.
+When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST answer a page headed by the instance's name.
 
 **Reason:** the owner who opens the server's address needs the way into every console page, not the notice a visitor is given.
 
-**Tests:** `compliance/console-pages.test.ts › is shown to the owner's browser, headed by the instance's name and holding a search for pages and settings`.
+**Tests:** `compliance/console-pages.test.ts › is shown to the owner's browser, headed by the instance's name`.
+
+### `instance/root-home-search`
+
+When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST include in the page a search field named `q`.
+
+**Reason:** the owner finds a page or a setting by name from Home, without knowing which page holds it.
+
+**Tests:** `compliance/console-pages.test.ts › holds a search for pages and settings`.
 
 ### `instance/root-home-no-store`
 
