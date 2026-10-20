@@ -27,11 +27,8 @@ const asBrowser = (path: string, cookie?: string) =>
 describe("a console page, asked for by a browser that is not signed in", () => {
   it("goes to sign in and says to come back to the same address, query included", async () => {
     for (const [path, returnTo] of [
-      ["/auth/owner/manage", "/auth/owner/manage"],
-      [
-        "/auth/owner/manage?tab=keys&x=%20y",
-        "/auth/owner/manage?tab=keys&x=%20y",
-      ],
+      ["/auth/owner/keys", "/auth/owner/keys"],
+      ["/auth/owner/keys?tab=keys&x=%20y", "/auth/owner/keys?tab=keys&x=%20y"],
       ["/auth/owner/passkeys", "/auth/owner/passkeys"],
       ["/auth/owner/profile", "/auth/owner/profile"],
     ] as const) {
@@ -59,18 +56,18 @@ describe("a console page, asked for by a browser that is not signed in", () => {
   });
 
   it("never carries an address a browser would read as another host", async () => {
-    const res = await asBrowser("/auth/owner/manage?next=//evil.example/x");
+    const res = await asBrowser("/auth/owner/keys?next=//evil.example/x");
     const location = res.headers.get("location") ?? "";
     const returnTo = new URL(location, "http://localhost").searchParams.get(
       "return_to",
     );
-    expect(returnTo).toBe("/auth/owner/manage?next=//evil.example/x");
+    expect(returnTo).toBe("/auth/owner/keys?next=//evil.example/x");
     expect(new URL(returnTo ?? "", "http://localhost").host).toBe("localhost");
   });
 
   it("sends an address too long to carry to sign in with no way back, so it lands on Home", async () => {
-    const room = MAX_CONSOLE_RETURN_TO_LENGTH - "/auth/owner/manage?x=".length;
-    const fits = `/auth/owner/manage?x=${"a".repeat(room)}`;
+    const room = MAX_CONSOLE_RETURN_TO_LENGTH - "/auth/owner/keys?x=".length;
+    const fits = `/auth/owner/keys?x=${"a".repeat(room)}`;
     expect(fits).toHaveLength(MAX_CONSOLE_RETURN_TO_LENGTH);
     // Witness: the longest address that fits is carried whole.
     const carried = await asBrowser(fits);
@@ -85,14 +82,14 @@ describe("a console page, asked for by a browser that is not signed in", () => {
 
   it("treats a HEAD for a page as the GET it stands for", async () => {
     const head = (headers: Record<string, string>) =>
-      ctx.app.request("/auth/owner/manage?tab=keys", {
+      ctx.app.request("/auth/owner/keys?tab=keys", {
         method: "HEAD",
         headers,
       });
     const out = await head(BROWSER);
     expect(out.status).toBe(302);
     expect(out.headers.get("location")).toBe(
-      `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/manage?tab=keys")}`,
+      `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/keys?tab=keys")}`,
     );
     expect(out.headers.get("cache-control")).toContain("no-store");
     // Witness: with the owner's session the same HEAD is the page's headers.
@@ -114,11 +111,11 @@ describe("a console page, asked for by a browser that is not signed in", () => {
       form: {
         email: ctx.owner.email,
         password: ctx.owner.password,
-        return_to: "/auth/owner/manage?x=1",
+        return_to: "/auth/owner/keys?x=1",
       },
     });
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/auth/owner/manage?x=1");
+    expect(res.headers.get("location")).toBe("/auth/owner/keys?x=1");
   });
 
   it("lands on Home after signing in with nowhere to return to", async () => {
@@ -133,7 +130,7 @@ describe("a console page, asked for by a browser that is not signed in", () => {
   it("is sent to sign in again when its session ends while a page is open", async () => {
     const mine = await createTestContext();
     try {
-      const open = await mine.app.request("/auth/owner/manage", {
+      const open = await mine.app.request("/auth/owner/keys", {
         headers: { ...BROWSER, cookie: mine.owner.cookie },
       });
       expect(open.status).toBe(200);
@@ -147,12 +144,12 @@ describe("a console page, asked for by a browser that is not signed in", () => {
         body: "{}",
       });
       expect(out.status).toBe(200);
-      const next = await mine.app.request("/auth/owner/manage", {
+      const next = await mine.app.request("/auth/owner/keys", {
         headers: { ...BROWSER, cookie: mine.owner.cookie },
       });
       expect(next.status).toBe(302);
       expect(next.headers.get("location")).toBe(
-        "/auth/sign-in?return_to=%2Fauth%2Fowner%2Fmanage",
+        "/auth/sign-in?return_to=%2Fauth%2Fowner%2Fkeys",
       );
     } finally {
       await mine.cleanup();
@@ -160,7 +157,7 @@ describe("a console page, asked for by a browser that is not signed in", () => {
   });
 
   it("opens for the owner's session, with a policy that lets the page's script reach this server", async () => {
-    const res = await asBrowser("/auth/owner/manage", ctx.owner.cookie);
+    const res = await asBrowser("/auth/owner/keys", ctx.owner.cookie);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-security-policy")).toContain(
       "connect-src 'self'",
@@ -195,7 +192,7 @@ describe("a console page, asked for by something that is not a browser", () => {
     const { createUnclaimedTestApp } = await import("../test-utils.js");
     const fresh = await createUnclaimedTestApp();
     try {
-      const res = await fresh.app.request("/auth/owner/manage", {
+      const res = await fresh.app.request("/auth/owner/keys", {
         headers: BROWSER,
       });
       expect(res.status).toBe(302);
@@ -216,7 +213,7 @@ describe("Home at the root", () => {
       "connect-src 'self'",
     );
     const text = visibleText(await home.text());
-    expect(text).toContain("Older management page");
+    expect(text).toContain("Export and restore");
     expect(text).toContain("Sign out");
     expect(text).not.toContain("Marfa is running");
 
@@ -237,12 +234,12 @@ describe("Home at the root", () => {
     }
   });
 
-  it("links its older management page and reaches it from Home", async () => {
+  it("links the pages it lists and reaches them from Home", async () => {
     const html = await (await asBrowser("/", ctx.owner.cookie)).text();
-    expect(pageLinks(html).map((l) => l.href)).toContain("/auth/owner/manage");
-    expect(
-      (await asBrowser("/auth/owner/manage", ctx.owner.cookie)).status,
-    ).toBe(200);
+    for (const path of ["/auth/owner/export", "/auth/owner/connectors"]) {
+      expect(pageLinks(html).map((l) => l.href)).toContain(path);
+      expect((await asBrowser(path, ctx.owner.cookie)).status, path).toBe(200);
+    }
   });
 
   it("takes a search from the owner's browser and nobody else", async () => {

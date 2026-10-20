@@ -28,7 +28,7 @@ let ctx: TestContext;
 let server: { close: () => Promise<void> };
 
 /** The signed-in page every registered row here leads to, which is a real route. */
-const PAGE = "/auth/owner/manage";
+const PAGE = "/auth/owner/keys";
 
 beforeAll(async () => {
   if (launched instanceof Error) return;
@@ -153,7 +153,6 @@ describe("Home", () => {
         await page.getByText("Needs attention").waitFor();
         await page.getByText("A key has not been used in a year").waitFor();
         await page.getByText("7 keys").waitFor();
-        await page.getByText("Older management page").waitFor();
         // The script ran: it shows the controls the server sent hidden.
         await page.getByRole("button", { name: "Sign out" }).waitFor();
         await page

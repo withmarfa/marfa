@@ -189,7 +189,7 @@ inBrowser("the sign-in page, in a browser", () => {
       await page.goto(`${origin}/auth/sign-in`);
       await signIn(page);
       await page.waitForURL(`${origin}/`);
-      expect(await page.textContent("main")).toContain("Older management page");
+      expect(await page.textContent("main")).toContain("Export and restore");
 
       // Opening the sign-in page now says so too, rather than offering the
       // form again.

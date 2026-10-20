@@ -4,7 +4,7 @@
  * Home: where the owner lands, and the one page that lists the rest. The
  * pages come from the registry, grouped as it groups them, each with the value
  * the page registered for it; what needs a look comes from the pages too. Home
- * names no page itself except the interim row below.
+ * names no page itself.
  */
 import { renderDocument } from "../pages/render.js";
 import {
@@ -19,7 +19,6 @@ import {
   SearchField,
   Section,
 } from "../pages/parts/index.js";
-import { HOME_GROUPS } from "../pages/registry.js";
 import type { BuiltGroup, PageRegistry } from "../pages/registry.js";
 import type { HomeReading } from "./console.js";
 
@@ -27,19 +26,6 @@ import type { HomeReading } from "./console.js";
 export const MAX_HOME_SEARCH = 200;
 /** The most settings a search lists, so one broad word does not list every setting. */
 const MAX_SETTING_HITS = 8;
-
-/**
- * REMOVE with the pages it stands in for. Until Access, Your data,
- * Connections and This Marfa have their own pages, the one management page
- * holds what they will. It sits in This Marfa and is not a registered page, so
- * the picker and the search never offer it.
- */
-const OLDER_MANAGEMENT_PAGE = {
-  groupId: "marfa",
-  title: "Older management page",
-  description: "Maintenance, connectors and restore, all on one page",
-  href: "/auth/owner/manage",
-} as const;
 
 export interface HomePageParams {
   nonce: string;
@@ -86,30 +72,11 @@ function sections(registry: PageRegistry, reading: HomeReading): HomeSection[] {
         valueTone: value?.tone,
       };
     });
-  const result: HomeSection[] = built.map((group) => ({
+  return built.map((group) => ({
     id: group.id,
     title: group.title,
     rows: rowsOf(group),
   }));
-  const interim: HomeRow = {
-    title: OLDER_MANAGEMENT_PAGE.title,
-    description: OLDER_MANAGEMENT_PAGE.description,
-    href: OLDER_MANAGEMENT_PAGE.href,
-  };
-  const own = result.find((s) => s.id === OLDER_MANAGEMENT_PAGE.groupId);
-  if (own) own.rows.push(interim);
-  else {
-    const order = HOME_GROUPS.map((g) => g.id);
-    const at = order.indexOf(OLDER_MANAGEMENT_PAGE.groupId);
-    const later = result.findIndex((s) => order.indexOf(s.id) > at);
-    const added: HomeSection = {
-      id: OLDER_MANAGEMENT_PAGE.groupId,
-      title: HOME_GROUPS[at]?.title ?? "This Marfa",
-      rows: [interim],
-    };
-    result.splice(later === -1 ? result.length : later, 0, added);
-  }
-  return result;
 }
 
 function Results(props: {

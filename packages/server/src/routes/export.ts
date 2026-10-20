@@ -93,7 +93,7 @@ const exportRoute = createRoute({
         .enum(["ndjson", "archive"])
         .optional()
         .describe(
-          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob the archive doesn't hold: one no store could read, or every blob when `files` is `false`.",
+          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold.",
         ),
       files: z
         .enum(["true", "false"])

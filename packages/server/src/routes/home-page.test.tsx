@@ -131,32 +131,6 @@ describe("Home", () => {
     expect(out).toContain('class="dot warn"');
   });
 
-  it("puts the older management page in This Marfa, and keeps it out of what the picker and search list", async () => {
-    const without = await home({ keys: {} });
-    expect(visibleText(without)).toContain("This Marfa");
-    expect(pageLinks(without)).toContainEqual({
-      href: "/auth/owner/manage",
-      text: expect.stringContaining("Older management page") as string,
-    });
-    // After Connections and before You, wherever a built page puts them.
-    const full = visibleText(
-      await home({ keys: {}, connectors: {}, general: {}, profile: {} }),
-    );
-    expect(full.indexOf("Connections")).toBeLessThan(
-      full.indexOf("This Marfa"),
-    );
-    expect(full.indexOf("General")).toBeLessThan(
-      full.indexOf("Older management page"),
-    );
-    expect(full.indexOf("Older management page")).toBeLessThan(
-      full.indexOf("You Profile"),
-    );
-    // Not a registered page, so the search dialog does not list it.
-    const dialog = /<dialog[\s\S]*?<\/dialog>/.exec(without)?.[0] ?? "";
-    expect(dialog).toContain("cs-page-keys");
-    expect(dialog).not.toContain("/auth/owner/manage");
-  });
-
   it("has a search that is a GET form to Home, and a button that opens the search everywhere", async () => {
     const out = await home();
     const form = pageForms(out).find((f) => f.method === "get");

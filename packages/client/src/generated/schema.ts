@@ -23682,7 +23682,7 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob the archive doesn't hold: one no store could read, or every blob when `files` is `false`. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold. */
                 format?: "ndjson" | "archive";
                 /** @description With `format=archive`, `false` leaves out the bytes of files, which the manifest then names in `missing_blobs`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
                 files?: "true" | "false";
