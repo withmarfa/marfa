@@ -3948,7 +3948,7 @@ export interface components {
             /** @description The type a new file becomes if its frontmatter names none. */
             type?: string;
             tier?: components["schemas"]["Tier"] & unknown;
-            /** @description Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property. */
+            /** @description Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property. A whole number a 64-bit float can't hold exactly is refused. */
             properties?: {
                 [key: string]: unknown;
             };
@@ -5247,7 +5247,7 @@ export interface operations {
                 "application/json": {
                     /** @description The item's type identifier, such as `core.note`. */
                     type: string;
-                    /** @description The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`. */
+                    /** @description The item's properties, checked against the type's schema. Strict mode refuses an undeclared property as `invalid_properties` (`details.code` `unknown_property`). A whole number a float can't hold exactly is refused: send it as a string. */
                     properties?: {
                         [key: string]: unknown;
                     };
@@ -6092,7 +6092,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. Strict mode refuses an undeclared property, as in `POST /items`. */
+                    /** @description The properties to write. They lay over the item's properties, or become all of them when `properties_mode` is `replace`. As in `POST /items`, strict mode refuses an undeclared property, and a whole number a float can't hold exactly is refused. */
                     properties?: {
                         [key: string]: unknown;
                     };
@@ -8209,7 +8209,7 @@ export interface operations {
                         id?: string;
                         /** @description The item's type identifier, such as `core.note`. */
                         type: string;
-                        /** @description The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`. */
+                        /** @description The item's properties, checked against the type's schema. Strict mode refuses an undeclared property as `invalid_properties` (`details.code` `unknown_property`). A whole number a float can't hold exactly is refused: send it as a string. */
                         properties?: {
                             [key: string]: unknown;
                         };
@@ -8484,6 +8484,7 @@ export interface operations {
                     enable_fanout?: boolean;
                     /** @enum {string} */
                     action: "update_properties";
+                    /** @description The properties to lay over each item's properties. A whole number a 64-bit float can't hold exactly is refused: send it as a string. */
                     patch: {
                         [key: string]: unknown;
                     };

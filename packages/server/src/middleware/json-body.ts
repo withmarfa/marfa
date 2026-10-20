@@ -3,15 +3,17 @@ import { ErrorCode, findLoneSurrogate, MarfaError } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { bodyCapFor } from "./body-cap.js";
 import { exceedsJsonDepth, MAX_JSON_DEPTH } from "../json-depth.js";
+import { refuseInexactIntegers } from "../item-property-numbers.js";
 
 /** A JSON escape of a surrogate code unit, U+D800 to U+DFFF. */
 const SURROGATE_ESCAPE = /\\u[dD][89a-fA-F]/;
 
 /**
  * Refuses a body that nests deeper than `MAX_JSON_DEPTH`, or that is JSON
- * holding text that is not well-formed UTF-16, before any door reads it. It
- * reads a clone, because a door or the sign-in handler reads the request's
- * own body and a body can be read once.
+ * holding text that is not well-formed UTF-16, or whose item properties hold
+ * a whole number a 64-bit float cannot hold as written, before any door reads
+ * it. It reads a clone, because a door or the sign-in handler reads the
+ * request's own body and a body can be read once.
  *
  * It judges every body but a `GET`'s and those of the blob, restore and
  * inbound doors (`bodyCapFor`'s `none` and `inbound`), whatever
@@ -51,6 +53,7 @@ export const jsonBodyGuard = createMiddleware<AppEnv>(async (c, next) => {
       });
     }
   }
+  refuseInexactIntegers(c.req.method, c.req.path, text);
   return next();
 });
 

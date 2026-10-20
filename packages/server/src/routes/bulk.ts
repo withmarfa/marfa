@@ -126,7 +126,7 @@ const BulkInputItemSchema = z.object({
     ),
   type: z.string().describe("The item's type identifier, such as `core.note`."),
   properties: WrittenPropertiesSchema.optional().describe(
-    "The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`.",
+    "The item's properties, checked against the type's schema. Strict mode refuses an undeclared property as `invalid_properties` (`details.code` `unknown_property`). A whole number a float can't hold exactly is refused: send it as a string.",
   ),
   properties_mode: z
     .enum(["merge", "replace"])

@@ -129,7 +129,9 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
   }),
   closedVariant({
     action: z.literal("update_properties"),
-    patch: WrittenPropertiesSchema,
+    patch: WrittenPropertiesSchema.describe(
+      "The properties to lay over each item's properties. A whole number a 64-bit float can't hold exactly is refused: send it as a string.",
+    ),
   }),
   closedVariant({
     action: z.literal("update_occurred_at"),

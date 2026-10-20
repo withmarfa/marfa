@@ -33,6 +33,8 @@ Field definitions:
 - **`enum_values`**: required for `enum` type
 - **`items_type`**: required for `array` type
 
+A property holds a number as a 64-bit float. A write that holds a whole number a float cannot hold exactly, in a declared or an undeclared property at any depth, is refused as `invalid_properties`; send such a number as a string. A `url` value is trimmed of surrounding whitespace, and Marfa stores the trimmed value.
+
 Subtypes only declare fields they add. They inherit all parent fields and **may not redefine them** (enforced at registration).
 
 ## Commands

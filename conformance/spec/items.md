@@ -326,6 +326,28 @@ If a write leaves out a property its type requires, or names one the type declar
 
 **Tests:** `compliance/validation.test.ts › rejects core.note with no properties with invalid_properties naming body`, `compliance/core-message.test.ts › rejects a message missing body with invalid_properties naming it`, `compliance/entity-subtypes.test.ts › rejects entity without required name with invalid_properties naming it`, `compliance/highlight.test.ts › rejects a highlight missing the required text property`, `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`.
 
+### `items/property-number-exact`
+
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions` or the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}` names a property, at any depth, whose value is a whole number written with digits that a 64-bit float neither holds exactly nor names as its shortest decimal form, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`, as `list.1`, and the message `Must be a whole number that a 64-bit float holds exactly, not <digits>. Send it as a string.`
+
+**Reason:** the server holds a number as a 64-bit float, so `1500000000000000001` would be stored and served back as `1500000000000000000` with nothing said. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
+
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
+
+### `items/property-number-exact-bulk`
+
+If an entry of `POST /items/bulk` names a property holding a number `items/property-number-exact` refuses, then the server MUST answer `400 invalid_properties` for the whole batch, with the entry's position in `details.index`, and write none of its entries.
+
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`.
+
+### `items/property-number-kept`
+
+When a write names a property whose value is a whole number that a 64-bit float holds exactly or names as its shortest decimal form, or a number written with a fraction or an exponent, the server MUST take it as the float it names, whatever its size.
+
+**Reason:** `1152921504606846976` (2^60) is held exactly, and the server serves it as `1152921504606847000`, so a value read back can be written back. A number with a fraction or an exponent names a float, not digits.
+
+**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number a float holds exactly inside an array and a nested object on both paths`.
+
 ### `items/property-name-empty`
 
 If a write names a property with no characters, other than an archive restore, then the server MUST answer `400 validation_error`.

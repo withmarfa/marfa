@@ -96,7 +96,7 @@ const FolderDefaultsSchema = z
       "The tier a new file takes if its frontmatter names none.",
     ),
     properties: WrittenPropertiesSchema.optional().describe(
-      "Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property.",
+      "Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property. A whole number a 64-bit float can't hold exactly is refused.",
     ),
     tags: z
       .array(TagSchema)
