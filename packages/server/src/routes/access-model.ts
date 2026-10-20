@@ -471,8 +471,6 @@ export function buildAccess(given: AccessInput): AccessModel {
       ),
     );
 
-  // The rows a person reads together, held and offered, are told apart by
-  // what they stand for wherever they read alike.
   const offered = [...data, ...profile].flatMap((row) =>
     row.kind === "level" ? [row, ...(row.choose?.rows ?? [])] : [],
   );
