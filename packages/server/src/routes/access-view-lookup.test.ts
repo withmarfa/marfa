@@ -3,6 +3,8 @@ import { visibleText } from "../pages/reading.js";
 import { createTestContext } from "../test-utils.js";
 import { AccessView, readAccessWords } from "./access-view.js";
 
+const html = (node: unknown): string => String(node);
+
 describe("readAccessWords", () => {
   it("looks up the label of a type this instance registered, and leaves the shipped ones to the registry", async () => {
     const ctx = await createTestContext({});
@@ -27,7 +29,7 @@ describe("readAccessWords", () => {
       );
       expect(
         visibleText(
-          String(
+          html(
             AccessView({
               scopes: ["app.inkwell.draft:write", "edge.parent-of:read"],
               ...words,
