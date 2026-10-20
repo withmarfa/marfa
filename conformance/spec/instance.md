@@ -700,6 +700,38 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 
 **Tests:** `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`, `› sends Vary: Accept on a refusal at the root as on the answers it varies`.
 
+### `instance/root-home`
+
+When the owner's browser session requests `GET /` and the request is one `instance/root-page` answers with a page, the server MUST answer a page headed by the instance's name that holds a search field named `q`.
+
+**Reason:** the owner who opens the server's address needs the way into every console page, not the notice a visitor is given.
+
+**Tests:** `compliance/console-pages.test.ts › is shown to the owner's browser, headed by the instance's name and holding a search for pages and settings`.
+
+### `instance/root-home-no-store`
+
+The server MUST send `Cache-Control: no-store` on the page it answers to the owner's browser session at `GET /`.
+
+**Reason:** the page is the owner's, and a cache must not hand it to a browser without the session.
+
+**Tests:** `compliance/console-pages.test.ts › is not cached`.
+
+### `instance/root-search-key`
+
+When the owner's browser session requests `GET /` for a page with the query key `q`, the server MUST NOT refuse `q` as undeclared.
+
+**Reason:** the search on Home is a form that submits `q` to the root.
+
+**Tests:** `compliance/console-pages.test.ts › takes a search from the owner's browser`.
+
+### `instance/root-search-key-other`
+
+If a request to `GET /` that is not the owner's browser session asking for a page carries the query key `q`, then the server MUST refuse `q` as `search-and-filters/undeclared-key` refuses an undeclared key.
+
+**Reason:** the root declares no query key to a program, and `q` belongs to the page it shows the owner alone.
+
+**Tests:** `compliance/console-pages.test.ts › refuses a search from anybody else, and any other key from everybody`.
+
 ## Pages
 
 The root is not the only page. The sign-in, consent and device approval pages are pages too, and so is what a refusal or an unserved path renders for a request that accepts `text/html`.
