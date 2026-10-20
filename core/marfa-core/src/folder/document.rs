@@ -404,7 +404,6 @@ mod tests {
 
     #[test]
     fn the_id_line_of_bytes_is_the_id_line_of_their_text() {
-        // The text reading the bytes' reading replaced.
         let by_text = |text: &str| {
             let mut lines = text.strip_prefix(MARK).unwrap_or(text).lines();
             if lines.next()? != FENCE {
