@@ -1,3 +1,4 @@
+import { verifyOAuthQueryParams } from "@better-auth/oauth-provider";
 import { makeSignature } from "better-auth/crypto";
 import { describe, expect, it } from "vitest";
 import {
@@ -111,5 +112,27 @@ describe("narrowSignedQuery", () => {
         SECRET,
       ),
     ).toBeNull();
+  });
+
+  it("signs a query the provider's own verifier accepts, and one it rejects once altered", async () => {
+    const query = await signed("openid *:read");
+    // The oracle first: the provider accepts the query it would have signed.
+    expect(await verifyOAuthQueryParams(query, SECRET)).toBe(true);
+    const narrowed = await narrowSignedQuery(
+      query,
+      ["openid", "core.note:read"],
+      ["core.note"],
+      SECRET,
+    );
+    expect(await verifyOAuthQueryParams(narrowed ?? "", SECRET)).toBe(true);
+    // The witness: the verifier is not accepting everything.
+    const altered = new URLSearchParams(narrowed ?? "");
+    altered.set("scope", "openid core.note:write");
+    expect(await verifyOAuthQueryParams(altered.toString(), SECRET)).toBe(
+      false,
+    );
+    expect(await verifyOAuthQueryParams(narrowed ?? "", `${SECRET}x`)).toBe(
+      false,
+    );
   });
 });

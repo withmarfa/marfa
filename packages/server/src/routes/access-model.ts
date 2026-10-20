@@ -31,6 +31,7 @@ import {
   dataSummary,
   heldSummary,
   LEVEL_RANK,
+  listWords,
   levelOfValue,
   lowerFirst,
   powersSummary,
@@ -546,6 +547,20 @@ export interface HeldAccess {
 }
 
 /**
+ * What a key holds that a scope cannot say: a thing held at no access beside
+ * a wider grant, and an extension namespace, which no scope names.
+ */
+export interface HeldExtras {
+  /**
+   * Scope literals, at either level, that name a thing held at no access: a
+   * key that reads all data and is denied one type. Shown as no access.
+   */
+  denied?: readonly string[];
+  /** An extension namespace and the level it is held at. */
+  extensions?: Readonly<Record<string, Level>>;
+}
+
+/**
  * Describe the scopes a credential holds: an app's consent or a key's
  * permissions read as scopes ({@link scopesOfKey}). The mechanisms
  * (`openid`, `offline_access`) are no access and are left out.
@@ -553,6 +568,7 @@ export interface HeldAccess {
 export function describeHeld(
   held: readonly string[],
   words: Words,
+  extras: HeldExtras = {},
 ): HeldAccess {
   const rows = new Map<string, HeldRow>();
   const data: HeldRow[] = [];
@@ -563,13 +579,22 @@ export function describeHeld(
   const profileLevels: HeldLevel[] = [];
   const seen: string[] = [];
   const powerTitles: string[] = [];
+  const keyOf = (scope: ParsedScope, literal: string): string =>
+    isLevelKind(scope) ? `${scope.kind}:${scope.typePattern}` : literal;
+  const denied = new Map<string, { scope: ParsedScope; profile: boolean }>();
+  for (const literal of extras.denied ?? []) {
+    const scope = parseScope(literal);
+    if (scope && isLevelKind(scope))
+      denied.set(keyOf(scope, literal), {
+        scope,
+        profile: scope.kind === "profile",
+      });
+  }
   for (const literal of held) {
     const scope = parseScope(literal);
     if (!scope || (scope.kind === "oidc" && isMechanism(literal))) continue;
-    const key = isLevelKind(scope)
-      ? `${scope.kind}:${scope.typePattern}`
-      : literal;
-    if (rows.has(key)) continue;
+    const key = keyOf(scope, literal);
+    if (rows.has(key) || denied.has(key)) continue;
     const { title, noun } = describe(scope, words);
     if (isLevelKind(scope)) {
       const level = levelHeld(held, scope.typePattern);
@@ -604,9 +629,40 @@ export function describeHeld(
       }
     }
   }
+  // Held at no access: shown as such, and said in the line, because a wider
+  // grant beside it would otherwise read as covering it.
+  const noAccess = { data: [] as string[], profile: [] as string[] };
+  for (const [key, { scope, profile: isProfile }] of denied) {
+    const { title, noun } = describe(scope, words);
+    const row = { title, value: LEVEL_LABELS.none };
+    rows.set(key, row);
+    (isProfile ? profile : data).push(row);
+    (isProfile ? noAccess.profile : noAccess.data).push(noun);
+  }
+  for (const [namespace, level] of Object.entries(extras.extensions ?? {})) {
+    const row = { title: namespace, value: LEVEL_LABELS[level] };
+    rows.set(`extension:${namespace}`, row);
+    data.push(row);
+    if (level === "none") noAccess.data.push(namespace);
+    else {
+      levels.push({ noun: namespace, level });
+      dataLevels.push({ noun: namespace, level });
+    }
+  }
   const none = {
     data: "No access to your data",
     profile: "No access to your profile",
+  };
+  const withNoAccess = (
+    line: string,
+    empty: string,
+    nouns: readonly string[],
+  ): string => {
+    if (nouns.length === 0) return line;
+    const denial = `no access to ${listWords(nouns)}`;
+    return line === empty
+      ? denial.charAt(0).toUpperCase() + denial.slice(1)
+      : `${line}; ${denial}`;
   };
   return {
     rows: [...rows.values()],
@@ -615,14 +671,22 @@ export function describeHeld(
     powers,
     summary: heldSummary(levels, seen, powerTitles),
     summaries: {
-      data: dataSummary(
-        dataLevels.map((pick) => ({ ...pick, held: "none" })),
+      data: withNoAccess(
+        dataSummary(
+          dataLevels.map((pick) => ({ ...pick, held: "none" })),
+          none.data,
+        ),
         none.data,
+        noAccess.data,
       ),
-      profile: profileSummary(
-        profileLevels.map((pick) => ({ ...pick, held: "none" })),
-        seen,
+      profile: withNoAccess(
+        profileSummary(
+          profileLevels.map((pick) => ({ ...pick, held: "none" })),
+          seen,
+          none.profile,
+        ),
         none.profile,
+        noAccess.profile,
       ),
       powers: `${String(powers.length)} turned on`,
     },
@@ -661,8 +725,9 @@ const isAllDataScope = (literal: string): boolean => {
  * post the scopes chosen. Each is a type the page offered, at a level the
  * all-data scope the request named covers, so the choice is still the
  * request narrowed. Chosen types are granted in place of the all-data scope,
- * never beside it. The type controls are read against the request whether
- * or not types were chosen, and only counted when they were.
+ * never beside it. The type controls are read only when types were chosen:
+ * a page without a script posts them all the same, and one that names a type
+ * deleted since the page was drawn means nothing while all data is kept.
  *
  * What the app holds rides along from the consent passed in, never from the
  * submission: the scopes the request names that this consent covers are
@@ -706,7 +771,7 @@ export function resolveSelection(
       allData.some((wide) => grantCoversScope([wide], literal))
     );
   };
-  if (typeValues.some((v) => !underAsk(v))) return { ok: false };
+  if (choosing && typeValues.some((v) => !underAsk(v))) return { ok: false };
   if (choosing && allData.length === 0) return { ok: false };
 
   const scopes = new Set(picked);

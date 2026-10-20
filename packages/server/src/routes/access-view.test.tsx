@@ -1,5 +1,6 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { visibleText } from "../pages/reading.js";
 import { buildAccess, describeHeld } from "./access-model.js";
@@ -161,20 +162,19 @@ describe("AccessView", () => {
   });
 });
 
-describe("scopesOfKey", () => {
+describe("a key's access", () => {
+  const view = (key: Parameters<typeof scopesOfKey>[0]) =>
+    visibleText(html(<AccessView {...scopesOfKey(key)} />));
+
   it("reads a key's permissions and maps as the scopes the pages describe", () => {
     expect(
       scopesOfKey({
         permissions: ["keys.mint"],
-        type_permissions: {
-          "core.note": "write",
-          "core.task": "read",
-          "*": "none",
-        },
+        type_permissions: { "core.note": "write", "core.task": "read" },
         edge_permissions: { "parent-of": "read" },
         metadata_permissions: { types: "write" },
         profile_permissions: { name: "write" },
-      }),
+      }).scopes,
     ).toEqual([
       "keys.mint",
       "core.note:write",
@@ -183,5 +183,69 @@ describe("scopesOfKey", () => {
       "metadata.types:write",
       "profile.name:write",
     ]);
+  });
+
+  it("shows a type denied beside all data as no access, not as read", () => {
+    const text = view({
+      type_permissions: { "*": "read", "core.note": "none" },
+    });
+    expect(text).toContain("All your data Read only");
+    expect(text).toContain("Note No access");
+    // The line says it too, so a closed group does not read as all data.
+    expect(text).toContain("Read all your data; no access to notes");
+    // The witness: with no carve-out nothing is denied.
+    expect(view({ type_permissions: { "*": "read" } })).not.toContain(
+      "No access to notes",
+    );
+  });
+
+  it("names a profile and a metadata entry for everything as the pages and the CLI do", () => {
+    const text = view({
+      metadata_permissions: { "*": "write" },
+      profile_permissions: { "*": "read" },
+    });
+    expect(text).toContain("Profile Read only");
+    expect(text).toContain("Definitions on your server Read and edit");
+    expect(text).not.toMatch(/\(all\)/);
+    // Profile reads under Your profile, not under Your data.
+    expect(text.indexOf("Profile Read only")).toBeGreaterThan(
+      text.indexOf("Your profile"),
+    );
+  });
+
+  it("shows an extension namespace at the level it is held", () => {
+    const text = view({
+      extension_permissions: { "app.cursor": "write", "app.old": "none" },
+    });
+    expect(text).toContain("app.cursor Read and edit");
+    expect(text).toContain("app.old No access");
+  });
+
+  it("says the same words as the CLI for one mixed key", () => {
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL(
+          "../../../../ci/fixtures/access-mixed-key.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as {
+      key: Parameters<typeof scopesOfKey>[0];
+      rows: { page: string; level: string }[];
+      powers: string[];
+    };
+    const held = describeHeld(
+      scopesOfKey(fixture.key).scopes,
+      {},
+      scopesOfKey(fixture.key),
+    );
+    const shown = [...held.data, ...held.profile].map(
+      (row) => `${row.title} ${row.value}`,
+    );
+    expect(shown.sort()).toEqual(
+      fixture.rows.map((row) => `${row.page} ${row.level}`).sort(),
+    );
+    expect(held.powers.map((power) => power.title)).toEqual(fixture.powers);
   });
 });

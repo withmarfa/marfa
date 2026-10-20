@@ -1,6 +1,10 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
-import { MANY_TYPES, SHOWN_TYPES } from "../pages/access-summary.js";
+import {
+  MANY_TYPES,
+  SHOWN_TYPES,
+  type Level,
+} from "../pages/access-summary.js";
 import { Icon } from "../pages/icons.js";
 import {
   DisclosureRow,
@@ -58,15 +62,15 @@ function LevelControl(props: {
 
 /** What the "Set every type" control can set: the levels some type offers. */
 function setEveryOptions(rows: readonly LevelRow[]) {
-  const offers = (label: string) =>
-    rows.some((row) => row.options.some((option) => option.label === label));
+  const offers = (level: Level) =>
+    rows.some((row) =>
+      row.options.some((option) => option.label === LEVEL_LABELS[level]),
+    );
   return [
     { value: "", label: "Choose…" },
-    ...(offers(LEVEL_LABELS.write)
-      ? [{ value: "write", label: LEVEL_LABELS.write }]
-      : []),
-    { value: "read", label: LEVEL_LABELS.read },
-    { value: "none", label: LEVEL_LABELS.none },
+    ...(["write", "read", "none"] as const)
+      .filter(offers)
+      .map((level) => ({ value: level, label: LEVEL_LABELS[level] })),
   ];
 }
 

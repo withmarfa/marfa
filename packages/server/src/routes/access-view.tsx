@@ -10,8 +10,9 @@
  */
 import { DisclosureRow, Row, RowGroup } from "../pages/parts/index.js";
 import { parseScope, type ParsedScope } from "@withmarfa/shared";
+import type { Level } from "../pages/access-summary.js";
 import type { Storage } from "../storage/interface.js";
-import { describeHeld, type HeldRow } from "./access-model.js";
+import { describeHeld, type HeldExtras, type HeldRow } from "./access-model.js";
 import {
   buildScopeDescriptions,
   resolveTypeLabels,
@@ -19,7 +20,7 @@ import {
 } from "./auth-consent.js";
 
 /** The words a caller looked up to name what is held; see {@link describeHeld}. */
-export interface AccessViewProps {
+export interface AccessViewProps extends HeldExtras {
   /** The scopes held: an app's consent, or a key through {@link scopesOfKey}. */
   scopes: readonly string[];
   /** A sentence per type pattern, for a row the curated names do not explain. */
@@ -46,7 +47,7 @@ function HeldRows(props: { rows: readonly HeldRow[] }) {
  * there, because that nothing is held in it is worth saying.
  */
 export function AccessView(props: AccessViewProps) {
-  const held = describeHeld(props.scopes, props);
+  const held = describeHeld(props.scopes, props, props);
   return (
     <RowGroup>
       <DisclosureRow title="Your data" description={held.summaries.data}>
@@ -90,28 +91,57 @@ export interface KeyAccess {
   edge_permissions?: Readonly<Record<string, string>>;
   metadata_permissions?: Readonly<Record<string, string>>;
   profile_permissions?: Readonly<Record<string, string>>;
+  extension_permissions?: Readonly<Record<string, string>>;
 }
 
+/** A key's access as {@link AccessView} takes it: `<AccessView {...scopesOfKey(key)} />`. */
+export interface KeyHeld extends HeldExtras {
+  scopes: string[];
+}
+
+const levelOf = (level: string): Level | undefined =>
+  level === "read" || level === "write" || level === "none" ? level : undefined;
+
 /**
- * The scopes a key's record holds, so a key shows through {@link AccessView}
- * like an app. A map entry at `none` holds nothing. A key's extension
- * namespaces are not scopes and are not shown here.
+ * What a key's record holds, in the form the view reads. A map entry at
+ * `none` is a thing the key is denied, shown as no access beside a wider
+ * grant. A `*` in the profile or metadata map is the whole of it, named as
+ * the pages and the CLI name it ("Profile", "Definitions on your server"),
+ * not as a type pattern. An extension namespace is no scope and is carried
+ * beside them.
  */
-export function scopesOfKey(key: KeyAccess): string[] {
-  const maps: [string, Readonly<Record<string, string>> | undefined][] = [
-    ["", key.type_permissions],
-    ["edge.", key.edge_permissions],
-    ["metadata.", key.metadata_permissions],
-    ["profile.", key.profile_permissions],
+export function scopesOfKey(key: KeyAccess): KeyHeld {
+  const scopes = [...(key.permissions ?? [])];
+  const denied: string[] = [];
+  const maps: [
+    (name: string) => string,
+    Readonly<Record<string, string>> | undefined,
+  ][] = [
+    [(name) => name, key.type_permissions],
+    [(name) => `edge.${name}`, key.edge_permissions],
+    [
+      (name) => (name === "*" ? "metadata" : `metadata.${name}`),
+      key.metadata_permissions,
+    ],
+    [
+      (name) => (name === "*" ? "profile" : `profile.${name}`),
+      key.profile_permissions,
+    ],
   ];
-  return [
-    ...(key.permissions ?? []),
-    ...maps.flatMap(([prefix, map]) =>
-      Object.entries(map ?? {})
-        .filter(([, level]) => level === "read" || level === "write")
-        .map(([pattern, level]) => `${prefix}${pattern}:${level}`),
-    ),
-  ];
+  for (const [pattern, map] of maps)
+    for (const [name, text] of Object.entries(map ?? {})) {
+      const level = levelOf(text);
+      if (level === "none") denied.push(`${pattern(name)}:read`);
+      else if (level) scopes.push(`${pattern(name)}:${level}`);
+    }
+  const extensions: Record<string, Level> = {};
+  for (const [namespace, text] of Object.entries(
+    key.extension_permissions ?? {},
+  )) {
+    const level = levelOf(text);
+    if (level) extensions[namespace] = level;
+  }
+  return { scopes, denied, extensions };
 }
 
 /**

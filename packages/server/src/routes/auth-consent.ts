@@ -765,6 +765,12 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
             const standing = [...new Set([...prior, ...formScopes])];
             const issued =
               classifyProxyOutcome(proxyResp, requestedRedirectUri) === "code";
+            // The registration was widened for this approval, so an answer
+            // that is not a code takes the widening back with it: the
+            // transaction ends, and the provider's answer goes to the browser
+            // as it was.
+            if (!issued && decisionQuery !== oauthQuery)
+              throw new ConsentRefused(proxyResp);
             if (standing.length > formScopes.length) {
               const restored =
                 await deps.storage.oauthProvider?.setConsentScopes(
@@ -797,11 +803,20 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         () => audit,
       );
     }).catch((error: unknown) =>
-      answerSignInAgain(c, error, `/auth/authorize?${oauthQuery}`),
+      error instanceof ConsentRefused
+        ? withNoStore(error.response)
+        : answerSignInAgain(c, error, `/auth/authorize?${oauthQuery}`),
     );
   });
 
   return app;
+}
+
+/** The provider answered an approval with something other than a code. */
+class ConsentRefused extends Error {
+  constructor(readonly response: Response) {
+    super("The provider refused the approval");
+  }
 }
 
 /**
@@ -1100,6 +1115,7 @@ export const __test_internals = {
   // and its verifier can never disagree about parameter order. The tests
   // that drive the real plugin flow are what pin this to the plugin.
   canonicalizeOAuthQueryParams,
+  verifySignedQuery,
 };
 
 /**

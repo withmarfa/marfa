@@ -382,10 +382,14 @@ describe("resolveSelection choosing types instead of all data", () => {
     ).toEqual({ ok: false });
   });
 
-  it("refuses a type control that is out of bounds even when types were not chosen", () => {
-    expect(
-      resolveSelection(["*:read"], ["*:read"], [], types("core.note:write")),
-    ).toEqual({ ok: false });
+  it("ignores a type control that is out of bounds when types were not chosen", () => {
+    // A page without a script posts every control, and a type deleted since the
+    // page was drawn is one of them: with all data kept it means nothing.
+    for (const stale of ["core.note:write", "core.unheard:read", "keys.mint"])
+      expect(
+        resolveSelection(["*:read"], ["*:read"], [], types(stale)),
+        stale,
+      ).toEqual({ ok: true, scopes: ["*:read"], chosen: true });
   });
 
   it("keeps the types an app already holds, whether it asks for all data or chooses types", () => {
