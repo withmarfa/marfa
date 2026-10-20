@@ -982,6 +982,93 @@ describe("Password and passkeys, dates, stale sign-ins and refusals", () => {
   );
 
   inBrowser(
+    "asks to confirm it's you before renaming a passkey after five minutes, and sends the rename once",
+    async () => {
+      await seedPasskey("seed-rename", "Before", new Date());
+      const { page, context, requests } = await open();
+      try {
+        await page.goto(origin + PASSKEYS);
+        await ageSessions();
+        const dialog = await manage(page, "Before");
+        await dialog.getByLabel("Name").fill("After");
+        await dialog.getByRole("button", { name: "Save name" }).click();
+        const confirm = dialogOf(page, "Confirm it's you");
+        await confirm.waitFor();
+        expect(await confirm.innerText()).toContain(
+          "To rename a passkey, confirm it's you.",
+        );
+        expect(await storedPasskeys()).toEqual(["Before"]);
+
+        // Cancel sends nothing more.
+        const sent = () =>
+          requests.filter((r) => r.path.startsWith("/owner/passkeys/"));
+        const refused = sent().length;
+        await confirm.getByRole("button", { name: "Cancel" }).click();
+        await confirm.waitFor({ state: "hidden" });
+        expect(sent()).toHaveLength(refused);
+        expect(await storedPasskeys()).toEqual(["Before"]);
+
+        await dialog.getByRole("button", { name: "Save name" }).click();
+        await confirm.waitFor();
+        await confirm.getByLabel("Or your password").fill(password);
+        await confirm.getByRole("button", { name: "Continue" }).click();
+        await done(page).getByText("Passkey renamed").waitFor();
+        expect(await storedPasskeys()).toEqual(["After"]);
+        expect(sent().filter((r) => r.status === 200)).toEqual([
+          { method: "PATCH", path: "/owner/passkeys/seed-rename", status: 200 },
+        ]);
+        expect(sent().filter((r) => r.status === 403)).toHaveLength(2);
+      } finally {
+        await context.close();
+        await dropSeededPasskeys();
+        await clearSignInWindows();
+      }
+    },
+  );
+
+  inBrowser(
+    "asks to confirm it's you before removing a passkey after five minutes, and sends the removal once",
+    async () => {
+      await seedPasskey("seed-remove", "Doomed", new Date());
+      const { page, context, requests } = await open();
+      try {
+        await page.goto(origin + PASSKEYS);
+        await ageSessions();
+        const dialog = await manage(page, "Doomed");
+        await dialog.getByRole("button", { name: "Remove passkey" }).click();
+        const remove = dialogOf(page, "Remove Doomed?");
+        await remove.getByRole("button", { name: "Remove passkey" }).click();
+        const confirm = dialogOf(page, "Confirm it's you");
+        await confirm.waitFor();
+        expect(await confirm.innerText()).toContain(
+          "To remove a passkey, confirm it's you.",
+        );
+        expect(await storedPasskeys()).toEqual(["Doomed"]);
+
+        const sent = () => requests.filter((r) => r.method === "DELETE");
+        const refused = sent().length;
+        await confirm.getByRole("button", { name: "Cancel" }).click();
+        await confirm.waitFor({ state: "hidden" });
+        expect(sent()).toHaveLength(refused);
+        expect(await storedPasskeys()).toEqual(["Doomed"]);
+
+        await remove.getByRole("button", { name: "Remove passkey" }).click();
+        await confirm.waitFor();
+        await confirm.getByLabel("Or your password").fill(password);
+        await confirm.getByRole("button", { name: "Continue" }).click();
+        await done(page).getByText("Passkey removed").waitFor();
+        expect(await storedPasskeys()).toEqual([]);
+        expect(sent().filter((r) => r.status === 200)).toHaveLength(1);
+        expect(sent().filter((r) => r.status === 403)).toHaveLength(2);
+      } finally {
+        await context.close();
+        await dropSeededPasskeys();
+        await clearSignInWindows();
+      }
+    },
+  );
+
+  inBrowser(
     "keeps a dialog open on Escape while its change is being sent",
     async () => {
       await seedPasskey("seed-busy", "Busy", new Date());

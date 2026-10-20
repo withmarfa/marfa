@@ -97,6 +97,21 @@ describe("a console page asked for by a browser that is not signed in", () => {
     expect(page.headers.get("content-type")).toContain("text/html");
   });
 
+  it("serves the Profile page and the Password and passkeys page to the signed-in owner, each under its heading", async () => {
+    const cookie = await signedInCookie();
+    for (const [path, heading] of [
+      ["/auth/owner/profile", "Profile"],
+      ["/auth/owner/passkeys", "Password and passkeys"],
+    ] as const) {
+      const page = await get(path, { ...BROWSER, cookie });
+      expect(page.status, path).toBe(200);
+      expect(page.headers.get("content-type"), path).toContain("text/html");
+      expect(await page.text(), path).toMatch(
+        new RegExp(`<h1[^>]*>${heading}</h1>`),
+      );
+    }
+  });
+
   it("goes to sign in with no way back for an address too long to carry", async () => {
     const base = "/auth/owner/manage?x=";
     const fits = `${base}${"a".repeat(2048 - base.length)}`;

@@ -44,6 +44,20 @@ describe("a console page, asked for by a browser that is not signed in", () => {
     }
   });
 
+  it("serves the owner's own pages to a signed-in owner, each under its heading", async () => {
+    for (const [path, heading] of [
+      ["/auth/owner/profile", "Profile"],
+      ["/auth/owner/passkeys", "Password and passkeys"],
+    ] as const) {
+      const res = await asBrowser(path, ctx.owner.cookie);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("content-type"), path).toContain("text/html");
+      expect(await res.text(), path).toMatch(
+        new RegExp(`<h1 class="title">${heading}</h1>`),
+      );
+    }
+  });
+
   it("never carries an address a browser would read as another host", async () => {
     const res = await asBrowser("/auth/owner/manage?next=//evil.example/x");
     const location = res.headers.get("location") ?? "";
