@@ -560,7 +560,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens a key an app made, any key through `keys.manage` or any key with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, or any key through `keys.manage` or with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`. `details` names what's missing.",
     },
     404: {
       content: {
