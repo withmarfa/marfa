@@ -50,7 +50,7 @@ describe("the audit log's kinds and search", () => {
         action,
         resource_type: "test",
         resource_id: `id-${action}`,
-        details: { note: "Sample" },
+        details: { note: "Sample Écran" },
       });
   });
 
@@ -72,6 +72,14 @@ describe("the audit log's kinds and search", () => {
     expect(await actionsOf("data", "id-item.create nothing-like-this")).toEqual(
       [],
     );
+    // Every word counts, not only the first eight.
+    expect(
+      await actionsOf("data", `${"bulk ".repeat(8)}nothing-like-this`),
+    ).toEqual([]);
+    // An accented word is matched as written: only A to Z fold, on both sides.
+    expect(await actionsOf("data", "sample ÉCRAN id-item.create")).toEqual([
+      "item.create",
+    ]);
   });
 
   it("reads an underscore or percent sign in a search as itself", async () => {

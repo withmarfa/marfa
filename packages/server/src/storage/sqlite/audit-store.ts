@@ -78,7 +78,7 @@ function kindClause(kind: AuditKind): SQL {
   }
 }
 
-/** Every word is somewhere in the entry's text, in any order, ignoring case. */
+/** Every word is somewhere in the entry's text, in any order, ignoring ASCII case. */
 function searchClause(q: string): SQL | undefined {
   const words = auditSearchWords(q);
   if (words.length === 0) return undefined;

@@ -25415,7 +25415,7 @@ export interface operations {
                 resource_id?: string;
                 /** @description Only return entries of this kind: `access` is sign-ins, keys, folders and the profile, `data` is items, edges, types, files and restores, `settings` is configuration, webhooks and connectors, and `housekeeping` is what Marfa does on its own. */
                 kind?: "access" | "data" | "settings" | "housekeeping";
-                /** @description Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details. */
+                /** @description Only return entries that hold every word of this text, in any order and ignoring ASCII case, in their action, resource, key, address or details. */
                 q?: string;
                 /** @description Only return entries recorded after this time. */
                 created_after?: string;

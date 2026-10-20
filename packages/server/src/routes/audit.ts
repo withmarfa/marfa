@@ -88,7 +88,7 @@ const listAuditRoute = createRoute({
         .max(AUDIT_SEARCH_MAX_LENGTH)
         .optional()
         .describe(
-          "Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details.",
+          "Only return entries that hold every word of this text, in any order and ignoring ASCII case, in their action, resource, key, address or details.",
         ),
       created_after: z
         .string()

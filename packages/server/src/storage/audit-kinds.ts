@@ -53,17 +53,18 @@ export const SETTINGS_FAMILIES: readonly string[] = [
 
 export const SETTINGS_ACTIONS: readonly string[] = ["blob.stores_configured"];
 
-/** The most words and characters a search holds. */
+/** The most characters a search holds. */
 export const AUDIT_SEARCH_MAX_LENGTH = 200;
-export const AUDIT_SEARCH_MAX_WORDS = 8;
 
-/** The words of a search, lowercased, in the order written, without the extras. */
+/**
+ * The words of a search, in the order written, with A to Z lowercased and
+ * nothing else: SQLite's `lower()` folds only those, so both sides agree.
+ */
 export function auditSearchWords(q: string): string[] {
   return q
-    .toLowerCase()
+    .replace(/[A-Z]/g, (letter) => letter.toLowerCase())
     .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, AUDIT_SEARCH_MAX_WORDS);
+    .filter(Boolean);
 }
 
 /** What `kind` means, for the contract and the API reference. */

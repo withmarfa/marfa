@@ -1717,7 +1717,7 @@ If `kind` is not one of `access`, `data`, `settings` or `housekeeping`, then the
 
 ### `events/audit-search`
 
-The server MUST filter `GET /audit` by `q` to the entries that hold every word of `q`, in any order and ignoring case, in their action, resource type, resource ID, key ID, client address or details.
+The server MUST filter `GET /audit` by `q` to the entries that hold every word of `q`, in any order and ignoring ASCII case, in their action, resource type, resource ID, key ID, client address or details.
 
 **Tests:** `compliance/audit.test.ts › searches by every word, ignoring case and order`.
 
