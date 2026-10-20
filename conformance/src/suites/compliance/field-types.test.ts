@@ -322,6 +322,26 @@ describe("an array field", () => {
       { sites: ["https://example.test", "no"] },
       "sites.1",
     ],
+    [
+      "a url array with an empty punycode host",
+      { sites: ["https://example.test", "http://xn--"] },
+      "sites.1",
+    ],
+    [
+      "a url array with a percent-encoded punycode label",
+      { sites: ["http://xn--%41"] },
+      "sites.0",
+    ],
+    [
+      "a url array with a punctuated punycode label",
+      { sites: ["http://xn--!"] },
+      "sites.0",
+    ],
+    [
+      "a url array with an internationalized label beside a punycode one",
+      { sites: ["http://bücher.xn--"] },
+      "sites.0",
+    ],
     ["an object array with a string", { things: [{}, "text"] }, "things.1"],
     ["an object array with an array", { things: [[]] }, "things.0"],
     ["a universal links array with a number", { links: [1] }, "links.0"],
@@ -342,6 +362,14 @@ describe("an array field", () => {
       expect(fields(refused), what).toContain(named);
     },
   );
+
+  it("takes a url whose host is valid Punycode", async () => {
+    const taken = await create({ sites: ["http://xn--mnchen-3ya.de/"] });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    expect(taken.data.item.properties.sites).toEqual([
+      "http://xn--mnchen-3ya.de/",
+    ]);
+  });
 
   it("takes the values of the declared types, an empty array and a null", async () => {
     const good = await create({

@@ -222,95 +222,16 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
 /// A `url` value as the server holds it, or `None` where the server refuses
 /// it. The server trims the text as JavaScript's `trim` does, judges it as the
 /// WHATWG URL standard does, and keeps it without the tabs and line breaks the
-/// standard ignores.
+/// standard ignores. It also refuses a host label that starts `xn--` and is not
+/// valid Punycode, which the standard keeps as written and the `url` crate
+/// refuses.
 pub(crate) fn url_value(text: &str) -> Option<String> {
     let kept: String = text
         .trim_matches(js::is_space)
         .chars()
         .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
         .collect();
-    (url::Url::parse(&kept).is_ok() || parses_ignoring_punycode(&kept)).then_some(kept)
-}
-
-/// The standard percent-decodes a host and converts it to ASCII ignoring
-/// invalid Punycode: a label that starts `xn--` and does not decode stays as
-/// written. The `url` crate refuses such a host, so the labels of that kind are
-/// replaced by one it takes and the rest of the address is judged as written.
-fn parses_ignoring_punycode(text: &str) -> bool {
-    let Some(start) = text.find("://").map(|at| at + 3) else {
-        return false;
-    };
-    let after = &text[start..];
-    let authority_end = after.find(['/', '\\', '?', '#']).unwrap_or(after.len());
-    let authority = &after[..authority_end];
-    let host_start = authority.rfind('@').map_or(0, |at| at + 1);
-    if authority[host_start..].starts_with('[') {
-        return false;
-    }
-    let host_end = authority[host_start..]
-        .find(':')
-        .map_or(authority.len(), |at| host_start + at);
-    let Some(host) = percent_decoded(&authority[host_start..host_end]) else {
-        return false;
-    };
-    // A character the decoding brought in must not reshape the address.
-    if host.chars().any(|ch| {
-        ch.is_ascii_control()
-            || matches!(ch, ' ' | '#' | '%' | '/' | ':' | '<' | '>' | '?' | '@')
-            || matches!(ch, '[' | '\\' | ']' | '^' | '|')
-    }) {
-        return false;
-    }
-    let mut replaced = false;
-    let labels: Vec<&str> = host
-        .split('.')
-        .map(|label| {
-            let punycode = label
-                .get(..4)
-                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xn--"))
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
-            replaced |= punycode;
-            if punycode { "x" } else { label }
-        })
-        .collect();
-    replaced
-        && url::Url::parse(&format!(
-            "{}{}{}{}",
-            &text[..start + host_start],
-            labels.join("."),
-            &authority[host_end..],
-            &after[authority_end..],
-        ))
-        .is_ok()
-}
-
-/// A host with its `%XX` escapes replaced by the bytes they name, read as
-/// UTF-8. `None` where those bytes are not UTF-8.
-fn percent_decoded(host: &str) -> Option<String> {
-    let bytes = host.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        let pair = bytes.get(at + 1..at + 3).and_then(|pair| {
-            let digits = std::str::from_utf8(pair).ok()?;
-            u8::from_str_radix(digits, 16)
-                .ok()
-                .filter(|_| digits.bytes().all(|b| b.is_ascii_hexdigit()))
-        });
-        match (bytes[at], pair) {
-            (b'%', Some(byte)) => {
-                decoded.push(byte);
-                at += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                at += 1;
-            }
-        }
-    }
-    String::from_utf8(decoded).ok()
+    url::Url::parse(&kept).is_ok().then_some(kept)
 }
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
@@ -524,17 +445,11 @@ mod tests {
             ),
             ("https://exa\tmple.com/a\nb\r", "https://example.com/ab"),
             ("ht\ttps://example.com", "https://example.com"),
-            ("http://xn--", "http://xn--"),
-            ("http://xn--/", "http://xn--/"),
-            ("http://xn--%41", "http://xn--%41"),
-            ("http://XN--%41/p", "http://XN--%41/p"),
-            ("http://a.xn--%41.b:80/p", "http://a.xn--%41.b:80/p"),
-            ("http://u@xn--%41/", "http://u@xn--%41/"),
-            ("http://%78n--/", "http://%78n--/"),
             ("https://münchen.de/straße", "https://münchen.de/straße"),
-            ("http://a.b.c.xn--pokxncvks", "http://a.b.c.xn--pokxncvks"),
-            ("HTTP://XN--ABC/x?y#z", "HTTP://XN--ABC/x?y#z"),
-            ("http://user:pw@xn--:8080/p", "http://user:pw@xn--:8080/p"),
+            ("http://xn--mnchen-3ya.de/", "http://xn--mnchen-3ya.de/"),
+            ("HTTP://XN--MNCHEN-3YA.DE/x", "HTTP://XN--MNCHEN-3YA.DE/x"),
+            ("https://example.com/xn--", "https://example.com/xn--"),
+            ("foo://xn--/", "foo://xn--/"),
             ("http://[::1]/", "http://[::1]/"),
             ("mailto:a@b.c", "mailto:a@b.c"),
             ("\u{1}https://example.com/", "\u{1}https://example.com/"),
@@ -547,6 +462,20 @@ mod tests {
             "",
             "   ",
             "\u{200b}https://example.com",
+            "http://xn--",
+            "http://xn--/",
+            "http://xn--%41",
+            "http://XN--%41/p",
+            "http://a.xn--%41.b:80/p",
+            "http://u@xn--%41/",
+            "http://%78n--/",
+            "http://a.b.c.xn--pokxncvks",
+            "http://user:pw@xn--:8080/p",
+            "http://bücher.xn--",
+            "http://xn--a.münchen.de/",
+            "http:xn--",
+            "http://xn--!",
+            "http://xn--%7E",
             "http://xn--é/",
             "http://xn--%e9/",
             "http://xn--%c3%a9/",

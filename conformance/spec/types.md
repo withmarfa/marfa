@@ -346,11 +346,19 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 ### `types/url-value`
 
-When an item names a value for a `url` field, or an element of an `array` field whose `items_type` is `url`, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
+When an item names a value for a `url` field, or an element of an array field whose `items_type` is `url`, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
 
-**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a host such as `http://xn--` that the standard takes is taken on both.
+**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both.
 
-**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
+**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
+
+### `types/url-punycode`
+
+If the host of a `url` value of a special scheme has a label that starts `xn--` and is not valid Punycode, then the server MUST refuse the value `invalid_properties`.
+
+**Reason:** the standard keeps such a label as written, and the Node versions the server supports differ on whether they take it: 22 and 24 refuse `http://xn--` and `http://xn--%41`, and 26 takes them. A device refuses them too (`device/url-trimmed`), so one value has one answer on every server and every device, whatever Node the server runs on. A label that decodes to nothing but ASCII is not valid Punycode either.
+
+**Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› takes a url whose host is valid Punycode`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
 
 ### `types/url-stored`
 
