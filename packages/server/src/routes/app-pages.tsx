@@ -276,7 +276,7 @@ export function AppPage(props: AppPageParams) {
         <Section
           id="keys"
           title="Keys it made"
-          description="Each holds no more than the app does."
+          description="Each was made with no more access than the app had."
         >
           <RowGroup oneLine>
             {made === 0 ? (

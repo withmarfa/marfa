@@ -286,7 +286,7 @@ describe("an app's own page", () => {
     );
     expect(link?.text).toContain("reader sync");
     expect(visibleText(html)).toContain(
-      "Each holds no more than the app does.",
+      "Each was made with no more access than the app had.",
     );
   });
 
