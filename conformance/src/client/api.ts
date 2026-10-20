@@ -505,6 +505,7 @@ export class MarfaClient {
       source?: string;
       occurred_after?: string;
       occurred_before?: string;
+      files?: string;
     } = {},
   ): Promise<ApiResponse<Uint8Array>> {
     const params = new URLSearchParams({ format: "archive" });
