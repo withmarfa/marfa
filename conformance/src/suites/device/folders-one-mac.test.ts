@@ -2441,15 +2441,11 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     // A hand-written duplicate reads once, however its directory is spelled.
     const written = JSON.parse(readFileSync(harness.registry, "utf8")) as {
-      folders: Array<{ dir: string; folder: string; root?: string }>;
+      folders: Array<{ dir: string; folder: string }>;
     };
     const [entry] = written.folders;
     if (entry === undefined) throw new Error("the registry lists nothing");
-    written.folders.push(entry, {
-      dir: harness.dir,
-      folder: entry.folder,
-      root: entry.root,
-    });
+    written.folders.push(entry, { dir: harness.dir, folder: entry.folder });
     writeFileSync(harness.registry, JSON.stringify(written));
     const once = await harness.folder.list();
     expect(once.ok && once.value.length, "an entry was listed twice").toBe(1);
@@ -2700,7 +2696,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
-  it("lists each folder with the identity of the directory it opened, and keeps one that records none until it lists itself again", async () => {
+  it("lists each folder with the identity of the directory it opened, and drops one that records none once its state is removed", async () => {
     const { a, b } = await onOneMac(
       "root-recorded",
       { search: { types: ["core.note"] } },
@@ -2717,21 +2713,38 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ).toBe(true);
     expect(new Set(roots).size, "two folders share one identity").toBe(2);
 
-    // An entry written without one proves nothing about the directory now
-    // at its path, so it stays until its folder lists itself again.
+    // The identity is in `folders list --json`.
+    const shown = await a.folder.list();
+    expect(shown.ok, JSON.stringify(shown)).toBe(true);
+    expect(
+      shown.ok && shown.value.map((entry) => entry.root).sort(),
+      "folders list does not show the identity of each directory",
+    ).toEqual([...roots].sort());
+
+    // An entry without one is judged by what its path holds: its folder
+    // stays while the state is there and goes once the state is removed, so
+    // it is not listed forever, and does not hold up the other folders.
     const written = JSON.parse(readFileSync(a.registry, "utf8")) as {
       folders: Array<{ dir: string; folder: string; root?: string }>;
     };
     for (const entry of written.folders) delete entry.root;
     writeFileSync(a.registry, JSON.stringify(written));
-    rmSync(join(a.dir, ".marfa"), { recursive: true, force: true });
-    const kept = await b.folder.list();
-    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    const unidentified = await b.folder.list();
     expect(
-      kept.ok && kept.value.map((entry) => entry.folder).sort(),
-      "an entry that records no directory was taken off the list",
+      unidentified.ok && unidentified.value.map((entry) => entry.folder).sort(),
+      "an entry that records no directory was taken off the list while its state was there",
     ).toEqual([a.settings.id, b.settings.id].sort());
+    writeFileSync(a.registry, JSON.stringify(written));
+    rmSync(join(a.dir, ".marfa"), { recursive: true, force: true });
+    const dropped = await b.folder.list();
+    expect(dropped.ok, JSON.stringify(dropped)).toBe(true);
+    expect(
+      dropped.ok && dropped.value.map((entry) => entry.folder),
+      "an entry that records no directory stayed listed after its state was removed",
+    ).toEqual([b.settings.id]);
 
+    // A pass records the identity, and a directory that then replaces the
+    // folder's is not taken for it.
     expect((await b.folder.push()).ok).toBe(true);
     expect(
       registryEntries(a.registry).find(
@@ -2739,12 +2752,20 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       )?.root,
       "a folder that passed did not list itself with the directory it opened",
     ).toBe(rootOf.get(b.settings.id));
-    rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
-    const dropped = await a.folder.list();
+    const away = replaceWithEmpty(b);
+    const replaced = await b.folder.list();
     expect(
-      dropped.ok && dropped.value.map((entry) => entry.folder),
+      replaced.ok && replaced.value.map((entry) => entry.folder),
+      "a folder whose directory an empty one replaced was taken off the list",
+    ).toEqual([b.settings.id]);
+    rmSync(b.dir, { recursive: true });
+    renameSync(away, b.dir);
+    rmSync(join(b.dir, ".marfa"), { recursive: true, force: true });
+    const last = await b.folder.list();
+    expect(
+      last.ok && last.value.map((entry) => entry.folder),
       "a folder whose state was removed stayed listed once it recorded the directory it opened",
-    ).toEqual([a.settings.id]);
+    ).toEqual([]);
   });
 
   it("keeps a folder it cannot read listed, and holds a delete meanwhile", async () => {

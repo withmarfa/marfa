@@ -1544,4 +1544,6 @@ export interface AddedFolder {
 export interface RegisteredFolder {
   dir: string;
   folder: string;
+  /** An opaque identity of the directory the folder opened. */
+  root?: string;
 }

@@ -26,8 +26,7 @@ pub struct Registered {
     pub store: Option<String>,
     /// The identity (device, inode and birth time) of the directory the
     /// folder was admitted at, so a different directory standing at `dir`
-    /// is never taken for it. An entry that has none is kept by every tidy
-    /// until the folder is opened and lists itself again with one.
+    /// is never taken for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
 }
@@ -835,16 +834,15 @@ fn root_identity(root: &Directory) -> Option<String> {
 /// missing or unreadable root is kept, since a disconnected volume cannot
 /// establish that the admitted folder was removed. So is a root that is not
 /// the admitted directory, such as an empty mount point or a recreated
-/// directory standing at the path, whatever it holds, and an entry that
-/// records no admitted directory.
+/// directory standing at the path, whatever it holds. An entry that records
+/// no admitted directory is judged by what its path holds.
 pub(super) fn gone(entry: &Registered) -> bool {
-    let Some(admitted) = entry.root.as_deref() else {
-        return false;
-    };
     let Ok(root) = Directory::open(&entry.dir) else {
         return false;
     };
-    if root_identity(&root).as_deref() != Some(admitted) {
+    if let Some(admitted) = entry.root.as_deref()
+        && root_identity(&root).as_deref() != Some(admitted)
+    {
         return false;
     }
     matches!(
@@ -994,35 +992,53 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_that_records_no_admitted_directory_is_kept_until_its_folder_lists_itself_again() {
+    fn an_entry_that_records_no_admitted_directory_is_judged_by_what_its_path_holds() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let base = temp.path();
         let registry = Registry::at(base.join(FILE_NAME));
-        let unidentified = folder_at(base, "notes");
+        let kept = folder_at(base, "kept");
+        let removed = folder_at(base, "removed");
         std::fs::write(
             registry.path(),
             serde_json::json!({
-                "folders": [{ "dir": unidentified, "folder": "f1", "store": "s1" }]
+                "folders": [
+                    { "dir": kept, "folder": "f1", "store": "s1" },
+                    { "dir": removed, "folder": "f2", "store": "s2" },
+                ]
             })
             .to_string(),
         )
         .unwrap();
-        std::fs::remove_dir_all(unidentified.join(STATE_DIR)).unwrap();
+        std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
+        let dirs = |registry: &Registry| -> Vec<PathBuf> {
+            registry
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
         assert_eq!(
-            registry.folders().unwrap().len(),
-            1,
-            "a root that is not known to be the admitted one was unlisted"
+            dirs(&registry),
+            vec![kept.clone()],
+            "an entry with no identity whose state was removed stayed listed"
         );
 
-        std::fs::create_dir_all(unidentified.join(STATE_DIR)).unwrap();
-        std::fs::write(unidentified.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
-        register(&registry, &unidentified, "f1", Some("s1")).unwrap();
+        // A pass that opens the folder records the identity, and from then
+        // on a directory replacing it is not taken for it.
+        register(&registry, &kept, "f1", Some("s1")).unwrap();
         let [listed] = &registry.folders().unwrap()[..] else {
             panic!("the folder is listed once");
         };
         assert!(listed.root.is_some(), "listing again recorded no identity");
-        std::fs::remove_dir_all(unidentified.join(STATE_DIR)).unwrap();
-        assert_eq!(registry.folders().unwrap(), Vec::new());
+        let away = base.join("kept-away");
+        std::fs::rename(&kept, &away).unwrap();
+        std::fs::create_dir(&kept).unwrap();
+        assert_eq!(dirs(&registry), vec![kept.clone()]);
+        std::fs::remove_dir(&kept).unwrap();
+        std::fs::rename(&away, &kept).unwrap();
+        std::fs::remove_dir_all(kept.join(STATE_DIR)).unwrap();
+        assert_eq!(dirs(&registry), Vec::<PathBuf>::new());
     }
 
     #[test]

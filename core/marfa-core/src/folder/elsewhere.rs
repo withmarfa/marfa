@@ -697,6 +697,59 @@ mod tests {
     }
 
     #[test]
+    fn a_remembered_peer_with_no_identity_whose_state_was_removed_is_dropped() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let make = |dir: &Path, folder: &str| {
+            std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+            let core = Core::open(dir.join(STATE_DIR).join("core.sqlite"), None).unwrap();
+            super::super::settings_file::bind(&core, folder).unwrap();
+        };
+        let own = temp.path().join("own");
+        let removed = temp.path().join("removed");
+        let replaced = temp.path().join("replaced");
+        make(&own, "01a00000-0000-7000-8000-0000000000a1");
+        make(&removed, "01a00000-0000-7000-8000-0000000000a2");
+        make(&replaced, "01a00000-0000-7000-8000-0000000000a3");
+        let identity = Directory::open(&replaced)
+            .unwrap()
+            .metadata()
+            .ok()
+            .and_then(|metadata| identity::of(&metadata))
+            .map(|identity| identity.key());
+        let remembered = |dir: &Path, folder: &str, root: Option<String>| Registered {
+            dir: dir.to_path_buf(),
+            folder: folder.to_string(),
+            store: Some(format!("store-{folder}")),
+            root,
+        };
+        let known = vec![
+            remembered(&removed, "removed", None),
+            remembered(&replaced, "replaced", identity),
+        ];
+        std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
+        std::fs::rename(&replaced, temp.path().join("replaced-away")).unwrap();
+        std::fs::create_dir(&replaced).unwrap();
+
+        let folder = Folder::open(&own, None).unwrap();
+        store::meta_set(
+            &folder.core.conn().unwrap(),
+            META_OTHERS,
+            &serde_json::to_string(&known).unwrap(),
+        )
+        .unwrap();
+        let peers = Peers::of(&folder, None);
+        let remaining: Vec<&Path> = peers.all().iter().map(|peer| peer.root.as_path()).collect();
+        assert!(
+            !remaining.contains(&removed.as_path()),
+            "a remembered folder with no identity whose state was removed stayed a peer"
+        );
+        assert!(
+            remaining.contains(&replaced.as_path()),
+            "a remembered folder whose directory was replaced by an empty one was dropped"
+        );
+    }
+
+    #[test]
     fn a_file_that_is_not_text_leaves_the_other_folder_complete() {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let root = dir.path().canonicalize().unwrap();
