@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   getManagementClient,
+  getOwnerClient,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -169,6 +170,73 @@ describe("PATCH /keys/{id}", () => {
     });
     expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
     expect(narrowed.data.type_permissions).toEqual({});
+  });
+
+  it("refuses an update that widens a key when it names narrow_only", async () => {
+    const owner = getOwnerClient();
+    const created = await client.createKey({
+      label: "ku-narrow-only",
+      source: `${ctx.source}-ku-narrow-only`,
+      type_permissions: { "*": "read", "core.note": "none" },
+      permissions: ["audit.read"],
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackKey(ctx, created.data.id);
+    const key = created.data;
+
+    const held = async () => {
+      const listed = await client.listKeys();
+      const row = listed.data.data.find((k) => k.id === key.id);
+      return [row?.type_permissions, row?.permissions, row?.label];
+    };
+    const before = await held();
+    // The witness: the key holds a denial beside a wildcard to lose.
+    expect(before[0]).toEqual({ "*": "read", "core.note": "none" });
+
+    const attempts: Partial<ApiKeyRequest>[] = [
+      { type_permissions: { "*": "write", "core.note": "none" } },
+      // Dropping the denial gives the key the type it was denied.
+      { type_permissions: { "*": "read" } },
+      { permissions: ["audit.read", "keys.mint"] },
+      { sources: ["another-source"] },
+    ];
+    for (const attempt of attempts) {
+      const refused = await owner.updateKey(key.id, {
+        ...attempt,
+        label: "ku-narrow-only-widened",
+        narrow_only: true,
+      });
+      expect(refused.status, JSON.stringify(attempt)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await held(), "a refused update changed the key").toEqual(before);
+
+    // The same caller narrows it, carrying the denial forward, and the label
+    // changes with it.
+    const narrowed = await owner.updateKey(key.id, {
+      label: "ku-narrow-only-narrowed",
+      type_permissions: {
+        "*": "read",
+        "core.note": "none",
+        "core.bookmark": "none",
+      },
+      permissions: [],
+      narrow_only: true,
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+    expect(narrowed.data.type_permissions).toEqual({
+      "*": "read",
+      "core.note": "none",
+      "core.bookmark": "none",
+    });
+    expect(narrowed.data.permissions).toEqual([]);
+
+    // Without the field the owner may still give a key more.
+    const widened = await owner.updateKey(key.id, {
+      type_permissions: { "*": "write" },
+    });
+    expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+    expect(widened.data.type_permissions).toEqual({ "*": "write" });
   });
 
   it("refuses a caller without keys.mint", async () => {

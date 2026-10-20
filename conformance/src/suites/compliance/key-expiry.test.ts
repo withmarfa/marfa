@@ -392,6 +392,24 @@ describe("the owner and an expiry", () => {
   });
 });
 
+describe("the owner and an expiry with narrow_only", () => {
+  it("lengthens or clears the expiry of a key that no app made, whatever narrow_only says", async () => {
+    const key = await mint("owner-narrow-only", SOON);
+    const later = await owner.updateKey(key.id, {
+      expires_at: LATER,
+      narrow_only: true,
+    });
+    expect(later.status, JSON.stringify(later.error)).toBe(200);
+    expect(later.data.expires_at).toBe(LATER);
+    const cleared = await owner.updateKey(key.id, {
+      expires_at: null,
+      narrow_only: true,
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.expires_at).toBeNull();
+  });
+});
+
 describe("a key an app made", () => {
   it(
     "is shortened and never lengthened or cleared, whoever the caller is",

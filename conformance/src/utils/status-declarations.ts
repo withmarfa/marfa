@@ -176,6 +176,10 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/owner/manage": [200, 302, 401],
   "GET /auth/owner/restore": [200, 302, 401],
   "GET /auth/owner/profile": [200, 302, 401, 403],
+  "GET /auth/owner/keys": [200, 302, 401, 403],
+  "GET /auth/owner/keys/new": [200, 302, 401, 403],
+  "GET /auth/owner/keys/{id}": [200, 302, 401, 403, 404],
+  "GET /auth/owner/keys/{id}/copy": [200, 302, 401, 403],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
 };
 

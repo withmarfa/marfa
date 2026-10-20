@@ -497,6 +497,12 @@ const UpdateKeyBodySchema = z.strictObject({
     .describe(
       "Can't change. To give a key another source, create a new key and revoke this one.",
     ),
+  narrow_only: z
+    .boolean()
+    .optional()
+    .describe(
+      "`true` to refuse the update if it would give the key a permission, map entry or claimed source it doesn't hold now. An app's key and a `keys.manage` update are always held to this. It doesn't limit `expires_at`. Defaults to `false`.",
+    ),
 });
 
 const updateKeyRoute = createRoute({
@@ -553,7 +559,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app created or, through `keys.manage`, any key; or it names `enforcement_override` and you don't hold `config.manage`. `details.required_scope` or `details.source` names what's missing.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app made, a key updated through `keys.manage`, or any key when `narrow_only` is `true`; or it names `enforcement_override` and you don't hold `config.manage`. `details` names what's missing.",
     },
     404: {
       content: {
@@ -987,6 +993,8 @@ export function keyRoutes(storage: Storage, salt: string) {
         details: mintDetails(c, grantItemId),
       }),
     );
+    // The plaintext is in this answer and nowhere else, ever.
+    c.header("Cache-Control", "no-store");
     return c.json(stored, 201);
   });
 
@@ -1066,10 +1074,14 @@ export function keyRoutes(storage: Storage, salt: string) {
             profile_permissions: body.profile_permissions,
           };
           const permissions = body.permissions?.filter(isPermission);
-          if (existing.oauth_client_id !== undefined || manager) {
+          if (
+            existing.oauth_client_id !== undefined ||
+            manager ||
+            body.narrow_only === true
+          )
             refuseWideningKey(existing, requested, permissions, sources);
+          if (existing.oauth_client_id !== undefined || manager)
             refuseLongerLife(existing, expiresAt);
-          }
           if (manager) requirePermission(c, "keys.manage");
           else if (!direct) {
             const key = requireAuth(c);

@@ -241,6 +241,14 @@ The server MUST carry a key's plaintext `key` only in the answer to the mint tha
 
 **Tests:** `compliance/key-management.test.ts › key secret is not included in list response`, `› a key holding no permission reads itself, and no other key`, `compliance/keys-update.test.ts › updates the label and the maps in place, never the source`.
 
+### `keys-and-oauth/plaintext-no-store`
+
+When `POST /keys` mints a key, the server MUST send `Cache-Control: no-store` with the `201`.
+
+**Reason:** The plaintext is in that answer and nowhere else, so a cache must not keep it, nor a browser page that sent the mint.
+
+**Tests:** `compliance/key-management.test.ts › the answer to a mint carries the plaintext and forbids a cache keeping it`.
+
 ### `keys-and-oauth/own-source-unique`
 
 If a mint names as the new key's own `source` one that another key, neither revoked nor past its `expires_at`, holds as its own, then the server MUST answer `409 conflict` with `details.source` naming it.
@@ -326,6 +334,28 @@ If an update would give a key an app made a permission, map entry or claimed sou
 **Reason:** The consent screen tells a person that a key an app makes holds what the app held and never more, and that promise is worth something only if no credential can lift it.
 
 **Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`, `compliance/claimed-sources.test.ts › never widens a key an app made to a new source`.
+
+### `keys-and-oauth/update-narrow-only`
+
+If `PATCH /keys/{id}` names `narrow_only: true` and would give the key a permission, map entry or claimed source the key does not hold, then the server MUST answer `403 forbidden`, whoever the caller is.
+
+**Reason:** The owner console's key page offers a key less access and never more. It builds its choices from the key as it was when the page opened, so an update sent from a page opened before another change, or edited by hand, must not lift what the key holds now.
+
+**Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
+
+### `keys-and-oauth/update-narrow-only-unchanged`
+
+If `PATCH /keys/{id}` names `narrow_only: true` and would give the key a permission, map entry or claimed source the key does not hold, then the server MUST leave the key as it was.
+
+**Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
+
+### `keys-and-oauth/update-narrow-only-applies`
+
+When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing it does not hold, the server MUST update the key as it would without `narrow_only`.
+
+**Reason:** A denial beside a wildcard counts as held, so an update that carries each held denial forward is a narrowing, and one that drops a denial is not.
+
+**Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
 
 ### `keys-and-oauth/key-unknown`
 
@@ -616,6 +646,14 @@ If `PATCH /keys/{id}` is sent for a key an app made that has an `expires_at`, na
 When direct owner or local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
 
 **Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made`.
+
+### `keys-and-oauth/expiry-narrow-only-free`
+
+When direct owner or local authority sends `PATCH /keys/{id}` naming `narrow_only: true` and a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
+
+**Reason:** `narrow_only` limits reach, not life, and `keys-and-oauth/expiry-owner-free` leaves the owner free to move an end date either way.
+
+**Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made, whatever narrow_only says`.
 
 ## Authentication
 
