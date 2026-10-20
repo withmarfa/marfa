@@ -166,11 +166,11 @@ If the server refuses a confirmation, then the server MUST leave the session tha
 
 ### `authentication/confirm-names-no-account`
 
-If a request carrying a live owner browser session sends `POST /auth/confirm` with a body that names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` and MUST NOT replace that session.
+If a request carrying a live owner browser session sends `POST /auth/confirm` with a body that names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` without replacing that session.
 
 **Reason:** The account is the signed-in session's owner. A body cannot name another.
 
-**Tests:** `compliance/confirm-sign-in.test.ts › refuses a body that names an email, both proofs, or neither`.
+**Tests:** `compliance/confirm-sign-in.test.ts › refuses a body that names an email, both proofs, or neither, and replaces nothing`.
 
 ### `authentication/confirm-passkey-owner`
 
@@ -180,13 +180,13 @@ If a passkey assertion sent to `POST /auth/confirm` is not for a passkey registe
 
 ### `authentication/confirm-needs-session`
 
-If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` and MUST NOT make a session.
+If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` without making a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused with no cookie, with an ended session, and with a key`.
 
 ### `authentication/confirm-origin`
 
-If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` and MUST NOT make a session.
+If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` without making a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
 
