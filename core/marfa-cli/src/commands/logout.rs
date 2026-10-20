@@ -7,6 +7,7 @@ use crate::output::Printer;
 use crate::remote::{Named, Remote};
 
 pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
+    credentials::refuse_if_off()?;
     let url = Remote::url_named(named)?;
     let origin = Remote::public_at(&url)?.origin().to_string();
     auth::with_credential_lock(&origin, || sign_out(&origin, out))
@@ -56,5 +57,24 @@ fn sign_out(origin: &str, out: &Printer) -> Result<(), CliError> {
         None => out.report(&json!({ "server": origin, "signed_out": false }), || {
             format!("not signed in to {origin}")
         }),
+    }
+}
+
+#[cfg(test)]
+mod keychain_off_tests {
+    use super::*;
+
+    #[test]
+    fn signing_out_is_refused_while_the_keychain_is_off() {
+        credentials::turn_off();
+        let named = Named {
+            url: Some("https://marfa.example".into()),
+            key: None,
+        };
+        let outcome = run(&named, &Printer { json: true });
+        assert!(
+            matches!(&outcome, Err(CliError::Usage(message)) if message.contains("the keychain is off")),
+            "{outcome:?}"
+        );
     }
 }

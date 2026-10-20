@@ -4,7 +4,9 @@
 //! item another build wrote, so a test waiting on it waits forever. Tests use
 //! isolated credential stores; process fixtures share plain files.
 //! `MARFA_KEYCHAIN` selects a file keychain on macOS for unattended runs, with
-//! prompts refused.
+//! prompts refused. `--no-keychain` and `MARFA_NO_KEYCHAIN` turn the keychain
+//! off: nothing reads or writes it, and a command that needs to keep
+//! something refuses.
 
 use serde::{Deserialize, Serialize};
 
@@ -71,8 +73,16 @@ impl Keychain for System {
     }
 }
 
-#[cfg(not(test))]
+/// The one door to the keychain. Every function below that reaches it
+/// returns before it does while the keychain is off, so a call that gets
+/// here then is a missed check.
 fn keychain() -> &'static dyn Keychain {
+    assert!(!is_off(), "a keychain call while the keychain is off");
+    chosen()
+}
+
+#[cfg(not(test))]
+fn chosen() -> &'static dyn Keychain {
     static CHOSEN: std::sync::LazyLock<Box<dyn Keychain + Send>> =
         std::sync::LazyLock::new(|| match std::env::var_os("MARFA_KEYCHAIN") {
             Some(path) if !path.is_empty() => named(std::path::PathBuf::from(path)),
@@ -121,8 +131,68 @@ impl Unavailable {
 }
 
 #[cfg(test)]
-fn keychain() -> &'static dyn Keychain {
+fn chosen() -> &'static dyn Keychain {
     isolated::keychain()
+}
+
+#[cfg(not(test))]
+static OFF: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// Each test runs on a thread of its own, so one test's keychain being off
+// never reaches another's.
+#[cfg(test)]
+thread_local! {
+    static OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Treats the keychain as absent for the rest of the run.
+pub fn turn_off() {
+    #[cfg(not(test))]
+    OFF.store(true, std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    OFF.with(|off| off.set(true));
+}
+
+#[cfg(test)]
+pub(crate) fn turn_on() {
+    OFF.with(|off| off.set(false));
+}
+
+pub fn is_off() -> bool {
+    #[cfg(not(test))]
+    return OFF.load(std::sync::atomic::Ordering::Relaxed);
+    #[cfg(test)]
+    OFF.with(std::cell::Cell::get)
+}
+
+/// `MARFA_NO_KEYCHAIN` set to a true word; empty, unset or any other value
+/// leaves the keychain on.
+pub fn off_by_environment() -> bool {
+    std::env::var("MARFA_NO_KEYCHAIN").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+/// For what needs the keychain to keep or remove something, and says what to
+/// do instead.
+pub fn refusal(instead: &str) -> CliError {
+    CliError::Usage(format!(
+        "the keychain is off (--no-keychain or MARFA_NO_KEYCHAIN), so nothing can be kept in it or removed from it; {instead}"
+    ))
+}
+
+const KEY_INSTEAD: &str = "pass a key with --key or MARFA_API_KEY on each command instead";
+
+/// What a command that finds no credential tells the person to do.
+pub fn advice() -> &'static str {
+    if is_off() {
+        "set MARFA_API_KEY or pass --key"
+    } else {
+        "set MARFA_API_KEY, keep a key with `marfa keys keep`, sign in with `marfa login`, or pass --key"
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -152,7 +222,18 @@ impl Kept {
     }
 }
 
+/// For a command that needs the keychain to keep or remove something.
+pub fn refuse_if_off() -> Result<(), CliError> {
+    if is_off() {
+        return Err(refusal(KEY_INSTEAD));
+    }
+    Ok(())
+}
+
 pub fn read(origin: &str) -> Result<Option<Kept>, CliError> {
+    if is_off() {
+        return Ok(None);
+    }
     match keychain().get(origin)? {
         Some(text) => serde_json::from_str(&text).map(Some).map_err(|error| {
             CliError::Invalid(format!(
@@ -164,12 +245,14 @@ pub fn read(origin: &str) -> Result<Option<Kept>, CliError> {
 }
 
 pub fn keep(origin: &str, kept: &Kept) -> Result<(), CliError> {
+    refuse_if_off()?;
     let text = serde_json::to_string(kept)?;
     keychain().set(origin, &text)?;
     keychain().set(CURRENT, origin)
 }
 
 pub fn forget(origin: &str) -> Result<bool, CliError> {
+    refuse_if_off()?;
     let had = drop(origin)?;
     if current()?.as_deref() == Some(origin) {
         keychain().delete(CURRENT)?;
@@ -180,22 +263,33 @@ pub fn forget(origin: &str) -> Result<bool, CliError> {
 /// Leaves the origin current, so after a sign-in ends on its own the next
 /// bare command still names the server it lost.
 pub fn drop(origin: &str) -> Result<bool, CliError> {
+    refuse_if_off()?;
     keychain().delete(origin)
 }
 
 pub fn client_id(origin: &str) -> Result<Option<String>, CliError> {
+    if is_off() {
+        return Ok(None);
+    }
     keychain().get(&format!("{CLIENT}{origin}"))
 }
 
 pub fn keep_client_id(origin: &str, id: &str) -> Result<(), CliError> {
+    refuse_if_off()?;
     keychain().set(&format!("{CLIENT}{origin}"), id)
 }
 
 pub fn current() -> Result<Option<String>, CliError> {
+    if is_off() {
+        return Ok(None);
+    }
     keychain().get(CURRENT)
 }
 
 pub fn location() -> Option<&'static std::path::Path> {
+    if is_off() {
+        return None;
+    }
     keychain().location()
 }
 
@@ -226,7 +320,7 @@ impl Drop for Held {
             format!("{CLIENT}{}", self.origin),
             CURRENT.to_string(),
         ] {
-            let _ = keychain().delete(&account);
+            let _ = chosen().delete(&account);
         }
     }
 }
@@ -595,5 +689,58 @@ mod tests {
         // The witness: the run's own keychain holds it, asked the same way.
         assert!(search(Some(vec![isolated::file().opened().unwrap()])));
         assert!(!search(None), "the entry reached the user's keychains");
+    }
+
+    #[test]
+    fn a_keychain_that_is_off_reads_as_absent_and_refuses_to_keep_or_remove() {
+        let origin = format!("https://off.invalid:{}", std::process::id());
+        let _keychain = hold(&origin);
+        let kept = Kept::Key {
+            key: "marfa_k1_off".into(),
+        };
+        keep(&origin, &kept).unwrap();
+        keep_client_id(&origin, "client-1").unwrap();
+
+        turn_off();
+        // The keychain holds all of it, and none of it is found: every call
+        // returns before it reaches the keychain, which would fail the test.
+        assert_eq!(read(&origin).unwrap(), None);
+        assert_eq!(current().unwrap(), None);
+        assert_eq!(client_id(&origin).unwrap(), None);
+        assert_eq!(location(), None);
+        let refusals = [
+            keep(&origin, &kept).unwrap_err(),
+            keep_client_id(&origin, "client-2").unwrap_err(),
+            forget(&origin).unwrap_err(),
+            drop(&origin).unwrap_err(),
+        ];
+        for refusal in refusals {
+            assert!(
+                matches!(&refusal, CliError::Usage(message)
+                    if message.contains("the keychain is off") && message.contains("--key")),
+                "{refusal:?}"
+            );
+        }
+        turn_on();
+
+        // The witness: with the keychain on again, all of it is as it was.
+        assert_eq!(read(&origin).unwrap(), Some(kept));
+        assert_eq!(current().unwrap().as_deref(), Some(origin.as_str()));
+        assert_eq!(client_id(&origin).unwrap().as_deref(), Some("client-1"));
+    }
+
+    #[test]
+    #[should_panic(expected = "a keychain call while the keychain is off")]
+    fn a_call_that_reaches_the_keychain_while_it_is_off_fails_the_test() {
+        turn_off();
+        keychain();
+    }
+
+    #[test]
+    fn what_to_do_without_a_credential_depends_on_whether_the_keychain_is_on() {
+        assert!(advice().contains("marfa login"));
+        turn_off();
+        assert!(!advice().contains("marfa login"));
+        assert!(advice().contains("MARFA_API_KEY"));
     }
 }

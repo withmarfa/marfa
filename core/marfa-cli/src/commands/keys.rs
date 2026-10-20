@@ -538,6 +538,7 @@ fn listing(answer: &Value) -> String {
 /// holds (`keys-and-oauth/current-key`): a key that reaches no type is kept
 /// as readily as one that reaches them all.
 fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    credentials::refuse_if_off()?;
     let key = match remote.credential() {
         Some(source) if source != crate::remote::CredentialSource::Keychain => remote.bearer(),
         _ => None,
@@ -694,5 +695,23 @@ mod access_tests {
         let printed = minted_text(&minted);
         assert!(printed.starts_with("marfa_k1_secret\nkey key_1 (Reader);"));
         assert!(printed.ends_with("\n  Powers: Read the activity log"));
+    }
+}
+
+#[cfg(test)]
+mod keychain_off_tests {
+    use super::*;
+
+    #[test]
+    fn keeping_or_forgetting_a_key_is_refused_while_the_keychain_is_off() {
+        credentials::turn_off();
+        let remote = Remote::keyed("https://marfa.example", "marfa_k1_key").unwrap();
+        for command in [KeysCommand::Keep, KeysCommand::Forget] {
+            let outcome = run(command, &remote, &Printer { json: true });
+            assert!(
+                matches!(&outcome, Err(CliError::Usage(message)) if message.contains("MARFA_API_KEY")),
+                "{outcome:?}"
+            );
+        }
     }
 }

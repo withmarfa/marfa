@@ -58,9 +58,7 @@ pub enum CliError {
     NoStoreAt(std::path::PathBuf),
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
-    #[error(
-        "no credential for {origin}: set MARFA_API_KEY, keep a key with `marfa keys keep`, sign in with `marfa login`, or pass --key"
-    )]
+    #[error("no credential for {origin}: {}", crate::credentials::advice())]
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
     NoKeychain(String),

@@ -435,11 +435,15 @@ fn refresh_locked(origin: &str, refused: Option<&str>) -> Result<Kept, CliError>
 }
 
 /// The operation must not acquire this lock again, including by resolving a
-/// credential that might need a refresh.
+/// credential that might need a refresh. With the keychain off there is no
+/// store to guard, so none is taken.
 pub fn with_credential_lock<T>(
     origin: &str,
     operation: impl FnOnce() -> Result<T, CliError>,
 ) -> Result<T, CliError> {
+    if credentials::is_off() {
+        return operation();
+    }
     let mut lock = fd_lock::RwLock::new(credential_lock_file(origin)?);
     let _held = lock.write()?;
     operation()
@@ -1028,6 +1032,28 @@ mod tests {
             Some(origin.as_str()),
             "the origin stays current so the next command names the server it lost"
         );
+    }
+
+    #[test]
+    fn a_kept_credential_is_not_found_while_the_keychain_is_off() {
+        let origin = format!("https://off-credential.invalid:{}", std::process::id());
+        let _keychain = credentials::hold(&origin);
+        let kept = Kept::Key {
+            key: "marfa_k1_kept".into(),
+        };
+        credentials::keep(&origin, &kept).unwrap();
+        assert_eq!(resolve_credential(&origin, true).unwrap(), Some(kept));
+
+        credentials::turn_off();
+        assert_eq!(resolve_credential(&origin, true).unwrap(), None);
+        // No lock is taken for a store that is not used.
+        let mut ran = false;
+        with_credential_lock(&origin, || {
+            ran = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(ran);
     }
 }
 

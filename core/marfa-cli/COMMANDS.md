@@ -10,8 +10,9 @@ Every command accepts these.
 
 | Option | Description |
 | --- | --- |
-| `--url <URL>` | The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current. |
-| `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one. |
+| `--url <URL>` | The server's base URL. Falls back to MARFA_API_URL, then to the server a kept credential made current. With a key from --key or MARFA_API_KEY, or with the keychain off, there is no such fallback and the URL is required. |
+| `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one, unless the keychain is off. |
+| `--no-keychain` | Treat the keychain as absent: read nothing from it and write nothing to it, so the server and the key must come from --url, --key, MARFA_API_URL or MARFA_API_KEY. A command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1 does the same. |
 | `--allow-http` | Send a credential over plain http to a host that is not this machine without the warning, for a network that is private. MARFA_ALLOW_HTTP=1 does the same. |
 | `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. |
 | `--json` | Print the answer as JSON, and a refusal as one JSON object on stderr, after any warning, which is one plain line. |
@@ -111,7 +112,7 @@ marfa login [OPTIONS]
 | --- | --- |
 | `--scope <SCOPE>` | The scopes to ask for. Defaults to everything an owner can hold that the server supports; the consent screen narrows it. |
 | `--no-browser` | Print the page to open rather than opening it. |
-| `--print-token` | Print the token set instead of keeping it in the keychain. |
+| `--print-token` | Print the token set instead of keeping it in the keychain, which this leaves unread and unchanged. The server must come from --url or MARFA_API_URL. |
 | `--client-id <ID>` | The client id an earlier sign-in registered, where no keychain remembers it; without one the binary registers again. |
 | `--name <NAME>` | The name this sign-in registers under, which is sent to the server and shown to its owner among their sign-ins. Defaults to `marfa on` and this machine's host name without its domain. Giving it registers the binary again. |
 
