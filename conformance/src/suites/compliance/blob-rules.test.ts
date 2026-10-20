@@ -142,9 +142,40 @@ async function uploadReferencedText(words: string) {
   return upload.data.hash;
 }
 
+/**
+ * Waits until the server's own orphan sweep has made its first run. It makes
+ * that run thirty seconds after the server boots, and a run is a run: one
+ * landing between a case's upload and its first run reports the case's
+ * blobs, and the case's run purges them before it can read the report. A run
+ * of this file's own does not take its place, because a run ahead of the
+ * schedule leaves the schedule alone. Once the first run has finished, the
+ * next is a day away, so every run in a case is one the case asked for.
+ */
+async function sweepScheduleSettled(): Promise<void> {
+  await waitFor(
+    "the orphan sweep's first scheduled run",
+    async () => {
+      const listing = await operator.listHousekeeping();
+      expect(listing.status).toBe(200);
+      const sweep = listing.data.data.find(
+        (job) => job.name === "blob-orphans",
+      );
+      if (!sweep) return undefined;
+      const hourAhead = Date.now() + 3_600_000;
+      return sweep.running_since === null &&
+        Date.parse(sweep.next_run_at) > hourAhead
+        ? true
+        : undefined;
+    },
+    60_000,
+    250,
+  );
+}
+
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("compliance", "blob-rules"));
   operator = getManagementClient();
+  await sweepScheduleSettled();
 });
 
 afterAll(async () => {

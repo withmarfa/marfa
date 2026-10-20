@@ -191,6 +191,7 @@ describe("confirming with the password", () => {
       });
       expect(direct.status).toBe(401);
     }
+    const askedAt = Date.now();
     const locked = await confirm(
       { password: TEST_OWNER.password },
       stale,
@@ -217,9 +218,18 @@ describe("confirming with the password", () => {
     });
     expect(form.status).toBe(302);
     expect(form.headers.get("location")).toContain("too_many_attempts");
-    expect(form.headers.get("location")).toContain(
-      `retry_after=${String(wait)}`,
+    // The wait is the whole seconds left in the same lockout, rounded up, so
+    // it falls as the clock runs: the page's answer comes later than the
+    // confirmation's and may be shorter by the whole seconds in between.
+    const elapsed = Math.ceil((Date.now() - askedAt) / 1000);
+    const formWait = Number(
+      new URL(form.headers.get("location") ?? "", origin).searchParams.get(
+        "retry_after",
+      ),
     );
+    expect(Number.isInteger(formWait)).toBe(true);
+    expect(formWait).toBeLessThanOrEqual(wait);
+    expect(formWait).toBeGreaterThanOrEqual(wait - elapsed);
 
     // The refused confirmation left the session as it was: live, and still stale.
     expect(sendsNoOtherSession(locked, stale)).toBe(true);
