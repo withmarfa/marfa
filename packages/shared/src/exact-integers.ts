@@ -29,9 +29,9 @@ export function isKeptInteger(source: string): boolean {
 export function inexactIntegerMessage(source: string): string {
   const rounded = Number(source);
   const kept = Number.isFinite(rounded)
-    ? `, which it keeps as ${String(rounded)}`
+    ? `, which it serves as ${String(rounded)}`
     : "";
-  return `Must be a whole number that a 64-bit float keeps digit for digit, not ${source}${kept}. Send it as a string.`;
+  return `Must be a whole number that Marfa serves back with the same digits, not ${source}${kept}. Send it as a string.`;
 }
 
 /** A whole number in a JSON text that is not kept as written. */
@@ -50,6 +50,43 @@ type Reviver = (
 ) => unknown;
 
 const WHOLE_NUMBER = /^-?\d+$/;
+const DIGIT_RUN = /\d{16,}/g;
+
+/**
+ * Whether `text` holds a whole number token that is not kept as written: a run
+ * of 16 or more digits outside a string, with no `.`, `e` or `E` joined to it.
+ * It reads the text once without parsing it, so a body that holds no such
+ * token costs a scan, whatever else it holds (the digits of a string, of a
+ * fraction or of an exponent, and a great many objects).
+ */
+function holdsInexactToken(text: string): boolean {
+  let inString = false;
+  let scanned = 0;
+  for (const run of text.matchAll(DIGIT_RUN)) {
+    const start = run.index;
+    for (let at = scanned; at < start; at += 1) {
+      const code = text.charCodeAt(at);
+      if (inString) {
+        if (code === 0x5c) at += 1;
+        else if (code === 0x22) inString = false;
+      } else if (code === 0x22) {
+        inString = true;
+      }
+    }
+    scanned = start;
+    if (inString) continue;
+    const end = start + run[0].length;
+    const after = text.charAt(end);
+    if (after === "." || after === "e" || after === "E") continue;
+    const before = text.charAt(start - 1);
+    const signed = before === "-" || before === "+";
+    const lead = text.charAt(signed ? start - 2 : start - 1);
+    if (before === "." || lead === "e" || lead === "E") continue;
+    const from = before === "-" ? start - 1 : start;
+    if (!isKeptInteger(text.slice(from, end))) return true;
+  }
+  return false;
+}
 
 /**
  * Every whole number in `text`, a JSON document, that is not kept as written,
@@ -57,10 +94,12 @@ const WHOLE_NUMBER = /^-?\d+$/;
  * `text` is not JSON, which the door that reads it refuses itself.
  *
  * The text is read for the digits as written because `JSON.parse` rounds a
- * number before any value is built, so the value alone cannot say.
+ * number before any value is built, so the value alone cannot say. It is
+ * parsed only once the scan has found a number that is not kept, and only
+ * then is it noted where each object sits, since that is what names the path.
  */
 export function findInexactIntegers(text: string): InexactInteger[] {
-  if (!/\d{16}/.test(text)) return [];
+  if (!holdsInexactToken(text)) return [];
   const parents = new Map<unknown, { holder: unknown; key: string }>();
   const found: { holder: unknown; key: string; source: string }[] = [];
   const reviver: Reviver = function (key, value, context) {

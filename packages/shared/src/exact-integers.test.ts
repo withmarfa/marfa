@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   findInexactIntegers,
   inexactIntegerMessage,
@@ -59,15 +59,15 @@ describe("inexactIntegerMessage", () => {
   it.each([
     [
       "1152921504606846976",
-      "Must be a whole number that a 64-bit float keeps digit for digit, not 1152921504606846976, which it keeps as 1152921504606847000. Send it as a string.",
+      "Must be a whole number that Marfa serves back with the same digits, not 1152921504606846976, which it serves as 1152921504606847000. Send it as a string.",
     ],
     [
       "-9007199254740993",
-      "Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string.",
+      "Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string.",
     ],
     [
       "1000000000000000000000",
-      "Must be a whole number that a 64-bit float keeps digit for digit, not 1000000000000000000000, which it keeps as 1e+21. Send it as a string.",
+      "Must be a whole number that Marfa serves back with the same digits, not 1000000000000000000000, which it serves as 1e+21. Send it as a string.",
     ],
   ])("names the digits a float keeps for %s", (source, message) => {
     expect(inexactIntegerMessage(source)).toBe(message);
@@ -76,7 +76,7 @@ describe("inexactIntegerMessage", () => {
   it("names no digits for a number beyond a float's largest", () => {
     const source = "9".repeat(400);
     expect(inexactIntegerMessage(source)).toBe(
-      `Must be a whole number that a 64-bit float keeps digit for digit, not ${source}. Send it as a string.`,
+      `Must be a whole number that Marfa serves back with the same digits, not ${source}. Send it as a string.`,
     );
   });
 });
@@ -120,6 +120,44 @@ describe("findInexactIntegers", () => {
   it("leaves digits inside a string alone", () => {
     expect(findInexactIntegers('{"a":"1500000000000000001"}')).toEqual([]);
   });
+
+  it.each([
+    ['{"a":"x\\"1500000000000000001","b":1}', "an escaped quote"],
+    ['{"a":"\\\\1500000000000000001","b":1}', "an escaped backslash"],
+    ['{"a":1.5e+1500000000000000001}', "the digits of an exponent"],
+    ['{"a":1e-1500000000000000001}', "a negative exponent"],
+    ['{"a":0.1500000000000000001}', "the digits of a fraction"],
+    ['{"a":1500000000000000001.0}', "a fraction"],
+    ['{"1500000000000000001":1}', "a key"],
+  ])(
+    "never parses a text whose long digits are not a whole number: %#",
+    (text) => {
+      const parse = vi.spyOn(JSON, "parse");
+      try {
+        expect(findInexactIntegers(text)).toEqual([]);
+        expect(parse).not.toHaveBeenCalled();
+      } finally {
+        parse.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['{"a":"x\\"","b":1500000000000000001}', "b", "1500000000000000001"],
+    ['{"a":"\\\\","b":-1500000000000000001}', "b", "-1500000000000000001"],
+    [
+      '{"a":"\\\\1500000000000000001","b":[1,1152921504606846976]}',
+      "b.1",
+      "1152921504606846976",
+    ],
+  ])(
+    "parses a text with a whole number outside every string: %#",
+    (text, path, source) => {
+      expect(findInexactIntegers(text)).toEqual([
+        { source, path: path.split(".") },
+      ]);
+    },
+  );
 
   it("names a member whose key is empty", () => {
     expect(findInexactIntegers('{"":{"":1500000000000000001}}')).toEqual([
