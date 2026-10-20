@@ -60,7 +60,7 @@ function cliPairs(name: string): Pairs {
 describe("the words access is read in", () => {
   const glossary = glossaryTables();
 
-  it("are the same in the glossary, the CLI and the server", () => {
+  it("are three levels and twelve powers in the glossary", () => {
     expect(glossary.levels).toHaveLength(3);
     expect(glossary.rows.length).toBeGreaterThan(0);
     expect(glossary.powers).toHaveLength(12);

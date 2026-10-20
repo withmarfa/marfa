@@ -1376,7 +1376,7 @@ describe("what the approval pages keep when an app holds types and asks again fo
       "core.note:write",
       "core.task:read",
     ]);
-    // The witness that the token is narrow: it reads a note and is no key to anything else.
+    // The token the narrowed request was exchanged for works.
     expect(await itemsStatus(server, issued.body.access_token ?? "")).toBe(200);
   });
 

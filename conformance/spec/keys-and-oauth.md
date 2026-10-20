@@ -1393,7 +1393,7 @@ If an approval posted from the consent screen or the device approval page names 
 
 Where a request names the all-data scope `*:read` or `*:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for all data, and one control for each registered item type that is not a `system` type.
 
-**Reason:** "All your data, including types added later" is one choice, and an owner who would give less chooses the types instead. A `system` type holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it.
+**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. A `system` type holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it.
 
 **Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`.
 
