@@ -130,6 +130,42 @@ export function TextField(props: TextFieldProps) {
   );
 }
 
+export interface RowInputProps {
+  id: string;
+  name: string;
+  value?: string;
+  placeholder?: string;
+  maxlength?: number;
+  autocomplete?: string;
+  /** The id of the row's description, which a screen reader reads after the name. */
+  describedBy?: string;
+  invalid?: boolean;
+  /** Read by the browser module that drives the page, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
+}
+
+/**
+ * A text input that ends a row: the row's title labels it (`for`), so it has
+ * no label of its own.
+ */
+export function RowInput(props: RowInputProps) {
+  return (
+    <input
+      class="input"
+      id={props.id}
+      name={props.name}
+      type="text"
+      value={props.value}
+      placeholder={props.placeholder}
+      maxlength={props.maxlength}
+      autocomplete={props.autocomplete ?? "off"}
+      aria-invalid={props.invalid ? "true" : undefined}
+      aria-describedby={props.describedBy}
+      {...dataAttributes(props.data)}
+    />
+  );
+}
+
 export type PasswordFieldProps = Omit<
   TextFieldProps,
   "type" | "value" | "placeholder" | "readonly" | "maxlength"

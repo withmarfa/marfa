@@ -109,6 +109,11 @@ describe("powersSummary", () => {
       "3 things asked, each off until you turn it on",
     );
   });
+
+  it("counts even when none is on, for a page where nothing is asked", () => {
+    expect(powersSummary(0, 3, true)).toBe("0 of 3 turned on");
+    expect(powersSummary(2, 3, true)).toBe("2 of 3 turned on");
+  });
 });
 
 describe("heldSummary", () => {

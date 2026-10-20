@@ -272,7 +272,10 @@ export function AccessChoices(props: AccessChoicesProps) {
               badge={isNew}
               description={model.summaries.powers}
               live
-              data={{ "access-group": "powers" }}
+              data={{
+                "access-group": "powers",
+                ...(model.counted ? { "access-counted": "" } : {}),
+              }}
             >
               {model.powers.map((row) => (
                 <SwitchControl row={row} badge={isNew} />

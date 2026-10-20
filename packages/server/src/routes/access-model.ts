@@ -168,6 +168,8 @@ export interface AccessModel {
   mechanisms: string[];
   /** Whether the app already holds some access. */
   returning: boolean;
+  /** The page is a key's, so its powers line counts what is on even when none is. */
+  counted: boolean;
   /**
    * Whether a control offers the level to edit an item type or the content,
    * which adds, changes and deletes items. Editing a definition, a link type
@@ -197,6 +199,15 @@ export interface AccessInput {
    */
   chooseTypes?: readonly ChoosableType[];
   bundles: readonly PermissionBundle[];
+  /**
+   * Where every control starts, for a page that is not answering an app's
+   * request. `off` is a key being made: nothing is on until the person turns
+   * it on. `held` is a key being narrowed: every control starts at the most
+   * it offers, which is what the key holds now. Without it, a control starts
+   * on unless it is a power, and `powers` then read "N of M turned on" only
+   * once one is on.
+   */
+  start?: "off" | "held";
 }
 
 /** What a caller looked up to name a scope in words; a pattern it leaves out is named from the registry. */
@@ -331,8 +342,12 @@ export function buildAccess(given: AccessInput): AccessModel {
   // off-by-default bundle offers or covers. A wildcard that covers a withheld
   // literal starts off with it, so a request cannot arrive on by being broad.
   const startsOn = (literal: string): boolean =>
-    !requiresExplicitConsent(literal) &&
-    !withheld.some((w) => grantCoversScope([literal], w));
+    input.start === "off"
+      ? false
+      : input.start === "held"
+        ? true
+        : !requiresExplicitConsent(literal) &&
+          !withheld.some((w) => grantCoversScope([literal], w));
 
   const asks = new Map<string, Ask>();
   const switches: ParsedScope[] = [];
@@ -528,12 +543,14 @@ export function buildAccess(given: AccessInput): AccessModel {
       powers: powersSummary(
         ordered.filter((row) => row.checked).length,
         ordered.length,
+        input.start !== undefined,
       ),
       empty,
       held: heldList.summary,
     },
     mechanisms,
     returning,
+    counted: input.start !== undefined,
     offersEdit,
   };
 }

@@ -104,6 +104,7 @@ function summaryOf(group: HTMLElement): string | undefined {
       return powersSummary(
         boxes.filter((box) => box.checked).length,
         boxes.length,
+        "accessCounted" in group.dataset,
       );
     }
     default:

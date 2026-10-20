@@ -616,6 +616,14 @@ button.row:hover .rt {
 .row .rd.danger {
   color: var(--danger);
 }
+.row .rd.warn {
+  color: var(--warn);
+}
+.row .rd.secret {
+  font-family: var(--mono);
+  color: var(--fg);
+  user-select: all;
+}
 .row .val {
   width: var(--value);
   text-align: right;

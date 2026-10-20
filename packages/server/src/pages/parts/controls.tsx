@@ -15,6 +15,12 @@ export interface ButtonProps {
   type?: "button" | "submit";
   wide?: boolean;
   disabled?: boolean;
+  /**
+   * Looks and reads as unavailable but still takes focus and a press, for a
+   * button whose reason the page states beside it. The script decides what a
+   * press does.
+   */
+  ariaDisabled?: boolean;
   /** The accessible name, for a button that holds only an icon. */
   label?: string;
   /** Opens the dialog with this id. */
@@ -61,6 +67,7 @@ export function Button(props: ButtonProps) {
       class={className}
       type={props.type ?? "button"}
       disabled={props.disabled}
+      aria-disabled={props.ariaDisabled ? "true" : undefined}
       aria-label={props.label}
       title={kind === "icon-only" ? props.label : undefined}
       data-dialog-open={props.opens}

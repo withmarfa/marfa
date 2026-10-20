@@ -168,9 +168,17 @@ export function profileSummary(
   return words.length > 0 ? capitalize(words.join("; ")) : empty;
 }
 
-/** The line under "More control over Marfa". */
-export function powersSummary(on: number, total: number): string {
-  if (on > 0) return `${String(on)} of ${String(total)} turned on`;
+/**
+ * The line under "More control over Marfa". `counted` is for a page where the
+ * person is not answering a request, so "asked" would be untrue: it says how
+ * many are on even when none is.
+ */
+export function powersSummary(
+  on: number,
+  total: number,
+  counted = false,
+): string {
+  if (on > 0 || counted) return `${String(on)} of ${String(total)} turned on`;
   return total === 1
     ? "1 thing asked, off until you turn it on"
     : `${String(total)} things asked, each off until you turn it on`;
