@@ -183,13 +183,13 @@ inBrowser("the sign-in page, in a browser", () => {
     }
   });
 
-  it("ends on a page, not JSON, when no app is waiting", async () => {
+  it("ends on Home, not JSON, when no app is waiting", async () => {
     const page = await newPage();
     try {
       await page.goto(`${origin}/auth/sign-in`);
       await signIn(page);
       await page.waitForURL(`${origin}/`);
-      expect(await page.textContent("main")).toContain("You're signed in");
+      expect(await page.textContent("main")).toContain("Older management page");
 
       // Opening the sign-in page now says so too, rather than offering the
       // form again.
