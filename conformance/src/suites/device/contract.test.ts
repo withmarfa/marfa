@@ -2407,10 +2407,10 @@ describe("the contract the working copy was built for", () => {
         ]),
         "a proxy's answer was counted against a write the server never saw",
       ).toEqual(
-        // The write behind is sent only in the three drains in which it
-        // tests the edit. Having then met the proxy in three, it is passed
-        // over (`queue-and-verdicts/stuck-write-passed-over`).
-        pass >= 2 && pass < 5
+        // From the third drain the edit has met the proxy three drains
+        // running, and the write behind is sent to test it each drain
+        // (`queue-and-verdicts/stuck-write-tested`).
+        pass >= 2
           ? [
               [null, 0],
               [null, 0],
@@ -2418,14 +2418,13 @@ describe("the contract the working copy was built for", () => {
           : [[null, 0]],
       );
     }
-    // The write behind is sent once a drain from the third, three times, to
-    // test the edit (`queue-and-verdicts/stuck-write-tested`), and meeting the
-    // proxy as well it sets nothing aside
-    // (`queue-and-verdicts/stuck-write-test-failed`).
+    // The write behind is sent once a drain from the third, to test the edit
+    // (`queue-and-verdicts/stuck-write-tested`), and meeting the proxy as well
+    // it sets nothing aside (`queue-and-verdicts/stuck-write-test-failed`).
     expect(
       scripted.requests.filter((request) => request.method === "POST").length,
       "the pass went on past an answer from in front of the server, or sent the write behind it before the edit had met the failure three drains running",
-    ).toBe(3);
+    ).toBe(5);
 
     // The witness: the server's own refusal, naming its contract, refuses.
     const own = await device.drain();
