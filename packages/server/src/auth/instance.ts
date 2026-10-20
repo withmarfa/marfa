@@ -2,6 +2,7 @@ import { withoutWriteWait } from "../storage/sqlite/connection.js";
 import { DEVICE_CODE_LIFETIME } from "./device-code-lifetime.js";
 import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
+import { requirePasskeyName } from "./passkey-name.js";
 import {
   buildPasskeyPlugin,
   PASSKEY_OWNER_PATHS,
@@ -1303,6 +1304,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
           });
       };
       await validate();
+      if (path === "/passkey/verify-registration" && request.method === "POST")
+        await requirePasskeyName(request);
       // Challenge consumption is the first write. The credential lookup,
       // local cryptographic check, counter and session then share its writer.
       return withRequestAuthority(validate, () =>

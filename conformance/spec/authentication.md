@@ -92,6 +92,12 @@ When an authorized caller submits a passkey name, the server MUST trim its ends 
 
 **Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
 
+### `authentication/passkey-registration-name`
+
+When an authorized caller registers a passkey with a name that `authentication/passkey-rename` would refuse, the server MUST return `400` with `validation_error` before it stores the passkey.
+
+**Tests:** `compliance/passkeys.test.ts › refuses a passkey name at registration by the rename rule`.
+
 ### `authentication/passkey-management-not-found`
 
 When an authorized caller renames or removes a missing, foreign, or removed passkey ID, the server MUST return `404` with `passkey_not_found`.

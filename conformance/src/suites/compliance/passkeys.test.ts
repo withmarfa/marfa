@@ -290,6 +290,55 @@ describe("owner passkeys", () => {
     });
     expect(rename.status).toBe(200);
   });
+  it("refuses a passkey name at registration by the rename rule", async () => {
+    const stored = async () =>
+      (
+        (await (
+          await fetch(server.url + "/owner/passkeys", {
+            headers: { origin: server.url, cookie: ownerCookie },
+          })
+        ).json()) as { data: unknown[] }
+      ).data.length;
+    const before = await stored();
+    const challenge = await options("register");
+    const response = testAuthenticator().registration(
+      challenge.body.challenge,
+      server.url,
+      new URL(server.url).hostname,
+    );
+    for (const name of [
+      " ",
+      "x".repeat(509),
+      "bad\u0000name",
+      "\u001b[31mred",
+      "bad\u202ename",
+    ]) {
+      const refused = await post(
+        "/auth/passkey/verify-registration",
+        { name, response },
+        challenge.cookie,
+      );
+      expect(refused.status, JSON.stringify(name)).toBe(400);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "validation_error" },
+      });
+    }
+    expect(await stored(), "nothing was stored").toBe(before);
+    // The same registration with a name the rule allows is the witness that it was producible.
+    const accepted = await post(
+      "/auth/passkey/verify-registration",
+      { name: "Accepted", response },
+      challenge.cookie,
+    );
+    expect(accepted.status).toBe(200);
+    expect(await stored()).toBe(before + 1);
+    const id = ((await accepted.json()) as { id: string }).id;
+    const removed = await fetch(server.url + "/owner/passkeys/" + id, {
+      method: "DELETE",
+      headers: { origin: server.url, cookie: ownerCookie },
+    });
+    expect(removed.status).toBe(200);
+  });
   it("requires owner authority and the instance origin for passkey management", async () => {
     const absent = await fetch(server.url + "/owner/passkeys", {
       headers: { origin: server.url },

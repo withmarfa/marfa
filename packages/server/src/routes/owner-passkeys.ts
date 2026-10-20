@@ -12,7 +12,7 @@ import {
 } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth, OwnerPasskey } from "../auth/instance.js";
-import { SIGN_IN_NAME_MAX, UNPRINTABLE } from "../auth/sign-in-names.js";
+import { PasskeyNameSchema } from "../auth/passkey-name.js";
 const PasskeySchema = z
   .object({
     id: z
@@ -100,20 +100,9 @@ const rename = createRoute({
       content: {
         "application/json": {
           schema: z.strictObject({
-            name: z
-              .string()
-              .refine(
-                (name) =>
-                  !UNPRINTABLE.test(name) && !/\p{Bidi_Control}/u.test(name),
-                {
-                  message:
-                    "name can't hold a control or bidirectional formatting character",
-                },
-              )
-              .trim()
-              .min(1)
-              .max(SIGN_IN_NAME_MAX)
-              .describe("The new name. Marfa trims spaces from each end."),
+            name: PasskeyNameSchema.describe(
+              "The new name. Marfa trims spaces from each end.",
+            ),
           }),
         },
       },

@@ -42,6 +42,17 @@ export const UNPRINTABLE =
   /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 
 /**
+ * A bidirectional formatting character of any kind, including the marks and
+ * the Arabic letter mark that {@link UNPRINTABLE} leaves out.
+ */
+export const BIDI_CONTROL = /\p{Bidi_Control}/u;
+
+/** Whether `text` holds a character a name may not: a control or a bidirectional formatting character. */
+export function hasHiddenCharacter(text: string): boolean {
+  return UNPRINTABLE.test(text) || BIDI_CONTROL.test(text);
+}
+
+/**
  * `name` trimmed, or undefined where it is no name a sign-in can be shown by:
  * empty, longer than {@link SIGN_IN_NAME_MAX}, or holding an
  * {@link UNPRINTABLE} character. The app or the key that chose it falls back

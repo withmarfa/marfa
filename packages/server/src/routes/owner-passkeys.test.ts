@@ -166,6 +166,50 @@ it("rejects invalid names, foreign IDs, wrong origins and bearer authority witho
     (await ctx.request(`/owner/passkeys/${row.id}`, "DELETE")).status,
   ).toBe(404);
 });
+it("refuses a name at registration by the rule the rename holds, before anything is stored", async () => {
+  const ctx = await fixture();
+  const options = await ctx.request("/auth/passkey/generate-register-options");
+  const challenge = ((await options.json()) as { challenge: string }).challenge;
+  const cookie = ctx.ownerCookie + "; " + cookies(options);
+  const response = testAuthenticator().registration(challenge, origin);
+  const attempt = (name: unknown) =>
+    ctx.request(
+      "/auth/passkey/verify-registration",
+      "POST",
+      { response, name },
+      cookie,
+    );
+  for (const name of [
+    "",
+    " ",
+    "a".repeat(201),
+    "a".repeat(509),
+    "bad\u0000name",
+    "\u001b[31mred\u001b[0m",
+    "bad\u202ename",
+    "bad\u061cname",
+    "bad\u200ename",
+    "\nName",
+    "Name\n",
+    123,
+    null,
+  ]) {
+    const refused = await attempt(name);
+    expect(refused.status, JSON.stringify(name)).toBe(400);
+    expect(await refused.json()).toMatchObject({
+      error: { code: "validation_error" },
+    });
+  }
+  expect(await (await ctx.request("/owner/passkeys")).json()).toMatchObject({
+    data: [],
+  });
+  // The refusals spent nothing: the same challenge still registers.
+  const accepted = await attempt("  Studio  ");
+  expect(accepted.status).toBe(200);
+  expect(await (await ctx.request("/owner/passkeys")).json()).toMatchObject({
+    data: [{ name: "Studio" }],
+  });
+});
 it("requires recent authentication for mutations but permits stale reads and local changes", async () => {
   const ctx = await fixture();
   const { row } = await ctx.register("Owner");
