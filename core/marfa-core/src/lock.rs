@@ -13,6 +13,9 @@ use crate::error::CoreError;
 /// The lock's file in a folder's state directory, beside the store.
 pub(crate) const DIRECTORY_LOCK: &str = "core.sqlite.writer-lock";
 
+/// How often a lock file is opened to get a connection that can write.
+const OPENS: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handle {
     Writer,
@@ -40,8 +43,7 @@ impl WriterLock {
         };
         let path = lock_path(store);
         crate::owner_only(&path)?;
-        let claim = Connection::open(&path)?;
-        Self::claim_connection(claim)
+        Self::claim_opened(&path.display().to_string(), || Ok(Connection::open(&path)?))
     }
 
     #[cfg(unix)]
@@ -64,7 +66,31 @@ impl WriterLock {
         if create {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
         }
-        Self::claim_connection(vfs.open(name, flags)?)
+        Self::claim_opened(name, || vfs.open(name, flags))
+    }
+
+    /// The lock on the file `open` opens, named `file` in an error. Every lock
+    /// is claimed here, so none can be the writer on a connection that cannot
+    /// write.
+    ///
+    /// SQLite opens a file read-only without saying so when it cannot open it
+    /// for writing, and `BEGIN EXCLUSIVE` on that connection succeeds with
+    /// only a shared lock. That also happens to a file whose creation raced
+    /// another's on macOS (one open fails with `ENOENT`), so a read-only
+    /// connection is opened again before the claim is refused.
+    fn claim_opened(
+        file: &str,
+        mut open: impl FnMut() -> Result<Connection, CoreError>,
+    ) -> Result<Self, CoreError> {
+        for _ in 0..OPENS {
+            let claim = open()?;
+            if !claim.is_readonly("main")? {
+                return Self::claim_connection(claim);
+            }
+        }
+        Err(CoreError::Store(format!(
+            "{file} cannot be opened for writing, so it cannot be locked: check that it is writable"
+        )))
     }
 
     /// Whether an exclusive holder keeps a named lock. Shared read probes
@@ -168,6 +194,111 @@ mod tests {
         assert!(WriterLock::held_named(&vfs, name).unwrap());
         drop(held);
         assert!(!WriterLock::held_named(&vfs, name).unwrap());
+    }
+
+    #[cfg(unix)]
+    fn state() -> (tempfile::TempDir, crate::directory::Directory) {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = crate::directory::Directory::open(temp.path()).unwrap();
+        (temp, state)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_lock_file_that_cannot_be_written_is_refused_not_claimed() {
+        use std::os::unix::fs::PermissionsExt;
+        let (temp, state) = state();
+        let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+        let name = "request-lock";
+        drop(WriterLock::claim_named(&vfs, name, true).unwrap());
+        let mode = |mode| {
+            std::fs::set_permissions(
+                temp.path().join(name),
+                std::fs::Permissions::from_mode(mode),
+            )
+            .unwrap();
+        };
+        mode(0o400);
+        for create in [true, false] {
+            let claim = WriterLock::claim_named(&vfs, name, create);
+            assert!(
+                matches!(&claim, Err(CoreError::Store(message)) if message.contains(name)),
+                "create {create}: {:?}",
+                claim.map(|lock| lock.handle())
+            );
+        }
+        // The witness: with the file writable again, the same call claims it
+        // and an exclusive holder is seen.
+        mode(0o600);
+        let claim = WriterLock::claim_named(&vfs, name, true).unwrap();
+        assert_eq!(claim.handle(), Handle::Writer);
+        assert!(WriterLock::held_named(&vfs, name).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_lock_that_cannot_be_written_is_refused_every_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("core.sqlite");
+        let lock = dir.path().join("core.sqlite.writer-lock");
+        drop(WriterLock::claim(Some(&store)).unwrap());
+        let mode = |mode| {
+            std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        mode(0o400);
+        for attempt in ["first", "second"] {
+            let claim = WriterLock::claim(Some(&store));
+            assert!(
+                matches!(&claim, Err(CoreError::Store(message)) if message.contains("core.sqlite.writer-lock")),
+                "{attempt} claim: {:?}",
+                claim.map(|lock| lock.handle())
+            );
+        }
+        // The witness: with the file writable again, the same call claims it.
+        mode(0o600);
+        let claim = WriterLock::claim(Some(&store)).unwrap();
+        assert_eq!(claim.handle(), Handle::Writer);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn of_two_claims_creating_a_lock_file_at_once_the_writer_holds_it() {
+        let witnessed = std::sync::atomic::AtomicUsize::new(0);
+        for _ in 0..200 {
+            let (_temp, state) = state();
+            let vfs = crate::directory_vfs::DirectoryVfs::new(state.file()).unwrap();
+            let start = std::sync::Barrier::new(2);
+            let claims: Vec<WriterLock> = std::thread::scope(|scope| {
+                let asking: Vec<_> = (0..2)
+                    .map(|_| {
+                        scope.spawn(|| {
+                            start.wait();
+                            WriterLock::claim_named(&vfs, "request-lock", true).unwrap()
+                        })
+                    })
+                    .collect();
+                asking.into_iter().map(|a| a.join().unwrap()).collect()
+            });
+            let writers = claims
+                .iter()
+                .filter(|claim| claim.handle() == Handle::Writer)
+                .count();
+            assert!(writers <= 1, "two claims were the writer");
+            // Both may be refused when each sees the other mid-claim; a
+            // writer, though, must hold the lock a probe finds.
+            if writers == 1 {
+                witnessed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                assert!(
+                    WriterLock::held_named(&vfs, "request-lock").unwrap(),
+                    "a claim reported the writer role without holding the lock"
+                );
+            }
+        }
+        assert!(
+            witnessed.load(std::sync::atomic::Ordering::SeqCst) > 0,
+            "no round had a writer, so nothing was checked"
+        );
     }
 
     #[test]
