@@ -356,7 +356,7 @@ When an item names a value for a `url` field, or an element of an array field wh
 
 If the host of a `url` value of a special scheme has a label that starts `xn--` and is not valid Punycode, then the server MUST refuse the value `invalid_properties`.
 
-**Reason:** the standard keeps such a label as written, and the Node versions the server supports differ on whether they take it: 22 and 24 refuse `http://xn--` and `http://xn--%41`, and 26 takes them. A device refuses them too (`device/url-trimmed`), so one value has one answer on every server and every device, whatever Node the server runs on. A label that decodes to nothing but ASCII is not valid Punycode either.
+**Reason:** the standard keeps such a label as written, and the Node versions the server supports differ on whether they take it: 22 and 24 refuse `http://xn--` and `http://xn--%41`, and 26 takes them. A device refuses them too (`device/url-trimmed`), so one value has one answer on every server and every device, whatever Node the server runs on. A label that decodes to nothing but ASCII is not a valid IDNA A-label.
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› takes a url whose host is valid Punycode`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
 

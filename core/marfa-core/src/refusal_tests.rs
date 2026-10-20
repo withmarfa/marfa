@@ -321,9 +321,9 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
 
 #[test]
 fn a_float_a_binding_hands_over_is_held_in_the_digits_the_server_serves() {
-    // The Node and Swift bindings hand a JavaScript number or a `Double` over
-    // as a float, never as an integer, so no whole number reaches the core as
-    // `1152921504606846976` from them.
+    // The Node binding passes these large JavaScript numbers as floats,
+    // as does the Swift binding's `Number(f64)` case.
+    // Swift's separate `Integer(i64)` case reaches the integer guard.
     let core = copy(&Scripted::start());
     let float = |number: f64| serde_json::Number::from_f64(number).unwrap();
     for (number, served) in [
