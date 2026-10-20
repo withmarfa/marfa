@@ -185,13 +185,9 @@ pub fn id_line(text: &str) -> Option<String> {
     id_line_of(text.as_bytes())
 }
 
-/// The longest line of frontmatter read for the id: a line past it is no
-/// fence and no id, so a file of bytes is never decoded whole to look for one.
-const LINE_LIMIT: usize = 1 << 16;
-
-/// `id_line` over bytes that may not be text. It decodes the frontmatter one
+/// `id_line` over bytes that may not be text. It judges the frontmatter one
 /// line at a time and stops at its closing fence, so a large file that is not
-/// a document is not copied.
+/// a document is not copied: a line is decoded only if it names the id.
 pub fn id_line_of(bytes: &[u8]) -> Option<String> {
     let bytes = bytes
         .strip_prefix(MARK.encode_utf8(&mut [0; 4]).as_bytes())
@@ -202,15 +198,19 @@ pub fn id_line_of(bytes: &[u8]) -> Option<String> {
     if lines.next()? != FENCE.as_bytes() {
         return None;
     }
-    lines
-        .filter(|line| line.len() <= LINE_LIMIT)
-        .map(String::from_utf8_lossy)
-        .take_while(|line| line.trim_end() != FENCE)
-        .find_map(|line| {
-            line.strip_prefix("marfa_id:")
-                .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
-        })
-        .filter(|id| !id.is_empty())
+    for line in lines {
+        // A fence is text: a decoded line with a replacement character in it
+        // is not one.
+        if std::str::from_utf8(line).is_ok_and(|line| line.trim_end() == FENCE) {
+            return None;
+        }
+        if let Some(id) = line.strip_prefix(b"marfa_id:") {
+            let id = String::from_utf8_lossy(id);
+            return Some(id.trim().trim_matches(['"', '\'']).to_string())
+                .filter(|id| !id.is_empty());
+        }
+    }
+    None
 }
 
 pub fn read_body(text: &str) -> Document {
@@ -416,7 +416,14 @@ mod tests {
                 .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
                 .filter(|id| !id.is_empty())
         };
+        // A line of any length is judged like any other.
+        let padded_fence = format!("---\ntitle: x\n---{}\nmarfa_id: 02b\n", " ".repeat(1 << 17));
+        let long_id = format!("---\nmarfa_id: {}\n---\n", "a".repeat(1 << 17));
+        let long_other = format!("---\ntitle: {}\nmarfa_id: 01a\n---\n", "a".repeat(1 << 17));
         for text in [
+            padded_fence.as_str(),
+            long_id.as_str(),
+            long_other.as_str(),
             "---\nmarfa_id: 01a\n---\nbody\n",
             "---\r\ntitle: x\r\nmarfa_id: \"01a\"\r\n---\r\n",
             "\u{feff}---\nmarfa_id: '01a'\n---\n",
@@ -430,8 +437,9 @@ mod tests {
             "---\n",
             "",
         ] {
-            assert_eq!(id_line_of(text.as_bytes()), by_text(text), "{text:?}");
-            assert_eq!(id_line(text), by_text(text), "{text:?}");
+            let shown = &text[..text.len().min(64)];
+            assert_eq!(id_line_of(text.as_bytes()), by_text(text), "{shown:?}");
+            assert_eq!(id_line(text), by_text(text), "{shown:?}");
         }
     }
 
@@ -449,9 +457,9 @@ mod tests {
         assert_eq!(id_line_of(&body), None);
         // Bytes that open with no fence are not read past their first line.
         assert_eq!(id_line_of(&[0x80; 4096]), None);
-        // A line too long to be a fence or an id is not one.
+        // A long line of bytes that are not text is no fence and no id.
         let mut long = b"---\n".to_vec();
-        long.extend(vec![0x80; LINE_LIMIT + 1]);
+        long.extend(vec![0x80; 1 << 17]);
         long.extend(b"\nmarfa_id: 01a\n---\n");
         assert_eq!(id_line_of(&long).as_deref(), Some("01a"));
     }

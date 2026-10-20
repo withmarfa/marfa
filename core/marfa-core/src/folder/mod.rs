@@ -1905,7 +1905,7 @@ impl Folder {
                 }
             };
             if let Some(reason) = &file.unreadable
-                && (!encoding(reason) || !bytes_item()?)
+                && !bytes_item()?
             {
                 self.hold_unreadable(file, claim.as_ref(), reason, &withheld)?;
                 report.flagged.push(Flagged::of(
@@ -6627,6 +6627,53 @@ mod tests {
                 "{name} is bound with a text copy"
             );
             assert_eq!(bound.content_hash, state::hash(&binary));
+        }
+    }
+
+    #[test]
+    fn a_file_item_at_a_document_name_is_sent_as_bytes_whatever_they_hold() {
+        // Valid UTF-8, each a block that does not parse as frontmatter.
+        for (label, edited) in [
+            ("unclosed list", "---\ntitle: [unclosed\n---\nbody\n"),
+            ("duplicate key", "---\ntitle: a\ntitle: b\n---\nbody\n"),
+            ("unterminated quote", "---\ntitle: 'x\n---\nbody\n"),
+        ] {
+            let (dir, folder) = scanned_folder();
+            std::fs::write(dir.path().join("archive.bin"), [0x80; 4096]).unwrap();
+            // The witness: a note with the same bytes is held.
+            std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 2);
+            std::fs::write(dir.path().join("note.md"), edited).unwrap();
+            let report = folder.scan().unwrap();
+            let flagged = |report: &ScanReport, path: &str| {
+                report.flagged.iter().any(|flagged| flagged.path == path)
+            };
+            assert!(flagged(&report, "note.md"), "{label}: {report:?}");
+
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.renamed, 1, "{label}: {report:?}");
+            let item_id = {
+                let conn = folder.core.conn().unwrap();
+                let bound = state::bound_at(&conn, "notes.md").unwrap().unwrap();
+                assert!(bound.held.is_none(), "{label}: {:?}", bound.held);
+                bound.item_id
+            };
+
+            std::fs::write(dir.path().join("notes.md"), edited).unwrap();
+            let report = folder.scan().unwrap();
+            assert!(!flagged(&report, "notes.md"), "{label}: {report:?}");
+            assert_eq!(report.updated, 1, "{label}: {report:?}");
+            let conn = folder.core.conn().unwrap();
+            let bound = state::bound_at(&conn, "notes.md").unwrap().unwrap();
+            assert_eq!(bound.item_id, item_id, "{label}");
+            assert!(bound.held.is_none(), "{label}: {:?}", bound.held);
+            assert_eq!(
+                bound.content_hash,
+                state::hash(edited.as_bytes()),
+                "{label}"
+            );
+            assert!(bound.presentation.is_none(), "{label}");
         }
     }
 
