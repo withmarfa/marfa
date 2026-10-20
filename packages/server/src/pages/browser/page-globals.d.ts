@@ -28,7 +28,15 @@ interface BrowserElement {
   closest(selector: string): BrowserElement | null;
   checkVisibility(): boolean;
   focus(): void;
-  getBoundingClientRect(): { top: number; right: number };
+  getBoundingClientRect(): {
+    top: number;
+    right: number;
+    bottom: number;
+    left: number;
+    width: number;
+    height: number;
+  };
+  querySelector(selector: string): BrowserElement | null;
   querySelectorAll(selector: string): BrowserElement[];
   childNodes: { nodeType: number; textContent: string | null }[];
 }

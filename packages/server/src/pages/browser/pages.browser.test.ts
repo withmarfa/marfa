@@ -22,6 +22,7 @@ import type { TestContext } from "../../test-utils.js";
 import { parsePageSize } from "../navigation.js";
 import { MomentFixture, renderFixturePage } from "../test-fixture.js";
 import { renderDocument } from "../render.js";
+import { headerGeometry } from "./header-geometry.js";
 
 const launched = await launchTestBrowser();
 if (launched instanceof Error && process.env.CI) throw launched;
@@ -834,24 +835,7 @@ describe("at 375 pixels", () => {
         const { page, context } = await open({ width });
         try {
           await page.goto(`${origin}/fixture`);
-          const g = await page.evaluate(() => {
-            const head = document.querySelector(".head");
-            const rect = (el: Element | null | undefined) => {
-              if (!el) throw new Error("missing header part");
-              const r = el.getBoundingClientRect();
-              return {
-                left: r.left,
-                right: r.right,
-                top: r.top,
-                bottom: r.bottom,
-              };
-            };
-            return {
-              title: rect(head?.querySelector("h1")),
-              action: rect(head?.querySelector(".actions .btn")),
-              head: rect(head),
-            };
-          });
+          const g = await headerGeometry(page, ".actions .btn");
           const label = `${String(width)}px`;
           expect(g.action.top, label).toBeGreaterThanOrEqual(g.title.top - 0.5);
           expect(g.action.top, label).toBeLessThan(g.title.bottom);
