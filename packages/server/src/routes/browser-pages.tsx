@@ -12,8 +12,8 @@
  */
 import {
   Button,
-  ClosingAction,
   ConsolePage,
+  DangerRow,
   Dialog,
   EmptyState,
   Notice,
@@ -112,17 +112,15 @@ export function BrowsersPage(props: BrowsersParams) {
         </RowGroup>
       </div>
       {others > 0 && (
-        <ClosingAction>
-          <Row
-            title="Sign out of all other browsers"
-            description={`Ends ${others === 1 ? "1 sign-in" : `${String(others)} sign-ins`}. You stay signed in here.`}
-            buttons={
-              <Button kind="danger-quiet" opens="browsers-others-dialog">
-                Sign out others
-              </Button>
-            }
-          />
-        </ClosingAction>
+        <DangerRow
+          title="Sign out of all other browsers"
+          description={`Ends ${others === 1 ? "1 sign-in" : `${String(others)} sign-ins`}. You stay signed in here.`}
+          action={
+            <Button kind="danger-quiet" opens="browsers-others-dialog">
+              Sign out others
+            </Button>
+          }
+        />
       )}
       {others > 0 && (
         <Dialog

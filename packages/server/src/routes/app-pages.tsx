@@ -19,8 +19,8 @@ import {
 } from "../pages/navigation.js";
 import {
   Button,
-  ClosingAction,
   ConsolePage,
+  DangerRow,
   Dialog,
   EmptyState,
   ListToolbar,
@@ -304,17 +304,15 @@ export function AppPage(props: AppPageParams) {
           </RowGroup>
         </Section>
       </div>
-      <ClosingAction>
-        <Row
-          title={`Disconnect ${props.name}`}
-          description={`${endWords(made)} It asks again the next time it needs access.`}
-          buttons={
-            <Button kind="danger-quiet" opens="app-disconnect-dialog">
-              Disconnect
-            </Button>
-          }
-        />
-      </ClosingAction>
+      <DangerRow
+        title={`Disconnect ${props.name}`}
+        description={`${endWords(made)} It asks again the next time it needs access.`}
+        action={
+          <Button kind="danger-quiet" opens="app-disconnect-dialog">
+            Disconnect
+          </Button>
+        }
+      />
       <Dialog
         id="app-disconnect-dialog"
         title={`Disconnect ${props.name}?`}
