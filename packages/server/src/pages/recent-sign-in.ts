@@ -25,4 +25,6 @@ export const CONFIRM_REFUSALS = {
   passkey: "That passkey could not be verified.",
   /** No signed-in owner session holds the request, so there is nothing to renew. */
   noSession: "Sign in as the owner to continue.",
+  /** The proof was not judged wrong; taking it failed, so trying again may work. */
+  failed: "Marfa couldn't confirm it's you. Try again.",
 } as const;

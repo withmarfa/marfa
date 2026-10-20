@@ -822,7 +822,7 @@ describe("the passkey step with a sign-in older than five minutes", () => {
           await add.click();
           await dialog.waitFor();
           expect(await dialog.innerText()).toContain(
-            "To add a passkey, confirm it's you. You last signed in more than 5 minutes ago.",
+            "To add a passkey, confirm it's you. Changes like this need a sign-in from the last 5 minutes.",
           );
           await dialog.getByRole("button", { name: "Cancel" }).click();
           await dialog.waitFor({ state: "hidden" });
@@ -841,6 +841,48 @@ describe("the passkey step with a sign-in older than five minutes", () => {
           await dialog.getByRole("button", { name: "Continue" }).click();
           await page.getByText("Passkey added", { exact: true }).waitFor();
           expect(await credentials()).toBe(1);
+        } finally {
+          clock.resetClockForTests();
+          await context.close();
+        }
+      });
+    },
+  );
+
+  inBrowser(
+    "starts the passkey again after a confirmation when the five minutes run out during the prompt",
+    async () => {
+      await withInstance(async ({ origin, ctx }) => {
+        const { context, page } = await open();
+        clock.installDateShim();
+        try {
+          await virtualAuthenticator(context, page);
+          await issueSetupCode(ctx.storage);
+          const { ticket } = await issueSetupTicket(ctx.storage);
+          await page.goto(`${origin}/setup#handoff=${ticket}`);
+          await page.locator("#owner-form").waitFor();
+          await claim(page);
+          await page.waitForURL(`${origin}/setup/passkey`);
+          let verifies = 0;
+          await page.route(
+            "**/auth/passkey/verify-registration",
+            async (route) => {
+              verifies += 1;
+              if (verifies === 1) clock.advanceClock(6 * 60_000);
+              await route.continue();
+            },
+          );
+          await page.getByRole("button", { name: "Add passkey" }).click();
+          const dialog = page.getByRole("dialog", { name: "Confirm it's you" });
+          await dialog.waitFor();
+          await dialog.getByLabel("Or your password").fill(OWNER.password);
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          await page.getByText("Passkey added", { exact: true }).waitFor();
+          expect(verifies).toBe(2);
+          const { ownerId } = await getClaimStatus(ctx.storage);
+          expect((await ctx.auth.listOwnerPasskeys(ownerId ?? "")).length).toBe(
+            1,
+          );
         } finally {
           clock.resetClockForTests();
           await context.close();

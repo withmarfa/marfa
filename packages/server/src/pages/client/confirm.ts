@@ -25,6 +25,7 @@ import {
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
 import { clearFieldError, showFieldError } from "./form.js";
+import { initPasswordFields } from "./password.js";
 
 /**
  * How long before the sign-in stops being recent the dialog already opens. The
@@ -319,7 +320,13 @@ function ask(
   if (view.pending) return view.pending;
   view.opener = opener;
   if (view.why) view.why.textContent = why;
+  // Back to a hidden, empty field, with the show button following it.
+  if (view.password.type === "text")
+    view.dialog
+      .querySelector<HTMLButtonElement>("[data-password-toggle]")
+      ?.click();
   view.password.value = "";
+  view.password.dispatchEvent(new Event("input"));
   clearFieldError(view.password);
   hidePasskeyError(view);
   setBusy(view, false);
@@ -334,6 +341,9 @@ function ask(
 }
 
 function wire(view: View): void {
+  // The page's own pass over its password fields does not reach into a shadow root.
+  if (view.dialog.getRootNode() instanceof ShadowRoot)
+    initPasswordFields(view.dialog);
   view.form.addEventListener("submit", (event) => {
     event.preventDefault();
     void submitPassword(view);
@@ -352,10 +362,18 @@ function wire(view: View): void {
   view.dialog.addEventListener("cancel", (event) => {
     if (view.busy) event.preventDefault();
   });
+  // A press that began and ended on the backdrop, not a drag from a field.
+  let pressedOnBackdrop = false;
+  view.dialog.addEventListener("pointerdown", (event) => {
+    pressedOnBackdrop = event.target === view.dialog;
+  });
   view.dialog.addEventListener("click", (event) => {
     const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (target.closest("[data-dialog-close]") && !view.busy)
+    if (!(target instanceof Element) || view.busy) return;
+    if (
+      target.closest("[data-dialog-close]") ||
+      (target === view.dialog && pressedOnBackdrop)
+    )
       finish(view, false);
   });
   view.dialog.addEventListener("close", () => {
@@ -383,23 +401,18 @@ async function refusedForOldSignIn(response: Response): Promise<boolean> {
 }
 
 function gate(view: View, form: HTMLFormElement): void {
-  const left = Number(form.dataset.confirmLeft);
+  let left = Number(form.dataset.confirmLeft);
   if (!Number.isFinite(left)) return;
   const needing = new Set(
     (form.dataset.confirmScopes ?? "").split(" ").filter((s) => s !== ""),
   );
   const why = form.dataset.confirmWhy ?? "";
-  const rendered = Date.now();
-  let confirmed = false;
+  let rendered = Date.now();
   // Before the form module's own listener, which would otherwise start the
   // submitting state on a submit this one is about to hold back.
   form.addEventListener(
     "submit",
     (event) => {
-      if (confirmed) {
-        confirmed = false;
-        return;
-      }
       const submitter = event.submitter;
       if (
         !(submitter instanceof HTMLElement) ||
@@ -416,7 +429,9 @@ function gate(view: View, form: HTMLFormElement): void {
       event.stopImmediatePropagation();
       void ask(view, why, submitter).then((ok) => {
         if (!ok) return;
-        confirmed = true;
+        // The sign-in is new, so a form that stays open does not ask again.
+        rendered = Date.now();
+        left = RECENT_SIGN_IN_MS;
         form.requestSubmit(submitter);
       });
     },

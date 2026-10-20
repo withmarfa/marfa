@@ -537,7 +537,7 @@ describe("Approve access in a browser, confirming it's you", () => {
         const dialog = confirmDialog(b.page);
         await dialog.waitFor();
         expect(await dialog.innerText()).toContain(
-          "To let Left Open App change your data or control Marfa, confirm it's you. You last signed in more than 5 minutes ago.",
+          "To let Left Open App change your data or control Marfa, confirm it's you. Changes like this need a sign-in from the last 5 minutes.",
         );
         expect(b.callbacks.length).toBe(before);
 
@@ -603,6 +603,99 @@ describe("Approve access in a browser, confirming it's you", () => {
         expect(asked.headers.get("location") ?? "").not.toContain("code=");
       } finally {
         clock.resetClockForTests();
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "cannot be dismissed while the confirmation is being sent, and then goes on",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        const { app, proof } = await openConsent(b, "Busy Confirm App");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        await letFiveMinutesPass(b.page);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await b.page.route("**/auth/confirm", async (route) => {
+          await held;
+          await route.continue();
+        });
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await expect
+          .poll(() => dialog.locator(".card").getAttribute("aria-busy"))
+          .toBe("true");
+        // Neither Cancel, Escape nor the backdrop closes it now.
+        await dialog
+          .getByRole("button", { name: "Cancel" })
+          .dispatchEvent("click");
+        await b.page.keyboard.press("Escape");
+        await b.page.mouse.click(5, 5);
+        expect(await dialog.isVisible()).toBe(true);
+        const sent = await arrival(b, () => {
+          release();
+          return Promise.resolve();
+        });
+        expect(await scopesOf(app, sent, proof)).toContain("core.note:write");
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "does not ask again for the next Approve after confirming, while the sign-in is new",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        await openConsent(b, "Twice App");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        await letFiveMinutesPass(b.page);
+        // The first decision goes nowhere, so the form stays on the page.
+        let decisions = 0;
+        await b.page.route("**/auth/authorize/decision", async (route) => {
+          decisions += 1;
+          if (decisions === 1) await route.fulfill({ status: 204, body: "" });
+          else await route.continue();
+        });
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await expect.poll(() => decisions).toBe(1);
+        await dialog.waitFor({ state: "hidden" });
+        // A real decision leaves the page; this one did not, so the form's
+        // submitting state is cleared by hand.
+        await b.page.evaluate(
+          `(() => {
+            const form = document.querySelector("form[data-access]");
+            delete form.dataset.submitting;
+            for (const button of form.querySelectorAll("button")) {
+              button.disabled = false;
+              button.classList.remove("is-loading");
+              if (button.dataset.idleLabel !== undefined)
+                button.textContent = button.dataset.idleLabel;
+            }
+          })()`,
+        );
+
+        const sent = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(sent).toContain("code=");
+        expect(decisions).toBe(2);
+        expect(await dialog.isVisible()).toBe(false);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
         await b.context.close();
       }
     },

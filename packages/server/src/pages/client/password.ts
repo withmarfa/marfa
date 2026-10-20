@@ -6,10 +6,8 @@
  * input between `password` and `text`. A browser that runs no script never
  * sees a button that does nothing.
  */
-export function initPasswordFields(): void {
-  for (const wrap of document.querySelectorAll<HTMLElement>(
-    "[data-password]",
-  )) {
+export function initPasswordFields(root: ParentNode = document): void {
+  for (const wrap of root.querySelectorAll<HTMLElement>("[data-password]")) {
     const input = wrap.querySelector<HTMLInputElement>("input");
     const button = wrap.querySelector<HTMLButtonElement>(
       "[data-password-toggle]",

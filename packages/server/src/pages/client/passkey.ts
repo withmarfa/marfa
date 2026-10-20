@@ -20,26 +20,46 @@ interface Answer {
 
 const WHY = "To add a passkey, confirm it's you.";
 
-/** The answer, or `null` when the person cancelled the confirmation. */
-async function request(path: string, body?: unknown): Promise<Answer | null> {
-  const response = await sendConfirmed(
-    () =>
-      fetch(path, {
-        method: body === undefined ? "GET" : "POST",
-        credentials: "same-origin",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json",
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      }),
-    WHY,
-  );
+function fetchJson(path: string, body?: unknown): Promise<Response> {
+  return fetch(path, {
+    method: body === undefined ? "GET" : "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+/** The answer to a change sent through the dialog, or `null` when the person cancelled it. */
+async function answer(send: () => Promise<Response>): Promise<Answer | null> {
+  const response = await sendConfirmed(send, WHY);
   if (response === null) return null;
   return {
     status: response.status,
     body: (await response.json().catch(() => null)) as Answer["body"],
   };
+}
+
+const request = (path: string, body?: unknown): Promise<Answer | null> =>
+  answer(() => fetchJson(path, body));
+
+const OPTIONS = "/auth/passkey/generate-register-options";
+const VERIFY = "/auth/passkey/verify-registration";
+
+/**
+ * A new credential from the server's options: the credential, the server's
+ * refusal of the options, or `null` when the person cancelled a confirmation.
+ */
+async function createCredential(
+  parse: (options: unknown) => PublicKeyCredentialCreationOptions,
+): Promise<PublicKeyCredential | Answer | null> {
+  const options = await request(OPTIONS);
+  if (options?.status !== 200) return options;
+  const credential = await navigator.credentials.create({
+    publicKey: parse(options.body),
+  });
+  if (!(credential instanceof PublicKeyCredential))
+    throw new Error("No passkey was made");
+  return credential;
 }
 
 function refusalText(answer: Answer): string {
@@ -72,23 +92,25 @@ export function initPasskey(): void {
       const waiting = add.dataset.loadingLabel;
       if (waiting && add.lastChild) add.lastChild.textContent = waiting;
       try {
-        const options = await request(
-          "/auth/passkey/generate-register-options",
-        );
-        if (options === null) return;
-        if (options.status !== 200) {
-          showNotice(root, "error", refusalText(options));
+        const made = await createCredential(parse);
+        if (made === null) return;
+        if (!(made instanceof PublicKeyCredential)) {
+          showNotice(root, "error", refusalText(made));
           return;
         }
-        const credential = await navigator.credentials.create({
-          publicKey: parse(options.body),
-        });
-        if (!(credential instanceof PublicKeyCredential)) {
-          showNotice(root, "error", SETUP_WORDS.somethingWrong);
-          return;
-        }
-        const verified = await request("/auth/passkey/verify-registration", {
-          response: credential.toJSON(),
+        let credential = made;
+        let confirmed = false;
+        // A confirmation answered with a passkey replaces the challenge this
+        // registration was made for, so it starts again from its options.
+        const verified = await answer(async () => {
+          if (confirmed) {
+            const next = await createCredential(parse);
+            if (!(next instanceof PublicKeyCredential))
+              throw new Error("The passkey could not be made again");
+            credential = next;
+          }
+          confirmed = true;
+          return fetchJson(VERIFY, { response: credential.toJSON() });
         });
         if (verified === null) return;
         if (verified.status !== 200) {

@@ -96,7 +96,7 @@ async function refresh() {
     li.textContent = row.name + (row.ip_address ? ', from ' + row.ip_address : '') + ', last used ' + new Date(row.last_used_at).toLocaleString() + (row.current ? ' (this browser)' : '');
     action(li, 'Sign out', async () => {
       if (!confirm(row.current ? 'Sign out this browser?' : 'Sign out this browser? It will need to sign in again. Connected apps keep their access.')) return;
-      await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'}, 'Signing out a browser needs a recent sign-in.');
+      await request('/owner/sign-ins/' + encodeURIComponent(row.id), {method:'DELETE'}, row.current ? undefined : 'Signing out a browser needs a recent sign-in.');
       if (row.current) { location.assign('/auth/sign-in'); return 'left'; }
     });
   });

@@ -356,13 +356,32 @@ export function withCredentialAudit<
                   : [];
               const result = await (original as Operation)(args);
               if (confirms && result !== null)
-                await (adapter.deleteMany as Operation)({
-                  model: "session",
-                  where: [
-                    { field: "id", value: confirms.sessionId },
-                    { field: "userId", value: confirms.userId },
-                  ],
-                });
+                // The session ends as every other does, with its own audit
+                // row, in this same transaction. The provider's hook on a
+                // session's end only tells apps of a back-channel logout, and
+                // no app registers one (`keys-and-oauth/no-backchannel-registered`).
+                await runAuditedTransaction(
+                  storage,
+                  () =>
+                    (adapter.deleteMany as Operation)({
+                      model: "session",
+                      where: [
+                        { field: "id", value: confirms.sessionId },
+                        { field: "userId", value: confirms.userId },
+                      ],
+                    }),
+                  {
+                    action: "auth.session.delete",
+                    resource_type: "auth_session",
+                    resource_id: confirms.sessionId,
+                    client_ip: request?.clientIp ?? null,
+                    details: {
+                      operation: "delete",
+                      user_id: confirms.userId,
+                      replaced_by_confirmation: true,
+                    },
+                  },
+                );
               if (
                 revoke &&
                 matched.some(

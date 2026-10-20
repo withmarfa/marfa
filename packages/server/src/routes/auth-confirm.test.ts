@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { resetClockForTests } from "../clock.js";
 import { testAuthenticator } from "../auth/passkey-test-authenticator.js";
 import { SIGN_IN_ADDRESS_LIMIT } from "../auth/sign-in-throttle.js";
-import { SIGN_IN_AGAIN_MESSAGE } from "../pages/recent-sign-in.js";
+import {
+  CONFIRM_REFUSALS,
+  SIGN_IN_AGAIN_MESSAGE,
+} from "../pages/recent-sign-in.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -31,9 +34,22 @@ async function fixture(): Promise<TestContext> {
 /** Age the owner's session to `minutes` old, so the next change is refused. */
 async function ageSessionTo(c: TestContext, minutes: number): Promise<void> {
   await (c.storage as unknown as Sql).__sqliteRun(
-    "UPDATE auth_session SET created_at = ?",
-    [Math.floor(Date.now() / 1000) - minutes * 60],
+    "UPDATE auth_session SET created_at = ?, updated_at = ?",
+    [
+      Math.floor(Date.now() / 1000) - minutes * 60,
+      Math.floor(Date.now() / 1000) - minutes * 60,
+    ],
   );
+}
+
+/**
+ * A refusal may renew the session that sent the request, since a session last
+ * used more than a minute ago records its use, and so may send that session's
+ * own cookie again. It never sends another session.
+ */
+function sendsNoOtherSession(response: Response, cookie: string): boolean {
+  const sent = cookiesOf(response);
+  return sent === "" || sent.split("; ").every((part) => cookie.includes(part));
 }
 
 function cookiesOf(response: Response): string {
@@ -113,13 +129,50 @@ describe("POST /auth/confirm with the password", () => {
     expect(old.status).toBe(401);
   });
 
+  it("records the end of the old session and the new sign-in, as any other end of a session is", async () => {
+    const c = await fixture();
+    const session = await c.auth.getSession(
+      new Headers({ cookie: c.owner.cookie }),
+      { readOnly: true },
+    );
+    const oldId = session!.session.id;
+    await ageSessionTo(c, 6);
+    const confirmed = await confirm(c, { password: c.owner.password });
+    expect(confirmed.status).toBe(200);
+    const rows = (await (
+      c.storage as unknown as {
+        __sqliteAll: (
+          sql: string,
+        ) => Promise<
+          { action: string; resource_id: string | null; details: string }[]
+        >;
+      }
+    ).__sqliteAll(
+      "SELECT action, resource_id, details FROM audit_log WHERE action IN ('auth.session.delete', 'auth.sign_in.success') ORDER BY created_at",
+    )) as { action: string; resource_id: string | null; details: string }[];
+    const ended = rows.filter(
+      (row) =>
+        row.action === "auth.session.delete" && row.resource_id === oldId,
+    );
+    expect(ended).toHaveLength(1);
+    expect(JSON.parse(ended[0]!.details)).toMatchObject({
+      operation: "delete",
+    });
+    const signedIn = rows.filter(
+      (row) =>
+        row.action === "auth.sign_in.success" &&
+        JSON.parse(row.details).confirmed_session === oldId,
+    );
+    expect(signedIn).toHaveLength(1);
+  });
+
   it("answers a wrong password in place and leaves the session as it was", async () => {
     const c = await fixture();
     const stale = c.owner.cookie;
     await ageSessionTo(c, 6);
     const wrong = await confirm(c, { password: "not the password" }, stale);
     expect(wrong.status).toBe(401);
-    expect(wrong.headers.get("set-cookie")).toBeNull();
+    expect(sendsNoOtherSession(wrong, stale)).toBe(true);
     expect((await refusalOf(wrong)).error.code).toBe("unauthorized");
 
     expect(
@@ -179,6 +232,7 @@ describe("POST /auth/confirm with the password", () => {
 
   it("holds a lockout reached through the sign-in form against a confirmation", async () => {
     const c = await fixture();
+    await ageSessionTo(c, 6);
     for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++)
       await request(c.app, "POST", "/auth/sign-in/email", {
         body: { email: c.owner.email, password: "wrong" },
@@ -187,11 +241,13 @@ describe("POST /auth/confirm with the password", () => {
       });
     const locked = await confirm(c, { password: c.owner.password });
     expect(locked.status).toBe(429);
-    expect(locked.headers.get("set-cookie")).toBeNull();
+    expect(sendsNoOtherSession(locked, c.owner.cookie)).toBe(true);
+    expect((await rename(c, c.owner.cookie)).status).toBe(403);
   });
 
   it("takes no email: a body that names one, or two proofs, or none, is refused", async () => {
     const c = await fixture();
+    await ageSessionTo(c, 6);
     for (const body of [
       { password: c.owner.password, email: "other@example.com" },
       { email: c.owner.email, password: c.owner.password, passkey: {} },
@@ -201,8 +257,36 @@ describe("POST /auth/confirm with the password", () => {
     ]) {
       const answered = await confirm(c, body);
       expect(answered.status, JSON.stringify(Object.keys(body))).toBe(400);
-      expect(answered.headers.get("set-cookie")).toBeNull();
+      expect(sendsNoOtherSession(answered, c.owner.cookie)).toBe(true);
     }
+    expect((await rename(c, c.owner.cookie)).status).toBe(403);
+  });
+});
+
+describe("POST /auth/confirm when the storage fails", () => {
+  it("does not call a failure a wrong password, and keeps the session", async () => {
+    const c = await fixture();
+    const stale = c.owner.cookie;
+    await ageSessionTo(c, 6);
+    const original = c.storage.audit.log.bind(c.storage.audit);
+    const spy = vi
+      .spyOn(c.storage.audit, "log")
+      .mockImplementation(async (entry, id) => {
+        if (entry.action === "auth.sign_in.success")
+          throw new Error("audit storage unavailable");
+        return original(entry, id);
+      });
+    const failed = await confirm(c, { password: c.owner.password }, stale);
+    spy.mockRestore();
+    expect(failed.status).toBeGreaterThanOrEqual(500);
+    expect((await refusalOf(failed)).error.message).not.toBe(
+      CONFIRM_REFUSALS.password,
+    );
+    expect(sendsNoOtherSession(failed, stale)).toBe(true);
+    // The right password, with the storage back, still confirms.
+    expect(
+      (await confirm(c, { password: c.owner.password }, stale)).status,
+    ).toBe(200);
   });
 });
 
@@ -338,6 +422,29 @@ describe("POST /auth/confirm with a passkey", () => {
         })
       ).status,
     ).toBe(200);
+  });
+
+  it("says a passkey answer that cannot be used again failed, rather than that the passkey is wrong", async () => {
+    const c = await fixture();
+    const device = await registered(c);
+    const stale = c.owner.cookie;
+    await ageSessionTo(c, 6);
+    const asked = await challenge(c, stale);
+    const assertion = device.authentication(asked.value, ORIGIN);
+    const first = await confirm(c, { passkey: assertion }, asked.cookie);
+    expect(first.status).toBe(200);
+    // The challenge was spent: the same answer cannot be taken twice.
+    const challengeCookie = asked.cookie.replace(stale, "").replace(/^; /, "");
+    const replay = await confirm(
+      c,
+      { passkey: assertion },
+      `${cookiesOf(first)}; ${challengeCookie}`,
+    );
+    expect(replay.status).not.toBe(401);
+    expect(replay.status).not.toBe(200);
+    expect((await refusalOf(replay)).error.message).toBe(
+      CONFIRM_REFUSALS.failed,
+    );
   });
 
   it("refuses a passkey that belongs to another user than the session's, and keeps the session", async () => {

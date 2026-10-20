@@ -7,6 +7,10 @@
  */
 const openers = new WeakMap<HTMLDialogElement, HTMLElement>();
 
+/** The confirmation dialog answers its own buttons and backdrop, in `confirm.ts`, so it can refuse while it is sending. */
+const answersItself = (dialog: Element | null): boolean =>
+  dialog?.hasAttribute("data-confirm-dialog") === true;
+
 export function openDialog(
   dialog: HTMLDialogElement,
   opener: Element | null = document.activeElement,
@@ -56,7 +60,7 @@ export function initDialogs(): void {
     const closer = target.closest("[data-dialog-close]");
     if (closer) {
       const dialog = closer.closest("dialog");
-      if (dialog) {
+      if (dialog && !answersItself(dialog)) {
         event.preventDefault();
         dialog.close();
       }
@@ -68,6 +72,7 @@ export function initDialogs(): void {
     if (
       target instanceof HTMLDialogElement &&
       target.open &&
+      !answersItself(target) &&
       pressedOnBackdrop &&
       releasedOnBackdrop
     )

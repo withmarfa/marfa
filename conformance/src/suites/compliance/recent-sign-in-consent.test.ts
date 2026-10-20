@@ -363,7 +363,7 @@ describe("the device screen", () => {
       const text = visibleText(await screen.text());
       expect(text, scope).toContain("Confirm it's you");
       expect(text, scope).toContain(
-        "You last signed in more than 5 minutes ago.",
+        "Changes like this need a sign-in from the last 5 minutes.",
       );
       // The same request is shown to a session that signed in just now, so a
       // screen left open can ask when its five minutes run out.
@@ -520,7 +520,7 @@ describe("the authorization screen", () => {
       const text = visibleText(await screen.text());
       expect(text, scope).toContain("Confirm it's you");
       expect(text, scope).toContain(
-        "You last signed in more than 5 minutes ago.",
+        "Changes like this need a sign-in from the last 5 minutes.",
       );
       // The same request is shown to a session that signed in just now, so a
       // screen left open can ask when its five minutes run out.

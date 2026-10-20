@@ -100,6 +100,16 @@ function changeName(cookie: string): Promise<Response> {
   });
 }
 
+/**
+ * A refusal may still renew the session that sent the request, as any use of
+ * a session does once a minute has passed, so it may send that session's own
+ * cookie again. What it never does is send another session.
+ */
+function sendsNoOtherSession(response: Response, cookie: string): boolean {
+  const sent = sessionCookie(response);
+  return sent === undefined || sent === cookie;
+}
+
 async function code(response: Response): Promise<string> {
   const body = (await response.json()) as { error: { code: string } };
   return body.error.code;
@@ -152,7 +162,7 @@ describe("confirming with the password", () => {
     const wrong = await confirm({ password: "not the password" }, stale);
     expect(wrong.status).toBe(401);
     expect(await code(wrong)).toBe("unauthorized");
-    expect(wrong.headers.get("set-cookie")).toBeNull();
+    expect(sendsNoOtherSession(wrong, stale)).toBe(true);
     // The session lives, is still stale, and a right password renews it.
     expect((await get("/owner/sign-ins", stale)).status).toBe(200);
     expect((await changeName(stale)).status).toBe(403);
@@ -163,6 +173,7 @@ describe("confirming with the password", () => {
 
   it("counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait", async () => {
     const stale = await signIn();
+    await server.advanceClock(6 * MINUTE);
     const address = nextAddress();
     // Ten attempts from one address spend the window, whichever door they came by.
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -210,8 +221,10 @@ describe("confirming with the password", () => {
       `retry_after=${String(wait)}`,
     );
 
-    // The refused confirmation left the session as it was.
+    // The refused confirmation left the session as it was: live, and still stale.
+    expect(sendsNoOtherSession(locked, stale)).toBe(true);
     expect((await get("/owner/sign-ins", stale)).status).toBe(200);
+    expect((await changeName(stale)).status).toBe(403);
     // Another address is not held by it.
     expect(
       (await confirm({ password: TEST_OWNER.password }, stale)).status,
@@ -220,8 +233,10 @@ describe("confirming with the password", () => {
 });
 
 describe("a confirmation names no account", () => {
-  it("refuses a body that names an email, both proofs, or neither", async () => {
+  it("refuses a body that names an email, both proofs, or neither, and replaces nothing", async () => {
     const stale = await signIn();
+    // A minute or more since the session was last used, so its use is recorded.
+    await server.advanceClock(6 * MINUTE);
     for (const body of [
       { email: "someone@example.test", password: TEST_OWNER.password },
       { password: TEST_OWNER.password, passkey: {} },
@@ -229,9 +244,10 @@ describe("a confirmation names no account", () => {
     ]) {
       const refused = await confirm(body, stale);
       expect(refused.status, JSON.stringify(Object.keys(body))).toBe(400);
-      expect(refused.headers.get("set-cookie")).toBeNull();
+      expect(sendsNoOtherSession(refused, stale)).toBe(true);
     }
     expect((await get("/owner/sign-ins", stale)).status).toBe(200);
+    expect((await changeName(stale)).status).toBe(403);
   });
 
   it("refuses a passkey that is not registered to the signed-in owner, and leaves the session as it was", async () => {
@@ -273,8 +289,9 @@ describe("a confirmation names no account", () => {
       cookie,
     );
     expect(refused.status).toBe(401);
-    expect(refused.headers.get("set-cookie")).toBeNull();
+    expect(sendsNoOtherSession(refused, owner)).toBe(true);
     expect((await get("/owner/sign-ins", owner)).status).toBe(200);
+    expect((await changeName(owner)).status).toBe(403);
   });
 });
 
@@ -320,6 +337,31 @@ describe("confirming with a passkey", () => {
     expect(renewed).toBeTruthy();
     expect((await changeName(renewed!)).status).toBe(200);
     expect((await get("/owner/sign-ins", stale)).status).toBe(401);
+  });
+});
+
+describe("a stale session signing out", () => {
+  it("lets a stale browser session sign itself out in one request, and ends another only with a recent one", async () => {
+    const stale = await signIn();
+    await server.advanceClock(6 * MINUTE);
+    const fresh = await signIn();
+    const listed = (await (await get("/owner/sign-ins", stale)).json()) as {
+      data: { id: string; kind: string; current?: boolean }[];
+    };
+    const browsers = listed.data.filter((row) => row.kind === "browser");
+    const own = browsers.find((row) => row.current)!;
+    const other = browsers.find((row) => !row.current)!;
+    const end = (id: string, cookie: string) =>
+      fetch(`${server.apiUrl}/owner/sign-ins/${id}`, {
+        method: "DELETE",
+        headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
+      });
+
+    expect((await end(other.id, stale)).status).toBe(403);
+    expect((await get("/owner/sign-ins", fresh)).status).toBe(200);
+    expect((await end(own.id, stale)).status).toBe(200);
+    expect((await get("/owner/sign-ins", stale)).status).toBe(401);
+    expect((await get("/owner/sign-ins", fresh)).status).toBe(200);
   });
 });
 

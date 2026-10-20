@@ -23,8 +23,8 @@ export function ConfirmDialog() {
       title="Confirm it's you"
       description={
         <>
-          <span data-confirm-why></span> You last signed in more than 5 minutes
-          ago.
+          <span data-confirm-why></span> Changes like this need a sign-in from
+          the last 5 minutes.
         </>
       }
       data={{ "confirm-dialog": "" }}

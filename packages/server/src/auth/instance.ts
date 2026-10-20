@@ -295,7 +295,7 @@ export type ConfirmOutcome =
   | { ok: true; cookies: string[] }
   | {
       ok: false;
-      reason: "wrong_password" | "passkey_refused" | "session_ended";
+      reason: "wrong_password" | "passkey_refused" | "session_ended" | "failed";
     }
   | { ok: false; reason: "too_many_attempts"; retryAfterSeconds: number };
 
@@ -1245,10 +1245,19 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     const still = await facade.getSession(input.headers, { readOnly: true });
     if (still?.session.id !== current.sessionId)
       return { ok: false, reason: "session_ended" };
-    return {
-      ok: false,
-      reason: proof.kind === "password" ? "wrong_password" : "passkey_refused",
-    };
+    // Only the provider's answer that the proof is wrong says so. Anything
+    // else is a failure to take it, which is logged and says so plainly.
+    if (response.status === 401)
+      return {
+        ok: false,
+        reason:
+          proof.kind === "password" ? "wrong_password" : "passkey_refused",
+      };
+    log("warn", "A confirmation could not be taken", {
+      status: response.status,
+      proof: proof.kind,
+    });
+    return { ok: false, reason: "failed" };
   };
 
   /**

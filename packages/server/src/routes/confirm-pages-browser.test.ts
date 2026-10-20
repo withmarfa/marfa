@@ -85,7 +85,7 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
       const dialog = dialogOf(page);
       await dialog.waitFor();
       expect(await dialog.innerText()).toContain(
-        "Making a key lets something new reach your data. You last signed in more than 5 minutes ago.",
+        "Making a key lets something new reach your data. Changes like this need a sign-in from the last 5 minutes.",
       );
       expect(await keySources()).not.toContain("confirmed-key");
       await dialog.getByLabel("Or your password").fill("not the password");
@@ -171,6 +171,70 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
       expect(await keySources()).not.toContain("to-revoke");
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
+});
+
+inBrowser(
+  "Manage, signing out this browser with a sign-in older than five minutes",
+  () => {
+    it("signs this browser out in one request, with no question", async () => {
+      const { context, page } = await signedIn();
+      try {
+        await page.goto(`${origin}/auth/owner/manage`);
+        await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
+        clock.advanceClock(6 * MINUTE);
+        page.on("dialog", (alert) => void alert.accept());
+        let deletes = 0;
+        page.on("request", (request) => {
+          if (
+            request.method() === "DELETE" &&
+            request.url().includes("/owner/sign-ins/")
+          )
+            deletes += 1;
+        });
+        await page
+          .locator("#browsers li")
+          .filter({ hasText: "(this browser)" })
+          .getByRole("button", { name: "Sign out" })
+          .click();
+        await page.waitForURL(/\/auth\/sign-in/);
+        expect(deletes).toBe(1);
+        expect(await dialogOf(page).count()).toBe(0);
+        const after = await context.request.get(`${origin}/owner/sign-ins`);
+        expect(after.status()).toBe(401);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await context.close();
+      }
+    });
+  },
+);
+
+inBrowser("The confirmation's password field", () => {
+  it("has the show-password button on a page with a stylesheet of its own", async () => {
+    const { context, page } = await signedIn();
+    try {
+      await page.goto(`${origin}/auth/owner/manage`);
+      await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
+      clock.advanceClock(6 * MINUTE);
+      await page.locator("summary").click();
+      await page.fill("#label", "Toggle key");
+      await page.fill("#source", "toggle-key");
+      await page.click("#mint button");
+      const dialog = dialogOf(page);
+      await dialog.waitFor();
+      const field = dialog.getByLabel("Or your password");
+      const toggle = dialog.getByRole("button", { name: "Show password" });
+      expect(await toggle.isVisible()).toBe(false);
+      await field.fill("typed");
+      await toggle.click();
+      expect(await field.getAttribute("type")).toBe("text");
+      await dialog.getByRole("button", { name: "Hide password" }).click();
+      expect(await field.getAttribute("type")).toBe("password");
+    } finally {
       clock.advanceClock(16 * MINUTE);
       await context.close();
     }
@@ -317,3 +381,137 @@ inBrowser("Passkeys, with a sign-in older than five minutes", () => {
     }
   });
 });
+
+inBrowser(
+  "Passkeys, with the sign-in going stale during the passkey prompt",
+  () => {
+    async function withAuthenticator(context: BrowserContext, page: Page) {
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("WebAuthn.enable");
+      await cdp.send("WebAuthn.addVirtualAuthenticator", {
+        options: {
+          protocol: "ctap2",
+          transport: "internal",
+          hasResidentKey: true,
+          hasUserVerification: true,
+          isUserVerified: true,
+          automaticPresenceSimulation: true,
+        },
+      });
+    }
+
+    /** Lets the first registration reach the server only after the five minutes have run out. */
+    async function staleOnFirstVerify(page: Page): Promise<() => number> {
+      let verifies = 0;
+      await page.route("**/auth/passkey/verify-registration", async (route) => {
+        verifies += 1;
+        if (verifies === 1) clock.advanceClock(6 * MINUTE);
+        await route.continue();
+      });
+      return () => verifies;
+    }
+
+    const countPasskeys = async (): Promise<number> =>
+      (
+        await ctx.auth.listOwnerPasskeys(
+          (await ctx.storage.owner?.find())?.id ?? "",
+        )
+      ).length;
+
+    it("asks to confirm it's you and starts the registration again, answered with the password", async () => {
+      const { context, page } = await signedIn();
+      try {
+        await withAuthenticator(context, page);
+        await page.goto(`${origin}/auth/owner/passkeys`);
+        const before = await countPasskeys();
+        const verifies = await staleOnFirstVerify(page);
+        await page.fill('[name="passkey-name"]', "Stale during prompt");
+        await page.click("#add-passkey");
+        expect(await dialogOf(page).innerText()).toContain(
+          "Adding a passkey needs a recent sign-in.",
+        );
+        await confirmWithPassword(page);
+        await page.getByText("Passkey added.", { exact: true }).waitFor();
+        expect(verifies()).toBe(2);
+        expect(await countPasskeys()).toBe(before + 1);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await context.close();
+      }
+    });
+
+    it("starts the registration again when a passkey answers the question, which replaces the challenge", async () => {
+      const { context, page } = await signedIn();
+      try {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send("WebAuthn.enable");
+        const add = async (transport: "internal" | "usb"): Promise<string> =>
+          (
+            await cdp.send("WebAuthn.addVirtualAuthenticator", {
+              options: {
+                protocol: "ctap2",
+                transport,
+                hasResidentKey: true,
+                hasUserVerification: true,
+                isUserVerified: true,
+                automaticPresenceSimulation: true,
+              },
+            })
+          ).authenticatorId;
+        const answering = (id: string, on: boolean) =>
+          cdp.send("WebAuthn.setAutomaticPresenceSimulation", {
+            authenticatorId: id,
+            enabled: on,
+          });
+        const first = await add("internal");
+        await page.goto(`${origin}/auth/owner/passkeys`);
+        await page.fill('[name="passkey-name"]', "First");
+        await page.click("#add-passkey");
+        await page.getByText("Passkey added.", { exact: true }).waitFor();
+        const before = await countPasskeys();
+
+        // The second passkey is made on another device. The first answers the
+        // question, then the second makes the registration again.
+        await answering(first, false);
+        const second = await add("usb");
+        let verifies = 0;
+        let optionsAsked = 0;
+        await page.route(
+          "**/auth/passkey/verify-registration",
+          async (route) => {
+            verifies += 1;
+            if (verifies === 1) {
+              clock.advanceClock(6 * MINUTE);
+              await answering(first, true);
+              await answering(second, false);
+            }
+            await route.continue();
+          },
+        );
+        await page.route(
+          "**/auth/passkey/generate-register-options",
+          async (route) => {
+            optionsAsked += 1;
+            if (optionsAsked === 2) {
+              await answering(first, false);
+              await answering(second, true);
+            }
+            await route.continue();
+          },
+        );
+        await page.fill('[name="passkey-name"]', "Second");
+        await page.click("#add-passkey");
+        const dialog = dialogOf(page);
+        await dialog.waitFor();
+        await dialog.getByRole("button", { name: "Use a passkey" }).click();
+        await dialog.waitFor({ state: "hidden" });
+        await expect.poll(countPasskeys).toBe(before + 1);
+        expect(verifies).toBe(2);
+        expect(optionsAsked).toBe(2);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await context.close();
+      }
+    });
+  },
+);

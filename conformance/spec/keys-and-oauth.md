@@ -2527,11 +2527,19 @@ If `DELETE /owner/sign-ins/{id}` names no live sign-in of the owner, then the se
 
 ### `keys-and-oauth/sign-in-end-recent`
 
-If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago and `{id}` names a sign-in other than that session, then the server MUST answer `403 forbidden`.
 
 **Reason:** A browser left signed in, or a copied cookie, cannot end the owner's other sign-ins without the password.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`, `› refuses a browser that signed in more than five minutes ago 403, and ends no app or key`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`, `› refuses a browser that signed in more than five minutes ago 403, and ends no app or key`, `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
+
+### `keys-and-oauth/sign-in-end-self`
+
+When the browser session asking `DELETE /owner/sign-ins/{id}` names its own session, the server MUST end it whatever the session's age.
+
+**Reason:** Ending the browser's own sign-in only gives up authority, so it needs no recent sign-in, and a page does not ask the owner to confirm it's them first. A confirmation would replace the session the request names.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
 
 ### `keys-and-oauth/sign-in-end-restart`
 

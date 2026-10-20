@@ -158,13 +158,15 @@ If the attempt windows `authentication/confirm-lanes` names are spent, then the 
 
 ### `authentication/confirm-refused-keeps`
 
-If the server refuses a confirmation, then the server MUST leave the session that sent it live, unchanged, and set no cookie.
+If the server refuses a confirmation, then the server MUST leave the session that sent it live with its sign-in time unchanged.
+
+**Reason:** Using a session renews its idle expiry and may send its own cookie again, but a refusal never makes a newer session, so a stale session stays stale.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › answers a wrong password 401 and leaves the session as it was`, `› counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`, `› refuses a passkey that is not registered to the signed-in owner, and leaves the session as it was`.
 
 ### `authentication/confirm-names-no-account`
 
-If the body of `POST /auth/confirm` names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` and set no session.
+If a request carrying a live owner browser session sends `POST /auth/confirm` with a body that names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` and MUST NOT replace that session.
 
 **Reason:** The account is the signed-in session's owner. A body cannot name another.
 
@@ -178,13 +180,13 @@ If a passkey assertion sent to `POST /auth/confirm` is not for a passkey registe
 
 ### `authentication/confirm-needs-session`
 
-If a request to `POST /auth/confirm` carries no live owner browser session, or carries a bearer key, then the server MUST answer `401 unauthorized` and set no session.
+If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` and MUST NOT make a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused with no cookie, with an ended session, and with a key`.
 
 ### `authentication/confirm-origin`
 
-If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` and set no session.
+If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` and MUST NOT make a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
 

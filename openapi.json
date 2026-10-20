@@ -44370,7 +44370,7 @@
             "ownerSession": []
           }
         ],
-        "description": "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.",
+        "description": "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser session signed in more than five minutes ago can end only its own sign-in.",
         "parameters": [
           {
             "schema": {
@@ -44496,7 +44496,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago.",
+            "description": "- `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago and the ID names another sign-in.",
             "content": {
               "application/json": {
                 "schema": {

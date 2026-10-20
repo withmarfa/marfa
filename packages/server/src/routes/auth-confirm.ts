@@ -56,6 +56,8 @@ export function confirmRoutes(storage: Storage, auth: MarfaAuth) {
     if (!outcome.ok) {
       if (outcome.reason === "too_many_attempts")
         throw new PasswordAttemptsSpent(outcome.retryAfterSeconds);
+      if (outcome.reason === "failed")
+        throw new MarfaError(ErrorCode.CONFLICT, CONFIRM_REFUSALS.failed);
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
         outcome.reason === "wrong_password"
