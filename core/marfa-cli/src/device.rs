@@ -162,7 +162,9 @@ pub enum DeviceCommand {
     /// One pass. A write that met a network rather than an answer is left
     /// where it was, uncounted, for the next drain. A write that meets one
     /// in three drains in a row is tested against the next write that does
-    /// not depend on it, and set aside as failing_alone if that is taken.
+    /// not depend on it, and so is each further write that meets one in
+    /// three drains, up to three tests in a drain. If a test is taken, every
+    /// write tested is set aside as failing_alone.
     Drain,
     /// Clear the writes the server has answered.
     ///

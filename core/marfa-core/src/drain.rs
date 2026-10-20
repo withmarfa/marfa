@@ -140,8 +140,13 @@ enum Classified {
 /// before the drain asks whether it fails alone.
 const ENVIRONMENTAL_STREAK: i64 = 3;
 
+/// The writes a drain sends to test the suspects, however many are queued: an
+/// outage costs the suspect and these, and no more.
+const TESTS_PER_DRAIN: usize = 3;
+
 /// A write that has met an environmental failure often enough to be tested:
-/// whether the server answers another write that does not depend on it.
+/// whether the server answers another write that depends on none of the
+/// suspects.
 struct Suspect {
     id: String,
     key: String,
@@ -149,8 +154,6 @@ struct Suspect {
     streak: i64,
     failure: LastFailure,
     unavailable: String,
-    /// The write sent to test it, once one has been.
-    probe: Option<String>,
     /// Where the write's entry stands in the report's verdicts.
     verdict_at: usize,
 }
@@ -948,7 +951,8 @@ fn send_queue(
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
     let mut lookups = Lookups::new();
-    let mut suspect: Option<Suspect> = None;
+    let mut suspects: Vec<Suspect> = Vec::new();
+    let mut tests_sent = 0;
 
     for row in &all {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -1208,14 +1212,11 @@ fn send_queue(
         if let Ok(answer) = &answer {
             waited(&mut report, answer.retry_after_seconds);
         }
-        // The first write sent after a suspect tests it.
-        let probing = suspect.as_mut().is_some_and(|stuck| {
-            let first = stuck.probe.is_none();
-            if first {
-                stuck.probe = Some(row.id.clone());
-            }
-            first
-        });
+        // A write sent while there are suspects tests them.
+        let testing = !suspects.is_empty();
+        if testing {
+            tests_sent += 1;
+        }
 
         let class = refine(row, &payload, &answer, classify(&answer));
         let environmental = class == Classified::Environmental;
@@ -1258,32 +1259,24 @@ fn send_queue(
             }
         };
         let mut deferred = false;
-        if environmental {
-            if probing {
-                // The test met a failure too, so what fails is not one write:
-                // neither is counted, and the pass ends.
-                if suspect.take().is_some() {
-                    report.undelivered += 1;
-                }
-            } else if suspect.is_none() && !rate_limited(&answer) && !not_the_writes(&answer) {
-                let streak = row.environmental_streak + 1;
-                let failure = failure_of(&answer);
-                if streak >= ENVIRONMENTAL_STREAK {
-                    // The pass goes on to the next write that can go, and
-                    // ends there only if that one fails as well.
-                    deferred = true;
-                    suspect = Some(Suspect {
-                        id: row.id.clone(),
-                        key: row.idempotency_key.clone(),
-                        streak,
-                        failure,
-                        unavailable: settled.unavailable.clone().unwrap_or_default(),
-                        probe: None,
-                        verdict_at: report.verdicts.len(),
-                    });
-                } else {
-                    store::note_environmental(&*core.conn()?, &row.id, streak, &failure)?;
-                }
+        if environmental && !rate_limited(&answer) && !not_the_writes(&answer) {
+            let streak = row.environmental_streak + 1;
+            let failure = failure_of(&answer);
+            if streak >= ENVIRONMENTAL_STREAK && tests_sent < TESTS_PER_DRAIN {
+                // The pass goes on to the next write that depends on no
+                // suspect, and ends there if that one is met as well and has
+                // not met failures enough to join them.
+                deferred = true;
+                suspects.push(Suspect {
+                    id: row.id.clone(),
+                    key: row.idempotency_key.clone(),
+                    streak,
+                    failure,
+                    unavailable: settled.unavailable.clone().unwrap_or_default(),
+                    verdict_at: report.verdicts.len(),
+                });
+            } else {
+                store::note_environmental(&*core.conn()?, &row.id, streak, &failure)?;
             }
         }
         if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
@@ -1334,9 +1327,9 @@ fn send_queue(
         report
             .verdicts
             .push(verdict_of(answered, &settled, answered.answer.as_deref()));
-        if probing && !environmental && !stop {
-            // The server answered a write that does not wait on the suspect.
-            if let Some(stuck) = suspect.take() {
+        if testing && !environmental && !stop {
+            // The server answered a write that waits on none of the suspects.
+            for stuck in std::mem::take(&mut suspects) {
                 set_aside(core, &stuck, &mut report, &mut answers)?;
             }
         }
@@ -1356,16 +1349,18 @@ fn send_queue(
         }
     }
 
-    // No write was left to test it with: the suspect waits as any write does
-    // that met an environmental failure. A refused credential has parked it
-    // instead, and `stopped` counts it.
-    if let Some(stuck) = suspect.take()
-        && report.stopped.is_none()
-    {
-        store::note_environmental(&*core.conn()?, &stuck.id, stuck.streak, &stuck.failure)?;
-        report.undelivered += 1;
-        if report.unavailable.is_none() {
-            report.unavailable = Some(stuck.unavailable);
+    // The pass ended with the suspects untested or the test met as well: they
+    // wait as any write does that met an environmental failure. A refused
+    // credential has parked them instead, and `stopped` counts them.
+    if report.stopped.is_none() {
+        for stuck in &suspects {
+            store::note_environmental(&*core.conn()?, &stuck.id, stuck.streak, &stuck.failure)?;
+            report.undelivered += 1;
+        }
+        if let Some(first) = suspects.first()
+            && report.unavailable.is_none()
+        {
+            report.unavailable = Some(first.unavailable.clone());
         }
     }
 

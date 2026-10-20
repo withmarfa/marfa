@@ -610,8 +610,8 @@ describe("what is not a write failing alone", () => {
     ).toEqual([null, null]);
     expect(
       waiting.map((row) => row.environmental_streak),
-      "a drain whose test failed as well counted the run of either write",
-    ).toEqual([2, 0]);
+      "a failure met by the write sent to test, or by the write tested, was not counted",
+    ).toEqual([5, 3]);
     otherUp = true;
     const report = await drainOnce(own);
     expect(
@@ -758,5 +758,319 @@ describe("the write sent to test a write that fails", () => {
       [upload.value.id, "blocked"],
       [noted.id, "accepted"],
     ]);
+  });
+});
+
+/** What a drain sent: the report, and the requests the server saw during it. */
+async function drainSeen(harness: Harness) {
+  const before = harness.server.requests.length;
+  const report = await drainOnce(harness);
+  return { report, requests: harness.server.requests.slice(before) };
+}
+
+/** A proxy with a body limit: it refuses an upload over a few bytes with an HTML 413. */
+function bodyLimit(request: RecordedRequest): Answer {
+  return request.raw.length > 20 ? gateway(413, HTML_413) : takeUpload(request);
+}
+
+/**
+ * `uploads` large files a proxy refuses, then a note behind them. Which of
+ * them the issue's queue is: a write that fails alone, and one that does not.
+ */
+async function stuckUploads(label: string, uploads: number) {
+  const own = await hydratedHarness(label, { rows: held() });
+  harness = own;
+  const stuck: QueuedWrite[] = [];
+  for (let index = 1; index <= uploads; index += 1) {
+    const queued = await own.device.putBlob(
+      fileOf(
+        `big-${index}.bin`,
+        `bytes the proxy will not take, file ${index}\n`,
+      ),
+      "application/octet-stream",
+    );
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) throw new Error("unreachable: the assertion above threw");
+    stuck.push(queued.value);
+  }
+  const noted = await note(own, "behind the uploads");
+  own.server.answer("POST", "/blobs", bodyLimit);
+  scripted(own.server, { create: [createdAs] });
+  return { harness: own, stuck, noted };
+}
+
+function writesOf(requests: RecordedRequest[]): string[] {
+  return requests
+    .filter((request) => request.method !== "GET")
+    .map((request) => `${request.method} ${request.pathname}`);
+}
+
+describe("writes that each fail alone, and the write behind them", () => {
+  it("sets two stuck uploads aside together once a note behind them lands, in the fifth drain", async () => {
+    const { harness: own, stuck, noted } = await stuckUploads("two-stuck", 2);
+    const sent: string[][] = [];
+    const landed: Array<string | null> = [];
+    for (let drain = 1; drain <= 5; drain += 1) {
+      const seen = await drainSeen(own);
+      sent.push(writesOf(seen.requests));
+      landed.push(
+        seen.report.verdicts.find((verdict) => verdict.id === noted.id)
+          ?.verdict ?? null,
+      );
+    }
+    const upload = "POST /blobs";
+    expect(
+      sent,
+      "the drains did not send what the rule says: the first upload alone twice, then it and the second as its test, then the note as the test of both",
+    ).toEqual([
+      [upload],
+      [upload],
+      [upload, upload],
+      [upload, upload],
+      [upload, upload, "POST /items"],
+    ]);
+    expect(
+      landed,
+      "the note was taken in a drain other than the fifth, or never",
+    ).toEqual([null, null, null, null, "accepted"]);
+    const queue = await queueOf(own);
+    expect(
+      queue.map((row) => [row.id, row.verdict, row.reason, row.refusals]),
+      "the two uploads were not both set aside, or the note was not taken",
+    ).toEqual([
+      [stuck[0]?.id, "blocked", "failing_alone", 0],
+      [stuck[1]?.id, "blocked", "failing_alone", 0],
+      [noted.id, "accepted", null, 0],
+    ]);
+    expect(
+      queue.slice(0, 2).map((row) => row.last_failure?.status),
+      "the queue does not say what each upload last met",
+    ).toEqual([413, 413]);
+    // Nothing is sent for either of them after.
+    const again = await drainSeen(own);
+    expect(again.requests).toEqual([]);
+  });
+
+  it("sets three stuck uploads aside together once a note behind them lands, in the seventh drain", async () => {
+    const { harness: own, stuck, noted } = await stuckUploads("three-stuck", 3);
+    const upload = "POST /blobs";
+    const sent: string[][] = [];
+    for (let drain = 1; drain <= 7; drain += 1) {
+      sent.push(writesOf((await drainSeen(own)).requests));
+    }
+    expect(sent).toEqual([
+      [upload],
+      [upload],
+      [upload, upload],
+      [upload, upload],
+      [upload, upload, upload],
+      [upload, upload, upload],
+      [upload, upload, upload, "POST /items"],
+    ]);
+    expect(
+      (await queueOf(own)).map((row) => [row.id, row.verdict, row.reason]),
+      "three stuck uploads were not all set aside together by the note that landed",
+    ).toEqual([
+      [stuck[0]?.id, "blocked", "failing_alone"],
+      [stuck[1]?.id, "blocked", "failing_alone"],
+      [stuck[2]?.id, "blocked", "failing_alone"],
+      [noted.id, "accepted", null],
+    ]);
+  });
+
+  it("leaves a note behind four stuck uploads unsent, and sets nothing aside, because a drain tests with three writes at most", async () => {
+    const { harness: own, stuck, noted } = await stuckUploads("four-stuck", 4);
+    const upload = "POST /blobs";
+    const sent: string[][] = [];
+    for (let drain = 1; drain <= 12; drain += 1) {
+      sent.push(writesOf((await drainSeen(own)).requests));
+    }
+    expect(
+      sent,
+      "a drain sent more than the write tested and three writes to test it with, or fewer than the rule allows",
+    ).toEqual([
+      [upload],
+      [upload],
+      [upload, upload],
+      [upload, upload],
+      [upload, upload, upload],
+      [upload, upload, upload],
+      ...Array.from({ length: 6 }, () => [upload, upload, upload, upload]),
+    ]);
+    const queue = await queueOf(own);
+    expect(
+      queue.map((row) => [row.id, row.verdict, row.environmental_streak]),
+      "the cap set an upload aside, or sent the note, though no write the server answers was sent",
+    ).toEqual([
+      [stuck[0]?.id, null, 12],
+      [stuck[1]?.id, null, 10],
+      [stuck[2]?.id, null, 8],
+      [stuck[3]?.id, null, 6],
+      [noted.id, null, 0],
+    ]);
+    expect(requestsTo(own, "POST", "/items")).toHaveLength(0);
+
+    // The witness is the test above: with one stuck upload fewer, the same
+    // note lands in the seventh drain.
+  });
+
+  it("sends at most four requests a drain, and sets nothing aside, in an outage that fails ten queued writes", async () => {
+    harness = await hydratedHarness("ten-outage", { rows: held() });
+    const own = harness;
+    for (let index = 1; index <= 10; index += 1)
+      await note(own, `note ${index}`);
+    let down = true;
+    scripted(own.server, {
+      create: [
+        (request) =>
+          down ? gateway(502, "<html>bad gateway</html>") : createdAs(request),
+      ],
+    });
+    const counts: number[] = [];
+    for (let drain = 1; drain <= 16; drain += 1) {
+      const seen = await drainSeen(own);
+      counts.push(writesOf(seen.requests).length);
+      expect(
+        seen.report.answered,
+        "a drain against a gateway that failed every write reported an answer",
+      ).toBe(0);
+    }
+    expect(
+      Math.max(...counts),
+      "an outage cost more than the first write and the three that test it",
+    ).toBe(4);
+    expect(
+      counts,
+      "the requests a drain sent did not grow by one write at a time to the cap and stay there",
+    ).toEqual([1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]);
+    expect(
+      (await queueOf(own)).map((row) => [row.verdict, row.refusals]),
+      "an outage set a write aside or counted a refusal",
+    ).toEqual(Array.from({ length: 10 }, () => [null, 0]));
+
+    // The witness: when the gateway recovers, every write goes in one drain.
+    down = false;
+    const back = await drainOnce(own);
+    expect(back.answered).toBe(10);
+    expect(
+      (await queueOf(own)).map((row) => [
+        row.verdict,
+        row.environmental_streak,
+      ]),
+    ).toEqual(Array.from({ length: 10 }, () => ["accepted", 0]));
+  });
+
+  it("ends the pass at a write sent to test them that the server limits, adding nothing to its streak", async () => {
+    harness = await hydratedHarness("stuck-test-limited", { rows: held() });
+    const own = harness;
+    const stuck = await note(own, "stuck");
+    const limited = await note(own, "limited");
+    const behind = await note(own, "behind");
+    let limit = true;
+    scripted(own.server, {
+      create: [
+        (request) =>
+          titleOf(request) === "stuck"
+            ? gateway(502, "<html>bad gateway</html>")
+            : titleOf(request) === "limited" && limit
+              ? {
+                  kind: "json",
+                  status: 429,
+                  body: {
+                    error: { code: "rate_limited", message: "slow down" },
+                  },
+                  headers: { "Retry-After": "7" },
+                }
+              : createdAs(request),
+      ],
+    });
+    const sent: string[][] = [];
+    for (let drain = 1; drain <= 6; drain += 1) {
+      const seen = await drainSeen(own);
+      sent.push(writesOf(seen.requests));
+      if (drain >= 3) expect(seen.report.retry_after_seconds).toBe(7);
+    }
+    expect(
+      sent.map((requests) => requests.length),
+      "a write sent to test that the server limited did not end the pass, or was not sent",
+    ).toEqual([1, 1, 2, 2, 2, 2]);
+    expect(
+      (await queueOf(own)).map((row) => [
+        row.id,
+        row.verdict,
+        row.environmental_streak,
+      ]),
+      "a rate limit added to a streak, or the write behind was sent",
+    ).toEqual([
+      [stuck.id, null, 6],
+      [limited.id, null, 0],
+      [behind.id, null, 0],
+    ]);
+
+    // The witness: once the server stops limiting, the same writes are
+    // tested, and the stuck write is set aside.
+    limit = false;
+    const report = await drainOnce(own);
+    expect(
+      report.verdicts.map((verdict) => [verdict.id, verdict.verdict]),
+    ).toEqual([
+      [stuck.id, "blocked"],
+      [limited.id, "accepted"],
+      [behind.id, "accepted"],
+    ]);
+  });
+
+  it("never sends a write that waits on the second stuck upload to test them, and holds it", async () => {
+    harness = await hydratedHarness("second-dependants", { rows: held() });
+    const own = harness;
+    const first = await own.device.putBlob(
+      fileOf("big-1.bin", "bytes the proxy will not take, file 1\n"),
+      "application/octet-stream",
+    );
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    const attached = await own.device.attach(
+      HELD.id,
+      fileOf("big-2.bin", "bytes the proxy will not take, file 2\n"),
+      { mimeType: "application/octet-stream" },
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    const independent = await note(own, "independent");
+    expect((await queueOf(own)).map((row) => row.kind)).toEqual([
+      "upload_blob",
+      "upload_blob",
+      "create_item",
+      "create_edge",
+      "create_item",
+    ]);
+    own.server.answer("POST", "/blobs", bodyLimit);
+    scripted(own.server, {
+      create: [createdAs],
+      edges: [refusal(500, "internal_error", "an edge must not be sent")],
+    });
+    const sent: string[][] = [];
+    for (let drain = 1; drain <= 5; drain += 1) {
+      sent.push(writesOf((await drainSeen(own)).requests));
+    }
+    expect(
+      sent.at(-1),
+      "the fifth drain sent the file item or the edge that wait on the second upload, or not the note",
+    ).toEqual(["POST /blobs", "POST /blobs", "POST /items"]);
+    expect(
+      titleOf(requestsTo(own, "POST", "/items")[0] as RecordedRequest),
+      "the one write that tested the uploads was not the independent note",
+    ).toBe("independent");
+    expect(requestsTo(own, "POST", "/items")).toHaveLength(1);
+    expect(requestsTo(own, "POST", "/edges")).toHaveLength(0);
+    expect(
+      (await queueOf(own)).map((row) => [row.kind, row.verdict, row.reason]),
+    ).toEqual([
+      ["upload_blob", "blocked", "failing_alone"],
+      ["upload_blob", "blocked", "failing_alone"],
+      ["create_item", "blocked", "awaiting_dependency"],
+      ["create_edge", "blocked", "awaiting_dependency"],
+      ["create_item", "accepted", null],
+    ]);
+    expect((await queueOf(own))[4]?.id).toBe(independent.id);
   });
 });
