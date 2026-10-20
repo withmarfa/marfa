@@ -7,7 +7,9 @@ import {
   trackKey,
   trackWebhook,
   cleanup,
+  getManagementClient,
 } from "../../utils/setup.js";
+import { waitFor } from "../../utils/wait.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -193,7 +195,10 @@ describe("audit log", () => {
       expect(hook.status).toBe(201);
       trackWebhook(ctx, hook.data.id, client);
 
-      const idsOf = async (kind: string): Promise<string[]> => {
+      const idsOf = async (
+        kind: string,
+        by: string | null = ctx.trackedKeys[0]!,
+      ): Promise<string[]> => {
         const page = await client.listAudit({
           kind: kind as "data",
           created_after: since,
@@ -201,7 +206,7 @@ describe("audit log", () => {
         });
         expect(page.ok, JSON.stringify(page.error)).toBe(true);
         return page.data.data
-          .filter((entry) => entry.key_id === ctx.trackedKeys[0])
+          .filter((entry) => entry.key_id === by)
           .map((entry) => `${entry.action}:${entry.resource_id}`);
       };
       const own = {
@@ -218,9 +223,30 @@ describe("audit log", () => {
           if (other !== kind)
             expect(found, `${kind} holds ${other}`).not.toContain(foreign);
       }
+      // Housekeeping writes with no key: an orphaned upload, reported on one
+      // run of the sweep and purged on the next, leaves a `blob.purge`.
+      const upload = await client.uploadBlob(
+        new TextEncoder().encode(`audit-kind orphan ${ctx.runId}`),
+        "text/plain",
+      );
+      expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
+      const purge = `blob.purge:${upload.data.hash}`;
+      const operator = getManagementClient();
+      await waitFor(
+        "the sweep to purge the orphaned upload",
+        async () => {
+          await operator.runHousekeeping("blob-orphans");
+          return (await idsOf("housekeeping", null)).includes(purge)
+            ? true
+            : undefined;
+        },
+        30_000,
+      );
       const housekeeping = await idsOf("housekeeping");
       for (const entry of Object.values(own))
         expect(housekeeping).not.toContain(entry);
+      for (const kind of ["access", "data", "settings"])
+        expect(await idsOf(kind, null), kind).not.toContain(purge);
     } finally {
       await receiver.close();
     }
