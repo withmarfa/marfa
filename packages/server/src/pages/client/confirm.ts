@@ -347,7 +347,12 @@ function wire(view: View): void {
     const settle = view.settle;
     view.settle = null;
     settle?.(false);
-    if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    // After the page's own code has run on the answer: it may have disabled
+    // the button that opened this, and a disabled button takes no focus.
+    if (opener instanceof HTMLElement)
+      setTimeout(() => {
+        if (opener.isConnected) opener.focus();
+      }, 0);
   });
 }
 

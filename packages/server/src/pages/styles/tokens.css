@@ -1,5 +1,6 @@
 /* Design tokens for Marfa's pages. This is the only stylesheet that may hold a color. */
-:root {
+:root,
+:host {
   color-scheme: light;
 
   --bg: #ffffff;
@@ -81,7 +82,8 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root,
+  :host {
     color-scheme: dark;
 
     --bg: #131313;
