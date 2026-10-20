@@ -183,13 +183,17 @@ export interface SearchFieldProps {
   value?: string;
   placeholder: string;
   full?: boolean;
-  /** Shows the shortcut that opens the command search, once a script knows the platform. */
+  /**
+   * Shows the shortcut that opens the command search, as a button that opens
+   * it. Both start hidden and the script shows them, once it knows the
+   * platform and that the page carries the search.
+   */
   shortcutHint?: boolean;
 }
 
 export function SearchField(props: SearchFieldProps) {
   return (
-    <label class={props.full ? "search full" : "search"}>
+    <div class={props.full ? "search full" : "search"}>
       <Icon name="search" />
       <input
         type="search"
@@ -199,8 +203,18 @@ export function SearchField(props: SearchFieldProps) {
         aria-label={props.placeholder}
         autocomplete="off"
       />
-      {props.shortcutHint && <kbd data-shortcut-hint hidden></kbd>}
-    </label>
+      {props.shortcutHint && (
+        <button
+          type="button"
+          class="hint"
+          aria-label="Open the search for every page and setting"
+          data-command-search-open
+          hidden
+        >
+          <kbd data-shortcut-hint></kbd>
+        </button>
+      )}
+    </div>
   );
 }
 

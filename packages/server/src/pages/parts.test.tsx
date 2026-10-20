@@ -600,7 +600,7 @@ describe("fields", () => {
     expect(out).toContain("data-icon-show");
   });
 
-  it("makes a search field that is a labeled search input, with its shortcut hint hidden until a script shows it", () => {
+  it("makes a search field that is a labeled search input, with its shortcut button hidden until a script shows it", () => {
     const out = html(
       <SearchField placeholder="Search keys" value="a" shortcutHint />,
     );
@@ -610,8 +610,19 @@ describe("fields", () => {
       "aria-label": "Search keys",
       value: "a",
     });
-    expect(out).toMatch(/<kbd data-shortcut-hint="true" hidden=""><\/kbd>/);
-    expect(html(<SearchField placeholder="s" />)).not.toContain("<kbd");
+    const open = attrs(out, /<button /);
+    expect(open).toMatchObject({
+      type: "button",
+      "data-command-search-open": "true",
+      hidden: "",
+    });
+    expect(open["aria-label"]).not.toBe("");
+    expect(out).toMatch(
+      /<button [^>]*><kbd data-shortcut-hint="true"><\/kbd><\/button>/,
+    );
+    const plain = html(<SearchField placeholder="s" />);
+    expect(plain).not.toContain("<kbd");
+    expect(plain).not.toContain("<button");
   });
 
   it("ends a form with its buttons, after a note", () => {
@@ -706,6 +717,18 @@ describe("lists", () => {
     ).toBe("");
   });
 
+  it("keeps the pager for a list past ten rows when one page holds it all, so the size can be changed back", () => {
+    const at50 = html(
+      <Pager
+        pagination={paginate(30, 1, 50)}
+        noun="keys"
+        href={(p) => `?page=${String(p)}`}
+      />,
+    );
+    expect(at50).toContain("1–30 of 30");
+    expect(at50).toContain('name="size"');
+  });
+
   it("shows where you are and links to the page before and after", () => {
     const out = html(
       <Pager
@@ -717,6 +740,40 @@ describe("lists", () => {
     expect(out).toContain("11–20 of 42");
     expect(out).toContain('href="?page=1" rel="prev"');
     expect(out).toContain('href="?page=3" rel="next"');
+  });
+
+  it("offers 10, 25 and 50 rows per page, marks the one shown, and sends the form when it changes", () => {
+    const out = html(
+      <Pager
+        pagination={paginate(120, 1, 25)}
+        noun="keys"
+        href={(p) => `?page=${String(p)}&size=25`}
+        carry={{ q: "loop", size: "10", page: "4" }}
+      />,
+    );
+    expect(out).toContain("Rows per page");
+    expect(attrs(out, /<form /)).toMatchObject({ method: "get" });
+    const select = attrs(out, /<select /);
+    expect(select).toMatchObject({ name: "size", "data-autosubmit": "" });
+    expect(select["aria-label"]).toBe("Rows per page");
+    expect(
+      [...out.matchAll(/<option value="(\d+)"( selected(?:="[^"]*")?)?>/g)].map(
+        (m) => [m[1], m[2] !== undefined],
+      ),
+    ).toEqual([
+      ["10", false],
+      ["25", true],
+      ["50", false],
+    ]);
+    // The rest of the query rides along; the size and page it replaces do not.
+    expect(attrs(out, /<input type="hidden" name="q"/)).toMatchObject({
+      value: "loop",
+    });
+    expect(out.match(/type="hidden"/g)).toHaveLength(1);
+    expect(out).toContain("1–25 of 120");
+    expect(out.indexOf("Rows per page")).toBeLessThan(
+      out.indexOf("1–25 of 120"),
+    );
   });
 
   it("disables the arrow with nowhere to go", () => {

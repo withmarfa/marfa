@@ -3,7 +3,8 @@
 import type { Child } from "hono/jsx";
 import { localHref } from "../href.js";
 import { Icon } from "../icons.js";
-import type { Pagination } from "../navigation.js";
+import { PAGE_SIZE, PAGE_SIZES, type Pagination } from "../navigation.js";
+import { Select } from "./controls.js";
 
 export interface ListToolbarProps {
   /** Where the filters and the search send the list. */
@@ -36,19 +37,49 @@ export function ListToolbar(props: ListToolbarProps) {
 
 export interface PagerProps {
   pagination: Pagination;
-  /** The address of page `n` of this list. */
+  /** The address of page `n` of this list, at the size it is shown in now. */
   href: (page: number) => string;
   /** What the rows are, in the plural: "keys". */
   noun: string;
+  /**
+   * The rest of the list's query (its search and filters), which choosing
+   * another size sends back. Page and size are never carried.
+   */
+  carry?: Readonly<Record<string, string>>;
 }
 
-/** Pages of ten rows under a long list. A list that fits one page shows none. */
+/**
+ * Under a long list: the "Rows per page" select on the left (10, 25 or 50,
+ * sent as `size`), and where you are with the arrows on the right. A list of
+ * ten rows or fewer shows none, because no size changes what it shows.
+ */
 export function Pager(props: PagerProps) {
   const { pagination: p } = props;
-  if (p.last <= 1) return null;
+  if (p.total <= PAGE_SIZE) return null;
   const range = `${String(p.from + 1)}–${String(p.to)} of ${String(p.total)}`;
   return (
     <nav class="pager" aria-label={`${props.noun}, pages`}>
+      <form class="line" method="get">
+        {Object.entries(props.carry ?? {})
+          .filter(([name]) => name !== "size" && name !== "page")
+          .map(([name, value]) => (
+            <input type="hidden" name={name} value={value} />
+          ))}
+        <label class="line">
+          <span class="muted">Rows per page</span>
+          <Select
+            name="size"
+            label="Rows per page"
+            value={String(p.size)}
+            auto
+            autosubmit
+            options={PAGE_SIZES.map((size) => ({
+              value: String(size),
+              label: String(size),
+            }))}
+          />
+        </label>
+      </form>
       <div class="line">
         <span class="muted">{range}</span>
         {p.hasPrevious ? (
