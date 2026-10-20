@@ -862,26 +862,46 @@ describe("what an approval grants an app whose access ended while the screen was
     ]);
   });
 
-  it("denies a post of the read the app held, on a screen that offered it beside the write, once the app is disconnected", async () => {
-    const asked = "core.note:read core.note:write";
-    const app = await register(asked);
-    const first = await consentScreen(app, "core.note:read");
-    const sent = await decide(server, origin, cookie, first.consent, true, [
+  it("gives back no held read through Read only beside the write once the app is disconnected", async () => {
+    const asked = "core.note:read core.note:write core.task:read";
+    /** Approve the read alone, then post Read only and the tasks on a second screen. */
+    async function readOnlyAndTasks(cut: boolean): Promise<string[]> {
+      const app = await register(asked);
+      const first = await consentScreen(app, "core.note:read");
+      const held = await decide(server, origin, cookie, first.consent, true, [
+        "core.note:read",
+      ]);
+      expect(held?.searchParams.get("code")).toBeTruthy();
+      const proof = pkce();
+      const landed = await sentTo(
+        server,
+        await authorize(
+          server,
+          authorizeQuery(app.clientId, asked, proof),
+          cookie,
+        ),
+      );
+      const page = await fetch(landed!, { headers: { cookie } });
+      const screen = { html: await page.text(), consent: landed! };
+      const readOnly = selectNamed(screen.html, "Note")?.options.find(
+        (o) => o.label === "Read only",
+      );
+      // The held level is offered, and posts nothing.
+      expect(readOnly?.value).toBe("");
+      if (cut) await disconnect(app);
+      const sent = await decide(server, origin, cookie, screen.consent, true, [
+        readOnly?.value ?? "?",
+        "core.task:read",
+      ]);
+      return exchanged(app, screen, sent, proof);
+    }
+
+    // The witness: while the read is held, it comes with the approval.
+    expect(await readOnlyAndTasks(false)).toEqual([
       "core.note:read",
+      "core.task:read",
     ]);
-    expect(sent?.searchParams.get("code")).toBeTruthy();
-    const screen = await consentScreen(app, asked);
-    const readOnly = selectNamed(screen.html, "Note")?.options.find(
-      (o) => o.label === "Read only",
-    );
-    // The held level is offered, and posts nothing.
-    expect(readOnly?.value).toBe("");
-    await disconnect(app);
-    const denied = await decide(server, origin, cookie, screen.consent, true, [
-      readOnly?.value ?? "?",
-    ]);
-    expect(denied?.searchParams.get("error")).toBe("access_denied");
-    expect(denied?.searchParams.get("code")).toBeNull();
+    expect(await readOnlyAndTasks(true)).toEqual(["core.task:read"]);
   });
 
   it("refuses the device code of a screen left open once the app is disconnected, and grants nothing", async () => {

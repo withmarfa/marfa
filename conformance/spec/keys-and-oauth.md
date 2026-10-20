@@ -1335,11 +1335,11 @@ While an app holds access to a type, the server MUST NOT offer, on the consent s
 
 ### `keys-and-oauth/approval-keep-held`
 
-While an app holds the read of an item type or of the profile and a request names the write of it, the server MUST offer, on the consent screen or the device approval page, the choice read only, which posts no scope, beside the choice read and edit.
+While an app holds the read of an item type or of the profile and not its write, and a request names the write of it, the server MUST offer, on the consent screen or the device approval page, the choice read only, which posts no scope, beside the choice read and edit.
 
 **Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new. It posts no scope even where the request names the read, so a screen left open while the person disconnects the app does not count the read as newly chosen.
 
-**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`, `› denies a post of the read the app held, on a screen that offered it beside the write, once the app is disconnected`.
+**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`, `› gives back no held read through Read only beside the write once the app is disconnected`.
 
 ### `keys-and-oauth/approval-never-lowers`
 
