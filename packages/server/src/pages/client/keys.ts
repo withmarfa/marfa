@@ -29,10 +29,10 @@ import {
   type ExtensionLevel,
   type FingerprintedKey,
 } from "../key-body.js";
-import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
 import { messageOf, sendConfirmed, signInAgain } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
+import { busy, keepFlash, refusalText, showFlash } from "./page-state.js";
 import { initSaveBar, type SaveBar } from "./save-bar.js";
 
 const KEYS_HREF = "/auth/owner/keys";
@@ -45,42 +45,6 @@ const COPIED_MS = 2000;
 
 const keyHref = (id: string): string =>
   `${KEYS_HREF}/${encodeURIComponent(id)}`;
-
-/** What a refusal says when it is not about one field. */
-async function refusalText(response: Response): Promise<string> {
-  if (response.status === 429) {
-    const wait = parseWaitSeconds(response.headers.get("retry-after"));
-    return wait === undefined
-      ? "Too many attempts. Try again later."
-      : `Too many attempts. Try again in ${waitInMinutes(wait)}.`;
-  }
-  return response.status === 400 || response.status === 403
-    ? (await messageOf(response)) || SETUP_WORDS.somethingWrong
-    : SETUP_WORDS.somethingWrong;
-}
-
-// ---------------------------------------------------------------------------
-// A word that carries over to the next page
-// ---------------------------------------------------------------------------
-
-function keepFlash(message: string): void {
-  try {
-    sessionStorage.setItem(FLASH, message);
-  } catch {
-    // Without storage the next page simply says nothing.
-  }
-}
-
-/** Shows, once, what the page before it left to say. */
-function showFlash(): void {
-  try {
-    const message = sessionStorage.getItem(FLASH);
-    sessionStorage.removeItem(FLASH);
-    if (message !== null) showNotice(document, "flash", message);
-  } catch {
-    // Without storage there is nothing to say.
-  }
-}
 
 // ---------------------------------------------------------------------------
 // The words under a row, swapped in and out
@@ -137,25 +101,6 @@ const field = (
 
 const isEndChoice = (value: string): value is EndChoice =>
   (END_CHOICES as readonly string[]).includes(value);
-
-// ---------------------------------------------------------------------------
-// A button that is busy
-// ---------------------------------------------------------------------------
-
-function busy(button: HTMLButtonElement, on: boolean): void {
-  if (on) {
-    button.dataset.idleLabel ??= button.textContent;
-    button.textContent = button.dataset.loadingLabel ?? "Working...";
-    button.classList.add("is-loading");
-    button.setAttribute("aria-busy", "true");
-  } else {
-    if (button.dataset.idleLabel !== undefined)
-      button.textContent = button.dataset.idleLabel;
-    delete button.dataset.idleLabel;
-    button.classList.remove("is-loading");
-    button.removeAttribute("aria-busy");
-  }
-}
 
 const hook = (root: ParentNode, name: string): HTMLButtonElement | null =>
   root.querySelector<HTMLButtonElement>(`[data-hook="${name}"]`);
@@ -539,7 +484,7 @@ async function submitEdit(
     );
     if (response === null) return;
     if (response.ok) {
-      keepFlash("Saved");
+      keepFlash(FLASH, "Saved");
       leaving = true;
       bar.saved();
       location.reload();
@@ -601,7 +546,7 @@ async function revoke(): Promise<void> {
     if (response === null) return;
     // A key that is already gone is the state the person asked for.
     if (response.ok || response.status === 404) {
-      keepFlash(`Revoked ${label}`);
+      keepFlash(FLASH, `Revoked ${label}`);
       leaving = true;
       location.assign(KEYS_HREF);
       return;
@@ -644,7 +589,7 @@ function initEdit(form: HTMLFormElement): void {
 // ---------------------------------------------------------------------------
 
 export function initKeys(): void {
-  showFlash();
+  showFlash(FLASH);
   for (const form of document.querySelectorAll<HTMLFormElement>(
     "form[data-key-form]",
   )) {

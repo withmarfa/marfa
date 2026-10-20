@@ -33,6 +33,8 @@
   "GET /auth/owner/manage": "trusted owner management page",
   "GET /auth/owner/restore": "trusted owner archive restore page",
   "GET /auth/owner/profile": "owner profile page",
+  "GET /auth/owner/general": "owner general settings page",
+  "GET /auth/owner/health": "owner health page",
   "GET /auth/owner/keys": "owner API keys list",
   "GET /auth/owner/keys/new": "owner page for making a key",
   "GET /auth/owner/keys/{id}": "owner page for one key",

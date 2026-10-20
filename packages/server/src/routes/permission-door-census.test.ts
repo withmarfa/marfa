@@ -217,6 +217,8 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
     "POST /setup/name",
     "GET /auth/owner/manage",
     "GET /auth/owner/restore",
+    "GET /auth/owner/general",
+    "GET /auth/owner/health",
     "GET /auth/owner/keys",
     "GET /auth/owner/keys/new",
     "GET /auth/owner/keys/:id",

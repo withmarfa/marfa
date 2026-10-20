@@ -104,6 +104,8 @@ const BLOB_LAYER_HOLDERS: Record<string, string> = {
     "reads a file's bytes for its own row, only where that row's blob_ref reference lends (listCandidates)",
   "routes/blobs.ts": "the doors this census walks",
   "routes/export.ts": "hands the layer to the archive export below",
+  "routes/console-health.ts":
+    "reads whether the object store answers for the Health page; names no object and returns no bytes",
   "routes/export-archive.ts":
     "the export archive, whose explicit read context admits owner reads and applies mayReadBlob to credentials",
   "routes/restore-archive.ts":
