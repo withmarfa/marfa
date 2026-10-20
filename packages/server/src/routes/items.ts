@@ -982,7 +982,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.\n- `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
     },
     401: {
       content: {
@@ -1382,7 +1382,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.",
+        "- `invalid_id`: the ID is not a valid item ID.\n- `invalid_transition`: the item is not in the trash.\n- `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.",
     },
     401: {
       content: {
