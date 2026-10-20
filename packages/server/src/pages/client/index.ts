@@ -11,6 +11,7 @@ import { initPasskeySignIn } from "./passkey-sign-in.js";
 import { initPasswordFields } from "./password.js";
 import { initPicker } from "./picker.js";
 import { initSetup } from "./setup.js";
+import { initSignOut } from "./sign-out.js";
 
 function start(): void {
   initDialogs();
@@ -25,6 +26,7 @@ function start(): void {
   initAccess();
   initDeviceCode();
   initConfirm();
+  initSignOut();
 }
 
 if (document.readyState === "loading")

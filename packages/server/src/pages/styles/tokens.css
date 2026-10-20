@@ -20,6 +20,7 @@
   --danger-fill: #fdeeec;
   --danger-hover: #fbe0dc;
   --on-danger: #ffffff;
+  --warn: #b54708;
   --switch-off: #e5e5e5;
   --knob: #ffffff;
   --knob-shadow: rgba(0, 0, 0, 0.2);
@@ -103,6 +104,7 @@
     --danger-fill: #3a1714;
     --danger-hover: #4a1d19;
     --on-danger: #131313;
+    --warn: #f0a04b;
     --switch-off: #3a3a3a;
     --knob: #f2f2f2;
     --knob-shadow: rgba(0, 0, 0, 0.2);

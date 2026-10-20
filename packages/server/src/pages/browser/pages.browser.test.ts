@@ -19,6 +19,7 @@ import { renderHttpErrorPage } from "../../routes/http-error-page.js";
 import { renderSignedOutPage } from "../../routes/signed-out-page.js";
 import { createTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
+import { parsePageSize } from "../navigation.js";
 import { MomentFixture, renderFixturePage } from "../test-fixture.js";
 import { renderDocument } from "../render.js";
 
@@ -47,6 +48,7 @@ beforeAll(async () => {
       renderFixturePage({
         nonce: c.var.cspNonce,
         page: Number(c.req.query("page") ?? "1"),
+        size: parsePageSize(c.req.query("size")),
       }),
     ),
   );
@@ -710,6 +712,45 @@ describe("forms", () => {
   );
 });
 
+describe("rows per page", () => {
+  inBrowser(
+    "changes the list on choosing a size, and keeps the size across pages",
+    async () => {
+      const { page, context, violations } = await open();
+      try {
+        await page.goto(`${origin}/fixture`);
+        const rows = page.locator(".row", { hasText: /^Key / });
+        expect(await rows.count()).toBe(10);
+        const select = page.getByLabel("Rows per page");
+        expect(await select.inputValue()).toBe("10");
+        await page.getByRole("link", { name: "Next page" }).click();
+        await page.waitForURL(/page=2/);
+        expect(page.url()).toContain("size=10");
+        // A new size starts again from the first page.
+        await page.getByLabel("Rows per page").selectOption("25");
+        await page.waitForURL(/size=25/);
+        expect(page.url()).not.toContain("page=2");
+        expect(await page.getByLabel("Rows per page").inputValue()).toBe("25");
+        // The fixture holds 23 keys, so 25 rows show them all.
+        expect(await rows.count()).toBe(23);
+        expect(await violations()).toEqual([]);
+
+        // Untidy sizes fall back to ten rows rather than failing.
+        for (const bad of ["-5", "0", "999999999", "abc", "", "10.5"]) {
+          await page.goto(`${origin}/fixture?size=${bad}`);
+          expect(await rows.count(), bad).toBe(10);
+        }
+        for (const bad of ["-1", "0", "abc", "99999"]) {
+          const res = await page.goto(`${origin}/fixture?page=${bad}`);
+          expect(res?.status(), bad).toBe(200);
+        }
+      } finally {
+        await context.close();
+      }
+    },
+  );
+});
+
 describe("without the script", () => {
   inBrowser(
     "says the page needs JavaScript and leaves no control that does nothing",
@@ -724,6 +765,12 @@ describe("without the script", () => {
           false,
         );
         expect(await page.locator(".pw-toggle").isVisible()).toBe(false);
+        // The page is longer than ten rows, so its pager is there to be seen
+        // without the script, and the select that needs one is not.
+        expect(
+          await page.getByRole("link", { name: "Next page" }).count(),
+        ).toBe(1);
+        expect(await page.getByLabel("Rows per page").isVisible()).toBe(false);
         expect(await page.getByRole("heading", { level: 1 }).count()).toBe(1);
       } finally {
         await context.close();
@@ -761,6 +808,7 @@ describe("at 375 pixels", () => {
         for (const path of [
           "/fixture",
           "/fixture?page=3",
+          "/fixture?size=50",
           "/moment",
           "/signed-out",
           "/problem/404",

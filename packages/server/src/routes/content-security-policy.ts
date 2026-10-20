@@ -47,6 +47,15 @@ export function contentSecurityPolicy(nonce: string): string {
 }
 
 /**
+ * The policy for a console page: the baseline, and the page's own origin for
+ * the requests its script makes (signing out, confirming it's you) and for the
+ * forms it posts.
+ */
+export function consoleContentSecurityPolicy(nonce: string): string {
+  return `${contentSecurityPolicy(nonce)}; connect-src 'self'; form-action 'self'`;
+}
+
+/**
  * Gives each request a nonce a page can carry, and puts the policy naming it
  * on any HTML answer that has none of its own.
  */

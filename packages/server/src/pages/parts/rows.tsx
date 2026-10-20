@@ -15,7 +15,9 @@ interface RowCommon {
   /** A short mark after the title, such as "New". */
   badge?: string;
   value?: string;
-  valueTone?: "danger";
+  valueTone?: "warn" | "danger";
+  /** A dot before the row, for a row that reports something wrong: amber needs a look, red has stopped. */
+  dot?: "warn" | "danger";
   /** Starts hidden, for a row the script shows once it knows it can work. */
   hidden?: boolean;
   /** Read by the browser module that drives the page, as `data-*` attributes. */
@@ -99,6 +101,11 @@ export function Row(props: RowProps) {
       {props.value}
     </span>
   );
+  const lead = props.dot !== undefined && (
+    <span class="lead">
+      <span class={`dot ${props.dot}`} aria-hidden="true" />
+    </span>
+  );
   const chevron = (
     <span class="chev">
       <Icon name="chevron" />
@@ -108,6 +115,7 @@ export function Row(props: RowProps) {
   if (props.href !== undefined) {
     return (
       <a class={className} href={localHref(props.href)} id={props.id}>
+        {lead}
         <div class="grow">{text}</div>
         {value}
         {chevron}
@@ -122,6 +130,7 @@ export function Row(props: RowProps) {
         id={props.id}
         data-dialog-open={props.opens}
       >
+        {lead}
         <div class="grow">{text}</div>
         {value}
         {chevron}
@@ -136,6 +145,7 @@ export function Row(props: RowProps) {
         hidden={props.hidden}
         {...dataAttributes(props.data)}
       >
+        {lead}
         {props.for ? (
           <label class="grow" for={props.for}>
             {text}
@@ -155,6 +165,7 @@ export function Row(props: RowProps) {
       hidden={props.hidden}
       {...dataAttributes(props.data)}
     >
+      {lead}
       <div class="grow">{text}</div>
       {value}
       {props.buttons !== undefined && <span class="ends">{props.buttons}</span>}

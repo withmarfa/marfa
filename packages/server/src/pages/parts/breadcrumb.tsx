@@ -82,7 +82,7 @@ function PickerPanel(props: {
 
 /**
  * The bar across the top of a console page: Home, then the trail to where you
- * are. On the last crumb sits a button that opens the picker, a menu of every
+ * are. Home itself has no trail and shows an empty bar. On the last crumb sits a button that opens the picker, a menu of every
  * built page in the registry grouped as Home groups them. One level down, a
  * page that has items shows them in a panel beside it.
  *
@@ -90,8 +90,12 @@ function PickerPanel(props: {
  * without script sees the trail and no control that does nothing.
  */
 export function Breadcrumb(props: BreadcrumbProps) {
+  // Home is where a trail begins, so on Home itself there is none: the bar
+  // stays, empty, so the page starts at the same height as every other.
+  if (props.trail.length === 0) return <div class="crumbs"></div>;
+
   const groups = props.registry.groups();
-  const withMenu = props.trail.length > 0 && groups.length > 0;
+  const withMenu = groups.length > 0;
   const deep = props.trail.length > 1;
   const lastIndex = props.trail.length - 1;
 
@@ -99,14 +103,8 @@ export function Breadcrumb(props: BreadcrumbProps) {
     <nav class="crumbs" aria-label="Breadcrumb">
       <ol class="crumb-list">
         <li>
-          {props.trail.length > 0 ? (
-            <a href={localHref(props.home.href)}>{props.home.label}</a>
-          ) : (
-            <span class="here" aria-current="page">
-              {props.home.label}
-            </span>
-          )}
-          {props.trail.length > 0 && <Icon name="chevron" />}
+          <a href={localHref(props.home.href)}>{props.home.label}</a>
+          <Icon name="chevron" />
         </li>
         {props.trail.map((crumb, index) => {
           const last = index === lastIndex;

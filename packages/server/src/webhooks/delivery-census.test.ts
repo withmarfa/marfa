@@ -42,6 +42,8 @@ const OUTBOUND: Record<string, string> = {
     "runs in the owner's browser and calls this server's own passkey door; it sends no webhook delivery",
   "pages/client/setup.ts":
     "runs in the owner's browser and calls this server's own setup doors; it sends no webhook delivery",
+  "pages/client/sign-out.ts":
+    "runs in the owner's browser and calls this server's own sign-out door; it sends no webhook delivery",
   "test-browser.ts":
     "dispatches browser fixture requests through app.fetch in process; it sends no webhook delivery",
 };

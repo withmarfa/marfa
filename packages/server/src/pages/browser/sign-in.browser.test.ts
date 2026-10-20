@@ -156,7 +156,7 @@ describe("signing in", () => {
         await page.keyboard.type(OWNER.password);
         await page.keyboard.press("Enter");
         await page.waitForURL(`${main.origin}/`);
-        await page.getByText("You're signed in to").waitFor();
+        await page.getByRole("button", { name: "Sign out" }).waitFor();
         expect(problems).toEqual([]);
       } finally {
         await context.close();
@@ -357,7 +357,7 @@ describe("signing in", () => {
           .getByRole("button", { name: "Sign in", exact: true })
           .click();
         await page.waitForURL(`${main.origin}/`);
-        await page.getByText("You're signed in to").waitFor();
+        await page.getByText("Older management page").waitFor();
       } finally {
         await context.close();
       }
@@ -442,7 +442,7 @@ describe("the lock", () => {
           .getByRole("button", { name: "Sign in with a passkey" })
           .click();
         await page.waitForURL(`${locked.origin}/`);
-        await page.getByText("You're signed in to").waitFor();
+        await page.getByRole("button", { name: "Sign out" }).waitFor();
 
         // The password is still locked for a new session of the same address.
         await context.clearCookies();

@@ -1,6 +1,6 @@
 import { authAssetUrl } from "./auth-static.js";
 import { readInstanceName } from "../instance-name.js";
-import { contentSecurityPolicy } from "./content-security-policy.js";
+import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { escapeHtml } from "./auth-html.js";
 import { managementPages } from "./management-pages.js";
 import { Hono } from "hono";
@@ -19,6 +19,7 @@ import {
 import { renderAuthLayout } from "./auth-layout.js";
 import { confirmDialogMarkup } from "./confirm-host.js";
 import { setNoStore } from "./no-store.js";
+import { consoleGate } from "./console-gate.js";
 export function ownerPages(storage: Storage, auth: MarfaAuth) {
   const router = new Hono<AppEnv>();
   router.use("*", async (c, next) => {
@@ -26,11 +27,12 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
     requireSecureOwnerTransport(auth);
     await next();
   });
+  router.use("*", consoleGate(storage, auth));
   router.get("/passkeys", async (c) => {
     await requireOwnerSession(storage, auth, c.req.raw.headers);
     c.header(
       "Content-Security-Policy",
-      `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'; form-action 'self'`,
+      consoleContentSecurityPolicy(c.var.cspNonce),
     );
     return c.html(
       renderAuthLayout({

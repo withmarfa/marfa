@@ -4,8 +4,13 @@
  * no DOM and no Node API, so both can import it.
  */
 
-/** Rows on one page of a list. No list offers more, and none offers "all". */
+/** Rows on one page of a list until the person picks another size. */
 export const PAGE_SIZE = 10;
+
+/** The sizes a list offers, as its "Rows per page" select lists them. None offers "all". */
+export const PAGE_SIZES = [10, 25, 50] as const;
+
+export type PageSize = (typeof PAGE_SIZES)[number];
 
 /**
  * The item after a step up or down a list, wrapping at both ends. `-1` is
@@ -56,6 +61,8 @@ export function rankMatches(
 export interface Pagination {
   /** The page shown, from 1. */
   page: number;
+  /** Rows on a full page. */
+  size: PageSize;
   /** The last page, from 1: an empty list is one empty page. */
   last: number;
   /** The offset of the first row shown. */
@@ -71,13 +78,14 @@ export interface Pagination {
 export function paginate(
   total: number,
   page: number,
-  size: number = PAGE_SIZE,
+  size: PageSize = PAGE_SIZE,
 ): Pagination {
   const last = Math.max(1, Math.ceil(total / size));
   const shown = Math.min(Math.max(1, Math.trunc(page)), last);
   const from = (shown - 1) * size;
   return {
     page: shown,
+    size,
     last,
     from,
     to: Math.min(total, from + size),
@@ -91,4 +99,9 @@ export function paginate(
 export function parsePageNumber(value: string | undefined): number {
   if (value === undefined || !/^[1-9]\d{0,8}$/.test(value)) return 1;
   return Number(value);
+}
+
+/** Rows per page from a query string: one of {@link PAGE_SIZES}, else {@link PAGE_SIZE}. */
+export function parsePageSize(value: string | undefined): PageSize {
+  return PAGE_SIZES.find((size) => String(size) === value) ?? PAGE_SIZE;
 }

@@ -629,8 +629,30 @@ button.row:hover .rt {
   width: auto;
   max-width: 50%;
 }
+.row .val.warn {
+  color: var(--warn);
+}
 .row .val.danger {
   color: var(--danger);
+}
+.row .lead {
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 16px;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--icon);
+}
+.dot.warn {
+  background: var(--warn);
+}
+.dot.danger {
+  background: var(--danger);
 }
 .row .chev {
   flex-shrink: 0;
@@ -953,6 +975,18 @@ button.row:hover .rt {
 .search input:focus-visible {
   outline: none;
 }
+.search .hint {
+  display: inline-flex;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.search .hint[hidden] {
+  display: none;
+}
 
 /* A list's toolbar: filters on the left, the search on the right */
 .toolbar {
@@ -1005,7 +1039,8 @@ button.row:hover .rt {
 .pager {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-4);
 }
 .pager .line {

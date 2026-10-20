@@ -1,6 +1,6 @@
 import type { Storage } from "../storage/interface.js";
 import { readInstanceName } from "../instance-name.js";
-import { contentSecurityPolicy } from "./content-security-policy.js";
+import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { Hono } from "hono";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
@@ -20,7 +20,7 @@ export function managementPages(storage: Storage) {
     requireDirectAuthority(c);
     c.header(
       "Content-Security-Policy",
-      `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'; form-action 'self'`,
+      consoleContentSecurityPolicy(c.var.cspNonce),
     );
     await next();
   });

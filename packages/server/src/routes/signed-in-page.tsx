@@ -1,10 +1,8 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 /**
- * What a person sees when they are signed in and there is nowhere further to
- * send them: at the server's address after signing in with no app waiting,
- * and when they open the sign-in page while a session already exists and no
- * authorization sent them.
+ * What a person sees when they open the sign-in page while a session already
+ * exists and no authorization sent them.
  */
 import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import { renderDocument } from "../pages/render.js";
@@ -50,8 +48,8 @@ export function renderSignedInPage(params: SignedInPageParams): string {
             Continue
           </Button>
         )}
-        <Button kind="outline" wide href="/auth/owner/manage">
-          Manage {name}
+        <Button kind="outline" wide href="/">
+          Go to Home
         </Button>
       </MomentCard>
     </PageShell>,

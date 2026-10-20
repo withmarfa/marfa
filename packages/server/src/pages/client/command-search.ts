@@ -37,6 +37,10 @@ export function initCommandSearch(): void {
     hint.textContent = apple ? "⌘K" : "Ctrl K";
     hint.hidden = false;
   }
+  for (const trigger of document.querySelectorAll<HTMLElement>(
+    "[data-command-search-open]",
+  ))
+    trigger.hidden = false;
 
   const groups = [
     ...searchDialog.querySelectorAll<HTMLElement>("[data-search-group]"),

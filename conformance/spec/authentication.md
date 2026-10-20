@@ -195,3 +195,39 @@ If a request to `POST /auth/confirm` comes from an origin other than the instanc
 If a browser session created more than five minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey registration from a stale session`.
+
+## Console pages
+
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/restore`, `/auth/owner/password` and `/auth/owner/passkeys`. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+
+### `authentication/console-sign-in`
+
+When a browser that holds no owner session asks a console page for HTML, the server MUST answer `302` to `/auth/sign-in` with the page's path and query, percent-encoded, as `return_to`, or with `/` as `return_to` when the path and query together are longer than 2048 characters.
+
+**Reason:** a person who opens a bookmarked page after the session ended was handed a bare error with no way on, and signing in then sends them back to where they were (`keys-and-oauth/return-to-kept`). An address longer than that would ride in the sign-in page's own address and form, so the person lands on Home instead. The limit belongs to the console pages: the sign-in page carries any other `return_to`, such as an authorization request, whole.
+
+**Tests:** `compliance/console-pages.test.ts › goes to sign in, carrying the page's path and query as where to return`, `compliance/console-pages.test.ts › goes to sign in with no way back for an address too long to carry`, `compliance/console-pages.test.ts › is sent back to the page once it has signed in`, `compliance/console-pages.test.ts › is sent to sign in again when its session has ended`.
+
+### `authentication/console-sign-in-no-store`
+
+The server MUST send `Cache-Control: no-store` on the redirect from a console page to sign in.
+
+**Reason:** the redirect depends on the session the request carries, so a cache must not hand it to another browser.
+
+**Tests:** `compliance/console-pages.test.ts › is not given a redirect that a cache could hand to somebody else`.
+
+### `authentication/console-no-redirect`
+
+If a request for a console page carries an `Authorization` header or does not ask for HTML, then the server MUST NOT answer it with a redirect.
+
+**Reason:** a program reads the refusal it was always given, and a redirect to a sign-in page tells it nothing it can act on.
+
+**Tests:** `compliance/console-pages.test.ts › is not redirected to sign in, whether it asks for JSON, anything, or carries a credential`.
+
+### `authentication/console-unclaimed`
+
+While the instance is unclaimed, when a browser asks a console page for HTML, the server MUST answer `302` to `/setup`.
+
+**Reason:** no one can sign in to an instance that has no owner, so the page a person can use is the one that claims it.
+
+**Tests:** `compliance/console-pages.test.ts › is sent to set the instance up, not to a sign-in nobody can use`.

@@ -12,7 +12,9 @@
  *
  * With scripting off the form is a plain POST that the server validates.
  * A GET form is left alone, except that a select marked `data-autosubmit`
- * submits its form when it changes.
+ * submits its form when it changes, a click on a search field's icon or
+ * padding focuses its input, and a form marked `data-script-only`,
+ * which is no use without that, starts hidden and is shown here.
  */
 const FALLBACK = "Working...";
 
@@ -171,6 +173,23 @@ export function resetSubmitState(form: HTMLFormElement): void {
 }
 
 export function initForms(): void {
+  for (const form of document.querySelectorAll<HTMLElement>(
+    "[data-script-only]",
+  ))
+    form.hidden = false;
+
+  // A search field is a box around an input, so a click on its icon or its
+  // padding reaches the box, not the input.
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest("button, input, a"))
+      return;
+    target
+      .closest(".search")
+      ?.querySelector<HTMLInputElement>("input")
+      ?.focus();
+  });
+
   document.addEventListener("input", (event) => {
     const control = event.target;
     if (!(

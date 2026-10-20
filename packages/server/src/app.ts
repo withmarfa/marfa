@@ -42,10 +42,15 @@ import { createMarfaAuth } from "./auth/instance.js";
 import { itemRoutes } from "./routes/items.js";
 import { readInstanceName } from "./instance-name.js";
 import { renderRootPage } from "./routes/root-page.js";
-import { renderSignedInPage } from "./routes/signed-in-page.js";
+import { CONSOLE_PAGES, type ConsolePages } from "./routes/console.js";
+import { ownerBrowserSession } from "./routes/console-gate.js";
+import { homeSearchQuery, renderHomePage } from "./routes/home-page.js";
 import { setNoStore } from "./routes/no-store.js";
 import { withPreparedHeaders } from "./prepared-headers.js";
-import { pageSecurityPolicy } from "./routes/content-security-policy.js";
+import {
+  consoleContentSecurityPolicy,
+  pageSecurityPolicy,
+} from "./routes/content-security-policy.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
@@ -150,7 +155,11 @@ export function createApp(
    * answers equal without relying on separate reads of the stored row.
    */
   instanceId: string,
-  options: { localAuthority?: boolean } = {},
+  options: {
+    localAuthority?: boolean;
+    /** The pages Home lists. Defaults to the console's own; a test passes its own. */
+    consolePages?: ConsolePages;
+  } = {},
 ) {
   // The empty string is the one wrong value the type cannot refuse, and it
   // is what a caller reaching for a field that is not there hands over. An
@@ -469,23 +478,36 @@ export function createApp(
   // instances answering the same shape, which is exactly the question
   // somebody pointing a client at an address is asking.
   app.openAPIRegistry.registerPath(instanceDescriptionRoute);
-  app.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
+  const consolePages = options.consolePages ?? CONSOLE_PAGES;
+  app.get("/", async (c) => {
+    const wantsPage = prefersHtml(c.req.header("accept"));
+    // The owner's browser may search Home; nobody else sends the root a query.
+    const owner =
+      wantsPage && auth
+        ? await ownerBrowserSession(storage, auth, c.req.raw.headers)
+        : null;
+    refuseUndeclaredKeysOf(c.req.url, owner ? ["q"] : []);
     const instanceName = await readInstanceName(storage.settings);
     // One address, two readers: a program takes the description and a person
     // opening it in a browser takes a page.
-    if (prefersHtml(c.req.header("accept"))) {
+    if (wantsPage) {
       // The page says who is signed in, so it is the person's own and is not
-      // kept. It is where a sign-in with no app waiting ends.
+      // kept.
       setNoStore(c);
-      const session = await auth?.getSession(c.req.raw.headers);
+      if (!owner) return c.html(renderRootPage(c.var.cspNonce, instanceName));
+      c.header(
+        "Content-Security-Policy",
+        consoleContentSecurityPolicy(c.var.cspNonce),
+      );
       return c.html(
-        session
-          ? renderSignedInPage({
-              email: session.user.email,
-              instanceName,
-              nonce: c.var.cspNonce,
-            })
-          : renderRootPage(c.var.cspNonce, instanceName),
+        renderHomePage({
+          nonce: c.var.cspNonce,
+          instanceName,
+          address: new URL(config.authBaseUrl).host,
+          registry: consolePages.registry,
+          reading: await consolePages.read({ storage, config }),
+          query: homeSearchQuery(c.req.query("q")),
+        }),
       );
     }
     const description: z.infer<typeof InstanceDescriptionSchema> = {

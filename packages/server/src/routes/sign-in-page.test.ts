@@ -266,6 +266,12 @@ describe("validateReturnTo", () => {
     );
   });
 
+  it("carries a long address whole, as an authorize request can be", () => {
+    const long = `/auth/authorize?${new URLSearchParams({ state: "s".repeat(6000), client_id: "abc" }).toString()}`;
+    expect(long.length).toBeGreaterThan(6000);
+    expect(validateReturnTo(long, ISSUER)).toBe(long);
+  });
+
   it("falls back to / for anything that lands off the instance", () => {
     for (const raw of [
       "https://evil.com/",
@@ -968,7 +974,7 @@ describe("the sign-in page names the app that sent the person", () => {
 });
 
 describe("signing in with no app waiting", () => {
-  it("ends at the server's address, which tells a browser it is signed in", async () => {
+  it("ends at the server's address, which shows a signed-in browser Home", async () => {
     ctx = await createTestContext(undefined, {
       email: "erin@example.com",
       password: "correct horse",
@@ -999,17 +1005,17 @@ describe("signing in with no app waiting", () => {
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(page.headers.get("cache-control")).toContain("no-store");
     const text = visibleText(await page.text());
-    expect(text).toContain("You're signed in");
-    expect(text).toContain("erin@example.com");
+    expect(text).toContain("Sign out");
+    expect(text).toContain("Older management page");
 
     // Witness: the same address with no session is the page that says
     // nobody is, and a program is still given the JSON whoever it is.
     const anonymous = await request(ctx.app, "GET", "/", {
       headers: { accept: "text/html" },
     });
-    expect(visibleText(await anonymous.text())).not.toContain(
-      "erin@example.com",
-    );
+    const anonymousText = visibleText(await anonymous.text());
+    expect(anonymousText).not.toContain("Sign out");
+    expect(anonymousText).toContain("Marfa is running");
     const program = await request(ctx.app, "GET", "/", { headers: { cookie } });
     expect(program.headers.get("content-type")).toContain("application/json");
   });

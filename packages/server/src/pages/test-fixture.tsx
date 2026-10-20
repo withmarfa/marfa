@@ -24,7 +24,7 @@ import {
 import { ListToolbar, Pager, Tabs } from "./parts/list.js";
 import { ClosingAction, Row, RowGroup } from "./parts/rows.js";
 import { PageShell } from "./parts/shell.js";
-import { paginate, PAGE_SIZE } from "./navigation.js";
+import { paginate, type PageSize } from "./navigation.js";
 import { renderDocument } from "./render.js";
 import {
   HOME_GROUPS,
@@ -80,11 +80,12 @@ const ROWS = Array.from({ length: 23 }, (_, i) => i + 1);
 export interface FixtureOptions {
   nonce: string;
   page?: number;
+  size?: PageSize;
 }
 
 export function FixturePage(props: FixtureOptions) {
   const registry = fixtureRegistry();
-  const pagination = paginate(ROWS.length, props.page ?? 1);
+  const pagination = paginate(ROWS.length, props.page ?? 1, props.size);
   return (
     <PageShell title="Fixture page" nonce={props.nonce}>
       <Breadcrumb
@@ -286,10 +287,11 @@ export function FixturePage(props: FixtureOptions) {
             <Pager
               pagination={pagination}
               noun="keys"
-              href={(page) => `?page=${String(page)}`}
+              href={(page) =>
+                `?page=${String(page)}&size=${String(pagination.size)}`
+              }
             />
           </div>
-          <p class="sr">{`Rows per page: ${String(PAGE_SIZE)}`}</p>
         </Section>
 
         <ClosingAction>

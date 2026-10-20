@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   PAGE_SIZE,
+  PAGE_SIZES,
   matchesQuery,
   paginate,
   parsePageNumber,
+  parsePageSize,
   rankMatches,
   stepIndex,
 } from "./navigation.js";
@@ -76,6 +78,7 @@ describe("paginate", () => {
     expect(PAGE_SIZE).toBe(10);
     expect(paginate(42, 1)).toEqual({
       page: 1,
+      size: 10,
       last: 5,
       from: 0,
       to: 10,
@@ -104,6 +107,7 @@ describe("paginate", () => {
   it("is one empty page for an empty list", () => {
     expect(paginate(0, 1)).toEqual({
       page: 1,
+      size: 10,
       last: 1,
       from: 0,
       to: 0,
@@ -111,6 +115,17 @@ describe("paginate", () => {
       hasPrevious: false,
       hasNext: false,
     });
+  });
+
+  it("pages by the size it is given", () => {
+    expect(paginate(42, 1, 25)).toMatchObject({
+      size: 25,
+      last: 2,
+      from: 0,
+      to: 25,
+    });
+    expect(paginate(42, 2, 25)).toMatchObject({ from: 25, to: 42 });
+    expect(paginate(42, 1, 50)).toMatchObject({ last: 1, to: 42 });
   });
 
   it("fills exactly one page with ten rows", () => {
@@ -131,5 +146,31 @@ describe("parsePageNumber", () => {
 
   it("does not trust a number too large to count with", () => {
     expect(parsePageNumber("99999999999999999999")).toBe(1);
+  });
+});
+
+describe("parsePageSize", () => {
+  it("reads each size a list offers", () => {
+    expect(PAGE_SIZES).toEqual([10, 25, 50]);
+    for (const size of PAGE_SIZES)
+      expect(parsePageSize(String(size))).toBe(size);
+  });
+
+  it("falls back to ten rows for anything else", () => {
+    for (const bad of [
+      undefined,
+      "",
+      "0",
+      "-25",
+      "5",
+      "100",
+      "25.0",
+      "025",
+      "abc",
+      "1e1",
+      " 25",
+      "99999999999999999999",
+    ])
+      expect(parsePageSize(bad), String(bad)).toBe(10);
   });
 });

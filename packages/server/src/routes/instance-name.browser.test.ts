@@ -50,9 +50,8 @@ it("shows changed names on later browser requests without creating HTML from the
       ).status(),
     ).toBe(200);
     await page.goto(origin);
-    expect(await page.getByRole("status").textContent()).toContain(
-      `You're signed in to ${name}`,
-    );
+    expect(await page.locator("h1").textContent()).toBe(name);
+    expect(await page.title()).toBe(name);
     await page.goto(`${origin}/auth/owner/manage`);
     expect(await page.locator("h1").textContent()).toBe(`Manage ${name}`);
     expect(await page.title()).toBe(`Manage ${name}`);

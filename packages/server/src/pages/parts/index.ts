@@ -1,5 +1,7 @@
 export { Breadcrumb } from "./breadcrumb.js";
 export type { BreadcrumbProps, Crumb } from "./breadcrumb.js";
+export { ConsolePage, HOME_HREF } from "./console-page.js";
+export type { ConsolePageProps } from "./console-page.js";
 export { CommandSearch } from "./command-search.js";
 export type { CommandSearchProps } from "./command-search.js";
 export { Button, ButtonPair, Select, Switch } from "./controls.js";

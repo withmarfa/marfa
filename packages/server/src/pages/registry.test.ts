@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { localHref } from "./href.js";
 import {
   HOME_GROUPS,
   PAGE_REGISTRY,
@@ -47,9 +48,16 @@ describe("the Home groups", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("start with no page built, so the shipped registry links to nothing", () => {
-    expect(PAGE_REGISTRY.groups()).toEqual([]);
-    expect(PAGE_REGISTRY.search("keys")).toEqual({ pages: [], settings: [] });
+  it("link only to pages that are built, each at an address on this server", () => {
+    const defined = new Set(
+      HOME_GROUPS.flatMap((g) => g.pages.map((p) => p.id)),
+    );
+    for (const group of PAGE_REGISTRY.groups())
+      for (const page of group.pages) {
+        expect(defined.has(page.id), page.id).toBe(true);
+        expect(() => localHref(page.href), page.id).not.toThrow();
+        expect(PAGE_REGISTRY.page(page.id)).toBe(page);
+      }
   });
 });
 

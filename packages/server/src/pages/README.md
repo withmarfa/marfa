@@ -53,6 +53,10 @@ There is no client framework and no client-side rendering.
   system's stylesheet, so neither stylesheet reaches the other.
 - **Lists:** `ListToolbar`, `Tabs` and `Pager`.
 - **Navigation:** `Breadcrumb` (with the page picker) and `CommandSearch`.
+  `SearchField` with `shortcutHint` also shows a button that opens the search,
+  hidden until the script knows the shortcut for the platform.
+- **Console page:** `ConsolePage` is the layout every console page uses: the
+  document, `Breadcrumb`, `CommandSearch`, `ConsoleColumn` and `ConfirmDialog`.
 
 Import from `parts/index.ts`.
 
@@ -62,9 +66,11 @@ Keep these in every page you build.
 
 - A console page is one quiet column 720 pixels wide with no sidebar. A moment
   (sign-in, claim, approval, signed out, problem) is one card 384 pixels wide.
-- A console page starts with a `Breadcrumb`. The page under Home carries the
-  picker, which lists every other page grouped as Home groups them. One level
-  down, a page that has items lists them in a side panel.
+- A console page is a `ConsolePage`, which starts with a `Breadcrumb`, except
+  Home, which has no trail and shows an empty bar. The page
+  under Home carries the picker, which lists every other page grouped as Home
+  groups them. One level down, a page that has items lists them in a side
+  panel.
 - A console page is a breadcrumb, a `PageHeader`, then sections. The page's
   one main action goes at the top right of the header, except on a form,
   whose buttons end it on the right in a `FormFoot`.
@@ -75,9 +81,13 @@ Keep these in every page you build.
   others) is a `ClosingAction`: no box, under a thin line.
 - Use selects. Use `Tabs` only to split one list into its two or three kinds.
 - A list has filters on the left and search on the right (`ListToolbar`), one
-  line per row cut short with an ellipsis, and pages of 10 rows (`Pager`).
-  Never offer "Show all".
-- Red is only for what cannot be undone.
+  line per row cut short with an ellipsis, and pages of 10 rows by default.
+  Past 10 rows the `Pager` also offers "Rows per page" (10, 25 or 50, read with
+  `parsePageSize` from the `size` query key beside `page`). Never offer "Show
+  all".
+- Red is for what cannot be undone, and for something that has stopped. Amber
+  is for something that needs a look. Both appear only as a dot or a value,
+  never as a filled box, and only where the page is reporting a state.
 - Light and dark follow `prefers-color-scheme`. In dark mode, boxes sit one step
   lighter than the page. There is no theme switch.
 - Put no color in any file but `tokens.css`, and no `style` attribute or
@@ -93,33 +103,40 @@ Keep these in every page you build.
    Tests that start a child process from outside this package read no
    `tsconfig.json`, so each file names its runtime itself;
    `jsx-pragma.test.ts` checks it.
-1. Write the page as a function that returns `PageShell` with the parts, and
+1. Write the page as a function that returns `ConsolePage` with the parts, and
    render it with `renderDocument`:
 
    ```tsx
    export function renderKeysPage(nonce: string, instanceName: string): string {
      return renderDocument(
-       <PageShell title="API keys" nonce={nonce}>
-         <Breadcrumb
-           home={{ label: instanceName, href: "/" }}
-           trail={[{ label: "API keys" }]}
-           registry={PAGE_REGISTRY}
-           pageId="keys"
-         />
-         <CommandSearch registry={PAGE_REGISTRY} home={{ href: "/" }} />
-         <ConsoleColumn>
-           <PageHeader title="API keys" />
-         </ConsoleColumn>
-       </PageShell>,
+       <ConsolePage
+         title="API keys"
+         nonce={nonce}
+         instanceName={instanceName}
+         trail={[{ label: "API keys" }]}
+         pageId="keys"
+       >
+         <PageHeader title="API keys" />
+       </ConsolePage>,
      );
    }
    ```
 
 1. Pass `c.var.cspNonce` from the route. `PageShell` throws without a valid
    nonce.
-1. Register the page so the picker and the search link to it:
-   `PAGE_REGISTRY.register("keys", { href, hasItems, settings })`. Do this where
-   the route is mounted.
+1. Mount the page under `/auth/owner/`, so the console's gate sends a browser
+   that is not signed in to sign in and back (`routes/console-gate.ts`).
+1. Register the page so the picker, the search and Home link to it, once, at
+   module level where the route is defined, with
+   `CONSOLE_PAGES.register("keys", { href, hasItems, settings, value, attention })`
+   (`routes/console.ts`). A second registration of the same page throws.
+   `value` returns the text at the right end of the page's row on Home and
+   `attention` returns the lines Home lists under Needs attention, each a short
+   title and a link. Both are optional and Home reads them as it renders, so
+   Home never changes when a page is added. Home waits two seconds for each.
+   One that is late, throws, or returns a link that is not a path on this
+   server or a tone other than `warn` or `danger` is left out, logged, and
+   shown as "Couldn't check" the page, so one page never takes Home down.
 1. Add a test that renders the page and checks its behavior (status, text,
    links, roles), not its class names.
 
@@ -163,7 +180,7 @@ of its scopes need a recent one (`gateAttributes`), and its approve button
 opens the dialog first when the person chose one of those too late. `client/index.ts` starts them all. They use the DOM
 only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
-password toggle, the shortcut hint) hidden, and the script shows it, so a
+password toggle, the shortcut hint, Sign out, a list's Rows per page) hidden, and the script shows it, so a
 browser without the script has no control that does nothing.
 
 `client/tsconfig.json` gives these files the DOM library, which the rest of the
