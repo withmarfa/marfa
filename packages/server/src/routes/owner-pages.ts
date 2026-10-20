@@ -1,6 +1,6 @@
 import { authAssetUrl } from "./auth-static.js";
 import { readInstanceName } from "../instance-name.js";
-import { contentSecurityPolicy } from "./content-security-policy.js";
+import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { escapeHtml } from "./auth-html.js";
 import { managementPages } from "./management-pages.js";
 import { Hono } from "hono";
@@ -32,7 +32,7 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
     await requireOwnerSession(storage, auth, c.req.raw.headers);
     c.header(
       "Content-Security-Policy",
-      `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'; form-action 'self'`,
+      consoleContentSecurityPolicy(c.var.cspNonce),
     );
     return c.html(
       renderAuthLayout({
