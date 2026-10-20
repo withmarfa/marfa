@@ -13,6 +13,7 @@ import {
   ConsolePage,
   Dialog,
   EmptyState,
+  LocalDate,
   Notice,
   PageHeader,
   PasswordField,
@@ -28,8 +29,8 @@ export interface PasskeyView {
   id: string;
   /** The owner's name for it, or `null` when it has none. */
   name: string | null;
-  /** When it was added, already written for a person. */
-  added: string;
+  /** When it was added. */
+  added: Date;
 }
 
 export interface PasswordPageParams {
@@ -300,7 +301,11 @@ export function PasswordPage(props: PasswordPageParams) {
               {props.passkeys.map((passkey, index) => (
                 <Row
                   title={passkey.name ?? UNNAMED}
-                  description={`Added ${passkey.added}`}
+                  description={
+                    <>
+                      Added <LocalDate at={passkey.added} />
+                    </>
+                  }
                   buttons={
                     <Button
                       kind="quiet"

@@ -17,6 +17,7 @@ There is no client framework and no client-side rendering.
 | `reading.ts`          | Reads a rendered page as a person does, for tests: text, fields, forms.     |
 | `access-summary.ts`   | The words an approval page says about a choice, for the server and browser. |
 | `account-input.ts`    | What the owner's pages say about a name, email, password and passkey name.  |
+| `local-date.ts`       | How a date is written: UTC from the server, the viewer's zone in the page.  |
 | `registry.ts`         | The pages of the console, for the page picker and the command search.       |
 | `navigation.ts`       | Logic the server and the browser share: stepping, matching, pagination.     |
 | `assets.generated.ts` | The built stylesheet and script, with their hashes. Generated; do not edit. |
@@ -47,6 +48,11 @@ There is no client framework and no client-side rendering.
 - **Codes:** `CodeCells` shows a code for a person to compare with the one on
   their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
+- **Dates:** `LocalDate` writes a date as `<time datetime="..." data-local-date>`
+  with the UTC date as its text. `client/local-date.ts` writes the text again
+  as the date in the viewer's own time zone, and a page that swaps in server
+  markup after load calls `localizeDates` on what it swapped in. A `Row`'s
+  `description` takes a `LocalDate` among its markup.
 - **Confirming it's you:** `ConfirmDialog` is the dialog a page opens when a
   change is refused for a sign-in older than five minutes. A page puts it once
   at the end of its body. A page with a stylesheet of its own embeds
@@ -183,7 +189,9 @@ opens the dialog first when the person chose one of those too late.
 passkeys pages (`data-account-form`): it checks the value with the words in
 `account-input.ts`, sends it to the door that makes the change, and then reads
 the page's own address again to swap in the region marked `data-live`, so the
-browser never draws a row. `client/index.ts` starts them all. They use the DOM
+browser never draws a row. `client/local-date.ts` is shared: any page that
+shows a date writes it with `LocalDate`, and the script does the rest.
+`client/index.ts` starts them all. They use the DOM
 only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
 password toggle, the shortcut hint, Sign out, a list's Rows per page) hidden, and the script shows it, so a

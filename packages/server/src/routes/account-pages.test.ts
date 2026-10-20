@@ -26,8 +26,12 @@ const password = (
   });
 
 const TWO = [
-  { id: "pk-one", name: "Safari on macOS", added: "October 3, 2026" },
-  { id: "pk-two", name: null, added: "October 9, 2026" },
+  {
+    id: "pk-one",
+    name: "Safari on macOS",
+    added: new Date("2026-10-03T09:30:00.000Z"),
+  },
+  { id: "pk-two", name: null, added: new Date("2026-10-09T23:45:00.000Z") },
 ];
 
 describe("the Profile page", () => {
@@ -122,6 +126,16 @@ describe("the Password and passkeys page", () => {
     expect(text).not.toMatch(/last used/i);
   });
 
+  it("writes each date as a time element, with the UTC date for a browser that cannot localize it", () => {
+    const out = password(TWO);
+    expect(
+      [...out.matchAll(/<time\b[^>]*>[^<]*<\/time>/g)].map((match) => match[0]),
+    ).toEqual([
+      '<time datetime="2026-10-03T09:30:00.000Z" data-local-date="">October 3, 2026</time>',
+      '<time datetime="2026-10-09T23:45:00.000Z" data-local-date="">October 9, 2026</time>',
+    ]);
+  });
+
   it("starts the rename field with the passkey's name, and empty for an unnamed one", () => {
     const out = password(TWO);
     const values = [...out.matchAll(/<input[^>]*name="name"[^>]*>/g)].map(
@@ -137,8 +151,8 @@ describe("the Password and passkeys page", () => {
 
   it("escapes a passkey's name and keeps a long one from breaking the page", () => {
     const out = password([
-      { id: "pk-one", name: HOSTILE, added: "October 3, 2026" },
-      { id: "pk-two", name: LONG_UNBROKEN, added: "October 3, 2026" },
+      { id: "pk-one", name: HOSTILE, added: new Date(0) },
+      { id: "pk-two", name: LONG_UNBROKEN, added: new Date(0) },
     ]);
     expect(out).not.toContain("<script>window.__injected");
     expect(out).not.toContain("<b>bold</b>");

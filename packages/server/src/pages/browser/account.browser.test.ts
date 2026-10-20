@@ -75,12 +75,16 @@ async function open(
     width?: number;
     passkeys?: boolean;
     withoutWebAuthn?: boolean;
+    timezoneId?: string;
   } = {},
 ): Promise<Opened> {
   const context = await browser.newContext({
     colorScheme: options.scheme ?? "light",
     viewport: { width: options.width ?? 1280, height: 900 },
     extraHTTPHeaders: newAddress(),
+    ...(options.timezoneId === undefined
+      ? {}
+      : { timezoneId: options.timezoneId }),
   });
   const signedIn = await context.request.post(`${origin}/auth/sign-in/email`, {
     headers: { origin },
@@ -876,6 +880,46 @@ describe("Password and passkeys, the passkeys", () => {
 });
 
 describe("Password and passkeys, dates, stale sign-ins and refusals", () => {
+  inBrowser(
+    "writes when a passkey was added in the viewer's own time zone, and again after the list is read again",
+    async () => {
+      await seedPasskey("seed-a", "Evening", new Date("2026-03-31T20:00:00Z"));
+      await seedPasskey("seed-b", "Morning", new Date("2026-04-01T05:00:00Z"));
+      try {
+        for (const [timezoneId, evening, morning] of [
+          ["UTC", "March 31, 2026", "April 1, 2026"],
+          ["Pacific/Kiritimati", "April 1, 2026", "April 1, 2026"],
+          ["Pacific/Pago_Pago", "March 31, 2026", "March 31, 2026"],
+        ] as const) {
+          const { page, context } = await open({ timezoneId });
+          try {
+            await page.goto(origin + PASSKEYS);
+            const time = (name: string) =>
+              page.locator(".row", { hasText: name }).locator("time");
+            expect(await time("Evening").innerText(), timezoneId).toBe(evening);
+            expect(await time("Morning").innerText(), timezoneId).toBe(morning);
+            // The instant is kept whole for anything that reads it.
+            expect(await time("Evening").getAttribute("datetime")).toBe(
+              "2026-03-31T20:00:00.000Z",
+            );
+            if (timezoneId !== "Pacific/Kiritimati") continue;
+            // The server draws the list again after a change, in UTC.
+            const dialog = await manage(page, "Evening");
+            await dialog.getByLabel("Name").fill("Evening again");
+            await dialog.getByRole("button", { name: "Save name" }).click();
+            await done(page).getByText("Passkey renamed").waitFor();
+            expect(await time("Evening again").innerText()).toBe(evening);
+            expect(await time("Morning").innerText()).toBe(morning);
+          } finally {
+            await context.close();
+          }
+        }
+      } finally {
+        await dropSeededPasskeys();
+      }
+    },
+  );
+
   inBrowser(
     "says a passkey that is already gone is removed, and shows any other 404 as the refusal it is",
     async () => {

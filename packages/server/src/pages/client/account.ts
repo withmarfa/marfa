@@ -30,6 +30,7 @@ import {
 } from "./confirm.js";
 import { openDialog } from "./dialog.js";
 import { clearFieldError, showFieldError, type Control } from "./form.js";
+import { localizeDates } from "./local-date.js";
 import { hideNotices, showNotice } from "./notice.js";
 import { passkeysSupported, registerPasskey } from "./passkey.js";
 
@@ -340,6 +341,7 @@ async function refresh(): Promise<boolean> {
     live.replaceChildren(
       ...Array.from(next.childNodes, (node) => document.importNode(node, true)),
     );
+    localizeDates(live);
     return true;
   } catch {
     return false;

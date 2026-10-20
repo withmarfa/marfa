@@ -17,13 +17,6 @@ import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { PASSKEYS_HREF, renderPasswordPage } from "./password-page.js";
 import { PROFILE_HREF, renderProfilePage } from "./profile-page.js";
 
-const ADDED = new Intl.DateTimeFormat("en-US", {
-  timeZone: "UTC",
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-
 /** "Password only", "1 passkey" or "3 passkeys": what Home says about signing in. */
 export function signInValue(passkeys: number): string {
   if (passkeys === 0) return "Password only";
@@ -147,7 +140,7 @@ export function accountPages(storage: Storage, auth: MarfaAuth) {
         passkeys: passkeys.map((passkey) => ({
           id: passkey.id,
           name: passkey.name,
-          added: ADDED.format(passkey.createdAt),
+          added: passkey.createdAt,
         })),
         suggestedName: suggestedPasskeyName(
           c.req.header("user-agent") ?? null,
