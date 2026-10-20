@@ -1300,6 +1300,14 @@ body:has(.savebar:not([hidden])) .col {
   .row > .grow {
     flex-basis: 60%;
   }
+  a.row,
+  button.row {
+    flex-wrap: nowrap;
+  }
+  a.row .val,
+  button.row .val {
+    max-width: 50%;
+  }
   .row .ends {
     margin-left: auto;
   }
