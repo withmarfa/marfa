@@ -357,6 +357,14 @@ When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing
 
 **Tests:** `compliance/keys-update.test.ts › refuses an update that widens a key when it names narrow_only`.
 
+### `keys-and-oauth/update-narrow-only-levers`
+
+If `PATCH /keys/{id}` names `narrow_only: true` and an `enforcement_override` other than the key's own, `null` included, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
+
+**Reason:** Whether levers are looser than the key's own depends on the instance's levers, which a lever left out or `null` falls back to and which can change, so the server refuses any change to them rather than judging its direction. Levers equal to the key's own change nothing and are accepted.
+
+**Tests:** `compliance/keys-update.test.ts › refuses a change to a key's write rules when it names narrow_only`.
+
 ### `keys-and-oauth/key-unknown`
 
 When `PATCH` or `DELETE /keys/{id}` names a well-formed id that no key within the caller's reach holds, the server MUST answer `404 api_key_not_found`.
@@ -647,13 +655,13 @@ When direct owner or local authority sends `PATCH /keys/{id}` naming a later `ex
 
 **Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made`.
 
-### `keys-and-oauth/expiry-narrow-only-free`
+### `keys-and-oauth/expiry-narrow-only-narrows`
 
-When direct owner or local authority sends `PATCH /keys/{id}` naming `narrow_only: true` and a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
+If `PATCH /keys/{id}` names `narrow_only: true` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
 
-**Reason:** `narrow_only` limits reach, not life, and `keys-and-oauth/expiry-owner-free` leaves the owner free to move an end date either way.
+**Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: the owner console's key page offers a key less, and a page opened before another change must not lengthen what the key has now.
 
-**Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made, whatever narrow_only says`.
+**Tests:** `compliance/key-expiry.test.ts › is shortened or given when the key has none, and refused a later expiry or none`.
 
 ## Authentication
 

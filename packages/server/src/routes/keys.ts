@@ -4,6 +4,7 @@ import {
 } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { randomBytes } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { ApiKey, Permission } from "@withmarfa/shared";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
@@ -489,7 +490,7 @@ const UpdateKeyBodySchema = z.strictObject({
     .nullable()
     .optional()
     .describe(
-      "Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`.",
+      "Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, through `keys.manage` or with `narrow_only`.",
     ),
   source: z
     .string()
@@ -501,7 +502,7 @@ const UpdateKeyBodySchema = z.strictObject({
     .boolean()
     .optional()
     .describe(
-      "`true` to refuse the update if it would give the key a permission, map entry or claimed source it doesn't hold now. An app's key and a `keys.manage` update are always held to this. It doesn't limit `expires_at`. Defaults to `false`.",
+      "`true` to refuse the update if it would give the key more: a permission, map entry or claimed source it doesn't hold, a later `expires_at` or none, or an `enforcement_override` other than its own. Defaults to `false`.",
     ),
 });
 
@@ -559,7 +560,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app made, a key updated through `keys.manage`, or any key when `narrow_only` is `true`; or it names `enforcement_override` and you don't hold `config.manage`. `details` names what's missing.",
+        "- `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens a key an app made, a `keys.manage` update or any key with `narrow_only`, which also refuses a changed `enforcement_override`; or it names one without `config.manage`. `details` names what's missing.",
     },
     404: {
       content: {
@@ -862,6 +863,27 @@ function refuseLongerLife(
   );
 }
 
+/**
+ * Refuse a change to the write rules of a key that can only be narrowed.
+ *
+ * Whether a key's own levers are looser than it has now depends on the
+ * instance's levers, which a lever left out or a `null` falls back to and which
+ * move, so any levers other than the key's own are refused rather than judged.
+ */
+function refuseChangedLevers(
+  existing: ApiKey,
+  requested: ApiKey["enforcement_override"] | null | undefined,
+): void {
+  if (requested === undefined) return;
+  if (isDeepStrictEqual(requested ?? undefined, existing.enforcement_override))
+    return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    "This key may only be narrowed by this operation. It cannot change the key's write rules. Leave enforcement_override out, or create a key of your own.",
+    { field: "enforcement_override" },
+  );
+}
+
 /** Everything, in the wildcard form, on one content family. */
 const EVERY_TYPE = { "*": "write" } as const;
 
@@ -1080,8 +1102,14 @@ export function keyRoutes(storage: Storage, salt: string) {
             body.narrow_only === true
           )
             refuseWideningKey(existing, requested, permissions, sources);
-          if (existing.oauth_client_id !== undefined || manager)
+          if (
+            existing.oauth_client_id !== undefined ||
+            manager ||
+            body.narrow_only === true
+          )
             refuseLongerLife(existing, expiresAt);
+          if (body.narrow_only === true)
+            refuseChangedLevers(existing, body.enforcement_override);
           if (manager) requirePermission(c, "keys.manage");
           else if (!direct) {
             const key = requireAuth(c);

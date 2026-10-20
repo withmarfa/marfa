@@ -20756,11 +20756,11 @@ export interface operations {
                     permissions?: components["schemas"]["Permission"][];
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
-                    /** @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made or through `keys.manage`. */
+                    /** @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than your own key's `expires_at`, or the key's current one for a key an app made, through `keys.manage` or with `narrow_only`. */
                     expires_at?: string | null;
                     /** @description Can't change. To give a key another source, create a new key and revoke this one. */
                     source?: string;
-                    /** @description `true` to refuse the update if it would give the key a permission, map entry or claimed source it doesn't hold now. An app's key and a `keys.manage` update are always held to this. It doesn't limit `expires_at`. Defaults to `false`. */
+                    /** @description `true` to refuse the update if it would give the key more: a permission, map entry or claimed source it doesn't hold, a later `expires_at` or none, or an `enforcement_override` other than its own. Defaults to `false`. */
                     narrow_only?: boolean;
                 };
             };
@@ -20813,7 +20813,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key a permission, map entry or source you don't hold, or an `expires_at` later than yours; it widens a key an app made, a key updated through `keys.manage`, or any key when `narrow_only` is `true`; or it names `enforcement_override` and you don't hold `config.manage`. `details` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the owner or local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens a key an app made, a `keys.manage` update or any key with `narrow_only`, which also refuses a changed `enforcement_override`; or it names one without `config.manage`. `details` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

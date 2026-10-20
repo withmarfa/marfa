@@ -239,6 +239,76 @@ describe("PATCH /keys/{id}", () => {
     expect(widened.data.type_permissions).toEqual({ "*": "write" });
   });
 
+  it("refuses a change to a key's write rules when it names narrow_only", async () => {
+    const owner = getOwnerClient();
+    const own = { strict_mode: { types: ["core.note"] } };
+    const skipped = {
+      strict_mode: { types: [] },
+      source_allowlist: { types: [], sources: [] },
+      source_filter: { types: [], sources: [] },
+    };
+    const created = await client.createKey({
+      label: "ku-narrow-levers",
+      source: `${ctx.source}-ku-narrow-levers`,
+      permissions: ["audit.read"],
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackKey(ctx, created.data.id);
+    const id = created.data.id;
+    const levers = async () =>
+      (await client.listKeys()).data.data.find((k) => k.id === id)
+        ?.enforcement_override;
+
+    // The witness: without narrow_only the owner may set the same levers.
+    const set = await owner.updateKey(id, { enforcement_override: own });
+    expect(set.status, JSON.stringify(set.error)).toBe(200);
+    expect(await levers()).toEqual(own);
+
+    for (const attempt of [skipped, { strict_mode: { types: [] } }, null]) {
+      const refused = await owner.updateKey(id, {
+        enforcement_override: attempt,
+        narrow_only: true,
+      });
+      expect(refused.status, JSON.stringify(attempt)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await levers(), "a refused update changed the levers").toEqual(own);
+
+    // Naming the levers the key already has changes nothing, so it goes through
+    // with the label.
+    const same = await owner.updateKey(id, {
+      label: "ku-narrow-levers-same",
+      enforcement_override: own,
+      narrow_only: true,
+    });
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
+    expect(same.data.enforcement_override).toEqual(own);
+
+    // A key with no levers is refused the same way.
+    const bare = await client.createKey({
+      label: "ku-narrow-levers-bare",
+      source: `${ctx.source}-ku-narrow-levers-bare`,
+      permissions: ["audit.read"],
+    });
+    expect(bare.status, JSON.stringify(bare.error)).toBe(201);
+    trackKey(ctx, bare.data.id);
+    const loosened = await owner.updateKey(bare.data.id, {
+      enforcement_override: skipped,
+      narrow_only: true,
+    });
+    expect(loosened.status).toBe(403);
+    const cleared = await owner.updateKey(bare.data.id, {
+      enforcement_override: null,
+      narrow_only: true,
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.enforcement_override).toBeUndefined();
+    expect(
+      (await client.listKeys()).data.data.find((k) => k.id === bare.data.id)
+        ?.enforcement_override,
+    ).toBeUndefined();
+  });
+
   it("refuses a caller without keys.mint", async () => {
     const target = await narrowKey("ku-target");
     const noKeys = await client.createKey({
