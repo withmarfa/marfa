@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
-use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
+use super::{Folder, STATE_DIR, bytes_of, carries_frontmatter, identity, plainly_inside, state};
+use crate::catalog::Catalog;
 use crate::directory::Directory;
 use crate::{Core, Result, store};
 
@@ -169,6 +170,23 @@ impl Peer {
         state::bound_to_item(&*folder.core.conn().ok()?, item_id)
             .ok()
             .flatten()
+    }
+
+    /// Whether its copy holds the item as a file item, whose bytes may sit at
+    /// a document's name.
+    fn holds_bytes(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return false;
+        };
+        let Ok(catalog) = folder.core.conn().and_then(|conn| Catalog::load(&conn)) else {
+            return false;
+        };
+        folder
+            .core
+            .get(item_id)
+            .ok()
+            .flatten()
+            .is_some_and(|item| bytes_of(&item, &catalog).is_some())
     }
 
     fn bound(&self) -> &HashMap<String, (String, String)> {
@@ -483,28 +501,27 @@ impl<'a> Peers<'a> {
                 path: peer.root.join(&bound.path).display().to_string(),
                 ..bound
             };
-            if let Some(mark) = mark
-                && let Some(found) = state::bound_with_identity(&conn, mark)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|bound| !peer.present(&bound.path))
-            {
+            let by_mark = mark
+                .map(|mark| state::bound_with_identity(&conn, mark).unwrap_or_default())
+                .unwrap_or_default();
+            let rows = state::bound_with_hash(&conn, hash).unwrap_or_default();
+            drop(conn);
+            // A note's file is found by its id; the bytes of a file item may
+            // sit at a document's name.
+            let fits = |bound: &state::Bound| {
+                (!carries_frontmatter(Path::new(&bound.path)) || peer.holds_bytes(&bound.item_id))
+                    && !peer.present(&bound.path)
+            };
+            if let Some(found) = by_mark.into_iter().find(|bound| fits(bound)) {
                 return Some(whole(found));
             }
-            same_bytes.extend(
-                state::bound_with_hash(&conn, hash)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter(|bound| {
-                        !carries_frontmatter(Path::new(&bound.path)) && !peer.present(&bound.path)
-                    })
-                    .map(whole),
-            );
+            same_bytes.extend(rows.into_iter().filter(|bound| fits(bound)).map(whole));
         }
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
-    pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool) -> Look {
+    /// `bytes` says the lost file's item is a file item.
+    pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool, bytes: bool) -> Look {
         if let Some(why) = self.doubt.as_deref().or(self.unreadable()) {
             return Look::Unsure(why.to_string());
         }
@@ -531,7 +548,7 @@ impl<'a> Peers<'a> {
                     .get(&file.key)
                     .is_some_and(|(bound, _)| bound == item)
         };
-        if carries_frontmatter(Path::new(&lost.path)) {
+        if carries_frontmatter(Path::new(&lost.path)) && !bytes {
             let found = peers.iter().any(|peer| {
                 peer.files()
                     .iter()
@@ -550,7 +567,7 @@ impl<'a> Peers<'a> {
                 continue;
             }
             for file in peer.files() {
-                if carries_frontmatter(&file.path) || theirs(peer, file) {
+                if (carries_frontmatter(&file.path) && !bytes) || theirs(peer, file) {
                     continue;
                 }
                 let same = match bound.get(&file.key) {

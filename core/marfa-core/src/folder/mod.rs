@@ -1307,6 +1307,20 @@ fn walk_at(
     }
 }
 
+/// The row a file belongs to: the one its identity names, else the one at its
+/// path.
+fn named_row<'a>(
+    mark: Option<&str>,
+    key: &str,
+    by_mark: &HashMap<&str, &'a state::Bound>,
+    by_path: &HashMap<&str, &'a state::Bound>,
+) -> Option<&'a state::Bound> {
+    match mark.and_then(|mark| by_mark.get(mark)) {
+        Some(row) => Some(*row),
+        None => by_path.get(key).copied(),
+    }
+}
+
 fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, identity::Identity> {
     identity::resolve(paths.iter().map(|path| {
         (
@@ -1566,9 +1580,9 @@ impl Folder {
         // during the read differs from what is recorded.
         let mut stats: Vec<(String, String)> = Vec::new();
         let mut unchanged: HashSet<String> = HashSet::new();
+        // Resolved over every file, so a hard link shares no mark.
+        let marks = captured_identities(&paths, &walked);
         if !full {
-            // Resolved over every file, so a hard link shares no mark.
-            let marks = captured_identities(&paths, &walked);
             let conn = self.core.conn()?;
             for (path, key) in paths.iter().zip(&keys) {
                 if let Some(bound) = by_path.get(key.as_str())
@@ -1587,6 +1601,32 @@ impl Folder {
                 }
             }
         }
+        // A file is its item's bytes, never a document, whatever its name says.
+        // Known before the claim, from the row its identity names, else the
+        // row at its path, as the claim finds it.
+        let by_mark: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
+            .collect();
+        let kinds: RefCell<HashMap<String, bool>> = RefCell::new(HashMap::new());
+        let row_holds_bytes = |row: &state::Bound| -> Result<bool> {
+            if let Some(known) = kinds.borrow().get(row.item_id.as_str()) {
+                return Ok(*known);
+            }
+            let found = self.file_item(&row.item_id, &catalog)?;
+            kinds.borrow_mut().insert(row.item_id.clone(), found);
+            Ok(found)
+        };
+        let holds_bytes = |path: &Path, key: &str| -> Result<bool> {
+            if !is_document(path) {
+                return Ok(false);
+            }
+            let mark = marks.get(path).map(identity::Identity::key);
+            match named_row(mark.as_deref(), key, &by_mark, &by_path) {
+                Some(row) => row_holds_bytes(row),
+                None => Ok(false),
+            }
+        };
         // Markdown files first, so a file only an embed names is sent too.
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
         let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
@@ -1597,7 +1637,8 @@ impl Folder {
             let mut named: HashSet<String> = HashSet::new();
             for at in reading {
                 let (path, key) = (&paths[at], &keys[at]);
-                if !carries_frontmatter(path) || unchanged.contains(key) {
+                if !carries_frontmatter(path) || unchanged.contains(key) || holds_bytes(path, key)?
+                {
                     continue;
                 }
                 let Ok(bytes) = walked
@@ -1669,32 +1710,35 @@ impl Folder {
         report.waiting += waiting;
         report.unchanged += unchanged.len() - waiting;
         // A file already a file item is read whatever the search says, so one
-        // no longer embedded, or moved, is followed rather than journaled.
-        let files_bound: Vec<&state::Bound> = snapshot
-            .iter()
-            .filter(|row| !is_document(Path::new(&row.path)))
-            .collect();
-        let bound_paths: HashSet<&str> = files_bound.iter().map(|row| row.path.as_str()).collect();
-        let bound_marks: HashSet<&str> = files_bound
-            .iter()
-            .filter_map(|row| row.identity.as_deref())
-            .collect();
-        let bound = |path: &Path, key: &str| {
-            bound_paths.contains(key)
-                || walked
-                    .opened
-                    .get(path)
-                    .map(|captured| captured.metadata.borrow().clone())
-                    .and_then(|metadata| identity::of(&metadata))
-                    .or_else(|| walked.unread.get(path).copied())
-                    .is_some_and(|found| bound_marks.contains(found.key().as_str()))
+        // no longer embedded, or moved, is followed rather than journaled. A
+        // row at a document name is a file item's only where its item is one.
+        let bound = |path: &Path, key: &str| -> Result<bool> {
+            let mark = walked
+                .opened
+                .get(path)
+                .map(|captured| captured.metadata.borrow().clone())
+                .and_then(|metadata| identity::of(&metadata))
+                .or_else(|| walked.unread.get(path).copied())
+                .map(|found| found.key());
+            for row in [
+                by_path.get(key).copied(),
+                mark.as_deref().and_then(|mark| by_mark.get(mark).copied()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if !is_document(Path::new(&row.path)) || row_holds_bytes(row)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
         };
         let mut held: Vec<PathBuf> = Vec::new();
         for (path, key) in paths.iter().zip(&keys) {
             if unchanged.contains(key) {
                 continue;
             }
-            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
+            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)?
             {
                 held.push(path.clone());
             } else {
@@ -1706,6 +1750,7 @@ impl Folder {
         let identities = captured_identities(&held, &walked);
         let mut files = Vec::new();
         for path in held {
+            let file_bytes = holds_bytes(&path, &identity::relative(&self.root, &path)?)?;
             // Unread bytes still claim their file's identity before another
             // file at its old path can take its item.
             let deferred = || {
@@ -1726,7 +1771,8 @@ impl Folder {
                         .get(&path)
                         .ok_or_else(|| std::io::Error::other("file not opened"))
                         .and_then(|captured| {
-                            captured.read_settled(settle.filter(|_| !is_document(&path)))
+                            captured
+                                .read_settled(settle.filter(|_| !is_document(&path) || file_bytes))
                         });
                     let bytes = match read {
                         Ok(Some(bytes)) => bytes,
@@ -1757,9 +1803,14 @@ impl Folder {
                 report.skipped += 1;
                 continue;
             }
-            let (text, not_text) = kept_text(&path, &bytes);
+            let (text, not_text) = if file_bytes {
+                (String::new(), None)
+            } else {
+                kept_text(&path, &bytes)
+            };
             let decodes = not_text.is_none();
-            let read = (decodes && carries_frontmatter(&path)).then(|| document::read(&text));
+            let read = (decodes && !file_bytes && carries_frontmatter(&path))
+                .then(|| document::read(&text));
             let unreadable = match not_text {
                 None => read.as_ref().and_then(|read| {
                     read.unreadable
@@ -1853,48 +1904,7 @@ impl Folder {
                 continue;
             }
             if file.deferred {
-                if let Some(Claim {
-                    bound: Some(bound), ..
-                }) = claim
-                {
-                    let mut writes = bound.writes.clone();
-                    if bound.path != file.key {
-                        self.unbind_if_still(&bound)?;
-                        // The name alone says the title; the unread line is the
-                        // pull's to rewrite.
-                        let shown = bound
-                            .presentation
-                            .as_ref()
-                            .and_then(|agreed| line_of(agreed.front()));
-                        if let Some(retitle) =
-                            self.renamed_title(&bound.item_id, &bound, file, None, &catalog)?
-                            && retitle.refusal(&retitle.title, &catalog).is_none()
-                            && let Some(id) =
-                                self.queue_title(&bound.item_id, &retitle, &retitle.title, shown)?
-                        {
-                            writes.queued.push(state::Queued {
-                                id,
-                                save: writes.save,
-                                line: None,
-                            });
-                        }
-                        self.place(&bound.item_id, &file.key, &withheld)?;
-                        report.renamed += 1;
-                    }
-                    if bound.path != file.key || bound.identity != file.mark {
-                        let conn = self.core.conn()?;
-                        state::bind(
-                            &conn,
-                            &state::Bound {
-                                path: file.key.clone(),
-                                identity: file.mark.clone(),
-                                writes,
-                                ..bound
-                            },
-                        )?;
-                        state::journal_clear(&conn, &file.key)?;
-                    }
-                }
+                self.follow_unread(file, claim, &catalog, &withheld, &mut report)?;
                 continue;
             }
             // A file item's file is its bytes, whatever its name says.
@@ -1904,6 +1914,21 @@ impl Folder {
                     None => Ok(false),
                 }
             };
+            // No blob the server holds is empty, so a file item emptied in
+            // place, as an editor does before it writes, keeps its bytes until
+            // there are some. The item decides, not the name: a note may be
+            // empty.
+            if file.source.as_deref().is_some_and(<[u8]>::is_empty) && bytes_item()? {
+                let unread = Scanned::deferred(
+                    &self.root,
+                    &file.path,
+                    file.mark.clone(),
+                    walked.opened.get(&file.path),
+                )?;
+                self.follow_unread(&unread, claim, &catalog, &withheld, &mut report)?;
+                report.skipped += 1;
+                continue;
+            }
             if let Some(reason) = &file.unreadable
                 && !bytes_item()?
             {
@@ -2505,10 +2530,7 @@ impl Folder {
             .map(|row| (row.item_id.as_str(), row))
             .collect();
         let named = |file: &Scanned| -> Option<&state::Bound> {
-            match file.mark.as_deref().and_then(|mark| by_mark.get(mark)) {
-                Some(bound) => Some(bound),
-                None => by_path.get(file.key.as_str()).copied(),
-            }
+            named_row(file.mark.as_deref(), &file.key, &by_mark, &by_path)
         };
 
         let mut contests: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
@@ -2622,7 +2644,6 @@ impl Folder {
                 || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
-                || carries_frontmatter(&file.path)
             {
                 continue;
             }
@@ -2643,7 +2664,11 @@ impl Folder {
                 let Some(item) = self.core.get(&edge.source_id)? else {
                     continue;
                 };
-                if !self.holds_bytes(&item, file, catalog) {
+                // A note's file carries its id; only a file item's bytes sit at
+                // a document's name without one.
+                if (carries_frontmatter(&file.path) && bytes_of(&item, catalog).is_none())
+                    || !self.holds_bytes(&item, file, catalog)
+                {
                     continue;
                 }
                 taken.insert(item.id.clone());
@@ -2676,7 +2701,6 @@ impl Folder {
                 || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
-                || carries_frontmatter(&file.path)
             {
                 continue;
             }
@@ -2708,6 +2732,63 @@ impl Folder {
             }
         }
         Ok((claims, waiting))
+    }
+
+    /// A file the scan did not read, its bytes still settling or empty or
+    /// unreadable now: its item follows it by identity, or by name, and the
+    /// folder holds what it last agreed with meanwhile.
+    fn follow_unread(
+        &self,
+        file: &Scanned,
+        claim: Option<Claim>,
+        catalog: &Catalog,
+        withheld: &placement::Withheld,
+        report: &mut ScanReport,
+    ) -> Result<()> {
+        let Some(Claim {
+            bound: Some(bound), ..
+        }) = claim
+        else {
+            return Ok(());
+        };
+        let mut writes = bound.writes.clone();
+        if bound.path != file.key {
+            self.unbind_if_still(&bound)?;
+            // The name alone says the title; the unread line is the pull's
+            // to rewrite.
+            let shown = bound
+                .presentation
+                .as_ref()
+                .and_then(|agreed| line_of(agreed.front()));
+            if let Some(retitle) =
+                self.renamed_title(&bound.item_id, &bound, file, None, catalog)?
+                && retitle.refusal(&retitle.title, catalog).is_none()
+                && let Some(id) =
+                    self.queue_title(&bound.item_id, &retitle, &retitle.title, shown)?
+            {
+                writes.queued.push(state::Queued {
+                    id,
+                    save: writes.save,
+                    line: None,
+                });
+            }
+            self.place(&bound.item_id, &file.key, withheld)?;
+            report.renamed += 1;
+        }
+        if bound.path != file.key || bound.identity != file.mark {
+            let conn = self.core.conn()?;
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: file.key.clone(),
+                    identity: file.mark.clone(),
+                    writes,
+                    ..bound
+                },
+            )?;
+            state::journal_clear(&conn, &file.key)?;
+        }
+        Ok(())
     }
 
     /// Whether the copy holds the item, and as bytes rather than as a document.
@@ -2902,11 +2983,17 @@ impl Folder {
         // An item already in the bin is where the delete would put it, and the
         // server refuses a second delete `404`.
         let mut leaves = true;
-        let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
+        let missing = if held
+            .as_ref()
+            .is_some_and(|item| item.state != ItemState::Trashed)
+        {
             let holds = self.holds(item_id, settings, members);
-            let look = match &bound {
-                Some(bound) => peers.moved_to(bound, holds),
-                None => Look::Nowhere,
+            let look = match (&bound, &held) {
+                (Some(bound), Some(item)) => {
+                    let catalog = Catalog::load(&*self.core.conn()?)?;
+                    peers.moved_to(bound, holds, bytes_of(item, &catalog).is_some())
+                }
+                _ => Look::Nowhere,
             };
             match look {
                 // A folder that still holds the item writes its file again.
@@ -5459,7 +5546,9 @@ impl Folder {
         bound: &state::Bound,
         rendering: &Rendering<'_>,
     ) -> Result<bool> {
-        if !carries_frontmatter(Path::new(&bound.path)) {
+        if bytes_of(item, rendering.catalog).is_some()
+            || !carries_frontmatter(Path::new(&bound.path))
+        {
             return Ok(false);
         }
         let Ok(found) = self.read_text(self.root.join(&bound.path)) else {
@@ -6793,6 +6882,173 @@ mod tests {
             assert_eq!(report.updated, 1, "{name}: {report:?}");
             assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
         }
+    }
+
+    fn status_of(folder: &Folder, path: &str) -> status::FileStatus {
+        folder
+            .status()
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|file| file.path == path)
+            .unwrap_or_else(|| panic!("{path} has no status"))
+    }
+
+    #[test]
+    fn a_file_item_renamed_to_a_document_name_is_not_held_by_the_status() {
+        for (label, bytes, flag) in [
+            // Lone continuation bytes, none of them UTF-8.
+            ("bytes that are not UTF-8", vec![0x81; 4096], "encoding"),
+            (
+                "frontmatter that does not parse",
+                b"---\ntitle: [unclosed\n---\nbody\n".to_vec(),
+                "unreadable",
+            ),
+        ] {
+            let (dir, folder) = scanned_folder();
+            std::fs::write(dir.path().join("archive.bin"), &bytes).unwrap();
+            let first = folder.scan().unwrap();
+            assert_eq!(first.created, 1, "{label}: {first:?}");
+            let item_id = status_of(&folder, "archive.bin").item_id.unwrap();
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
+            // The witness: a new document with the same bytes is held.
+            std::fs::write(dir.path().join("fresh.md"), &bytes).unwrap();
+            let fresh = status_of(&folder, "fresh.md");
+            assert_eq!((fresh.status, fresh.flag), ("held", Some(flag)), "{label}");
+
+            let before = status_of(&folder, "notes.md");
+            assert_eq!(
+                (before.status, before.flag),
+                ("waiting", None),
+                "{label}: the status holds a file item the scan takes by its identity"
+            );
+            let report = folder.scan().unwrap();
+            assert_eq!(report.renamed, 1, "{label}: {report:?}");
+            let flagged: Vec<&str> = report.flagged.iter().map(|f| f.path.as_str()).collect();
+            assert_eq!(flagged, ["fresh.md"], "{label}");
+            let after = status_of(&folder, "notes.md");
+            assert_eq!(after.item_id.as_deref(), Some(item_id.as_str()), "{label}");
+            assert!(
+                after.status != "held" && after.flag.is_none(),
+                "{label}: {after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_item_emptied_at_a_document_name_waits_and_fails_no_scan() {
+        for name in ["notes.md", "notes.markdown", "notes.txt"] {
+            let (dir, folder) = scanned_folder();
+            let bytes = vec![0x82; 4096];
+            std::fs::write(dir.path().join("archive.bin"), &bytes).unwrap();
+            std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 2, "{name}");
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join(name)).unwrap();
+            assert_eq!(folder.scan().unwrap().renamed, 1, "{name}");
+            let held = |folder: &Folder| {
+                state::bound_at(&folder.core.conn().unwrap(), name)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{name} is not bound"))
+            };
+            let bound = held(&folder);
+
+            // An editor empties the file before it writes. The witnesses: a
+            // note emptied is sent empty, and a new file in the same scan is
+            // sent.
+            std::fs::write(dir.path().join(name), b"").unwrap();
+            std::fs::write(dir.path().join("note.md"), "").unwrap();
+            std::fs::write(dir.path().join("witness.bin"), [7, 7, 1]).unwrap();
+            let report = folder.scan().unwrap_or_else(|error| {
+                panic!("{name}: an emptied file item failed the scan: {error}")
+            });
+            assert_eq!(
+                (report.created, report.updated),
+                (1, 1),
+                "{name}: {report:?}"
+            );
+            assert!(report.flagged.is_empty(), "{name}: {:?}", report.flagged);
+            assert!(report.skipped >= 1, "{name}: {report:?}");
+            let waiting = held(&folder);
+            assert_eq!(waiting.item_id, bound.item_id, "{name}");
+            assert_eq!(waiting.content_hash, bound.content_hash, "{name}");
+            assert!(waiting.held.is_none(), "{name}: {:?}", waiting.held);
+
+            // Written whole, it goes up as the item's new bytes.
+            let edited = [bytes.as_slice(), b"."].concat();
+            std::fs::write(dir.path().join(name), &edited).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.updated, 1, "{name}: {report:?}");
+            assert_eq!(held(&folder).content_hash, state::hash(&edited), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_file_item_at_a_document_name_waits_for_the_settle_window() {
+        let (dir, folder) = scanned_folder();
+        std::fs::write(dir.path().join("archive.bin"), [0x83; 4096]).unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        std::fs::rename(dir.path().join("archive.bin"), dir.path().join("notes.md")).unwrap();
+        assert_eq!(folder.scan().unwrap().renamed, 1);
+        let hash = |folder: &Folder, path: &str| {
+            state::bound_at(&folder.core.conn().unwrap(), path)
+                .unwrap()
+                .map(|bound| bound.content_hash)
+        };
+        let before = hash(&folder, "notes.md").unwrap();
+
+        // Still being written: a copy in progress changes the file as it goes.
+        let growing = [0x81; 8192];
+        std::fs::write(dir.path().join("notes.md"), growing).unwrap();
+        // The witnesses: a file that is no document waits as well, and a note
+        // is read at once.
+        std::fs::write(dir.path().join("witness.bin"), [7, 7, 2]).unwrap();
+        std::fs::write(dir.path().join("fresh.md"), "a note\n").unwrap();
+        let report = folder
+            .scan_watching(true, Duration::from_secs(3600))
+            .unwrap();
+        let mut settling = report.settling.clone();
+        settling.sort_unstable();
+        assert_eq!(settling, ["notes.md", "witness.bin"], "{report:?}");
+        assert_eq!((report.created, report.updated), (1, 0), "{report:?}");
+        assert_eq!(hash(&folder, "notes.md").unwrap(), before);
+        assert!(hash(&folder, "witness.bin").is_none());
+
+        // Once it has settled, it is sent.
+        let report = folder.scan().unwrap();
+        assert_eq!(report.updated, 1, "{report:?}");
+        assert_eq!(hash(&folder, "notes.md").unwrap(), state::hash(&growing));
+    }
+
+    #[test]
+    fn a_file_item_at_a_document_name_embeds_nothing() {
+        let (dir, folder) = scanned_folder_with(
+            serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
+            None,
+        );
+        // The search holds notes and audio, so an image goes only where a
+        // note embeds it.
+        std::fs::write(dir.path().join("y.png"), [7, 7, 3]).unwrap();
+        std::fs::write(dir.path().join("x.png"), [7, 7, 4]).unwrap();
+        std::fs::write(dir.path().join("note.md"), "![[y.png]]\n").unwrap();
+        std::fs::write(dir.path().join("archive.mp3"), "![[x.png]]\n").unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(report.created, 3, "{report:?}");
+        let bound = |folder: &Folder, path: &str| {
+            state::bound_at(&folder.core.conn().unwrap(), path)
+                .unwrap()
+                .is_some()
+        };
+        // The witness: a note's embed is sent.
+        assert!(bound(&folder, "y.png"), "the note's embed was not sent");
+        assert!(!bound(&folder, "x.png"));
+
+        std::fs::rename(dir.path().join("archive.mp3"), dir.path().join("notes.md")).unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!(report.renamed, 1, "{report:?}");
+        assert!(
+            !bound(&folder, "x.png"),
+            "an embed in a file item's bytes was followed"
+        );
     }
 
     #[test]

@@ -132,6 +132,11 @@ impl Folder {
             .iter()
             .map(|row| (row.path.as_str(), row))
             .collect();
+        let by_mark: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
+            .collect();
+        let marks = super::captured_identities(&paths, &walked);
         let mut seen: HashSet<String> = HashSet::new();
         let mut files: Vec<FileStatus> = Vec::new();
         for held in named.flagged {
@@ -148,6 +153,15 @@ impl Folder {
                 .opened
                 .get(path)
                 .and_then(|captured| captured.read().ok());
+            // A file is its item's bytes, never a document, whatever its name
+            // says: the row at its path, else the one its identity names, as
+            // the scan's claim finds it.
+            let mark = marks.get(path).map(identity::Identity::key);
+            let row = super::named_row(mark.as_deref(), key, &by_mark, &by_path);
+            let bytes_item = match row {
+                Some(row) => self.file_item(&row.item_id, &catalog)?,
+                None => false,
+            };
             let mut entry = match by_path.get(key.as_str()) {
                 Some(bound) => self.bound_status(
                     bound,
@@ -160,6 +174,7 @@ impl Folder {
                     key,
                     path,
                     bytes.as_deref(),
+                    bytes_item,
                     (&settings, &catalog, &edge_types),
                 ),
             };
@@ -167,15 +182,10 @@ impl Folder {
             // The item is read only for a text near the limit.
             let near = bytes
                 .as_deref()
-                .filter(|_| is_document(path))
+                .filter(|_| is_document(path) && !bytes_item)
                 .and_then(|bytes| text_of(bytes).ok())
                 .and_then(|text| near_limit(key, text));
-            if let Some(near) = near
-                && match by_path.get(key.as_str()) {
-                    Some(bound) => !self.file_item(&bound.item_id, &catalog)?,
-                    None => true,
-                }
-            {
+            if let Some(near) = near {
                 entry.warning = Some(near.reason);
             }
             files.push(entry);
@@ -333,14 +343,18 @@ impl Folder {
         key: &str,
         path: &Path,
         bytes: Option<&[u8]>,
+        bytes_item: bool,
         (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
     ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
         if !is_document(path) && bytes.is_some_and(<[u8]>::is_empty) {
             return entry.because("empty", "is empty, and a file item holds bytes");
         }
-        // Held by the scan before anything binds it, so read as the scan reads.
+        // Held by the scan before anything binds it, so read as the scan reads:
+        // a file item renamed to a document's name is claimed by its identity
+        // and sent as its bytes, whatever they hold.
         if is_document(path)
+            && !bytes_item
             && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
                 Err(reason) => Some(reason.to_string()),
                 Ok(_) if !super::carries_frontmatter(path) => None,
