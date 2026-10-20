@@ -20,7 +20,7 @@ There is no client framework and no client-side rendering.
 | `local-date.ts`       | How a date is written: UTC from the server, the viewer's zone in the page.  |
 | `registry.ts`         | The pages of the console, for the page picker and the command search.       |
 | `navigation.ts`       | Logic the server and the browser share: stepping, matching, pagination.     |
-| `assets.generated.ts` | The built stylesheet and script, with their hashes. Generated; do not edit. |
+| `assets.generated.ts` | The built stylesheet and script, with their hashes. Generated, not tracked. |
 
 ## The parts
 
@@ -227,12 +227,17 @@ server does not use.
 joins `tokens.css` and `parts.css` into one stylesheet, and writes both into
 `assets.generated.ts` with the SHA-1 of each.
 
-- `pnpm build` and `pnpm dev` run it first.
-- `pnpm --filter @withmarfa/server assets:watch` rebuilds when a source
+- Git does not track `assets.generated.ts`, so two pull requests that change
+  the pages never conflict in it. `pnpm install` (the server's `prepare`
+  script), `pnpm build`, `pnpm dev`, `generate:openapi`, the tests' global
+  setup, and the scripts that boot the server from source
+  (`conformance/scripts/marfa-server.ts` and `core/scripts/server-up.sh`)
+  each write it from the sources first, and leave a current file alone.
+- `pnpm --filter @withmarfa/server assets:build` writes it by hand, and
+  `pnpm --filter @withmarfa/server assets:watch` rebuilds when a source
   changes, for use beside `pnpm dev`.
-- `assets.test.ts` fails when the committed file differs from what the sources
-  build to, so run `pnpm --filter @withmarfa/server assets:build` and commit the
-  result after changing a style or a module.
+- `assets.test.ts` checks that the file is what the sources build to and that
+  a write is whole and happens only when the bytes differ.
 
 The server serves the files at `/auth/static/pages.css` and
 `/auth/static/pages.js`, through the same route, with the same strong ETag,

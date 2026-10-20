@@ -236,6 +236,26 @@ function ensureBuilt(): void {
   }
 }
 
+let pageAssetsWritten = false;
+
+/**
+ * The server imports its page assets from a generated file Git does not
+ * track. Written here from the sources, once for the process, so a boot from
+ * source never serves a stylesheet or script older than them.
+ */
+function ensurePageAssets(): void {
+  if (pageAssetsWritten) return;
+  const build = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "scripts/build-page-assets.ts"],
+    { cwd: resolve(REPO_ROOT, "packages/server"), stdio: "inherit" },
+  );
+  if (build.status !== 0) {
+    throw new Error("building the page assets failed");
+  }
+  pageAssetsWritten = true;
+}
+
 /** Runtime command supervised for a server entrypoint and its preloads. */
 export function serverRuntime(args: string[]): [string, ...string[]] {
   // The tsx CLI force-kills a child that cannot acknowledge a signal within
@@ -387,6 +407,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // the name.
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
   ensureBuilt();
+  ensurePageAssets();
 
   const port =
     args.port ?? namedPort(args.env?.PORT) ?? namedPort(process.env.PORT) ?? 0;

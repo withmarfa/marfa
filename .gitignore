@@ -4,6 +4,10 @@ node_modules/
 # Build output
 dist/
 
+# The page system's stylesheet and script, built from its sources by
+# `pnpm build`, `pnpm dev` and the tests' global setup.
+packages/server/src/pages/assets.generated.ts*
+
 # pnpm pack output — manual first-publish flow leaves a tarball
 # in the package directory; never commit it.
 *.tgz

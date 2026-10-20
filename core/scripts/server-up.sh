@@ -19,6 +19,11 @@ set -euo pipefail
 umask 077
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
+# The server imports its page assets from a generated file Git does not track.
+# Standard output carries the environment this script prints, so the build
+# reports on standard error.
+(cd "${repo}/packages/server" && node --import tsx scripts/build-page-assets.ts >&2) ||
+  { echo "server-up: building the page assets failed" >&2; exit 1; }
 keep=""
 if [[ -n "${MARFA_SERVER_KEEP:-}" ]]; then
   state="${MARFA_SERVER_KEEP}"
