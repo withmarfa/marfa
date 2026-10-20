@@ -78,6 +78,11 @@ function namesOf(picks: readonly LevelPick[], total?: number): string {
 export interface LevelPick {
   /** What the control is for, lower case and plural: "notes". */
   noun: string;
+  /**
+   * What a control stands for where it is one item type: its identifier, which
+   * names it where another control has the same noun.
+   */
+  alias?: string;
   /** The level the control is set to. */
   level: Level;
   /** The level the app already holds. */
@@ -86,13 +91,48 @@ export interface LevelPick {
   type?: boolean;
 }
 
+/** What a line needs of a control to name it: see {@link nameApart}. */
+export interface Nameable {
+  noun: string;
+  alias?: string;
+}
+
+/**
+ * The picks, each named by its identifier where another pick has its noun and
+ * the two stand for different things: "tasks and tasks" says nothing. A pick
+ * with no identifier keeps its noun. `alongside` is what else the page shows
+ * under the same nouns, such as what the app holds beside what it is asked
+ * for, so a line never reads as the same tasks changing when they are two
+ * types. The server and the browser call this on the same picks, so the line
+ * is the same in both.
+ */
+export function nameApart<T extends Nameable>(
+  picks: readonly T[],
+  alongside: readonly Nameable[] = [],
+): T[] {
+  const stands = new Map<string, Set<string | undefined>>();
+  for (const pick of [...picks, ...alongside])
+    stands.set(pick.noun, (stands.get(pick.noun) ?? new Set()).add(pick.alias));
+  return picks.map((pick) =>
+    pick.alias !== undefined && (stands.get(pick.noun)?.size ?? 0) > 1
+      ? { ...pick, noun: pick.alias }
+      : pick,
+  );
+}
+
 /**
  * What a set of level controls gives, as "read and edit notes and drafts;
  * read events". A control that adds nothing to what the app holds is left
  * out, so the line says what this approval gives.
  */
-function levelWords(picks: readonly LevelPick[], total?: number): string[] {
-  const gives = picks.filter((pick) => addsAccess(pick.level, pick.held));
+function levelWords(
+  picks: readonly LevelPick[],
+  total?: number,
+  alongside: readonly Nameable[] = [],
+): string[] {
+  const gives = nameApart(picks, alongside).filter((pick) =>
+    addsAccess(pick.level, pick.held),
+  );
   const edit = gives.filter((pick) => pick.level === "write");
   const read = gives.filter((pick) => pick.level === "read");
   const words: string[] = [];
@@ -106,8 +146,9 @@ export function dataSummary(
   picks: readonly LevelPick[],
   empty: string,
   total?: number,
+  alongside: readonly Nameable[] = [],
 ): string {
-  const words = levelWords(picks, total);
+  const words = levelWords(picks, total, alongside);
   return words.length > 0 ? capitalize(words.join("; ")) : empty;
 }
 
@@ -119,8 +160,9 @@ export function profileSummary(
   picks: readonly LevelPick[],
   switchesOn: readonly string[],
   empty: string,
+  alongside: readonly Nameable[] = [],
 ): string {
-  const words = levelWords(picks);
+  const words = levelWords(picks, undefined, alongside);
   if (switchesOn.length > 0)
     words.push(`see ${listWords(switchesOn.map(lowerFirst))}`);
   return words.length > 0 ? capitalize(words.join("; ")) : empty;
@@ -136,6 +178,8 @@ export function powersSummary(on: number, total: number): string {
 
 export interface HeldLevel {
   noun: string;
+  /** See {@link LevelPick.alias}. */
+  alias?: string;
   level: Level;
 }
 
@@ -147,8 +191,13 @@ export function heldSummary(
   levels: readonly HeldLevel[],
   seen: readonly string[],
   powers: readonly string[],
+  alongside: readonly Nameable[] = [],
 ): string {
-  const words = levelWords(levels.map((pick) => ({ ...pick, held: "none" })));
+  const words = levelWords(
+    levels.map((pick) => ({ ...pick, held: "none" })),
+    undefined,
+    alongside,
+  );
   if (seen.length > 0) words.push(`see ${listWords(seen.map(lowerFirst))}`);
   const line = capitalize(words.join("; "));
   const parts = line === "" ? [] : [line];

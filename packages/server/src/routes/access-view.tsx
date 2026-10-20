@@ -35,7 +35,11 @@ function HeldRows(props: { rows: readonly HeldRow[] }) {
   return (
     <>
       {props.rows.map((row) => (
-        <Row title={row.title} value={row.value} />
+        <Row
+          title={row.title}
+          description={row.description}
+          value={row.value}
+        />
       ))}
     </>
   );

@@ -21,6 +21,7 @@ import {
   SHOWN_TYPES,
   type Level,
   type LevelPick,
+  type Nameable,
 } from "../access-summary.js";
 
 const asLevel = (value: string | undefined): Level =>
@@ -52,12 +53,24 @@ function picksIn(group: HTMLElement): LevelPick[] {
     const held = asLevel(select.dataset.held);
     return {
       noun: select.dataset.noun ?? "",
+      alias: select.dataset.alias,
       held,
       level: levelOfValue(select.value, held),
       type: select.closest("[data-choose-types]") !== null,
     };
   });
 }
+
+/** What the app holds, which the lines name a type beside. */
+const heldIn = (group: HTMLElement): Nameable[] =>
+  [
+    ...(group.closest("form") ?? group).querySelectorAll<HTMLElement>(
+      "[data-held-pick]",
+    ),
+  ].map((pick) => ({
+    noun: pick.dataset.noun ?? "",
+    alias: pick.dataset.alias,
+  }));
 
 const switchesIn = (group: HTMLElement): HTMLInputElement[] => [
   ...group.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'),
@@ -74,6 +87,7 @@ function summaryOf(group: HTMLElement): string | undefined {
         picksIn(group),
         empty,
         choosingTypes(group) && total > 0 ? total : undefined,
+        heldIn(group),
       );
     }
     case "profile":
@@ -83,6 +97,7 @@ function summaryOf(group: HTMLElement): string | undefined {
           .filter((box) => box.checked)
           .map((box) => box.dataset.phrase ?? ""),
         empty,
+        heldIn(group),
       );
     case "powers": {
       const boxes = switchesIn(group);

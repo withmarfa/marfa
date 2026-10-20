@@ -249,3 +249,21 @@ describe("a key's access", () => {
     expect(held.powers.map((power) => power.title)).toEqual(fixture.powers);
   });
 });
+
+describe("AccessView for types that share a label", () => {
+  const view = visibleText(
+    html(
+      <AccessView
+        scopes={["core.task:read", "aic.ticket.task:write", "core.note:read"]}
+        typeLabels={{ "aic.ticket.task": "Task" }}
+      />,
+    ),
+  );
+
+  it("shows each such type's identifier under its label, and none under a label of its own", () => {
+    expect(view).toContain("Task core.task Read only");
+    expect(view).toContain("Task aic.ticket.task Read and edit");
+    expect(view).toContain("Note Read only");
+    expect(view).not.toContain("core.note");
+  });
+});

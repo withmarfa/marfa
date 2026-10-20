@@ -1546,3 +1546,133 @@ describe("what the approval pages keep when an app holds types and asks again fo
     ]);
   });
 });
+
+describe("what the approval pages say of item types that share a label", () => {
+  const booted = bootFor("approval-types-same-label");
+  beforeAll(async () => {
+    await booted.up();
+    // The shipped `core.task` is labeled "Task" too, and the page's own
+    // "Profile" row is titled like the second type.
+    for (const [id, label] of [
+      ["aic.ticket.task", "Task"],
+      ["aic.me.profile", "Profile"],
+    ]) {
+      const registered = await fetch(`${server.apiUrl}/types`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${server.workingKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id,
+          label,
+          fields: { title: { type: "string" } },
+        }),
+      });
+      expect(registered.status, await registered.clone().text()).toBe(201);
+    }
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  /** The rows named `label`, each with what a person reads under the label. */
+  const linesUnder = (html: string, label: string): string[] =>
+    readRows(html)
+      .filter((r) => r.control.label === label)
+      .map((r) =>
+        r.text.slice(r.text.lastIndexOf(label) + label.length).trim(),
+      );
+
+  it("shows each of them with its identifier, and a type with a label of its own without one, on both pages", async () => {
+    for (const [page, html] of await bothPages(ALL)) {
+      expect(linesUnder(html, "Task"), page).toEqual([
+        "core.task",
+        "aic.ticket.task",
+      ]);
+      expect(
+        readRows(html)
+          .filter((r) => r.control.label === "Task")
+          .map((r) => r.control.options.at(-1)?.value),
+        page,
+      ).toEqual(["core.task:write", "aic.ticket.task:write"]);
+      expect(linesUnder(html, "Note"), page).toEqual([""]);
+    }
+  });
+
+  it("describes the control of each of them by its identifier, and keeps the label as its name", async () => {
+    for (const [page, html] of await bothPages(ALL)) {
+      const described = readRows(html)
+        .filter((r) => r.control.label === "Task")
+        .map((r) =>
+          (r.control.describedby ?? "")
+            .split(" ")
+            .filter(Boolean)
+            .map((id) =>
+              visibleText(
+                new RegExp(
+                  `<div[^>]*\\bid="${id}"[^>]*>([\\s\\S]*?)</div>`,
+                ).exec(html)?.[1] ?? "",
+              ),
+            )
+            .join(" "),
+        );
+      expect(described, page).toEqual(["core.task", "aic.ticket.task"]);
+    }
+  });
+
+  it("gives a type the identifier when a page's own row shares its label, and that row none", async () => {
+    const asked = "*:read profile:read";
+    const app = await register(ALL);
+    const screens: [string, string][] = [
+      ["the consent screen", (await consentScreen(app, asked)).html],
+      ["the device approval page", (await deviceScreen(app, asked)).html],
+    ];
+    for (const [page, html] of screens) {
+      const profiles = readRows(html).filter(
+        (r) => r.control.label === "Profile",
+      );
+      const byName = (name: string) =>
+        profiles.find((r) => r.control.name === name)?.text ?? "";
+      expect(profiles, page).toHaveLength(2);
+      expect(byName("types"), page).toContain("aic.me.profile");
+      // The page's own row says what it covers, and names no identifier.
+      expect(byName("scopes"), page).not.toContain("aic.me.profile");
+      expect(
+        byName("scopes")
+          .replace(/^.*?Profile/, "")
+          .trim(),
+        page,
+      ).toMatch(/^Your name, email address and avatar/);
+    }
+  });
+
+  it("shows no identifier where only one type of a label is on the page, though the instance has two", async () => {
+    // The witness for the test above: the same label, asked of one type alone.
+    const one = await consentScreen(
+      await register(ALL),
+      "core.task:read core.note:read",
+    );
+    expect(linesUnder(one.html, "Task")).toEqual([""]);
+  });
+});
+
+describe("what the approval pages say of one item type shown in two rows", () => {
+  const booted = bootFor("approval-types-one-type-twice");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("shows no identifier under either row, because both are the same type", async () => {
+    // Asked beside all data, the type has a row of its own and one in the list of types.
+    const { html } = await consentScreen(
+      await register(ALL),
+      "*:read core.task:write",
+    );
+    const tasks = readRows(html).filter((r) => r.control.label === "Task");
+    // The witness: it is shown twice.
+    expect(tasks.map((r) => r.control.name).sort()).toEqual([
+      "scopes",
+      "types",
+    ]);
+    for (const row of tasks)
+      expect(row.text.slice(row.text.lastIndexOf("Task") + 4).trim()).toBe("");
+  });
+});

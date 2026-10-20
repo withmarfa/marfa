@@ -34,6 +34,8 @@ import {
   listWords,
   levelOfValue,
   lowerFirst,
+  nameApart,
+  type Nameable,
   powersSummary,
   profileSummary,
   type HeldLevel,
@@ -118,6 +120,8 @@ export interface LevelRow {
   selected: string;
   /** Present on a row for all data when the person may choose types instead. */
   choose?: ChooseTypes;
+  /** The item type the row is for, where it is for one item type: the identifier a search matches and a clash names it by. */
+  type?: string;
 }
 
 /** One thing the app asks for that is simply on or off. */
@@ -135,6 +139,8 @@ export interface SwitchRow {
 /** One thing the app holds, at the level it holds it. */
 export interface HeldRow {
   title: string;
+  /** Set where other rows share the title: what this one stands for. */
+  description?: string;
   value: string;
 }
 
@@ -155,6 +161,8 @@ export interface AccessModel {
   powers: SwitchRow[];
   /** What the app already holds, to show and not to change. */
   held: HeldRow[];
+  /** The levels it holds, which the browser names beside the ones it rebuilds a line from. */
+  heldLevels: HeldLevel[];
   summaries: AccessSummaries;
   /** Submitted with the form without a control: the OAuth mechanisms the request names. */
   mechanisms: string[];
@@ -227,8 +235,12 @@ function isCarried(literal: string, held: readonly string[]): boolean {
   return isMechanism(literal) || grantCoversScope(held, literal);
 }
 
-/** The label an exact item type carries: the instance's, then the shipped registry's. */
-function typeLabel(pattern: string, input: Words): string {
+/**
+ * The label an exact item type carries: the instance's, then the shipped
+ * registry's. Every page names a type through here, so one type reads the same
+ * wherever it is shown.
+ */
+export function typeLabel(pattern: string, input: Words): string {
   return (
     input.typeLabels?.[pattern] ??
     getTypeSchema(pattern)?.label ??
@@ -305,7 +317,9 @@ export function buildAccess(given: AccessInput): AccessModel {
     ...given,
     typeLabels: {
       ...Object.fromEntries(
-        (given.chooseTypes ?? []).map((type) => [type.id, type.label]),
+        (given.chooseTypes ?? []).flatMap((type) =>
+          type.label === undefined ? [] : [[type.id, type.label]],
+        ),
       ),
       ...given.typeLabels,
     },
@@ -340,6 +354,8 @@ export function buildAccess(given: AccessInput): AccessModel {
 
   let counter = 0;
   const nextId = (): string => `access-${String(++counter)}`;
+  /** The pattern each level row stands for, by the row's id. */
+  const patternOf = new Map<string, string>();
 
   const rowFor = (ask: Ask, name?: "types"): LevelRow | null => {
     const floor = levelHeld(held, ask.scope.typePattern);
@@ -366,10 +382,13 @@ export function buildAccess(given: AccessInput): AccessModel {
     const pick = wanted ?? options[0];
     const { title, noun, description } = describe(ask.scope, input);
     const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}`;
+    const id = nextId();
+    patternOf.set(id, ask.scope.typePattern);
     return {
       kind: "level",
-      id: nextId(),
+      id,
       ...(name === undefined ? {} : { name }),
+      ...(isExactTypeScope(ask.scope) ? { type: ask.scope.typePattern } : {}),
       title,
       noun,
       held: floor,
@@ -406,7 +425,6 @@ export function buildAccess(given: AccessInput): AccessModel {
 
   const data: LevelRow[] = [];
   const profile: (LevelRow | SwitchRow)[] = [];
-  const patternOf = new Map<string, string>();
   let offersEdit = false;
   for (const ask of asks.values()) {
     const row = rowFor(ask);
@@ -416,7 +434,6 @@ export function buildAccess(given: AccessInput): AccessModel {
       row.choose = choose;
       row.options.push({ value: CHOOSE_TYPES, label: CHOOSE_TYPES_LABEL });
     }
-    patternOf.set(row.id, ask.scope.typePattern);
     if (
       (ask.scope.kind === "type" || ask.scope.kind === "content") &&
       row.options.some((option) => option.label === LEVEL_LABELS.write)
@@ -425,17 +442,6 @@ export function buildAccess(given: AccessInput): AccessModel {
     if (ask.scope.kind === "profile") profile.push(row);
     else data.push(row);
   }
-  // Two things that read alike are told apart by what they are called in
-  // the registry, so no control is left unread.
-  const seen = new Map<string, number>();
-  for (const row of [...data, ...profile])
-    seen.set(row.title, (seen.get(row.title) ?? 0) + 1);
-  for (const row of [...data, ...profile]) {
-    if (row.kind !== "level" || (seen.get(row.title) ?? 0) < 2) continue;
-    const pattern = patternOf.get(row.id);
-    row.description = [pattern, row.description].filter(Boolean).join(". ");
-  }
-
   const powers = new Map<string, SwitchRow[]>();
   for (const scope of switches) {
     const literal = scopeLiteral(scope);
@@ -474,7 +480,20 @@ export function buildAccess(given: AccessInput): AccessModel {
       ),
     );
 
-  const heldList = describeHeld(held, input);
+  const offered = [...data, ...profile].flatMap((row) =>
+    row.kind === "level" ? [row, ...(row.choose?.rows ?? [])] : [],
+  );
+  const heldList = describeHeld(
+    held,
+    input,
+    {},
+    offered.map((row) => ({
+      row,
+      noun: row.noun,
+      pattern: patternOf.get(row.id) ?? "",
+      exact: row.type !== undefined,
+    })),
+  );
   const empty = {
     data: returning ? "Nothing new turned on" : "No access to your data",
     profile: returning ? "Nothing new turned on" : "No access to your profile",
@@ -484,6 +503,7 @@ export function buildAccess(given: AccessInput): AccessModel {
       .filter((row): row is LevelRow => row.kind === "level")
       .map((row) => ({
         noun: row.noun,
+        alias: row.type,
         held: row.held,
         level: levelOfValue(row.selected, row.held),
       }));
@@ -493,8 +513,9 @@ export function buildAccess(given: AccessInput): AccessModel {
     profile,
     powers: ordered,
     held: heldList.rows,
+    heldLevels: heldList.levels,
     summaries: {
-      data: dataSummary(picks(data), empty.data),
+      data: dataSummary(picks(data), empty.data, undefined, heldList.levels),
       profile: profileSummary(
         picks(profile),
         profile
@@ -502,6 +523,7 @@ export function buildAccess(given: AccessInput): AccessModel {
           .filter((row) => row.checked)
           .map((row) => row.title),
         empty.profile,
+        heldList.levels,
       ),
       powers: powersSummary(
         ordered.filter((row) => row.checked).length,
@@ -534,6 +556,8 @@ export interface HeldPower {
 export interface HeldAccess {
   /** One line for each thing held, in the order held: the box on the approval pages. */
   rows: HeldRow[];
+  /** What is held at each level, as a line names it. */
+  levels: HeldLevel[];
   /** What is held of the person's data, links and definitions, at the level held. */
   data: HeldRow[];
   /** What is held of the person's profile, at the level held. */
@@ -544,6 +568,37 @@ export interface HeldAccess {
   summary: string;
   /** The line for each group, as the approval controls say it. */
   summaries: { data: string; profile: string; powers: string };
+}
+
+/** A row of a page beside the pattern it stands for, and whether that is one item type exactly. */
+interface Named {
+  row: { title: string; description?: string };
+  /** What the row's control is for, as a lines names it. */
+  noun: string;
+  pattern: string;
+  exact: boolean;
+}
+
+/**
+ * Where rows a person reads together share a title but stand for different
+ * things, put what an item type stands for under its title: two item types
+ * can share a label, and so can a type and a curated row such as Profile, and
+ * a list of "Task" and "Task" leaves the person nothing to tell them by. A
+ * curated row never gets a line, since its title is the name of what it is.
+ * A row whose title is its own is left as it is. Call it once for a page's
+ * rows, since a second call would name them twice.
+ */
+function tellApart(named: readonly Named[]): void {
+  const patterns = new Map<string, Set<string>>();
+  for (const { row, pattern } of named)
+    patterns.set(
+      row.title,
+      (patterns.get(row.title) ?? new Set()).add(pattern),
+    );
+  for (const { row, pattern, exact } of named) {
+    if (!exact || (patterns.get(row.title)?.size ?? 0) < 2) continue;
+    row.description = [pattern, row.description].filter(Boolean).join(". ");
+  }
 }
 
 /**
@@ -564,13 +619,18 @@ export interface HeldExtras {
  * Describe the scopes a credential holds: an app's consent or a key's
  * permissions read as scopes ({@link scopesOfKey}). The mechanisms
  * (`openid`, `offline_access`) are no access and are left out.
+ *
+ * `alongside` is the rows the same page offers, so that a held row and an
+ * offered one that read alike are told apart too.
  */
 export function describeHeld(
   held: readonly string[],
   words: Words,
   extras: HeldExtras = {},
+  alongside: readonly Named[] = [],
 ): HeldAccess {
   const rows = new Map<string, HeldRow>();
+  const named: Named[] = [];
   const data: HeldRow[] = [];
   const profile: HeldRow[] = [];
   const powers: HeldPower[] = [];
@@ -598,15 +658,18 @@ export function describeHeld(
     const { title, noun } = describe(scope, words);
     if (isLevelKind(scope)) {
       const level = levelHeld(held, scope.typePattern);
-      const row = { title, value: LEVEL_LABELS[level] };
+      const row: HeldRow = { title, value: LEVEL_LABELS[level] };
       rows.set(key, row);
-      levels.push({ noun, level });
+      const exact = isExactTypeScope(scope);
+      const alias = exact ? scope.typePattern : undefined;
+      named.push({ row, noun, pattern: scope.typePattern, exact });
+      levels.push({ noun, alias, level });
       if (scope.kind === "profile") {
         profile.push(row);
-        profileLevels.push({ noun, level });
+        profileLevels.push({ noun, alias, level });
       } else {
         data.push(row);
-        dataLevels.push({ noun, level });
+        dataLevels.push({ noun, alias, level });
       }
     } else {
       const row = { title, value: "On" };
@@ -631,24 +694,37 @@ export function describeHeld(
   }
   // Held at no access: shown as such, and said in the line, because a wider
   // grant beside it would otherwise read as covering it.
-  const noAccess = { data: [] as string[], profile: [] as string[] };
+  const noAccess = {
+    data: [] as { noun: string; alias?: string }[],
+    profile: [] as { noun: string; alias?: string }[],
+  };
   for (const [key, { scope, profile: isProfile }] of denied) {
     const { title, noun } = describe(scope, words);
-    const row = { title, value: LEVEL_LABELS.none };
+    const row: HeldRow = { title, value: LEVEL_LABELS.none };
     rows.set(key, row);
+    const exact = isExactTypeScope(scope);
+    named.push({ row, noun, pattern: scope.typePattern, exact });
     (isProfile ? profile : data).push(row);
-    (isProfile ? noAccess.profile : noAccess.data).push(noun);
+    (isProfile ? noAccess.profile : noAccess.data).push({
+      noun,
+      alias: exact ? scope.typePattern : undefined,
+    });
   }
   for (const [namespace, level] of Object.entries(extras.extensions ?? {})) {
     const row = { title: namespace, value: LEVEL_LABELS[level] };
     rows.set(`extension:${namespace}`, row);
     data.push(row);
-    if (level === "none") noAccess.data.push(namespace);
+    if (level === "none") noAccess.data.push({ noun: namespace });
     else {
       levels.push({ noun: namespace, level });
       dataLevels.push({ noun: namespace, level });
     }
   }
+  tellApart([...named, ...alongside]);
+  const beside: Nameable[] = alongside.map((other) => ({
+    noun: other.noun,
+    alias: other.exact ? other.pattern : undefined,
+  }));
   const none = {
     data: "No access to your data",
     profile: "No access to your profile",
@@ -656,25 +732,28 @@ export function describeHeld(
   const withNoAccess = (
     line: string,
     empty: string,
-    nouns: readonly string[],
+    denied: readonly { noun: string; alias?: string }[],
   ): string => {
-    if (nouns.length === 0) return line;
-    const denial = `no access to ${listWords(nouns)}`;
+    if (denied.length === 0) return line;
+    const denial = `no access to ${listWords(nameApart(denied, beside).map((d) => d.noun))}`;
     return line === empty
       ? denial.charAt(0).toUpperCase() + denial.slice(1)
       : `${line}; ${denial}`;
   };
   return {
     rows: [...rows.values()],
+    levels,
     data,
     profile,
     powers,
-    summary: heldSummary(levels, seen, powerTitles),
+    summary: heldSummary(levels, seen, powerTitles, beside),
     summaries: {
       data: withNoAccess(
         dataSummary(
           dataLevels.map((pick) => ({ ...pick, held: "none" })),
           none.data,
+          undefined,
+          beside,
         ),
         none.data,
         noAccess.data,
@@ -684,6 +763,7 @@ export function describeHeld(
           profileLevels.map((pick) => ({ ...pick, held: "none" })),
           seen,
           none.profile,
+          beside,
         ),
         none.profile,
         noAccess.profile,

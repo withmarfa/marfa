@@ -106,7 +106,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
-import { resolveSelection } from "./access-model.js";
+import { resolveSelection, typeLabel } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import {
   canonicalizeOAuthQueryParams,
@@ -1583,7 +1583,11 @@ export async function resolveWildcardExpansions(
   for (const root of wildcardRoots) {
     const names = types
       .filter((t) => t.id.startsWith(`${root}.`))
-      .map((t) => t.label ?? t.id)
+      .map((t) =>
+        typeLabel(t.id, {
+          typeLabels: t.label === undefined ? undefined : { [t.id]: t.label },
+        }),
+      )
       .sort();
     if (names.length > 0) out[`${root}.*`] = names;
   }

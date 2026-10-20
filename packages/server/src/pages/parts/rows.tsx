@@ -9,6 +9,8 @@ interface RowCommon {
   id?: string;
   title: string;
   description?: string;
+  /** The id of the description line, for a control that names it as its description. */
+  descriptionId?: string;
   descriptionTone?: "danger";
   /** A short mark after the title, such as "New". */
   badge?: string;
@@ -70,6 +72,7 @@ export function Row(props: RowProps) {
   const className = `row${props.description ? " has-d" : ""}`;
   const description = props.description && (
     <div
+      id={props.descriptionId}
       class={props.descriptionTone ? `rd ${props.descriptionTone}` : "rd"}
       title={
         props.description.length > LONG_DESCRIPTION

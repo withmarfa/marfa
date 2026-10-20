@@ -1114,6 +1114,215 @@ describe("Approve access in a browser, choosing types in place of all data", () 
   );
 });
 
+describe("Approve access in a browser, choosing between types that share a label", () => {
+  inWorld();
+
+  /** An instance type labeled like the shipped `core.task`. */
+  const ensureSharedLabelType = async (): Promise<void> => {
+    if (await ctx.storage.types.get("aic.ticket.task")) return;
+    await ctx.storage.types.create({
+      id: "aic.ticket.task",
+      label: "Task",
+      version: 1,
+      fields: {},
+    });
+  };
+
+  inBrowser(
+    "tells two types called Task apart by identifier, and finds a type by it",
+    async () => {
+      await ensureSharedLabelType();
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Same Label App", "*:read *:write");
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        const tasks = b.page.locator("[data-type-row]", {
+          has: b.page.locator(".rt", { hasText: /^Task$/ }),
+        });
+        expect(await tasks.locator(".rd").allTextContents()).toEqual([
+          "core.task",
+          "aic.ticket.task",
+        ]);
+        // A type whose label is its own says nothing more.
+        const notes = b.page.locator("[data-type-row]", {
+          has: b.page.locator(".rt", { hasText: /^Note$/ }),
+        });
+        expect(await notes.locator(".rd").count()).toBe(0);
+
+        const search = b.page.getByRole("searchbox", { name: "Search types" });
+        await search.fill("ticket");
+        expect(
+          await b.page
+            .locator("[data-type-row]:not([hidden]) .rd")
+            .allTextContents(),
+        ).toEqual(["aic.ticket.task"]);
+        await search.fill("core.note");
+        expect(
+          await b.page
+            .locator("[data-type-row]:not([hidden]) .rt")
+            .allTextContents(),
+        ).toEqual(["Note"]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "gives each its identifier as its description, and says which is meant in the line under Your data",
+    async () => {
+      await ensureSharedLabelType();
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Same Label Words App", "*:read *:write");
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        const tasks = b.page.getByRole("combobox", { name: "Task" });
+        expect(await tasks.count()).toBe(2);
+        const descriptions: string[] = [];
+        for (const i of [0, 1]) {
+          const id = await tasks.nth(i).getAttribute("aria-describedby");
+          descriptions.push(
+            (await b.page.locator(`[id="${id ?? ""}"]`).textContent()) ?? "",
+          );
+        }
+        expect(descriptions).toEqual(["core.task", "aic.ticket.task"]);
+
+        const line = b.page
+          .locator("details.disclosure-row", {
+            has: b.page.locator("summary .rt", { hasText: "Your data" }),
+          })
+          .locator("summary [data-summary]");
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        await tasks.nth(0).selectOption({ label: "Read only" });
+        await tasks.nth(1).selectOption({ label: "Read only" });
+        expect(await line.textContent()).toBe(
+          "Read core.task and aic.ticket.task",
+        );
+        await tasks.nth(1).selectOption({ label: "Read and edit" });
+        expect(await line.textContent()).toBe(
+          "Read and edit aic.ticket.task; read core.task",
+        );
+        // A type whose label is its own is still named by it.
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read only" });
+        expect(await line.textContent()).toBe(
+          "Read and edit aic.ticket.task; read notes and core.task",
+        );
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "tells them apart in what the app already holds, and says it in the line",
+    async () => {
+      await ensureSharedLabelType();
+      const b = await openSignedIn();
+      try {
+        const app = await registerApp("*:read *:write", "Holds Two Tasks");
+        await b.page.goto(authorizeUrl(app, "*:read", pkce()));
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        const tasks = b.page.getByRole("combobox", { name: "Task" });
+        await tasks.nth(0).selectOption({ label: "Read only" });
+        await tasks.nth(1).selectOption({ label: "Read only" });
+        await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+
+        await b.page.goto(authorizeUrl(app, "*:read *:write", pkce()));
+        await b.page.getByText("Already allowed").click();
+        const held = b.page.locator("details.disclosure-row", {
+          has: b.page.locator("summary .rt", { hasText: "Already allowed" }),
+        });
+        expect(await held.locator("summary .rd").textContent()).toBe(
+          "Read core.task and aic.ticket.task",
+        );
+        // The line under the box, then the line under each held type.
+        expect((await held.locator(".rd").allTextContents()).slice(1)).toEqual([
+          "core.task",
+          "aic.ticket.task",
+        ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "names a type by identifier in the lines when what the app holds reads alike",
+    async () => {
+      await ensureSharedLabelType();
+      const b = await openSignedIn();
+      try {
+        const app = await registerApp("*:read *:write", "Holds One Task");
+        await b.page.goto(authorizeUrl(app, "*:read *:write", pkce()));
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        await b.page
+          .getByRole("combobox", { name: "Task" })
+          .nth(0)
+          .selectOption({ label: "Read and edit" });
+        await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+
+        // It holds core.task in full, so only the other "Task" is offered.
+        await b.page.goto(authorizeUrl(app, "*:read *:write", pkce()));
+        const held = b.page.locator("details.disclosure-row", {
+          has: b.page.locator("summary .rt", { hasText: "Already allowed" }),
+        });
+        expect(await held.locator("summary .rd").textContent()).toBe(
+          "Read and edit core.task",
+        );
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        const tasks = b.page.getByRole("combobox", { name: "Task" });
+        expect(await tasks.count()).toBe(1);
+        await tasks.selectOption({ label: "Read and edit" });
+        const line = b.page
+          .locator("details.disclosure-row", {
+            has: b.page.locator("summary .rt", { hasText: "Your data" }),
+          })
+          .locator("summary [data-summary]");
+        expect(await line.textContent()).toBe("Read and edit aic.ticket.task");
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+});
+
 interface DeviceAsk {
   app: Registered;
   userCode: string;

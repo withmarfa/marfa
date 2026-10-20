@@ -94,6 +94,8 @@ export interface SelectProps {
   name?: string;
   /** The accessible name, when no visible label points at the select. */
   label?: string;
+  /** The id of the element that describes the select, which a screen reader reads after its name. */
+  describedBy?: string;
   value?: string;
   options: readonly (SelectOption | SelectGroup)[];
   disabled?: boolean;
@@ -120,6 +122,7 @@ export function Select(props: SelectProps) {
         id={props.id}
         name={props.name}
         aria-label={props.label}
+        aria-describedby={props.describedBy}
         disabled={props.disabled}
         data-autosubmit={props.autosubmit ? "" : undefined}
         {...dataAttributes(props.data)}
