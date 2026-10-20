@@ -387,8 +387,7 @@ const notFound = {
 const SETTING_MALFORMED =
   "a setting is malformed or undeclared, such as a `system.*` type or a `first_placement` outside the folder. `details.errors[0].path` or `details.unknown_body_fields` names it.";
 
-const SETTING_TYPE_UNKNOWN =
-  "- `unknown_type`: a setting's type is unknown.";
+const SETTING_TYPE_UNKNOWN = "- `unknown_type`: a setting's type is unknown.";
 
 const SETTING_PROPERTIES_INEXACT =
   "- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.";
