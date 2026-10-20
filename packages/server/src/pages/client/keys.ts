@@ -19,10 +19,15 @@ import {
   claimedSources,
   END_CHOICES,
   endsAt,
+  extensionPermissions,
+  keyFingerprint,
+  notAfter,
   SKIPPED_WRITE_RULES,
   withDenials,
   type Denials,
   type EndChoice,
+  type ExtensionLevel,
+  type FingerprintedKey,
 } from "../key-body.js";
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
@@ -93,18 +98,16 @@ function showFlash(): void {
 // The words under a row, swapped in and out
 // ---------------------------------------------------------------------------
 
-type Tone = "danger" | "warn";
-
 const noteOf = (control: Element): HTMLElement | null =>
   control.closest(".row")?.querySelector<HTMLElement>(".rd") ?? null;
 
 /** Replaces the line under a control's row, or puts back the one the server wrote. */
-function setNote(control: Element, text: string | null, tone?: Tone): void {
+function setNote(control: Element, text: string | null, tone?: "danger"): void {
   const note = noteOf(control);
   if (!note) return;
   note.dataset.original ??= note.textContent;
   note.textContent = text ?? note.dataset.original;
-  note.classList.remove("danger", "warn");
+  note.classList.remove("danger");
   if (text !== null && tone !== undefined) note.classList.add(tone);
 }
 
@@ -226,24 +229,7 @@ function createReason(form: HTMLFormElement): Reason | null {
         first.focus();
       },
     };
-  const rules = field(form, "rules");
-  if (rules.value === "skip" && !literals.includes("config.manage"))
-    return {
-      text: form.dataset.reasonRules ?? "",
-      focus: () => {
-        rules.focus();
-      },
-    };
   return null;
-}
-
-/** The note under the write-rules choice follows whether skipping them can be sent. */
-function syncRulesNote(form: HTMLFormElement): void {
-  const rules = field(form, "rules");
-  const row = rules.closest<HTMLElement>(".row");
-  const stuck =
-    rules.value === "skip" && !literalsOf(form).includes("config.manage");
-  setNote(rules, stuck ? (row?.dataset.noteWarn ?? null) : null, "warn");
 }
 
 function syncCreate(form: HTMLFormElement): void {
@@ -251,7 +237,6 @@ function syncCreate(form: HTMLFormElement): void {
   setAvailable(hook(form, "key-submit"), reason === null);
   const line = form.querySelector<HTMLElement>("[data-reason]");
   if (line) line.textContent = reason?.text ?? "";
-  syncRulesNote(form);
 }
 
 interface Made {
@@ -281,6 +266,9 @@ function createBody(form: HTMLFormElement): Record<string, unknown> {
     label,
     source,
     ...accessBody(literalsOf(form)),
+    extension_permissions: extensionPermissions(
+      extensionLevel(field(form, "extensions").value),
+    ),
     ...(sources.length > 0 ? { sources } : {}),
     default_tier: field(form, "default_tier").value,
     ...(expiresAt === null ? {} : { expires_at: expiresAt }),
@@ -289,6 +277,9 @@ function createBody(form: HTMLFormElement): Record<string, unknown> {
       : {}),
   };
 }
+
+const extensionLevel = (value: string): ExtensionLevel =>
+  value === "read" || value === "write" ? value : "none";
 
 /** Shows the secret once, in place of the form. */
 function showSecret(form: HTMLFormElement, made: Made): void {
@@ -304,10 +295,11 @@ function showSecret(form: HTMLFormElement, made: Made): void {
   const done = hook(view, "key-done");
   if (done instanceof HTMLElement) done.setAttribute("href", keyHref(made.id));
   const copy = view.querySelector<HTMLButtonElement>("[data-key-copy]");
+  let onCopy: (() => void) | undefined;
   if (copy && "clipboard" in navigator) {
     copy.hidden = false;
     const label = copy.textContent;
-    copy.addEventListener("click", () => {
+    onCopy = () => {
       void navigator.clipboard
         .writeText(made.key)
         .then(() => {
@@ -319,8 +311,23 @@ function showSecret(form: HTMLFormElement, made: Made): void {
         .catch(() => {
           // A refused write leaves the secret on the screen to select by hand.
         });
-    });
+    };
+    copy.addEventListener("click", onCopy);
   }
+  // A page the browser keeps for the back button would otherwise bring the
+  // secret back whole. It is taken off the page as the person leaves, and
+  // coming back to the kept page shows what any later visit shows.
+  window.addEventListener(
+    "pagehide",
+    () => {
+      if (secret) secret.textContent = "";
+      if (copy && onCopy) copy.removeEventListener("click", onCopy);
+    },
+    { once: true },
+  );
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) location.reload();
+  });
   form.hidden = true;
   view.hidden = false;
   document.title = "Copy your key";
@@ -465,10 +472,50 @@ function editBody(
     ...(JSON.stringify(literals) === initialLiterals
       ? {}
       : withDenials(accessBody(literals), keptDenials(form))),
-    ...(end === ends.dataset.initial
+    ...(end === ends.dataset.initial || !isEndChoice(end)
       ? {}
-      : { expires_at: isEndChoice(end) ? endsAt(end, Date.now()) : undefined }),
+      : {
+          expires_at: notAfter(
+            endsAt(end, Date.now()),
+            ends.dataset.currentIso,
+          ),
+        }),
   };
+}
+
+const CHANGED_ELSEWHERE =
+  "This key changed in another window. Reload to see it.";
+const GONE_WORDS =
+  "This key was revoked or has ended. Go to API keys to see what is left.";
+
+type Seen =
+  | { state: "same" }
+  | { state: "changed" }
+  | { state: "gone" }
+  | { state: "refused"; response: Response };
+
+/**
+ * Looks at the key as it is now and compares it with what the page loaded, so
+ * a save made on a page that has gone stale does not run over a newer change.
+ */
+async function seeKey(form: HTMLFormElement, id: string): Promise<Seen> {
+  const response = await fetch("/keys", {
+    credentials: "same-origin",
+    headers: { accept: "application/json" },
+  });
+  if (!response.ok) return { state: "refused", response };
+  const list = (await response.json().catch(() => null)) as {
+    data?: unknown;
+  } | null;
+  const found = Array.isArray(list?.data)
+    ? (list.data as (FingerprintedKey & { id?: unknown })[]).find(
+        (key) => key.id === id,
+      )
+    : undefined;
+  if (found === undefined) return { state: "gone" };
+  return keyFingerprint(found) === form.dataset.loaded
+    ? { state: "same" }
+    : { state: "changed" };
 }
 
 async function submitEdit(
@@ -486,6 +533,24 @@ async function submitEdit(
   busy(button, true);
   let leaving = false;
   try {
+    const seen = await seeKey(form, id);
+    if (seen.state === "refused") {
+      if (seen.response.status === 401) {
+        signInAgain();
+        leaving = true;
+        return;
+      }
+      describeProblem(form, await refusalText(seen.response));
+      return;
+    }
+    if (seen.state === "gone") {
+      describeProblem(form, GONE_WORDS);
+      return;
+    }
+    if (seen.state === "changed") {
+      describeProblem(form, CHANGED_ELSEWHERE);
+      return;
+    }
     const response = await sendConfirmed(
       () =>
         fetch(`/keys/${encodeURIComponent(id)}`, {
@@ -510,10 +575,7 @@ async function submitEdit(
       return;
     }
     if (response.status === 404) {
-      describeProblem(
-        form,
-        "This key was revoked or has ended. Go to API keys to see what is left.",
-      );
+      describeProblem(form, GONE_WORDS);
       return;
     }
     describeProblem(form, await refusalText(response));

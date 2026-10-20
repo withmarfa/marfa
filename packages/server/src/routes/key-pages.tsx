@@ -36,11 +36,11 @@ import {
   Tabs,
 } from "../pages/parts/index.js";
 import type { RegistryItem } from "../pages/registry.js";
-import { END_CHOICES } from "../pages/key-body.js";
+import { ALL_EXTENSIONS } from "../pages/access-summary.js";
+import { END_CHOICES, type EndChoice } from "../pages/key-body.js";
 import { renderDocument } from "../pages/render.js";
 import { AccessChoices, offersChoice } from "./access-choices.js";
-import type { AccessModel } from "./access-model.js";
-import { PERMISSION_LABELS } from "./permission-labels.js";
+import { LEVEL_LABELS, type AccessModel } from "./access-model.js";
 
 export const KEYS_HREF = "/auth/owner/keys";
 export const NEW_KEY_HREF = `${KEYS_HREF}/new`;
@@ -66,8 +66,6 @@ const END_OPTIONS = END_CHOICES.map((value) => ({
   value,
   label: END_LABELS[value],
 }));
-
-const CONFIG_LABEL = PERMISSION_LABELS["config.manage"];
 
 interface PageBase {
   nonce: string;
@@ -241,6 +239,11 @@ export const renderKeyListPage = (params: KeyListParams): string =>
 // Create key
 // ---------------------------------------------------------------------------
 
+const EXTENSION_OPTIONS = (["none", "read", "write"] as const).map((level) => ({
+  value: level,
+  label: LEVEL_LABELS[level],
+}));
+
 export interface CreateKeyParams extends PageBase {
   /** Every control starting off, from `buildAccess` with `start: "off"`. */
   access: AccessModel;
@@ -250,7 +253,6 @@ export interface CreateKeyParams extends PageBase {
 const CREATE_REASONS = {
   name: "Give the key a name",
   access: "Turn on at least one thing it can do",
-  rules: `Skipping Marfa's write rules needs “${CONFIG_LABEL}” turned on`,
 } as const;
 
 /** The one place the words of a refused or failed change are written. */
@@ -311,7 +313,6 @@ export function CreateKeyPage(props: CreateKeyParams) {
         data-key-form="create"
         data-reason-name={CREATE_REASONS.name}
         data-reason-access={CREATE_REASONS.access}
-        data-reason-rules={CREATE_REASONS.rules}
         data-confirm-why="Making a key lets something new reach your data."
       >
         <PageHeader
@@ -417,12 +418,8 @@ export function CreateKeyPage(props: CreateKeyParams) {
             />
             <Row
               title="Marfa's write rules"
-              description={`Skipping them needs “${CONFIG_LABEL}”`}
+              description="Skipping them lets the key write what they would refuse"
               for="key-rules"
-              data={{
-                "note-default": `Skipping them needs “${CONFIG_LABEL}”`,
-                "note-warn": `Needs “${CONFIG_LABEL}” turned on`,
-              }}
               control={
                 <Select
                   id="key-rules"
@@ -433,6 +430,21 @@ export function CreateKeyPage(props: CreateKeyParams) {
                     { value: "follow", label: "Follow them" },
                     { value: "skip", label: "Skip them" },
                   ]}
+                />
+              }
+            />
+            <Row
+              title={ALL_EXTENSIONS.title}
+              description="What integrations attach to your items. Follows Access until you choose."
+              for="key-extensions"
+              control={
+                <Select
+                  id="key-extensions"
+                  name="extensions"
+                  label={ALL_EXTENSIONS.title}
+                  value="none"
+                  options={EXTENSION_OPTIONS}
+                  data={{ "ext-noun": ALL_EXTENSIONS.noun }}
                 />
               }
             />
@@ -554,8 +566,17 @@ export interface KeyPageParams extends PageBase {
   madeBy?: { name: string | null; connected: boolean };
   /** The lines under Details, in order. */
   details: readonly KeyDetail[];
-  /** The Ends select's current choice, and the date a key that ends is set to. */
-  ends: { current: string | null };
+  /**
+   * The Ends select: the key's current end in words (`null` when it has none),
+   * the same end as a time, and the ends it may be moved to, none later than it.
+   */
+  ends: {
+    current: string | null;
+    iso: string | null;
+    choices: readonly EndChoice[];
+  };
+  /** What the key held when the page was drawn, which a save compares with the key as it is then. */
+  loaded: string;
   /** The controls at the most the key holds, or `undefined` when it holds nothing. */
   access: AccessModel | undefined;
   /** What the key is denied beside a wider grant, written for the person, and the raw names the script sends back. */
@@ -573,7 +594,9 @@ export function KeyPage(props: KeyPageParams) {
     ...(props.ends.current === null
       ? []
       : [{ value: "current", label: props.ends.current }]),
-    ...END_OPTIONS,
+    ...END_OPTIONS.filter((option) =>
+      props.ends.choices.includes(option.value),
+    ),
   ];
   return (
     <ConsolePage
@@ -595,6 +618,7 @@ export function KeyPage(props: KeyPageParams) {
         data-key-id={props.id}
         data-key-label={props.label}
         data-keep={props.denied.keep}
+        data-loaded={props.loaded}
         data-confirm-why="Changing a key needs a recent sign-in."
       >
         <PageHeader title={props.label} lede={lede} />
@@ -626,6 +650,9 @@ export function KeyPage(props: KeyPageParams) {
                   options={endOptions}
                   data={{
                     initial: props.ends.current === null ? "never" : "current",
+                    ...(props.ends.iso === null
+                      ? {}
+                      : { "current-iso": props.ends.iso }),
                   }}
                 />
               }

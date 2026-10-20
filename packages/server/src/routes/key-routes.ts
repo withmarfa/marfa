@@ -6,7 +6,12 @@
  * through the public key doors.
  */
 import { Hono, type Context } from "hono";
-import { parseScope, PERMISSIONS, type ParsedScope } from "@withmarfa/shared";
+import {
+  parseScope,
+  PERMISSIONS,
+  resolveTypePermission,
+  type ParsedScope,
+} from "@withmarfa/shared";
 import { keysInReach } from "../auth/key-reach.js";
 import { listActiveAppGrants } from "../auth/grant-lifecycle.js";
 import * as clock from "../clock.js";
@@ -20,7 +25,13 @@ import {
   parsePageNumber,
   parsePageSize,
 } from "../pages/navigation.js";
-import { KEY_MAPS, type Denials, type KeyMap } from "../pages/key-body.js";
+import {
+  endChoicesFor,
+  KEY_MAPS,
+  keyFingerprint,
+  type Denials,
+  type KeyMap,
+} from "../pages/key-body.js";
 import {
   createdWords,
   endingTitle,
@@ -349,7 +360,10 @@ export function keyRoutes(storage: Storage) {
             scopes: parsed(scopes),
             held: undefined,
             ...words,
-            chooseTypes: await resolveChoosableTypes(storage, []),
+            chooseTypes: (await resolveChoosableTypes(storage, [])).filter(
+              (type) =>
+                resolveTypePermission(type.id, key.type_permissions) !== "none",
+            ),
             bundles: getPermissionBundles(),
             start: "held",
           });
@@ -424,7 +438,12 @@ export function keyRoutes(storage: Storage) {
         label: key.label,
         madeBy,
         details,
-        ends: { current: ends === null ? null : dateWords(ends, now) },
+        ends: {
+          current: ends === null ? null : dateWords(ends, now),
+          iso: ends === null ? null : new Date(ends).toISOString(),
+          choices: endChoicesFor(ends, now),
+        },
+        loaded: keyFingerprint(key),
         access,
         denied: {
           words: deniedRows,

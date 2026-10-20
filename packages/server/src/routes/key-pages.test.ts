@@ -15,6 +15,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { StoredApiKey } from "../storage/interface.js";
+import { keyFingerprint } from "../pages/key-body.js";
 
 let ctx: TestContext;
 let counter = 0;
@@ -261,6 +262,57 @@ describe("a key's own page", () => {
     expect(html).toContain("core.note");
   });
 
+  it("offers an end no later than the key's own, and never offers never to a key that ends", async () => {
+    await clearKeys();
+    const ends = await seed("ends", {
+      expires_at: new Date(Date.now() + 100 * DAY).toISOString(),
+    });
+    const options = (html: string): string[] =>
+      [
+        ...(
+          /<select[^>]*id="key-ends"[\s\S]*?<\/select>/.exec(html)?.[0] ?? ""
+        ).matchAll(/<option[^>]*value="([^"]*)"/g),
+      ].map((match) => match[1] ?? "");
+    expect(options((await page(`/auth/owner/keys/${ends.id}`)).html)).toEqual([
+      "current",
+      "30",
+      "90",
+    ]);
+    // Witness: a key that never ends is offered every end.
+    const open = await seed("open");
+    expect(options((await page(`/auth/owner/keys/${open.id}`)).html)).toEqual([
+      "never",
+      "30",
+      "90",
+      "365",
+    ]);
+  });
+
+  it("carries what it loaded, so a save can tell the key changed", async () => {
+    await clearKeys();
+    const key = await seed("loaded", { permissions: ["instance.read"] });
+    const { html } = await page(`/auth/owner/keys/${key.id}`);
+    const loaded = /data-loaded="([^"]*)"/.exec(html)?.[1] ?? "";
+    expect(loaded.replaceAll("&quot;", '"')).toBe(keyFingerprint(key));
+  });
+
+  it("offers to choose only the types the key holds", async () => {
+    await clearKeys();
+    const key = await seed("denied a type", {
+      type_permissions: { "*": "read", "core.note": "none" },
+    });
+    const { html } = await page(`/auth/owner/keys/${key.id}`);
+    // Witness: a type the key holds is offered, and the one it is denied is not.
+    expect(html).toContain('value="core.task:read"');
+    expect(html).not.toContain('value="core.note:read"');
+    const narrow = await seed("holds one type", {
+      type_permissions: { "core.task": "read" },
+    });
+    const only = (await page(`/auth/owner/keys/${narrow.id}`)).html;
+    expect(only).not.toContain("choose-types");
+    expect(only).not.toContain('name="types"');
+  });
+
   it("says it holds nothing for a key with no access", async () => {
     await clearKeys();
     const key = await seed("empty", { type_permissions: {} });
@@ -303,6 +355,31 @@ describe("Create key", () => {
     expect(html).toMatch(/<section[^>]*data-key-copy[^>]*hidden/);
     for (const permission of ["instance.read", "keys.mint", "config.manage"])
       expect(html, permission).toContain(`value="${permission}"`);
+  });
+
+  it("offers integration data under Advanced, starting at none, and says nothing of config.manage for the write rules", async () => {
+    const { html } = await page("/auth/owner/keys/new");
+    const select = /<select[^>]*name="extensions"[\s\S]*?<\/select>/.exec(
+      html,
+    )?.[0];
+    expect(select).toBeDefined();
+    expect(
+      [...(select ?? "").matchAll(/<option([^>]*)>([^<]*)</g)].map((match) => [
+        /value="([^"]*)"/.exec(match[1] ?? "")?.[1],
+        match[2],
+        (match[1] ?? "").includes("selected"),
+      ]),
+    ).toEqual([
+      ["none", "No access", true],
+      ["read", "Read only", false],
+      ["write", "Read and edit", false],
+    ]);
+    expect(select).toContain('data-ext-noun="integration data"');
+    expect(html.indexOf('name="extensions"')).toBeGreaterThan(
+      html.indexOf('id="advanced"'),
+    );
+    expect(visibleText(html)).not.toContain("Skipping them needs");
+    expect(html).not.toContain("data-reason-rules");
   });
 
   it("offers every item type to choose, however many there are", async () => {

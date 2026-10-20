@@ -4,7 +4,7 @@
  * the keyboard alone, a phone's width, light and dark, two keys asking for the
  * same source, a key revoked under an open page, and a long list of item types.
  */
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Locator, Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   launchTestBrowser,
@@ -98,6 +98,15 @@ const overflow = (page: Page) =>
 
 const powers = (page: Page) =>
   page.locator("summary", { hasText: "More control over Marfa" });
+
+/** The `value` of each option a locator finds. */
+async function optionValues(options: Locator): Promise<string[]> {
+  return Promise.all(
+    (await options.all()).map(
+      async (option) => (await option.getAttribute("value")) ?? "",
+    ),
+  );
+}
 
 /** Opens every group of access rows, as a person would one at a time. */
 const openGroups = (page: Page) =>
@@ -364,6 +373,187 @@ describe("Create key", () => {
       }
     },
   );
+
+  inBrowser(
+    "sends integration data that follows all data, and none when types are chosen or access is specific",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const sent: Record<string, unknown>[] = [];
+        page.on("request", (request) => {
+          if (request.method() === "POST" && request.url() === `${origin}/keys`)
+            sent.push(request.postDataJSON() as Record<string, unknown>);
+        });
+        const create = page.getByRole("button", { name: "Create key" });
+        const extensions = page.getByLabel("Integration data");
+        const dataLine = page.locator(
+          "[data-access-group=data] [data-summary]",
+        );
+
+        // All data at a level: integration data starts at that level.
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Follows all data");
+        await openGroups(page);
+        expect(await extensions.inputValue()).toBe("none");
+        await page
+          .getByLabel("All your data")
+          .selectOption({ label: "Read and edit" });
+        expect(await extensions.inputValue()).toBe("write");
+        expect(await dataLine.textContent()).toMatch(/integration data/);
+        await create.click();
+        await page
+          .locator("#key-secret")
+          .filter({ hasText: "marfa_k1_" })
+          .waitFor();
+        expect(sent[0]?.extension_permissions).toEqual({ "*": "write" });
+
+        // A choice of its own is kept when all data changes after it.
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Own choice");
+        await openGroups(page);
+        await extensions.selectOption({ label: "Read only" });
+        await page
+          .getByLabel("All your data")
+          .selectOption({ label: "Read and edit" });
+        expect(await extensions.inputValue()).toBe("read");
+        await create.click();
+        await page
+          .locator("#key-secret")
+          .filter({ hasText: "marfa_k1_" })
+          .waitFor();
+        expect(sent[1]?.extension_permissions).toEqual({ "*": "read" });
+
+        // Specific access: none, sent as an empty map so the key inherits nothing.
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Specific access");
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').check();
+        expect(await extensions.inputValue()).toBe("none");
+        await create.click();
+        await page
+          .locator("#key-secret")
+          .filter({ hasText: "marfa_k1_" })
+          .waitFor();
+        expect(sent[2]?.extension_permissions).toEqual({});
+
+        const stored = (
+          (await (await ctx.ownerRequest("/keys")).json()) as {
+            data: {
+              label: string;
+              extension_permissions: Record<string, string>;
+            }[];
+          }
+        ).data;
+        const held = (label: string) =>
+          stored.find((key) => key.label === label)?.extension_permissions;
+        expect(held("Follows all data")).toEqual({ "*": "write" });
+        expect(held("Own choice")).toEqual({ "*": "read" });
+        expect(held("Specific access")).toEqual({});
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "can skip Marfa's write rules without holding the config.manage switch",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Skips rules");
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').check();
+        await page.getByLabel("Marfa's write rules").selectOption("skip");
+        const create = page.getByRole("button", { name: "Create key" });
+        expect(await create.getAttribute("aria-disabled")).toBeNull();
+        expect(await page.locator("[data-reason]").textContent()).toBe("");
+        await create.click();
+        await page
+          .locator("#key-secret")
+          .filter({ hasText: "marfa_k1_" })
+          .waitFor();
+        const made = (
+          (await (await ctx.ownerRequest("/keys")).json()) as {
+            data: {
+              label: string;
+              permissions: string[];
+              enforcement_override?: unknown;
+            }[];
+          }
+        ).data.find((key) => key.label === "Skips rules");
+        expect(made?.permissions).toEqual(["instance.read"]);
+        expect(made?.enforcement_override).toBeTruthy();
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "takes the secret off the page when the person leaves it, and shows the gone page when the browser brings it back",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Left behind");
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').check();
+        await page.getByRole("button", { name: "Create key" }).click();
+        const secret = page.locator("#key-secret");
+        await secret.filter({ hasText: "marfa_k1_" }).waitFor();
+        const shown = (await secret.textContent()) ?? "";
+
+        // The page, as the browser would keep it when the person leaves.
+        await page.evaluate(
+          'window.dispatchEvent(new PageTransitionEvent("pagehide"))',
+        );
+        expect(await page.content()).not.toContain(shown);
+        expect(await secret.textContent()).toBe("");
+
+        // Witness: before leaving, the secret was on the page.
+        expect(shown).toContain("marfa_k1_");
+
+        // A real trip away and back never shows it.
+        await page.goto(`${origin}/auth/owner/keys`);
+        await page.goBack();
+        await page
+          .getByText(/can.t be shown again|no longer/i)
+          .first()
+          .waitFor();
+        expect(await page.content()).not.toContain(shown);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "reloads a kept page into the gone page when the browser restores it",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${origin}/auth/owner/keys/new`);
+        await page.getByLabel("Name").fill("Restored");
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').check();
+        await page.getByRole("button", { name: "Create key" }).click();
+        const secret = page.locator("#key-secret");
+        await secret.filter({ hasText: "marfa_k1_" }).waitFor();
+        const shown = (await secret.textContent()) ?? "";
+        await page.evaluate(
+          'window.dispatchEvent(new PageTransitionEvent("pagehide")); window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }))',
+        );
+        await page
+          .getByText(/can.t be shown again|no longer/i)
+          .first()
+          .waitFor();
+        expect(await page.content()).not.toContain(shown);
+      } finally {
+        await context.close();
+      }
+    },
+  );
 });
 
 describe("A key", () => {
@@ -442,6 +632,110 @@ describe("A key", () => {
 
         const missing = await page.goto(`${origin}/auth/owner/keys/${id}`);
         expect(missing?.status()).toBe(404);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "offers only ends no later than the key's own, and never lengthens it",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const current = new Date(Date.now() + 100 * 86_400_000).toISOString();
+        const id = await makeKey(context, "Ends in a while", {
+          expires_at: current,
+        });
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        const ends = page.locator("#key-ends");
+        const values = await optionValues(ends.locator("option"));
+        expect(values).toEqual(["current", "30", "90"]);
+
+        await ends.selectOption("90");
+        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByText("Saved").waitFor();
+        const saved = (await ctx.storage.keys.get(id))?.expires_at;
+        expect(Date.parse(saved ?? "")).toBeLessThan(Date.parse(current));
+        expect(Date.parse(saved ?? "")).toBeGreaterThan(
+          Date.now() + 89 * 86_400_000,
+        );
+
+        // Witness: a key that never ends is offered every end, "Never" first.
+        const open = await makeKey(context, "Never ends");
+        await page.goto(`${origin}/auth/owner/keys/${open}`);
+        expect(await optionValues(page.locator("#key-ends option"))).toEqual([
+          "never",
+          "30",
+          "90",
+          "365",
+        ]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser("offers to choose only the types the key holds", async () => {
+    const { page, context } = await open();
+    try {
+      const id = await makeKey(context, "Denied a type", {
+        type_permissions: { "*": "read", "core.note": "none" },
+      });
+      await page.goto(`${origin}/auth/owner/keys/${id}`);
+      await openGroups(page);
+      await page
+        .getByLabel("All your data")
+        .selectOption({ label: "Choose types" });
+      const values = await optionValues(
+        page.locator('select[name="types"] option'),
+      );
+      expect(values.some((value) => value.startsWith("core.task:"))).toBe(true);
+      expect(values.some((value) => value.startsWith("core.note:"))).toBe(
+        false,
+      );
+    } finally {
+      await context.close();
+    }
+  });
+
+  inBrowser(
+    "will not save over a key that changed in another window, and saves after a reload",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const id = await makeKey(context, "Changed elsewhere");
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').uncheck();
+
+        // Another window gives the key less.
+        const patched = await context.request.patch(`${origin}/keys/${id}`, {
+          headers: { origin },
+          data: {
+            narrow_only: true,
+            type_permissions: { "core.note": "read" },
+          },
+        });
+        expect(patched.status(), await patched.text()).toBe(200);
+
+        await page.getByRole("button", { name: "Save changes" }).click();
+        const problem = page.locator("[data-notice=problem]");
+        await problem.waitFor({ state: "visible" });
+        expect(await problem.innerText()).toContain(
+          "This key changed in another window. Reload to see it.",
+        );
+        const held = await ctx.storage.keys.get(id);
+        expect(held?.permissions).toEqual(["instance.read"]);
+        expect(held?.type_permissions).toEqual({ "core.note": "read" });
+
+        // Witness: after a reload the same change saves.
+        await page.reload();
+        await powers(page).click();
+        await page.locator('input[value="instance.read"]').uncheck();
+        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByText("Saved").waitFor();
+        expect((await ctx.storage.keys.get(id))?.permissions).toEqual([]);
       } finally {
         await context.close();
       }

@@ -127,6 +127,101 @@ export function endsAt(choice: EndChoice, now: number): string | null {
     : new Date(now + Number(choice) * DAY_MS).toISOString();
 }
 
+const DAYS_OF: Record<Exclude<EndChoice, "never">, number> = {
+  "30": 30,
+  "90": 90,
+  "365": 365,
+};
+
+/**
+ * The ends a saved key can be offered at `now`. A key that never ends can be
+ * given any; one that ends can be given only an end no later than its own,
+ * and never "never", because a key's page gives a key less and never more.
+ */
+export function endChoicesFor(
+  current: number | null,
+  now: number,
+): EndChoice[] {
+  if (current === null) return [...END_CHOICES];
+  return END_CHOICES.filter(
+    (choice) => choice !== "never" && now + DAYS_OF[choice] * DAY_MS <= current,
+  );
+}
+
+/**
+ * An end no later than `limit`. The page offers only ends within the key's
+ * own, measured when it was drawn; this keeps the one sent within it when a
+ * few seconds have passed since.
+ */
+export function notAfter(
+  end: string | null,
+  limit: string | undefined,
+): string | null {
+  return end !== null &&
+    limit !== undefined &&
+    Date.parse(end) > Date.parse(limit)
+    ? limit
+    : end;
+}
+
+/** The level integration (extension) data can be given on every namespace. */
+export type ExtensionLevel = "none" | MapLevel;
+
+/**
+ * The level a new key's integration data starts at: that of all data, when
+ * the key is given all data, else none.
+ */
+export function extensionFollowing(
+  literals: readonly string[],
+): ExtensionLevel {
+  if (literals.includes("*:write")) return "write";
+  if (literals.includes("*:read")) return "read";
+  return "none";
+}
+
+/**
+ * A new key's `extension_permissions`. None is an empty map, never left out,
+ * because a create that names no map gives the key what its maker holds.
+ */
+export function extensionPermissions(
+  level: ExtensionLevel,
+): Record<string, MapLevel> {
+  return level === "none" ? {} : { "*": level };
+}
+
+/** The parts of a key a saved page can change or be undone by. */
+export interface FingerprintedKey {
+  permissions?: readonly string[];
+  type_permissions?: Readonly<Record<string, string>>;
+  edge_permissions?: Readonly<Record<string, string>>;
+  metadata_permissions?: Readonly<Record<string, string>>;
+  profile_permissions?: Readonly<Record<string, string>>;
+  extension_permissions?: Readonly<Record<string, string>>;
+  expires_at?: string | null;
+}
+
+const sortedEntries = (
+  map: Readonly<Record<string, string>> | undefined,
+): [string, string][] =>
+  Object.entries(map ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+
+/**
+ * What a key's page loaded, as one string: the server writes it into the page
+ * from the stored key, and the browser computes it again from the key the API
+ * answers, so a page can tell that the key changed after it was drawn.
+ */
+export function keyFingerprint(key: FingerprintedKey): string {
+  return JSON.stringify([
+    [...(key.permissions ?? [])].sort(),
+    sortedEntries(key.type_permissions),
+    sortedEntries(key.edge_permissions),
+    sortedEntries(key.metadata_permissions),
+    sortedEntries(key.profile_permissions),
+    sortedEntries(key.extension_permissions),
+    key.expires_at ?? null,
+  ]);
+}
+
 /** The source a key writes as, claimed sources split from the comma list. */
 export function claimedSources(text: string, own: string): string[] {
   const names = text
