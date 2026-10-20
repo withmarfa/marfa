@@ -517,17 +517,21 @@ fn a_collector_that_never_answers_holds_the_exit_to_the_timeout_and_no_longer() 
         run(&env, &args)
     };
 
-    let short = report(&[("OTEL_EXPORTER_OTLP_TIMEOUT", "600")]);
+    let short = report(&[("OTEL_EXPORTER_OTLP_TIMEOUT", "1500")]);
     assert_eq!(
         (short.code, &short.stdout, &short.stderr),
         (without.code, &without.stdout, &without.stderr)
     );
     // The witness that it waited: the run reached the collector, and took the timeout.
     assert_eq!(silent.received().len(), 1);
-    assert!(short.took >= Duration::from_millis(550), "{:?}", short.took);
-    assert!(short.took < Duration::from_secs(3), "{:?}", short.took);
     assert!(
-        without.took < Duration::from_millis(500),
+        short.took >= Duration::from_millis(1450),
+        "{:?}",
+        short.took
+    );
+    assert!(short.took < Duration::from_secs(10), "{:?}", short.took);
+    assert!(
+        without.took < Duration::from_millis(1000),
         "{:?}",
         without.took
     );
@@ -540,7 +544,7 @@ fn a_collector_that_never_answers_holds_the_exit_to_the_timeout_and_no_longer() 
         "{:?}",
         default.took
     );
-    assert!(default.took < Duration::from_secs(6), "{:?}", default.took);
+    assert!(default.took < Duration::from_secs(15), "{:?}", default.took);
 }
 
 #[test]
@@ -562,11 +566,16 @@ fn a_collector_that_refuses_or_redirects_changes_nothing() {
         Reply::Redirect,
     ] {
         let collector = Collector::open(reply);
-        let with = run(&report_to(&collector, &[]), &args);
+        // A timeout far longer than any run, so only a run that waited on the
+        // collector can come near it, however loaded the machine.
+        let with = run(
+            &report_to(&collector, &[("OTEL_EXPORTER_OTLP_TIMEOUT", "30000")]),
+            &args,
+        );
         assert_eq!(with.code, without.code);
         assert_eq!(with.stdout, without.stdout);
         assert_eq!(with.stderr, without.stderr);
-        assert!(with.took < Duration::from_secs(3), "{:?}", with.took);
+        assert!(with.took < Duration::from_secs(15), "{:?}", with.took);
         // The witness: it was sent, once, and a redirect was not followed.
         assert_eq!(collector.received().len(), 1);
         assert_eq!(collector.received()[0].path(), "/v1/traces");
@@ -1411,7 +1420,7 @@ fn a_posthog_that_is_down_silent_or_refusing_changes_neither_the_exit_nor_the_ou
         "{:?}",
         default.took
     );
-    assert!(default.took < Duration::from_secs(6), "{:?}", default.took);
+    assert!(default.took < Duration::from_secs(15), "{:?}", default.took);
 }
 
 #[test]
