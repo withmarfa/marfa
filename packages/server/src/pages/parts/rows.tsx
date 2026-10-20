@@ -12,11 +12,14 @@ interface RowCommon {
   description?: string | Child;
   /** The id of the description line, for a control that names it as its description. */
   descriptionId?: string;
-  descriptionTone?: "danger";
+  /** Red for what cannot be undone, amber for what needs a look. */
+  descriptionTone?: "danger" | "warn";
   /** A short mark after the title, such as "New". */
   badge?: string;
   value?: string;
   valueTone?: "warn" | "danger";
+  /** Let the value take the width it needs, up to half the row, for a name or an address. */
+  valueAuto?: boolean;
   /** A dot before the row, for a row that reports something wrong: amber needs a look, red has stopped. */
   dot?: "warn" | "danger";
   /** Starts hidden, for a row the script shows once it knows it can work. */
@@ -99,7 +102,11 @@ export function Row(props: RowProps) {
     </>
   );
   const value = props.value !== undefined && props.value !== "" && (
-    <span class={props.valueTone ? `val ${props.valueTone}` : "val"}>
+    <span
+      class={["val", props.valueAuto ? "auto" : "", props.valueTone ?? ""]
+        .filter((name) => name !== "")
+        .join(" ")}
+    >
       {props.value}
     </span>
   );

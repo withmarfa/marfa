@@ -2,7 +2,7 @@
  * Human names for the permissions, and how the approval screens group them.
  *
  * One home because every surface that names a permission reads it (the
- * approval screens and the key form on the Manage page), and a permission
+ * approval screens and the Create key page), and a permission
  * whose name differs from one screen to the next is worse than one with no
  * name. Each map is keyed on `Permission`, so adding a permission fails to
  * compile until it has been named: the fallback is `humanizeType`, which

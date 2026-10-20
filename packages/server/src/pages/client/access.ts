@@ -23,6 +23,7 @@ import {
   type LevelPick,
   type Nameable,
 } from "../access-summary.js";
+import { extensionFollowing } from "../key-body.js";
 
 const asLevel = (value: string | undefined): Level =>
   value === "read" || value === "write" ? value : "none";
@@ -61,6 +62,26 @@ function picksIn(group: HTMLElement): LevelPick[] {
   });
 }
 
+const extensionSelect = (root: ParentNode): HTMLSelectElement | null =>
+  root.querySelector<HTMLSelectElement>("select[data-ext-noun]");
+
+/**
+ * Integration data on every namespace, which Create key sets apart from the
+ * data controls and the line under "Your data" still names.
+ */
+function extensionPicks(root: ParentNode): LevelPick[] {
+  const select = extensionSelect(root);
+  return select
+    ? [
+        {
+          noun: select.dataset.extNoun ?? "",
+          held: "none",
+          level: asLevel(select.value),
+        },
+      ]
+    : [];
+}
+
 /** What the app holds, which the lines name a type beside. */
 const heldIn = (group: HTMLElement): Nameable[] =>
   [
@@ -84,7 +105,7 @@ function summaryOf(group: HTMLElement): string | undefined {
         group.querySelector<HTMLElement>("[data-choose-types]")?.dataset.total,
       );
       return dataSummary(
-        picksIn(group),
+        [...picksIn(group), ...extensionPicks(group.closest("form") ?? group)],
         empty,
         choosingTypes(group) && total > 0 ? total : undefined,
         heldIn(group),
@@ -104,6 +125,7 @@ function summaryOf(group: HTMLElement): string | undefined {
       return powersSummary(
         boxes.filter((box) => box.checked).length,
         boxes.length,
+        "accessCounted" in group.dataset,
       );
     }
     default:
@@ -189,7 +211,12 @@ function showTypes(form: HTMLFormElement, expanded: { all: boolean }): void {
   if (more) more.hidden = !(collapsed && matches.length > SHOWN_TYPES);
 }
 
-function update(form: HTMLFormElement): void {
+function update(form: HTMLFormElement, extensionChosen: boolean): void {
+  const extensions = extensionSelect(form);
+  if (extensions && !extensionChosen) {
+    const all = form.querySelector<HTMLSelectElement>("select[data-all]");
+    extensions.value = extensionFollowing(all ? [all.value] : []);
+  }
   for (const group of form.querySelectorAll<HTMLElement>(
     "[data-access-group]",
   )) {
@@ -208,13 +235,20 @@ export function initAccess(): void {
     "form[data-access]",
   )) {
     const expanded = { all: false };
+    // Integration data follows all data until the person sets it.
+    let extensionChosen = false;
     const sync = (): void => {
       showTypes(form, expanded);
-      update(form);
+      update(form, extensionChosen);
     };
     sync();
     form.addEventListener("change", (event) => {
       const target = event.target;
+      if (
+        target instanceof HTMLSelectElement &&
+        target === extensionSelect(form)
+      )
+        extensionChosen = true;
       if (target instanceof HTMLSelectElement && "setEvery" in target.dataset) {
         const level = target.value;
         if (level === "write" || level === "read" || level === "none")

@@ -1024,6 +1024,38 @@ describe("the sign-in routes", () => {
     ]);
   });
 
+  it.each([
+    ["/auth/owner/keys/00000000-0000-4000-8000-000000000000", 404],
+    ["/auth/owner/keys/00000000-0000-4000-8000-000000000000/copy", 302],
+  ])("holds %s to the route template that answers it", (path, status) => {
+    const template = path.endsWith("/copy")
+      ? "GET /auth/owner/keys/{id}/copy"
+      : "GET /auth/owner/keys/{id}";
+    const line = { method: "GET", transport: "http", route: "/auth/owner/*" };
+    const report = reportStatuses(
+      parseRequestLines(JSON.stringify({ ...line, path, status })),
+      documentDeclaring([200]),
+    );
+    expect(report.unexplained).toEqual([]);
+    expect(report.undeclared).toEqual([]);
+    // Witness: a status the template does not declare is reported under the template.
+    const invalid = reportStatuses(
+      parseRequestLines(JSON.stringify({ ...line, path, status: 418 })),
+      documentDeclaring([200]),
+    );
+    expect(invalid.undeclared.map((entry) => entry.operation)).toEqual([
+      template,
+    ]);
+    // A path with no template stays named by its path and is unexplained.
+    const other = reportStatuses(
+      parseRequestLines(
+        JSON.stringify({ ...line, path: "/auth/owner/other/1", status }),
+      ),
+      documentDeclaring([200]),
+    );
+    expect(other.unexplained).toEqual(["GET /auth/owner/other/1"]);
+  });
+
   it("are each named with why, and every unpublished sign-in route declares its statuses", () => {
     for (const route of Object.keys(SIGN_IN_ROUTE_STATUSES)) {
       expect(UNPUBLISHED_ROUTES[route], route).toBeDefined();

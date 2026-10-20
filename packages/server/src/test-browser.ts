@@ -12,24 +12,58 @@
 import { existsSync, readdirSync } from "node:fs";
 import type { Server } from "node:http";
 import { createServer as createNetServer } from "node:net";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import { chromium } from "playwright-core";
 import type { Browser } from "playwright-core";
 import type { TestApp } from "./test-utils.js";
 
-/** Where a Chromium build may already be installed on this machine. */
-function chromiumCandidates(): string[] {
+const MAC_APP = join(
+  "Google Chrome for Testing.app",
+  "Contents",
+  "MacOS",
+  "Google Chrome for Testing",
+);
+
+/** The Chromium builds in a Playwright browsers folder, newest first. */
+function builtIn(root: string): string[] {
+  if (!existsSync(root)) return [];
+  const revision = (entry: string): number =>
+    Number(entry.slice("chromium-".length));
+  return readdirSync(root)
+    .filter((entry) => /^chromium-\d+$/.test(entry))
+    .sort((a, b) => revision(b) - revision(a))
+    .map((entry) => join(root, entry));
+}
+
+/**
+ * Where a Chromium build may already be installed on this machine. On macOS
+ * Playwright's own Chrome for Testing comes before the installed Google
+ * Chrome, because launching that leaves a code-sign copy of the app each time
+ * a test closes it.
+ */
+export function chromiumCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir(),
+  arch: string = process.arch,
+): string[] {
   const candidates: string[] = [];
-  const named = process.env.MARFA_TEST_BROWSER;
+  const named = env.MARFA_TEST_BROWSER;
   if (named) candidates.push(named);
-  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
-  if (root && existsSync(root)) {
-    for (const entry of readdirSync(root).sort().reverse()) {
-      if (entry.startsWith("chromium-")) {
-        candidates.push(join(root, entry, "chrome-linux", "chrome"));
-      }
-    }
+  const root = env.PLAYWRIGHT_BROWSERS_PATH;
+  if (platform === "darwin") {
+    const build = arch === "arm64" ? "chrome-mac-arm64" : "chrome-mac-x64";
+    const folder =
+      root && existsSync(root)
+        ? root
+        : join(home, "Library", "Caches", "ms-playwright");
+    for (const dir of builtIn(folder))
+      candidates.push(join(dir, build, MAC_APP));
+  } else if (root) {
+    for (const dir of builtIn(root))
+      candidates.push(join(dir, "chrome-linux", "chrome"));
   }
   return candidates.filter((path) => existsSync(path));
 }

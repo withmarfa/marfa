@@ -8,6 +8,7 @@ import { initDeviceCode } from "./device-code.js";
 import { initDialogs } from "./dialog.js";
 import { initForms } from "./form.js";
 import { localizeDates } from "./local-date.js";
+import { initKeys } from "./keys.js";
 import { initPasskey } from "./passkey.js";
 import { initPasskeySignIn } from "./passkey-sign-in.js";
 import { initPasswordFields } from "./password.js";
@@ -31,6 +32,7 @@ function start(): void {
   initDeviceCode();
   initConfirm();
   initSignOut();
+  initKeys();
 }
 
 if (document.readyState === "loading")

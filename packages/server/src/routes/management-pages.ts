@@ -2,16 +2,11 @@ import type { Storage } from "../storage/interface.js";
 import { readInstanceName } from "../instance-name.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { Hono } from "hono";
-import { PERMISSIONS } from "@withmarfa/shared";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { confirmDialogMarkup } from "./confirm-host.js";
 import { signInLeft } from "./confirm-gate.js";
 import { escapeHtml } from "./auth-html.js";
-import {
-  PERMISSION_LABELS,
-  permissionDescription,
-} from "./permission-labels.js";
 
 /** These pages call the API's own documented operations, as the owner's browser. */
 export function managementPages(storage: Storage) {
@@ -26,29 +21,19 @@ export function managementPages(storage: Storage) {
   });
   router.get("/manage", async (c) => {
     const instanceName = await readInstanceName(storage.settings);
-    const permissions = PERMISSIONS.map((permission) => {
-      const description = permissionDescription(permission);
-      return `<label><input type="checkbox" name="permission" value="${escapeHtml(permission)}"> ${escapeHtml(PERMISSION_LABELS[permission])}${description ? ` <small>${escapeHtml(description)}</small>` : ""}</label>`;
-    }).join("");
     return c.html(
       renderAuthLayout({
         nonce: c.var.cspNonce,
         title: `Manage ${instanceName}`,
         wide: true,
         bodyHtml: `<h1>Manage ${escapeHtml(instanceName)}</h1>
-<p><a href="/auth/owner/passkeys">Password and passkeys</a> | <a href="/auth/owner/restore">Restore an archive</a></p>
+<p><a href="/auth/owner/keys">API keys</a> | <a href="/auth/owner/passkeys">Password and passkeys</a> | <a href="/auth/owner/restore">Restore an archive</a></p>
 <p id="status" role="status"></p>
 <h2>Server</h2><pre id="health">Loading…</pre>
 <h2>Maintenance</h2><p>Maintenance can permanently delete data that is eligible for removal.</p><ul id="jobs"></ul>
 <h2>Signed-in browsers</h2><p>A browser stays signed in until it goes unused for seven days.</p><ul id="browsers"></ul>
 <h2>Connected apps</h2><ul id="apps"></ul>
 <h2>Connectors</h2><ul id="connectors"></ul>
-<h2>Keys</h2><ul id="keys"></ul>
-<details><summary>Create a key</summary><p>A key keeps access until you revoke it. Choose only the access it needs.</p>
-<form id="mint"><label for="label">Name</label><input id="label" name="label" required maxlength="200"><label for="source">Source name</label><input id="source" name="source" required maxlength="200">
-<label><input type="checkbox" name="content"> Read and write all content</label>
-<fieldset><legend>Additional permissions</legend>${permissions}</fieldset><button>Create key</button></form>
-<p id="new-key" role="status"></p></details>
 ${confirmDialogMarkup(c.var.cspNonce)}
 <script nonce="${escapeHtml(c.var.cspNonce)}">
 const status = document.getElementById('status');
@@ -75,8 +60,8 @@ function rows(id, data, render) {
   if (!data.length) { const li = document.createElement('li'); li.textContent = 'None'; list.append(li); }
 }
 async function refresh() {
-  const [health, jobs, keys, connectors, apps, signIns] = await Promise.all([
-    request('/health'), request('/housekeeping'), request('/keys'), request('/connectors'), request('/auth/grants'), request('/owner/sign-ins')
+  const [health, jobs, connectors, apps, signIns] = await Promise.all([
+    request('/health'), request('/housekeeping'), request('/connectors'), request('/auth/grants'), request('/owner/sign-ins')
   ]);
   document.getElementById('health').textContent = 'Status: ' + health.status;
   rows('jobs', jobs.data, (li, row) => { li.textContent = row.name;
@@ -85,9 +70,6 @@ async function refresh() {
       const result = await request('/housekeeping/' + encodeURIComponent(row.name) + '/run', {method:'POST'});
       if (result.outcome === 'error') throw new Error(result.error || 'Maintenance failed.');
     });
-  });
-  rows('keys', keys.data, (li, row) => { li.textContent = row.label + ' (' + row.source + ')';
-    action(li, 'Revoke', async () => { if (confirm('Revoke this key? Anything using it will lose access.')) await request('/keys/' + encodeURIComponent(row.id), {method:'DELETE'}, 'Revoking a key needs a recent sign-in.'); });
   });
   rows('connectors', connectors.data, (li, row) => { li.textContent = row.name;
     action(li, 'Remove', async () => { if (confirm('Remove this connector registration?')) await request('/connectors/' + encodeURIComponent(row.id), {method:'DELETE'}); });
@@ -105,15 +87,6 @@ async function refresh() {
     action(li, 'Disconnect and revoke keys', async () => { if (confirm('Disconnect this app and revoke all keys it created, including descendant keys?')) await request('/auth/grants/' + encodeURIComponent(row.id) + '?revoke_keys=true', {method:'DELETE'}, 'Disconnecting an app needs a recent sign-in.'); });
   });
 }
-document.getElementById('mint').addEventListener('submit', async (event) => {
-  event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); button.disabled = true;
-  document.getElementById('new-key').textContent = ''; const data = new FormData(form);
-  const body = {label:data.get('label'), source:data.get('source'), permissions:data.getAll('permission')};
-  if (data.has('content')) for (const field of ['type_permissions','edge_permissions','extension_permissions','metadata_permissions','profile_permissions']) body[field] = {'*':'write'};
-  try { const key = await request('/keys', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)}, 'Making a key lets something new reach your data.');
-    document.getElementById('new-key').textContent = 'Copy this key now. It will not be shown again: ' + key.key; await refresh();
-  } catch (error) { status.textContent = error.cancelled ? '' : error.message; } finally { button.disabled = false; }
-});
 refresh().catch(error => {status.textContent = error.message;});
 </script>`,
       }),

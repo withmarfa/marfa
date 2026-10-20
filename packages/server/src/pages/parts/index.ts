@@ -24,10 +24,17 @@ export { Dialog } from "./dialog.js";
 export type { DialogProps } from "./dialog.js";
 export { EmptyState, Notice } from "./feedback.js";
 export type { EmptyStateProps, NoticeProps } from "./feedback.js";
-export { FormFoot, PasswordField, SearchField, TextField } from "./fields.js";
+export {
+  FormFoot,
+  PasswordField,
+  RowInput,
+  SearchField,
+  TextField,
+} from "./fields.js";
 export type {
   FormFootProps,
   PasswordFieldProps,
+  RowInputProps,
   SearchFieldProps,
   TextFieldProps,
 } from "./fields.js";

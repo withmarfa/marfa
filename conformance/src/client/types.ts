@@ -221,6 +221,8 @@ export interface ApiKeyRequest {
   /** When the key stops working. Absent mints a key that never expires;
    *  `null` clears the expiry on an update. */
   expires_at?: string | null;
+  /** On an update, refuses it if it would give the key more than it holds. */
+  narrow_only?: boolean;
 }
 
 /** The one account behind the instance's sign-in surface. */

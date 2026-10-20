@@ -22,6 +22,16 @@ export const MANY_TYPES = 8;
 /** How many types a long list shows before "Show all". */
 export const SHOWN_TYPES = 5;
 
+/**
+ * How integration (extension) data on every namespace is named, wherever a
+ * page shows a key holding the `*` namespace: a row's title and, in a line, a
+ * lower-case plural noun. A named namespace is shown as it is.
+ */
+export const ALL_EXTENSIONS = {
+  title: "Integration data",
+  noun: "integration data",
+} as const;
+
 export const LEVEL_RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
 /** Whether `level` is above `held`: a choice that adds access. */
@@ -168,9 +178,17 @@ export function profileSummary(
   return words.length > 0 ? capitalize(words.join("; ")) : empty;
 }
 
-/** The line under "More control over Marfa". */
-export function powersSummary(on: number, total: number): string {
-  if (on > 0) return `${String(on)} of ${String(total)} turned on`;
+/**
+ * The line under "More control over Marfa". `counted` is for a page where the
+ * person is not answering a request, so "asked" would be untrue: it says how
+ * many are on even when none is.
+ */
+export function powersSummary(
+  on: number,
+  total: number,
+  counted = false,
+): string {
+  if (on > 0 || counted) return `${String(on)} of ${String(total)} turned on`;
   return total === 1
     ? "1 thing asked, off until you turn it on"
     : `${String(total)} things asked, each off until you turn it on`;

@@ -173,6 +173,19 @@ describe("key management", () => {
     expect(data.type_permissions["core.bookmark"]).toBe("read");
   });
 
+  it("the answer to a mint carries the plaintext and forbids a cache keeping it", async () => {
+    const minted = await client.createKey({
+      label: "km-no-store",
+      source: `${ctx.source}-km-no-store`,
+      type_permissions: { "core.note": "read" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    // The witness: the answer holds the plaintext a cache must not keep.
+    expect(minted.data.key.length).toBeGreaterThan(0);
+    expect(minted.headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("key secret is not included in list response", async () => {
     const keyResp = await client.createKey({
       label: "km-secret-hidden",

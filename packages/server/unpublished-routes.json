@@ -33,5 +33,9 @@
   "GET /auth/owner/manage": "trusted owner management page",
   "GET /auth/owner/restore": "trusted owner archive restore page",
   "GET /auth/owner/profile": "owner profile page",
+  "GET /auth/owner/keys": "owner API keys list",
+  "GET /auth/owner/keys/new": "owner page for making a key",
+  "GET /auth/owner/keys/{id}": "owner page for one key",
+  "GET /auth/owner/keys/{id}/copy": "where a new key's secret was shown once",
   "GET /auth/owner/passkeys": "owner password and passkeys page"
 }

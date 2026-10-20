@@ -11,6 +11,7 @@ import { EmptyState, Notice } from "./parts/feedback.js";
 import {
   FormFoot,
   PasswordField,
+  RowInput,
   SearchField,
   TextField,
 } from "./parts/fields.js";
@@ -275,6 +276,18 @@ describe("rows", () => {
     expect(out).not.toContain("<a ");
   });
 
+  it("lets a value take the width it needs, and tones a description amber or red", () => {
+    const out = html(
+      <Row title="Source" value="my-script" valueAuto valueTone="warn" />,
+    );
+    expect(out).toContain('class="val auto warn"');
+    expect(html(<Row title="Source" value="x" />)).toContain('class="val"');
+    expect(
+      html(<Row title="K" description="Check" descriptionTone="warn" />),
+    ).toContain("warn");
+    expect(html(<Row title="K" description="Check" />)).not.toContain("warn");
+  });
+
   it("puts a row's buttons at its end", () => {
     const out = html(<Row title="Key" buttons={<Button>Edit</Button>} />);
     expect(out).toMatch(/<span class="ends"><button /);
@@ -407,6 +420,15 @@ describe("controls", () => {
     });
   });
 
+  it("keeps a button that only looks unavailable in the tab order", () => {
+    const soft = attrs(html(<Button ariaDisabled>Create</Button>), /<button /);
+    expect(soft["aria-disabled"]).toBe("true");
+    expect("disabled" in soft).toBe(false);
+    const hard = attrs(html(<Button disabled>Create</Button>), /<button /);
+    expect("disabled" in hard).toBe(true);
+    expect("aria-disabled" in hard).toBe(false);
+  });
+
   it("wires dialog and loading attributes", () => {
     expect(
       attrs(html(<Button opens="d">Open</Button>), /<button /)[
@@ -532,6 +554,31 @@ describe("fields", () => {
     });
     expect(out).toContain('<p class="hint" id="name-hint">Shown to apps</p>');
     expect("aria-invalid" in attrs(out, /<input /)).toBe(false);
+  });
+
+  it("makes an input that ends a row, named by the row and not by a label of its own", () => {
+    const out = html(
+      <RowInput
+        id="key-name"
+        name="name"
+        describedBy="key-name-note"
+        invalid
+        data={{ field: "name" }}
+      />,
+    );
+    expect(attrs(out, /<input /)).toMatchObject({
+      id: "key-name",
+      name: "name",
+      type: "text",
+      autocomplete: "off",
+      "aria-invalid": "true",
+      "aria-describedby": "key-name-note",
+      "data-field": "name",
+    });
+    expect(out).not.toContain("<label");
+    expect(
+      "aria-invalid" in attrs(html(<RowInput id="a" name="a" />), /<input /),
+    ).toBe(false);
   });
 
   it("marks a field with an error invalid and shows the error in place of the hint", () => {

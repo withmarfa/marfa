@@ -142,6 +142,13 @@ const OPEN_DOORS: Record<string, string> = {
     "management page authenticated by direct owner session",
   "GET /auth/owner/restore":
     "restore form authenticated by direct owner session",
+  "GET /auth/owner/keys": "API keys list authenticated by direct owner session",
+  "GET /auth/owner/keys/new":
+    "key creation page authenticated by direct owner session",
+  "GET /auth/owner/keys/:id":
+    "one key's page authenticated by direct owner session",
+  "GET /auth/owner/keys/:id/copy":
+    "the page a new key's secret was shown on, authenticated by direct owner session",
   "GET /auth/owner/passkeys":
     "the Password and passkeys page, authenticated by the owner session cookie",
   "GET /auth/owner/profile":

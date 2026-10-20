@@ -392,6 +392,49 @@ describe("the owner and an expiry", () => {
   });
 });
 
+describe("the owner and an expiry with narrow_only", () => {
+  it("is shortened or given when the key has none, and refused a later expiry or none", async () => {
+    const key = await mint("owner-narrow-only", SOON);
+
+    // The witness: without narrow_only the owner may lengthen the same key.
+    const lengthened = await owner.updateKey(key.id, { expires_at: LATER });
+    expect(lengthened.status, JSON.stringify(lengthened.error)).toBe(200);
+
+    for (const bad of [LATEST, null]) {
+      const refused = await owner.updateKey(key.id, {
+        expires_at: bad,
+        narrow_only: true,
+      });
+      expect(refused.status, String(bad)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await expiryOf(key.id), "a refused update changed the end").toBe(
+      LATER,
+    );
+
+    const shorter = await owner.updateKey(key.id, {
+      expires_at: SOON,
+      narrow_only: true,
+    });
+    expect(shorter.status, JSON.stringify(shorter.error)).toBe(200);
+    expect(shorter.data.expires_at).toBe(SOON);
+
+    const unchanged = await owner.updateKey(key.id, {
+      expires_at: SOON,
+      narrow_only: true,
+    });
+    expect(unchanged.status, JSON.stringify(unchanged.error)).toBe(200);
+
+    const open = await mint("owner-narrow-only-open");
+    const given = await owner.updateKey(open.id, {
+      expires_at: LATER,
+      narrow_only: true,
+    });
+    expect(given.status, JSON.stringify(given.error)).toBe(200);
+    expect(given.data.expires_at).toBe(LATER);
+  });
+});
+
 describe("a key an app made", () => {
   it(
     "is shortened and never lengthened or cleared, whoever the caller is",

@@ -11,7 +11,7 @@ afterAll(async () => {
 const inBrowser = browser ? describe : describe.skip;
 
 inBrowser("trusted management pages", () => {
-  it("creates and revokes a key through the documented operations without browser storage", async () => {
+  it("makes and revokes a key on the API keys pages through the documented operations without browser storage", async () => {
     if (!browser) throw new Error("Browser unavailable");
     const { origin, port } = await reserveOrigin();
     const ctx = await createTestContext({ authBaseUrl: origin });
@@ -32,12 +32,19 @@ inBrowser("trusted management pages", () => {
       await page.goto(`${origin}/auth/owner/manage`);
       await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
       expect(await page.textContent("#status")).toBe("");
-      await page.locator("summary").click();
-      await page.fill("#label", "Browser manager");
-      await page.fill("#source", "browser-manager");
-      await page.check('input[value="instance.read"]');
-      await page.click("#mint button");
-      await page.locator("#new-key").filter({ hasText: "marfa_k1_" }).waitFor();
+      await page.getByRole("link", { name: "API keys" }).click();
+      await page.waitForURL(`${origin}/auth/owner/keys`);
+      await page.getByRole("link", { name: "Create key" }).click();
+      await page.getByLabel("Name").fill("Browser manager");
+      await page.getByLabel("Source it writes as").fill("browser-manager");
+      await page
+        .locator("summary", { hasText: "More control over Marfa" })
+        .click();
+      await page.locator('input[value="instance.read"]').check();
+      await page.getByRole("button", { name: "Create key" }).click();
+      const secret = page.locator("#key-secret");
+      await secret.filter({ hasText: "marfa_k1_" }).waitFor();
+      const shown = (await secret.textContent()) ?? "";
       const listed = await ctx.ownerRequest("/keys");
       const key = (
         (await listed.json()) as {
@@ -53,19 +60,23 @@ inBrowser("trusted management pages", () => {
       );
       expect(key!.permissions).toEqual(["instance.read"]);
       expect(key!.type_permissions).toEqual({});
-      page.once("dialog", (dialog) => {
-        void dialog.accept();
-      });
+      // The secret is on the screen and nowhere that outlasts it.
+      expect(page.url()).toBe(`${origin}/auth/owner/keys/${key!.id}/copy`);
+      expect(page.url()).not.toContain(shown);
+      expect(
+        await page.evaluate(() => [localStorage.length, sessionStorage.length]),
+      ).toEqual([0, 0]);
+      await page.getByRole("link", { name: "Done" }).click();
+      await page.waitForURL(`${origin}/auth/owner/keys/${key!.id}`);
+      await page.getByRole("button", { name: "Revoke" }).click();
       await page
-        .locator("#keys li")
-        .filter({ hasText: "Browser manager" })
+        .getByRole("dialog", { name: "Revoke Browser manager?" })
         .getByRole("button", { name: "Revoke" })
         .click();
-      await page
-        .locator("#keys li")
-        .filter({ hasText: "Browser manager" })
-        .waitFor({ state: "detached" });
+      await page.waitForURL(`${origin}/auth/owner/keys`);
+      await page.getByText("Revoked Browser manager").waitFor();
       expect(await ctx.storage.keys.get(key!.id)).toBeNull();
+      // The word was kept for one page and is gone with it.
       expect(
         await page.evaluate(() => [localStorage.length, sessionStorage.length]),
       ).toEqual([0, 0]);

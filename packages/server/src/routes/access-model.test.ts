@@ -601,6 +601,50 @@ describe("buildAccess", () => {
     },
   );
 
+  describe("where the controls start", () => {
+    const asked = [
+      scope("core.note:read"),
+      scope("core.note:write"),
+      scope("keys.mint"),
+    ];
+
+    it("starts a control on, and a power off, when answering an app's request", () => {
+      const model = buildAccess({ scopes: asked, held: undefined, bundles });
+      expect(model.data[0]?.selected).toBe("core.note:write");
+      expect(model.powers.map((row) => row.checked)).toEqual([false]);
+      expect(model.counted).toBe(false);
+      expect(model.summaries.powers).toBe(
+        "1 thing asked, off until you turn it on",
+      );
+    });
+
+    it("starts every control off for a key being made, and counts the powers", () => {
+      const model = buildAccess({
+        scopes: asked,
+        held: undefined,
+        bundles,
+        start: "off",
+      });
+      expect(model.data[0]?.selected).toBe("");
+      expect(model.powers.map((row) => row.checked)).toEqual([false]);
+      expect(model.counted).toBe(true);
+      expect(model.summaries.powers).toBe("0 of 1 turned on");
+    });
+
+    it("starts every control at the most it offers for a key being narrowed", () => {
+      const model = buildAccess({
+        scopes: asked,
+        held: undefined,
+        bundles,
+        start: "held",
+      });
+      expect(model.data[0]?.selected).toBe("core.note:write");
+      expect(model.powers.map((row) => row.checked)).toEqual([true]);
+      expect(model.counted).toBe(true);
+      expect(model.summaries.powers).toBe("1 of 1 turned on");
+    });
+  });
+
   describe("offersEdit", () => {
     const offers = (...literals: string[]): boolean =>
       buildAccess({ scopes: literals.map(scope), held: undefined, bundles })
@@ -938,6 +982,25 @@ describe("types that share a label", () => {
       { title: "Note", value: "Read only" },
     ]);
     expect(held.rows).toEqual(held.data);
+  });
+
+  it("names the integration data of every namespace in words, and other namespaces as they are", () => {
+    const all = describeHeld([], {}, { extensions: { "*": "write" } });
+    expect(all.data).toEqual([
+      { title: "Integration data", value: "Read and edit" },
+    ]);
+    expect(all.summary).toBe("Read and edit integration data");
+    const mixed = describeHeld(
+      ["core.note:read"],
+      {},
+      { extensions: { "*": "read", "app.cursor": "write" } },
+    );
+    expect(mixed.summary).toBe(
+      "Read and edit app.cursor; read notes and integration data",
+    );
+    expect(
+      describeHeld([], {}, { extensions: { "*": "none" } }).summaries.data,
+    ).toBe("No access to integration data");
   });
 
   it("tells a held type from a type the request offers when they share a label", () => {

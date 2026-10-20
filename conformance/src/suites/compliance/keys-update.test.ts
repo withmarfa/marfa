@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { ApiKeyRequest, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   getManagementClient,
+  getOwnerClient,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -169,6 +170,143 @@ describe("PATCH /keys/{id}", () => {
     });
     expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
     expect(narrowed.data.type_permissions).toEqual({});
+  });
+
+  it("refuses an update that widens a key when it names narrow_only", async () => {
+    const owner = getOwnerClient();
+    const created = await client.createKey({
+      label: "ku-narrow-only",
+      source: `${ctx.source}-ku-narrow-only`,
+      type_permissions: { "*": "read", "core.note": "none" },
+      permissions: ["audit.read"],
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackKey(ctx, created.data.id);
+    const key = created.data;
+
+    const held = async () => {
+      const listed = await client.listKeys();
+      const row = listed.data.data.find((k) => k.id === key.id);
+      return [row?.type_permissions, row?.permissions, row?.label];
+    };
+    const before = await held();
+    // The witness: the key holds a denial beside a wildcard to lose.
+    expect(before[0]).toEqual({ "*": "read", "core.note": "none" });
+
+    const attempts: Partial<ApiKeyRequest>[] = [
+      { type_permissions: { "*": "write", "core.note": "none" } },
+      // Dropping the denial gives the key the type it was denied.
+      { type_permissions: { "*": "read" } },
+      { permissions: ["audit.read", "keys.mint"] },
+      { sources: ["another-source"] },
+    ];
+    for (const attempt of attempts) {
+      const refused = await owner.updateKey(key.id, {
+        ...attempt,
+        label: "ku-narrow-only-widened",
+        narrow_only: true,
+      });
+      expect(refused.status, JSON.stringify(attempt)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await held(), "a refused update changed the key").toEqual(before);
+
+    // The same caller narrows it, carrying the denial forward, and the label
+    // changes with it.
+    const narrowed = await owner.updateKey(key.id, {
+      label: "ku-narrow-only-narrowed",
+      type_permissions: {
+        "*": "read",
+        "core.note": "none",
+        "core.bookmark": "none",
+      },
+      permissions: [],
+      narrow_only: true,
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+    expect(narrowed.data.type_permissions).toEqual({
+      "*": "read",
+      "core.note": "none",
+      "core.bookmark": "none",
+    });
+    expect(narrowed.data.permissions).toEqual([]);
+
+    // Without the field the owner may still give a key more.
+    const widened = await owner.updateKey(key.id, {
+      type_permissions: { "*": "write" },
+    });
+    expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+    expect(widened.data.type_permissions).toEqual({ "*": "write" });
+  });
+
+  it("refuses a change to a key's write rules when it names narrow_only", async () => {
+    const owner = getOwnerClient();
+    const own = { strict_mode: { types: ["core.note"] } };
+    const skipped = {
+      strict_mode: { types: [] },
+      source_allowlist: { types: [], sources: [] },
+      source_filter: { types: [], sources: [] },
+    };
+    const created = await client.createKey({
+      label: "ku-narrow-levers",
+      source: `${ctx.source}-ku-narrow-levers`,
+      permissions: ["audit.read"],
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackKey(ctx, created.data.id);
+    const id = created.data.id;
+    const levers = async () =>
+      (await client.listKeys()).data.data.find((k) => k.id === id)
+        ?.enforcement_override;
+
+    // The witness: without narrow_only the owner may set the same levers.
+    const set = await owner.updateKey(id, { enforcement_override: own });
+    expect(set.status, JSON.stringify(set.error)).toBe(200);
+    expect(await levers()).toEqual(own);
+
+    for (const attempt of [skipped, { strict_mode: { types: [] } }, null]) {
+      const refused = await owner.updateKey(id, {
+        enforcement_override: attempt,
+        narrow_only: true,
+      });
+      expect(refused.status, JSON.stringify(attempt)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await levers(), "a refused update changed the levers").toEqual(own);
+
+    // Naming the levers the key already has changes nothing, so it goes through
+    // with the label.
+    const same = await owner.updateKey(id, {
+      label: "ku-narrow-levers-same",
+      enforcement_override: own,
+      narrow_only: true,
+    });
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
+    expect(same.data.enforcement_override).toEqual(own);
+
+    // A key with no levers is refused the same way.
+    const bare = await client.createKey({
+      label: "ku-narrow-levers-bare",
+      source: `${ctx.source}-ku-narrow-levers-bare`,
+      permissions: ["audit.read"],
+    });
+    expect(bare.status, JSON.stringify(bare.error)).toBe(201);
+    trackKey(ctx, bare.data.id);
+    const loosened = await owner.updateKey(bare.data.id, {
+      enforcement_override: skipped,
+      narrow_only: true,
+    });
+    expect(loosened.status).toBe(403);
+    const cleared = await owner.updateKey(bare.data.id, {
+      enforcement_override: null,
+      narrow_only: true,
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.enforcement_override).toBeUndefined();
+    expect(
+      (await client.listKeys()).data.data.find((k) => k.id === bare.data.id)
+        ?.enforcement_override,
+    ).toBeUndefined();
   });
 
   it("refuses a caller without keys.mint", async () => {
