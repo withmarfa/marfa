@@ -47,7 +47,7 @@ import type { EnforcementSettings, InstanceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
 import { maxStringLength } from "./string-length.js";
 import { eventScheduleIssues } from "./recurrence.js";
-import { hasInvalidPunycodeLabel } from "./url-host.js";
+import { urlValue } from "./url-value.js";
 
 /** The type whose schedule fields every write is held to, with its subtypes. */
 const EVENT_TYPE = "core.event";
@@ -859,9 +859,7 @@ function valueToZod(
     case "boolean":
       return z.boolean();
     case "url":
-      return z.url().refine((value) => !hasInvalidPunycodeLabel(value.trim()), {
-        error: "Invalid URL",
-      });
+      return urlValue;
     case "email":
       return z.email();
     case "datetime":
