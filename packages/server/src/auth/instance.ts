@@ -3,6 +3,7 @@ import { DEVICE_CODE_LIFETIME } from "./device-code-lifetime.js";
 import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
 import { requirePasskeyName } from "./passkey-name.js";
+import { PASSWORD_MAX, PASSWORD_MIN } from "./password-limits.js";
 import {
   buildPasskeyPlugin,
   PASSKEY_OWNER_PATHS,
@@ -601,6 +602,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       : {}),
     emailAndPassword: {
       enabled: true,
+      minPasswordLength: PASSWORD_MIN,
+      maxPasswordLength: PASSWORD_MAX,
       password: {
         hash: hashPassword,
         verify: async (input) => {

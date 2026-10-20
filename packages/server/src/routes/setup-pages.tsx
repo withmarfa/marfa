@@ -13,6 +13,7 @@
  * link. Adding a passkey needs the script.
  */
 import type { Child } from "hono/jsx";
+import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 import { renderDocument } from "../pages/render.js";
 import {
   Button,
@@ -243,8 +244,8 @@ export function renderDetailsPage(nonce: string, state: DetailsPageState = {}) {
           required
           autocomplete="new-password"
           requiredMessage={SETUP_WORDS.password}
-          minlength={8}
-          hint="8 to 128 characters."
+          minlength={PASSWORD_MIN}
+          hint={`${String(PASSWORD_MIN)} to ${String(PASSWORD_MAX)} characters.`}
           error={errors.password}
           autofocus={firstInvalid === "password"}
         />

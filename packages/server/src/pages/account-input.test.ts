@@ -6,9 +6,8 @@ import {
   emailProblem,
   nameProblem,
   newPasswordProblem,
-  PASSWORD_MAX,
-  PASSWORD_MIN,
 } from "./account-input.js";
+import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 
 describe("a name the owner types", () => {
   it("is refused when nothing is left of it, and says so in the words the page uses", () => {

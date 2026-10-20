@@ -7,7 +7,7 @@
  * `PATCH` and `DELETE /owner/passkeys/{id}`.
  */
 import { renderDocument } from "../pages/render.js";
-import { PASSWORD_MAX, PASSWORD_MIN } from "../pages/account-input.js";
+import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 import {
   Button,
   ConsolePage,

@@ -1,5 +1,5 @@
 import { z } from "@hono/zod-openapi";
-import { hasHiddenCharacter } from "./auth/sign-in-names.js";
+import { hasHiddenCharacter } from "./auth/hidden-characters.js";
 
 export const DisplayNameSchema = z
   .string()

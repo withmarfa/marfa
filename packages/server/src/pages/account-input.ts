@@ -7,11 +7,11 @@
  * touches no DOM and no Node API, so the server and the browser can both
  * import it.
  */
+import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
+import { hasHiddenCharacter } from "../auth/hidden-characters.js";
 
 export const NAME_MAX = 200;
 export const EMAIL_MAX = 254;
-export const PASSWORD_MIN = 8;
-export const PASSWORD_MAX = 128;
 
 export const ACCOUNT_WORDS = {
   enterName: "Enter a name.",
@@ -22,19 +22,9 @@ export const ACCOUNT_WORDS = {
   emailTooLong: "Use 254 characters or fewer.",
   emailShape: "Enter an email like name@example.com.",
   enterCurrentPassword: "Enter your current password.",
-  wrongPassword: "That password is wrong. Try again.",
-  newPasswordLength: "Use 8 to 128 characters.",
+  newPasswordLength: `Use ${String(PASSWORD_MIN)} to ${String(PASSWORD_MAX)} characters.`,
   enterPasskeyName: "Give the passkey a name.",
 } as const;
-
-/**
- * A control character (C0, DEL or C1) or a bidirectional embedding, override
- * or isolate. The server refuses a name that holds one before it trims, so a
- * line break at the end of a name is refused too.
- */
-const HIDDEN =
-  // eslint-disable-next-line no-control-regex -- the controls are what it finds
-  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]|\p{Bidi_Control}/u;
 
 /** The length of `text` in Unicode code points, as the contract counts a name. */
 export function codePoints(text: string): number {
@@ -43,13 +33,15 @@ export function codePoints(text: string): number {
 
 /**
  * Why a name for the owner, or for a passkey, cannot be sent, or `undefined`
- * when it can. `empty` is what to say when nothing is left after trimming.
+ * when it can. `empty` is what to say when nothing is left after trimming. A
+ * hidden character is refused before the name is trimmed, as the server does,
+ * so a line break at the end of a name is refused too.
  */
 export function nameProblem(
   raw: string,
   empty: string = ACCOUNT_WORDS.enterName,
 ): string | undefined {
-  if (HIDDEN.test(raw)) return ACCOUNT_WORDS.hiddenCharacter;
+  if (hasHiddenCharacter(raw)) return ACCOUNT_WORDS.hiddenCharacter;
   const name = raw.trim();
   if (name === "") return empty;
   if (codePoints(name) > NAME_MAX) return ACCOUNT_WORDS.nameTooLong;

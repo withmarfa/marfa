@@ -9,9 +9,9 @@ import {
   browserSignInName,
   keySignInName,
   SIGN_IN_NAME_MAX,
-  UNPRINTABLE,
   usableSignInName,
 } from "./sign-in-names.js";
+import { UNPRINTABLE } from "./hidden-characters.js";
 
 /**
  * Who a write is written by, before it is named: a sign-in already named, a

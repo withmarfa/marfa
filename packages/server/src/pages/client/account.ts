@@ -21,7 +21,12 @@ import {
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { CONFIRM_REFUSALS } from "../recent-sign-in.js";
 import { SETUP_WORDS } from "../setup-words.js";
-import { sendConfirmed, signInAgain } from "./confirm.js";
+import {
+  CONFIRM_WORDS,
+  messageOf,
+  sendConfirmed,
+  signInAgain,
+} from "./confirm.js";
 import { openDialog } from "./dialog.js";
 import { clearFieldError, showFieldError, type Control } from "./form.js";
 import { hideNotices, showNotice } from "./notice.js";
@@ -59,17 +64,6 @@ function control(form: HTMLFormElement, name: string): HTMLInputElement {
   return found;
 }
 
-async function messageOf(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  const body = (await response.json().catch(() => null)) as {
-    error?: { message?: unknown };
-  } | null;
-  const message = body?.error?.message;
-  return typeof message === "string" && message !== "" ? message : fallback;
-}
-
 /** What a refused change says, with a lost sign-in sent to sign in. */
 async function refusal(
   response: Response,
@@ -87,7 +81,7 @@ async function refusal(
       response.status === 400 && invalid !== undefined
         ? invalid
         : response.status === 400 || response.status === 404
-          ? await messageOf(response, SETUP_WORDS.somethingWrong)
+          ? (await messageOf(response)) || SETUP_WORDS.somethingWrong
           : SETUP_WORDS.somethingWrong,
   };
 }
@@ -147,14 +141,14 @@ async function changePassword(form: HTMLFormElement): Promise<Outcome> {
     };
   }
   if (response.status === 401) {
-    if ((await messageOf(response, "")) === CONFIRM_REFUSALS.noSession) {
+    if ((await messageOf(response)) === CONFIRM_REFUSALS.noSession) {
       signInAgain();
       return { kind: "stay" };
     }
     return {
       kind: "problem",
       control: current,
-      text: ACCOUNT_WORDS.wrongPassword,
+      text: CONFIRM_WORDS.wrongPassword,
     };
   }
   if (response.status === 400)
