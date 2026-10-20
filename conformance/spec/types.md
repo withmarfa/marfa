@@ -344,6 +344,20 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 **Tests:** `compliance/field-types.test.ts › takes every datetime form and refuses one with no zone or an hour past 23`.
 
+### `types/url-value`
+
+When an item names a value for a `url` field, or an element of an `array` field whose `items_type` is `url`, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
+
+**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a host such as `http://xn--` that the standard takes is taken on both.
+
+**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
+
+### `types/url-stored`
+
+When the server takes a `url` value, the server MUST store the value without the whitespace trimmed from its ends and without tab, line feed and carriage return characters anywhere in it.
+
+**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
+
 ### `types/array-items`
 
 When an item names an `array` field whose `items_type` is a field type, the server MUST take each element that a field of that type takes as its value, an `enum` taking the field's `enum_values`.

@@ -22,6 +22,7 @@ mod folder_settings;
 /// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
+mod integers;
 mod js;
 mod lock;
 mod model;
@@ -76,6 +77,7 @@ pub use folder::{
     WatchEvent, WatchPass,
 };
 pub use folder_settings::FolderRow;
+pub use integers::refuse_inexact_integers;
 pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport, Draft, Edge,
@@ -2488,13 +2490,15 @@ fn unpin_held(tx: &Connection, id: &str) -> Result<bool> {
 
 /// The names a write carries held to the server's bounds before anything is
 /// saved or queued, so the server's refusal is never the first anyone hears
-/// of an empty tag or an unnamed property.
+/// of an empty tag, an unnamed property or a whole number a float would
+/// change.
 fn refuse_invalid_names(
     tags: &[String],
     properties: &serde_json::Map<String, Value>,
 ) -> Result<()> {
     validation::tags(tags)?;
-    validation::property_names(properties)
+    validation::property_names(properties)?;
+    integers::refuse_in_value(properties)
 }
 
 /// The server refuses a `system.*` write through the item operations to every
@@ -2578,7 +2582,10 @@ fn queue_create(
     let mut draft = draft.clone();
     draft.properties = catalog.in_answer_order(
         &draft.r#type,
-        &catalog.created_properties(&draft.r#type, &draft.properties),
+        &catalog.created_properties(
+            &draft.r#type,
+            &catalog.coerced_properties(&draft.r#type, &draft.properties),
+        ),
     );
     // A key naming a row the server answered sends no tier, since the server
     // leaves that row's tier as it stands (`items/tier-upsert`) and one sent
@@ -2717,6 +2724,10 @@ fn queue_update(
     let edit = &Edit {
         r#type: edit.r#type.clone().filter(|r#type| *r#type != held.r#type),
         tier: edit.tier.filter(|tier| Some(*tier) != held.tier),
+        properties: catalog.coerced_properties(
+            edit.r#type.as_deref().unwrap_or(&held.r#type),
+            &edit.properties,
+        ),
         ..edit.clone()
     };
     if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {

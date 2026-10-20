@@ -335,6 +335,9 @@ export interface BodyLinks {
 export interface Draft {
   type: string;
   properties?: Record<string, unknown>;
+  /** The properties as JSON text, sent as written where `properties` could
+   *  not carry them: digits a number would round. Wins over `properties`. */
+  propertiesText?: string;
   tags?: string[];
   tier?: Tier;
   source?: string;

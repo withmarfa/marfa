@@ -12,7 +12,9 @@ use crate::error::{CliError, Exit};
 use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
-use crate::values::{ItemState, SliceTier, SortDirection, SortField, Tier, properties};
+use crate::values::{
+    ItemState, SliceTier, SortDirection, SortField, Tier, item_properties, properties,
+};
 
 #[derive(Debug, Args)]
 pub struct DeviceArgs {
@@ -991,7 +993,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     let draft = Draft {
                         r#type: args.type_,
                         id: args.id,
-                        properties: properties(&args.properties)?,
+                        properties: item_properties(&args.properties)?,
                         tags: args.tags,
                         tier: args.tier.map(Into::into),
                         source: args.source,
@@ -1003,7 +1005,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Update(args) => {
                     let edit = Edit {
-                        properties: properties(&args.properties)?,
+                        properties: item_properties(&args.properties)?,
                         base_version: args.version,
                         source_id: args.source_id,
                         r#type: args.type_,

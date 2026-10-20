@@ -183,7 +183,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
             Some(values) => elements(definition, values)?,
         },
         "object" => if value.is_object() { None } else { expected("object") },
-        "url" => if value.as_str().is_some_and(|text| url::Url::parse(text).is_ok()) { None } else { Some("Must be a valid URL".into()) },
+        "url" => if value.as_str().is_some_and(|text| url_value(text).is_some()) { None } else { Some("Must be a valid URL".into()) },
         "email" => if value.as_str().is_some_and(email) { None } else { Some("Must be a valid email address".into()) },
         "date" => if value.as_str().is_some_and(date) { None } else { Some("Must be a calendar date (YYYY-MM-DD)".into()) },
         "datetime" => if value.as_str().is_some_and(|text| date(text) || datetime(text)) { None } else { Some("Must be a calendar date or ISO 8601 datetime with an offset".into()) },
@@ -217,6 +217,62 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
         }
     }
     Ok(None)
+}
+
+/// A `url` value as the server holds it, or `None` where the server refuses
+/// it. The server trims the text as JavaScript's `trim` does, judges it as the
+/// WHATWG URL standard does, and keeps it without the tabs and line breaks the
+/// standard ignores.
+pub(crate) fn url_value(text: &str) -> Option<String> {
+    let kept: String = text
+        .trim_matches(js::is_space)
+        .chars()
+        .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
+        .collect();
+    (url::Url::parse(&kept).is_ok() || parses_ignoring_punycode(&kept)).then_some(kept)
+}
+
+/// The standard converts a host to ASCII ignoring invalid Punycode: a label
+/// that starts `xn--` and does not decode stays as written. The `url` crate
+/// refuses such a host, so the labels of that kind are replaced by one it
+/// takes and the rest of the address is judged as written.
+fn parses_ignoring_punycode(text: &str) -> bool {
+    let Some(start) = text.find("://").map(|at| at + 3) else {
+        return false;
+    };
+    let after = &text[start..];
+    let authority_end = after.find(['/', '\\', '?', '#']).unwrap_or(after.len());
+    let authority = &after[..authority_end];
+    let host_start = authority.rfind('@').map_or(0, |at| at + 1);
+    if authority[host_start..].starts_with('[') {
+        return false;
+    }
+    let host_end = authority[host_start..]
+        .find(':')
+        .map_or(authority.len(), |at| host_start + at);
+    let mut replaced = false;
+    let labels: Vec<&str> = authority[host_start..host_end]
+        .split('.')
+        .map(|label| {
+            let punycode = label
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("xn--"))
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+            replaced |= punycode;
+            if punycode { "x" } else { label }
+        })
+        .collect();
+    replaced
+        && url::Url::parse(&format!(
+            "{}{}{}{}",
+            &text[..start + host_start],
+            labels.join("."),
+            &authority[host_end..],
+            &after[authority_end..],
+        ))
+        .is_ok()
 }
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
@@ -404,6 +460,57 @@ mod tests {
             "a@例子.test",
         ] {
             assert!(!email(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_url_is_trimmed_and_judged_as_the_server_does() {
+        // Each expectation is what the server answers: JavaScript's `trim`,
+        // `URL.canParse` of the result, and the result without tabs and line
+        // breaks as the stored value.
+        for (text, stored) in [
+            ("https://example.com/a", "https://example.com/a"),
+            ("  https://example.com/a  ", "https://example.com/a"),
+            (
+                "\u{3000}https://example.com/a\u{3000}",
+                "https://example.com/a",
+            ),
+            ("\u{feff}https://example.com/a", "https://example.com/a"),
+            (
+                "\u{feff}https://example.com/a\u{feff}",
+                "https://example.com/a",
+            ),
+            (
+                "\u{a0}https://example.com/a\u{2028}",
+                "https://example.com/a",
+            ),
+            ("https://exa\tmple.com/a\nb\r", "https://example.com/ab"),
+            ("ht\ttps://example.com", "https://example.com"),
+            ("http://xn--", "http://xn--"),
+            ("http://xn--/", "http://xn--/"),
+            ("https://münchen.de/straße", "https://münchen.de/straße"),
+            ("http://a.b.c.xn--pokxncvks", "http://a.b.c.xn--pokxncvks"),
+            ("HTTP://XN--ABC/x?y#z", "HTTP://XN--ABC/x?y#z"),
+            ("http://user:pw@xn--:8080/p", "http://user:pw@xn--:8080/p"),
+            ("http://[::1]/", "http://[::1]/"),
+            ("mailto:a@b.c", "mailto:a@b.c"),
+            ("\u{1}https://example.com/", "\u{1}https://example.com/"),
+        ] {
+            assert_eq!(url_value(text).as_deref(), Some(stored), "{text:?}");
+        }
+        for text in [
+            "\u{85}https://example.com/a",
+            "not a url",
+            "",
+            "   ",
+            "\u{200b}https://example.com",
+            "http://xn--é/",
+            "https://xn--a b/",
+            "http://xn--[::1]/",
+            "//example.com",
+            "http://example.com:99999",
+        ] {
+            assert_eq!(url_value(text), None, "{text:?}");
         }
     }
 

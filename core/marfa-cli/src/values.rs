@@ -127,6 +127,14 @@ impl From<SortDirection> for marfa_core::SortDirection {
     }
 }
 
+/// The properties of an item write: [`properties`], after the text is held to
+/// the whole numbers a float keeps as written, which the parse alone would
+/// round before the core could see them.
+pub fn item_properties(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, CliError> {
+    marfa_core::refuse_inexact_integers(text)?;
+    properties(text)
+}
+
 /// Refused here rather than deeper, so the caller hears about their argument
 /// rather than about a field a queue could not build.
 pub fn properties(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, CliError> {
@@ -136,5 +144,28 @@ pub fn properties(text: &str) -> Result<serde_json::Map<String, serde_json::Valu
         Err(error) => Err(CliError::Invalid(format!(
             "--properties is not JSON: {error}"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use marfa_core::CoreError;
+
+    #[test]
+    fn item_properties_refuse_a_number_a_float_would_change_before_it_is_rounded() {
+        for text in [
+            r#"{"id64": 1500000000000000001}"#,
+            r#"{"max": 9223372036854775807}"#,
+            r#"{"beyond": 99999999999999999999999}"#,
+        ] {
+            let error = item_properties(text).unwrap_err();
+            assert!(
+                matches!(&error, CliError::Core(CoreError::Validation { code, .. }) if code == "invalid_properties"),
+                "{text}: {error:?}"
+            );
+        }
+        assert!(item_properties(r#"{"num": 1152921504606846976, "x": 1.5, "y": 1e300}"#).is_ok());
+        assert!(item_properties("[1]").is_err());
     }
 }

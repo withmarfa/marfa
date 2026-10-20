@@ -2826,6 +2826,22 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 **Tests:** `device/save-before-sync.test.ts › checks a write against the types the app declares, and holds an unknown one back`.
 
+### `device/number-exact`
+
+If a write to an item names a property, at any depth, whose value is a whole number written with digits that a 64-bit float neither holds exactly nor names as its shortest decimal form, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
+
+**Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
+
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number a float holds exactly inside an array and a nested object on both paths`.
+
+### `device/url-trimmed`
+
+When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value` and `types/url-stored` have the server do.
+
+**Reason:** a value the server takes after trimming must not be refused offline, and the row shown before the answer must be the row stored after it.
+
+**Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
+
 ### `device/unknown-type-write`
 
 If a write names a type the copy was never told of, then a device MUST refuse it `unknown_type`.

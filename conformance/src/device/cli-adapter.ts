@@ -332,7 +332,7 @@ export class CliDevice implements DeviceUnderTest {
       "--type",
       draft.type,
       "--properties",
-      JSON.stringify(draft.properties ?? {}),
+      draft.propertiesText ?? JSON.stringify(draft.properties ?? {}),
     ];
     for (const tag of draft.tags ?? []) args.push("--tag", tag);
     if (draft.tier !== undefined) args.push("--tier", draft.tier);

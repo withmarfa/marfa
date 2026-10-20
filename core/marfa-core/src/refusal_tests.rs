@@ -191,3 +191,127 @@ fn a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog() {
     );
     assert!(core.item_types().is_ok());
 }
+
+fn bookmark(properties: serde_json::Value) -> crate::Draft {
+    crate::Draft {
+        r#type: "core.bookmark".into(),
+        properties: properties.as_object().unwrap().clone(),
+        ..Default::default()
+    }
+}
+
+fn payload_of(core: &Core, queued: &crate::QueuedWrite) -> serde_json::Value {
+    let conn = core.conn().unwrap();
+    let payload: String = conn
+        .query_row(
+            "SELECT payload FROM queue WHERE id = ?1",
+            [&queued.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    serde_json::from_str(&payload).unwrap()
+}
+
+#[test]
+fn a_url_is_trimmed_in_the_row_and_in_the_queued_write_as_the_server_keeps_it() {
+    let core = copy(&Scripted::start());
+    let queued = core
+        .create_item(&bookmark(serde_json::json!({
+            "url": "\u{3000}https://example.com/a\u{feff}",
+            "source_url": " https://exa\tmple.com/b ",
+            "title": "  kept as written  ",
+        })))
+        .unwrap();
+    let id = queued.item_id.clone().unwrap();
+    let held = core.get(&id).unwrap().unwrap();
+    assert_eq!(held.properties["url"], "https://example.com/a");
+    assert_eq!(held.properties["source_url"], "https://example.com/b");
+    assert_eq!(held.properties["title"], "  kept as written  ");
+    let sent = payload_of(&core, &queued);
+    assert_eq!(sent["properties"]["url"], "https://example.com/a");
+
+    let edit = crate::Edit {
+        properties: serde_json::json!({ "url": "\u{feff}https://example.com/c " })
+            .as_object()
+            .unwrap()
+            .clone(),
+        base_version: Some(held.version),
+        ..Default::default()
+    };
+    let queued = core.update_item(&id, &edit).unwrap();
+    assert_eq!(
+        core.get(&id).unwrap().unwrap().properties["url"],
+        "https://example.com/c"
+    );
+    assert_eq!(
+        payload_of(&core, &queued)["properties"]["url"],
+        "https://example.com/c"
+    );
+}
+
+#[test]
+fn a_url_the_standard_refuses_is_refused_and_one_it_takes_is_not() {
+    let core = copy(&Scripted::start());
+    for refused in [
+        "not a url",
+        "\u{85}https://example.com",
+        "http://xn--é/",
+        "   ",
+    ] {
+        let error = core
+            .create_item(&bookmark(serde_json::json!({ "url": refused })))
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Validation { code, message }
+                if code == "invalid_properties" && message == "url: Must be a valid URL"),
+            "{refused:?}: {error:?}"
+        );
+    }
+    assert!(core.queue().unwrap().is_empty());
+    for taken in ["http://xn--", "https://xn--/", "http://a.b.c.xn--pokxncvks"] {
+        let queued = core
+            .create_item(&bookmark(serde_json::json!({ "url": taken })))
+            .unwrap();
+        let id = queued.item_id.unwrap();
+        assert_eq!(core.get(&id).unwrap().unwrap().properties["url"], taken);
+    }
+}
+
+#[test]
+fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
+    let core = copy(&Scripted::start());
+    let mut kept = 0;
+    for (value, refused) in [
+        (1_500_000_000_000_000_001_i64, true),
+        (9_223_372_036_854_775_807, true),
+        (-9_007_199_254_740_993, true),
+        (1_152_921_504_606_846_976, false),
+        (9_007_199_254_740_991, false),
+    ] {
+        for (properties, field) in [
+            (serde_json::json!({ "undeclared": value }), "undeclared"),
+            (
+                serde_json::json!({ "nested": { "list": [0, value] } }),
+                "nested.list.1",
+            ),
+        ] {
+            let result = core.create_item(&bookmark(properties));
+            if refused {
+                let Err(CoreError::Validation { code, message }) = result else {
+                    panic!("{value} at {field} was not refused");
+                };
+                assert_eq!(code, "invalid_properties");
+                assert_eq!(
+                    message,
+                    format!(
+                        "{field}: Must be a whole number that a 64-bit float holds exactly, not {value}. Send it as a string."
+                    )
+                );
+            } else {
+                result.unwrap();
+                kept += 1;
+            }
+        }
+    }
+    assert_eq!(core.queue().unwrap().len(), kept);
+}

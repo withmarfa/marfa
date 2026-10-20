@@ -586,6 +586,39 @@ impl Catalog {
             .collect()
     }
 
+    /// The properties as the server keeps them: a `url` field, or an array of
+    /// `url` elements, holds the trimmed address (`types/url-stored`). A
+    /// value the field would refuse is left for the validation to name.
+    pub(crate) fn coerced_properties(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+    ) -> Map<String, Value> {
+        let kept = |value: &Value| match value.as_str().and_then(crate::validation::url_value) {
+            Some(url) => Value::String(url),
+            None => value.clone(),
+        };
+        properties
+            .iter()
+            .map(|(name, value)| {
+                let definition = self.definition(type_id, name);
+                let field = |key| {
+                    definition
+                        .and_then(|definition| definition.get(key))
+                        .and_then(Value::as_str)
+                };
+                let coerced = match (field("type"), value) {
+                    (Some("url"), _) => kept(value),
+                    (Some("array"), Value::Array(values)) if field("items_type") == Some("url") => {
+                        Value::Array(values.iter().map(kept).collect())
+                    }
+                    _ => value.clone(),
+                };
+                (name.clone(), coerced)
+            })
+            .collect()
+    }
+
     /// The nearest declaration of `name` in the type's chain.
     fn definition(&self, type_id: &str, name: &str) -> Option<&Value> {
         let mut current = type_id;
