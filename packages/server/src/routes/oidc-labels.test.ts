@@ -149,10 +149,10 @@ const COPY_FAMILIES = [
     // ordinary field in code that has never heard of a consent screen.
     keys: scopeDescriptionKeys(),
     // `SCOPE_LABELS` keys many of the same patterns and is not a second
-    // statement of this copy. It holds the short toggle name, a different
-    // field on the same key that `labelFor` falls back *from* to a
-    // description, and folding the two together would collapse a distinction
-    // the renderer depends on. `SCOPE_NOUNS` is the same name as it reads in
+    // statement of this copy. It holds a row's short title, a different
+    // field on the same key that `describe` in `access-model.ts` falls back
+    // *from* to a description, and folding the two together would collapse a
+    // distinction the renderer depends on. `SCOPE_NOUNS` is the same name as it reads in
     // the middle of a sentence about a choice.
     excise: [
       "export const SCOPE_LABELS: Record<string, string> = {",
