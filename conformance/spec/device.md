@@ -2828,11 +2828,19 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 ### `device/number-exact`
 
-If a write to an item names a property, at any depth, whose value is a whole number written with digits that a 64-bit float neither holds exactly nor names as its shortest decimal form, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
+If a write to an item names a property, at any depth, whose value is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number a float holds exactly inside an array and a nested object on both paths`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`.
+
+### `device/number-digits`
+
+When a device queues a write that names, in a property, a whole number that a 64-bit integer holds, a device MUST hold the row with the digits the server serves for that number.
+
+**Reason:** `device/number-exact` admits only digits the server serves back, so a row shown before the answer is the row stored after it. Beyond 64-bit integers a device holds the same float, which it may write in exponent form.
+
+**Tests:** `device/property-validation-live.test.ts › holds the digits %s as written on the server and in the local row, before and after a drain`.
 
 ### `device/url-trimmed`
 

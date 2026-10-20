@@ -328,9 +328,9 @@ If a write leaves out a property its type requires, or names one the type declar
 
 ### `items/property-number-exact`
 
-If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions` or the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}` names a property, at any depth, whose value is a whole number written with digits that a 64-bit float neither holds exactly nor names as its shortest decimal form, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`, as `list.1`, and the message `Must be a whole number that a 64-bit float holds exactly, not <digits>. Send it as a string.`
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions` or the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}` names a property, at any depth, whose value is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`, as `list.1`, and the message `Must be a whole number that a 64-bit float keeps digit for digit, not <digits>, which it keeps as <kept>. Send it as a string.`, leaving out `, which it keeps as <kept>` where the float is infinite.
 
-**Reason:** the server holds a number as a 64-bit float, so `1500000000000000001` would be stored and served back as `1500000000000000000` with nothing said. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
+**Reason:** the server holds a number as a 64-bit float and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
 
 **Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
 
@@ -342,11 +342,11 @@ If an entry of `POST /items/bulk` names a property holding a number `items/prope
 
 ### `items/property-number-kept`
 
-When a write names a property whose value is a whole number that a 64-bit float holds exactly or names as its shortest decimal form, or a number written with a fraction or an exponent, the server MUST take it as the float it names, whatever its size.
+When a write names a property whose value is a whole number written with the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, or a number written with a fraction or an exponent, the server MUST take it as the float it names, whatever its size, and serve it back in those digits.
 
-**Reason:** `1152921504606846976` (2^60) is held exactly, and the server serves it as `1152921504606847000`, so a value read back can be written back. A number with a fraction or an exponent names a float, not digits.
+**Reason:** every whole number a float holds exactly up to 2^53 is written in those digits, and so is `1152921504606847000`, which the server serves for a stored 2^60, so a value read back can be written back and read again as the same number. A number with a fraction or an exponent names a float, not digits.
 
-**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number a float holds exactly inside an array and a nested object on both paths`.
+**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› holds the digits %s as written on the server and in the local row, before and after a drain`.
 
 ### `items/property-name-empty`
 

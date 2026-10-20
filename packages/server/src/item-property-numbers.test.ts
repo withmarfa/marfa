@@ -38,8 +38,16 @@ async function send(
   });
 }
 
+/** The digits a float serves for each number a write is refused for. */
+const KEPT_AS: Record<string, string> = {
+  "1500000000000000001": "1500000000000000000",
+  "9223372036854775807": "9223372036854776000",
+  "-9007199254740993": "-9007199254740992",
+  "1152921504606846976": "1152921504606847000",
+};
+
 function refusal(source: string): string {
-  return `Must be a whole number that a 64-bit float holds exactly, not ${source}. Send it as a string.`;
+  return `Must be a whole number that a 64-bit float keeps digit for digit, not ${source}, which it keeps as ${KEPT_AS[source] ?? "?"}. Send it as a string.`;
 }
 
 async function expectRefused(
@@ -72,6 +80,7 @@ const REFUSED = [
   ["1500000000000000001", "1500000000000000001"],
   ["9223372036854775807", "9223372036854775807"],
   ["-9007199254740993", "-9007199254740993"],
+  ["1152921504606846976", "1152921504606846976"],
 ] as const;
 
 /** The properties of an event, hand-written so the digits reach the server as typed. */
@@ -168,7 +177,7 @@ describe("a whole number a float would change, at every door that writes item pr
   describe("what is kept", () => {
     it.each([
       ["9007199254740991", 9007199254740991],
-      ["1152921504606846976", 2 ** 60],
+      ["1152921504606847000", 2 ** 60],
       ["-9007199254740991", -9007199254740991],
       ["1.5", 1.5],
       ["1e300", 1e300],

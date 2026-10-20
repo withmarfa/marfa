@@ -228,6 +228,11 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
+  /** The row as the device prints it, unparsed, so the digits of a number can be read as held. */
+  async getText(id: string): Promise<Outcome<string>> {
+    return this.invokeText([...this.prefix(), "items", "get", id]);
+  }
+
   /** What a folder's search holds, answered from the copy (`device/folder-list`). */
   async listInFolder(
     folder: string,

@@ -282,11 +282,12 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
     let core = copy(&Scripted::start());
     let mut kept = 0;
     for (value, refused) in [
-        (1_500_000_000_000_000_001_i64, true),
-        (9_223_372_036_854_775_807, true),
-        (-9_007_199_254_740_993, true),
-        (1_152_921_504_606_846_976, false),
-        (9_007_199_254_740_991, false),
+        (1_500_000_000_000_000_001_i64, Some("1500000000000000000")),
+        (9_223_372_036_854_775_807, Some("9223372036854776000")),
+        (-9_007_199_254_740_993, Some("-9007199254740992")),
+        (1_152_921_504_606_846_976, Some("1152921504606847000")),
+        (1_152_921_504_606_847_000, None),
+        (9_007_199_254_740_991, None),
     ] {
         for (properties, field) in [
             (serde_json::json!({ "undeclared": value }), "undeclared"),
@@ -296,7 +297,7 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
             ),
         ] {
             let result = core.create_item(&bookmark(properties));
-            if refused {
+            if let Some(kept_as) = refused {
                 let Err(CoreError::Validation { code, message }) = result else {
                     panic!("{value} at {field} was not refused");
                 };
@@ -304,7 +305,7 @@ fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
                 assert_eq!(
                     message,
                     format!(
-                        "{field}: Must be a whole number that a 64-bit float holds exactly, not {value}. Send it as a string."
+                        "{field}: Must be a whole number that a 64-bit float keeps digit for digit, not {value}, which it keeps as {kept_as}. Send it as a string."
                     )
                 );
             } else {

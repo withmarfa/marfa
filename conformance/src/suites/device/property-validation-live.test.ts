@@ -18,6 +18,8 @@ let device: CliDevice;
 let type: string;
 let valuesType: string;
 let store: string;
+let apiUrl: string;
+let apiKey: string;
 const fields: Record<string, FieldDefinition> = {
   title: { type: "string", required: true, maxLength: 5 },
   read: { type: "boolean" },
@@ -35,7 +37,7 @@ const fields: Record<string, FieldDefinition> = {
 
 beforeAll(async () => {
   const context = await createTestContext("device", "property-validation");
-  ({ client, ctx } = context);
+  ({ client, ctx, apiUrl, apiKey } = context);
   type = `fixture.${ctx.runId}.fields`;
   expect((await client.registerType({ id: type, fields })).ok).toBe(true);
   trackType(ctx, type);
@@ -159,8 +161,17 @@ it("matches a real server's field decisions and keeps queued writes across a cat
   });
 });
 
-const MESSAGE =
-  "Must be a whole number that a 64-bit float holds exactly, not ";
+/** The digits a float is served as, for each number a write is refused for. */
+const KEPT_AS: Record<string, string> = {
+  "1500000000000000001": "1500000000000000000",
+  "9223372036854775807": "9223372036854776000",
+  "-9007199254740993": "-9007199254740992",
+  "1152921504606846976": "1152921504606847000",
+  "1000000000000000000000": "1e+21",
+};
+
+const message = (digits: string) =>
+  `Must be a whole number that a 64-bit float keeps digit for digit, not ${digits}, which it keeps as ${KEPT_AS[digits]}. Send it as a string.`;
 
 /** What the server answers a create of `text` (the request's properties as JSON text), and what the device queues and then the server stores. */
 async function bothPaths(text: string) {
@@ -183,6 +194,8 @@ it.each([
   ["1500000000000000001"],
   ["9223372036854775807"],
   ["-9007199254740993"],
+  ["1152921504606846976"],
+  ["1000000000000000000000"],
 ])(
   "refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message",
   async (digits) => {
@@ -197,13 +210,11 @@ it.each([
       expect(server.ok, text).toBe(false);
       expect(server.error?.error.code).toBe("invalid_properties");
       expect(server.error?.error.details?.errors).toEqual([
-        { field, message: `${MESSAGE}${digits}. Send it as a string.` },
+        { field, message: message(digits) },
       ]);
       expect(local.ok, text).toBe(false);
       if (!local.ok) {
-        expect(local.refusal.raw).toContain(
-          `${field}: ${MESSAGE}${digits}. Send it as a string.`,
-        );
+        expect(local.refusal.raw).toContain(`${field}: ${message(digits)}`);
       }
     }
     expect(await device.queue()).toEqual(before);
@@ -213,7 +224,11 @@ it.each([
 it.each([
   ["9007199254740991", 9007199254740991],
   ["-9007199254740991", -9007199254740991],
-  ["1152921504606846976", 1152921504606846976],
+  ["1152921504606847000", 1152921504606847000],
+  ["9223372036854776000", 9223372036854776000],
+  ["18446744073709552000", 18446744073709552000],
+  ["100000000000000000000", 1e20],
+  ["999999999999999900000", 999999999999999900000],
   ["1.5", 1.5],
   ["1e300", 1e300],
   ["1500000000000000001.5", 1500000000000000001.5],
@@ -245,8 +260,8 @@ it.each([
   },
 );
 
-it("keeps a large number a float holds exactly inside an array and a nested object on both paths", async () => {
-  const exact = "[1152921504606846976,2]";
+it("keeps a large number in the digits a float is served as inside an array and a nested object on both paths", async () => {
+  const exact = "[1152921504606847000,2]";
   const { server, local } = await bothPaths(
     `{"title":"t","extra":${exact},"nest":{"a":${exact}}}`,
   );
@@ -257,10 +272,49 @@ it("keeps a large number a float holds exactly inside an array and a nested obje
   expect((await device.drain()).ok).toBe(true);
   const held = await device.get(local.value.item_id!);
   expect(held.ok && held.value.properties).toMatchObject({
-    extra: [1152921504606846976, 2],
-    nest: { a: [1152921504606846976, 2] },
+    extra: [1152921504606847000, 2],
+    nest: { a: [1152921504606847000, 2] },
   });
 });
+
+it.each([
+  ["1152921504606847000"],
+  ["-1152921504606847000"],
+  ["9223372036854776000"],
+  ["18446744073709550000"],
+])(
+  "holds the digits %s as written on the server and in the local row, before and after a drain",
+  async (digits) => {
+    const holds = (text: string | false) =>
+      typeof text === "string" &&
+      new RegExp(`"weight":\\s*${digits}(?![\\d.eE])`).test(text);
+    const local = await device.create({
+      type: valuesType,
+      propertiesText: `{"title":"t","weight":${digits}}`,
+    });
+    expect(local.ok).toBe(true);
+    if (!local.ok) return;
+    const id = local.value.item_id!;
+    trackItem(ctx, id);
+    const offline = await device.getText(id);
+    expect(
+      holds(offline.ok && offline.value),
+      String(offline.ok && offline.value),
+    ).toBe(true);
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts.at(-1)?.verdict).toBe(
+      "accepted",
+    );
+    const held = await device.getText(id);
+    expect(holds(held.ok && held.value), String(held.ok && held.value)).toBe(
+      true,
+    );
+    const served = await fetch(`${apiUrl}/items/${id}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    expect(holds(await served.text())).toBe(true);
+  },
+);
 
 const URL_VALUE = "https://example.com/a";
 
@@ -287,6 +341,7 @@ it.each([
     "https://example.com/a",
   ],
   ["an empty punycode host", "http://xn--", "http://xn--"],
+  ["a percent-encoded punycode label", "http://xn--%41", "http://xn--%41"],
   [
     "an internationalized host",
     "https://münchen.de/straße",
@@ -321,16 +376,20 @@ it.each([
   },
 );
 
-it.each([["not a url"], ["\u0085" + URL_VALUE], ["http://xn--é/"], ["   "]])(
-  "refuses the url %j on both paths",
-  async (written) => {
-    const properties = { title: "t", url: written };
-    const server = await client.createItem({ type: valuesType, properties });
-    expect(server.ok).toBe(false);
-    expect(server.error?.error.code).toBe("invalid_properties");
-    const local = await device.create({ type: valuesType, properties });
-    expect(local.ok).toBe(false);
-    if (!local.ok)
-      expect(local.refusal.raw).toContain("url: Must be a valid URL");
-  },
-);
+it.each([
+  ["not a url"],
+  ["\u0085" + URL_VALUE],
+  ["http://xn--é/"],
+  ["http://xn--%e9/"],
+  ["http://xn--%2f/"],
+  ["   "],
+])("refuses the url %j on both paths", async (written) => {
+  const properties = { title: "t", url: written };
+  const server = await client.createItem({ type: valuesType, properties });
+  expect(server.ok).toBe(false);
+  expect(server.error?.error.code).toBe("invalid_properties");
+  const local = await device.create({ type: valuesType, properties });
+  expect(local.ok).toBe(false);
+  if (!local.ok)
+    expect(local.refusal.raw).toContain("url: Must be a valid URL");
+});

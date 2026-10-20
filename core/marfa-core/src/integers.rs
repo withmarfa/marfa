@@ -1,9 +1,9 @@
-//! Marfa holds a number as a 64-bit float, so a whole number written with more
-//! digits than a float keeps would come back as a different number. One is
-//! kept as written when its digits are the float's exact value, or the
-//! shortest digits that name that float, which is how the server writes every
-//! whole number it serves. A number with a fraction or an exponent names a
-//! float, not digits, and is never judged.
+//! Marfa holds a number as a 64-bit float and serves it as JavaScript prints
+//! it: the shortest digits that name the float. A whole number written with
+//! other digits would come back as a different number, so it is kept only
+//! when its digits are the ones JavaScript prints for the float it parses to.
+//! A number with a fraction or an exponent names a float, not digits, and is
+//! never judged.
 
 use serde_json::{Map, Value};
 
@@ -14,23 +14,31 @@ use crate::js;
 /// range, 2^53.
 const MIN_DIGITS: usize = 16;
 
-/// Whether the whole number written as `source` (optional minus, then digits)
-/// is kept as written by a float.
-pub(crate) fn kept(source: &str) -> bool {
-    let digits = source.strip_prefix('-').unwrap_or(source);
-    if digits.len() < MIN_DIGITS {
-        return true;
-    }
-    let Ok(rounded) = source.parse::<f64>() else {
-        return false;
-    };
-    rounded.is_finite() && (js::number(rounded) == source || format!("{rounded:.0}") == source)
+/// The digits JavaScript prints for the float the whole number `source`
+/// (optional minus, then digits) rounds to, where it is finite.
+fn served_as(source: &str) -> Option<String> {
+    source
+        .parse::<f64>()
+        .ok()
+        .filter(|rounded| rounded.is_finite())
+        .map(js::number)
 }
 
-/// What a write is told of a whole number that is not kept as written.
+/// Whether the whole number written as `source` is served back with the
+/// digits it was written with. Every safe integer is.
+pub(crate) fn kept(source: &str) -> bool {
+    let digits = source.strip_prefix('-').unwrap_or(source);
+    digits.len() < MIN_DIGITS || served_as(source).is_some_and(|served| served == source)
+}
+
+/// What a write is told of a whole number that is not kept as written: the
+/// digits the float would be served as, where it has any.
 fn message(source: &str) -> String {
+    let kept = served_as(source).map_or_else(String::new, |served| {
+        format!(", which it keeps as {served}")
+    });
     format!(
-        "Must be a whole number that a 64-bit float holds exactly, not {source}. Send it as a string."
+        "Must be a whole number that a 64-bit float keeps digit for digit, not {source}{kept}. Send it as a string."
     )
 }
 
@@ -156,37 +164,68 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn a_whole_number_is_kept_when_a_float_holds_it_as_written() {
+    fn a_whole_number_is_kept_when_its_digits_are_the_ones_javascript_prints() {
         for source in [
             "0",
             "-0",
             "9007199254740991",
             "-9007199254740991",
             "9007199254740992",
-            "1152921504606846976",
+            "10000000000000000",
             "1152921504606847000",
-            "9223372036854775808",
+            "-1152921504606847000",
             "9223372036854776000",
-            "1000000000000000000000",
-            "-1152921504606846976",
+            "18446744073709552000",
+            "100000000000000000000",
+            "999999999999999900000",
         ] {
             assert!(kept(source), "{source}");
         }
     }
 
     #[test]
-    fn a_whole_number_is_refused_when_a_float_would_change_it() {
+    fn a_whole_number_is_refused_when_its_digits_are_not_the_ones_javascript_prints() {
         for source in [
             "9007199254740993",
             "-9007199254740993",
+            "1152921504606846976",
+            "-1152921504606846976",
+            "9223372036854775808",
+            "18446744073709551615",
             "1500000000000000001",
             "9223372036854775807",
             "-9223372036854775808123",
+            "999999999999999868928",
+            "1000000000000000000000",
             "1000000000000000000001",
         ] {
             assert!(!kept(source), "{source}");
         }
         assert!(!kept(&"9".repeat(400)));
+    }
+
+    #[test]
+    fn a_refusal_names_the_digits_a_float_keeps() {
+        for (source, kept_as) in [
+            ("1152921504606846976", Some("1152921504606847000")),
+            ("-9007199254740993", Some("-9007199254740992")),
+            ("1000000000000000000000", Some("1e+21")),
+            (
+                "123456789012345678901234567890",
+                Some("1.2345678901234568e+29"),
+            ),
+            (&"9".repeat(400), None),
+        ] {
+            let expected = match kept_as {
+                Some(kept_as) => format!(
+                    "Must be a whole number that a 64-bit float keeps digit for digit, not {source}, which it keeps as {kept_as}. Send it as a string."
+                ),
+                None => format!(
+                    "Must be a whole number that a 64-bit float keeps digit for digit, not {source}. Send it as a string."
+                ),
+            };
+            assert_eq!(message(source), expected);
+        }
     }
 
     #[test]
@@ -203,14 +242,14 @@ mod tests {
         assert_eq!(code, "invalid_properties");
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that a 64-bit float holds exactly, not -9007199254740993. Send it as a string."
+            "list.1.deep: Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string."
         );
     }
 
     #[test]
     fn a_value_leaves_fractions_and_kept_numbers_alone() {
         let properties = json!({
-            "a": 1.5, "b": 1e300, "c": 1_152_921_504_606_846_976_u64, "d": [1.5e19],
+            "a": 1.5, "b": 1e300, "c": 1_152_921_504_606_847_000_u64, "d": [1.5e19],
         });
         assert!(refuse_in_value(properties.as_object().unwrap()).is_ok());
     }
@@ -224,7 +263,7 @@ mod tests {
         };
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that a 64-bit float holds exactly, not -9007199254740993. Send it as a string."
+            "list.1.deep: Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string."
         );
     }
 
@@ -238,7 +277,7 @@ mod tests {
         for text in [
             r#"{"a": "1500000000000000001"}"#,
             r#"{"a": 1500000000000000001.5, "b": 15000000000000000010e0, "c": 2E20}"#,
-            r#"{"a": "he said \"1500000000000000001\"", "b": 1152921504606846976}"#,
+            r#"{"a": "he said \"1500000000000000001\"", "b": 1152921504606847000}"#,
             r#"{"a": 9007199254740991}"#,
         ] {
             assert!(refuse_inexact_integers(text).is_ok(), "{text}");

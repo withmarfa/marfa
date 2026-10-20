@@ -1,33 +1,83 @@
 import { describe, expect, it } from "vitest";
-import { findInexactIntegers, isKeptInteger } from "./exact-integers.js";
+import {
+  findInexactIntegers,
+  inexactIntegerMessage,
+  isKeptInteger,
+} from "./exact-integers.js";
 
 describe("isKeptInteger", () => {
   it.each([
     "0",
-    "-0",
     "9007199254740991",
     "-9007199254740991",
     "9007199254740992",
-    "1152921504606846976",
+    "10000000000000000",
     "1152921504606847000",
-    "9223372036854775808",
+    "-1152921504606847000",
     "9223372036854776000",
-    "1000000000000000000000",
-    "-1152921504606846976",
-  ])("keeps %s, which names one float as it is written", (source) => {
-    expect(isKeptInteger(source)).toBe(true);
-  });
+    "18446744073709552000",
+    "100000000000000000000",
+    "999999999999999900000",
+  ])(
+    "keeps %s, which is the digits JavaScript prints for its float",
+    (source) => {
+      expect(isKeptInteger(source)).toBe(true);
+      expect(String(Number(source))).toBe(source);
+    },
+  );
 
   it.each([
     "9007199254740993",
     "-9007199254740993",
+    "1152921504606846976",
+    "-1152921504606846976",
+    "9223372036854775808",
+    "18446744073709551615",
     "1500000000000000001",
     "9223372036854775807",
     "-9223372036854775808123",
+    "999999999999999868928",
+    "1000000000000000000000",
     "1000000000000000000001",
     "9".repeat(400),
-  ])("refuses %s, which a float would change", (source) => {
-    expect(isKeptInteger(source)).toBe(false);
+  ])(
+    "refuses %s, which is not the digits JavaScript prints for its float",
+    (source) => {
+      expect(isKeptInteger(source)).toBe(false);
+    },
+  );
+});
+
+it.each(["0", "-0", "-9007199254740991", "9007199254740992"])(
+  "keeps %s, a safe integer, whatever JavaScript prints",
+  (source) => {
+    expect(isKeptInteger(source)).toBe(true);
+  },
+);
+
+describe("inexactIntegerMessage", () => {
+  it.each([
+    [
+      "1152921504606846976",
+      "Must be a whole number that a 64-bit float keeps digit for digit, not 1152921504606846976, which it keeps as 1152921504606847000. Send it as a string.",
+    ],
+    [
+      "-9007199254740993",
+      "Must be a whole number that a 64-bit float keeps digit for digit, not -9007199254740993, which it keeps as -9007199254740992. Send it as a string.",
+    ],
+    [
+      "1000000000000000000000",
+      "Must be a whole number that a 64-bit float keeps digit for digit, not 1000000000000000000000, which it keeps as 1e+21. Send it as a string.",
+    ],
+  ])("names the digits a float keeps for %s", (source, message) => {
+    expect(inexactIntegerMessage(source)).toBe(message);
+  });
+
+  it("names no digits for a number beyond a float's largest", () => {
+    const source = "9".repeat(400);
+    expect(inexactIntegerMessage(source)).toBe(
+      `Must be a whole number that a 64-bit float keeps digit for digit, not ${source}. Send it as a string.`,
+    );
   });
 });
 
@@ -51,6 +101,12 @@ describe("findInexactIntegers", () => {
         path: ["items", "1", "properties", "list", "1", "deep"],
       },
     ]);
+  });
+
+  it("finds 2^60 written in full and leaves the digits a float prints", () => {
+    expect(
+      findInexactIntegers('{"a":1152921504606846976,"b":1152921504606847000}'),
+    ).toEqual([{ source: "1152921504606846976", path: ["a"] }]);
   });
 
   it("leaves a number with a fraction or an exponent alone", () => {

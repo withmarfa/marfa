@@ -11,9 +11,14 @@ import { createNote } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
+let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "exact-integers"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "exact-integers",
+  ));
 });
 
 afterAll(async () => {
@@ -28,14 +33,28 @@ function send(method: string, path: string, body: string) {
   }>(path, { method, headers: { "Content-Type": "application/json" }, body });
 }
 
-const message = (digits: string) =>
-  `Must be a whole number that a 64-bit float holds exactly, not ${digits}. Send it as a string.`;
+/** The digits a float is served as, for each number a write is refused for. */
+const KEPT_AS: Record<string, string> = {
+  "1500000000000000001": "1500000000000000000",
+  "9223372036854775807": "9223372036854776000",
+  "-9007199254740993": "-9007199254740992",
+  "1152921504606846976": "1152921504606847000",
+  "1000000000000000000000": "1e+21",
+};
 
-const REFUSED = [
-  "1500000000000000001",
-  "9223372036854775807",
-  "-9007199254740993",
-];
+const message = (digits: string) =>
+  `Must be a whole number that a 64-bit float keeps digit for digit, not ${digits}, which it keeps as ${KEPT_AS[digits]}. Send it as a string.`;
+
+const REFUSED = Object.keys(KEPT_AS);
+
+/** What the server serves for an item, as text, because parsing it would round the digits again. */
+async function servedText(id: string): Promise<string> {
+  const res = await fetch(`${apiUrl}/items/${id}`, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  expect(res.status).toBe(200);
+  return await res.text();
+}
 
 async function refusedAt(
   res: Awaited<ReturnType<typeof send>>,
@@ -125,7 +144,11 @@ describe("a whole number a 64-bit float would change", () => {
   it.each([
     ["9007199254740991", 9007199254740991],
     ["-9007199254740991", -9007199254740991],
-    ["1152921504606846976", 1152921504606846976],
+    ["1152921504606847000", 1152921504606847000],
+    ["9223372036854776000", 9223372036854776000],
+    ["18446744073709552000", 18446744073709552000],
+    ["100000000000000000000", 1e20],
+    ["999999999999999900000", 999999999999999900000],
     ["1.5", 1.5],
     ["1e300", 1e300],
     ["1500000000000000001.5", 1500000000000000001.5],
@@ -141,6 +164,9 @@ describe("a whole number a 64-bit float would change", () => {
       weight: expected,
       list: [expected],
     });
+    const served = await servedText(res.data.item!.id);
+    expect(served).toContain(`"weight":${JSON.stringify(expected)}`);
+    expect(served).toContain(`"list":[${JSON.stringify(expected)}]`);
   });
 
   it("leaves the digits of a string alone", async () => {

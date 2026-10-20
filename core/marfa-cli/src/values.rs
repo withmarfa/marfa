@@ -165,7 +165,16 @@ mod tests {
                 "{text}: {error:?}"
             );
         }
-        assert!(item_properties(r#"{"num": 1152921504606846976, "x": 1.5, "y": 1e300}"#).is_ok());
+        assert!(item_properties(r#"{"num": 1152921504606846976}"#).is_err());
+        assert!(item_properties(r#"{"num": 1152921504606847000, "x": 1.5, "y": 1e300}"#).is_ok());
         assert!(item_properties("[1]").is_err());
+    }
+
+    #[test]
+    fn item_properties_read_a_number_as_the_float_javascript_reads() {
+        // The nearest float to these digits is 999999999999999868928; a parse
+        // that is off by one place in the last bit reads 1e21.
+        let read = item_properties(r#"{"num": 999999999999999900000}"#).unwrap();
+        assert_eq!(read["num"].as_f64(), Some(999_999_999_999_999_868_928.0));
     }
 }

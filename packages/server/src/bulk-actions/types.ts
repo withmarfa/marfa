@@ -130,7 +130,7 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
   closedVariant({
     action: z.literal("update_properties"),
     patch: WrittenPropertiesSchema.describe(
-      "The properties to lay over each item's properties. A whole number a 64-bit float can't hold exactly is refused: send it as a string.",
+      "The properties to lay over each item's properties. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
     ),
   }),
   closedVariant({
