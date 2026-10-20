@@ -3,7 +3,8 @@
  *
  * Every function takes the time it measures from, so a test names it and the
  * page reads it once. Dates are written in UTC: a page is made on the server,
- * which does not know where the person is.
+ * which does not know where the person is. Days are UTC calendar days, so a key
+ * that ends ten minutes after midnight ends tomorrow, not today.
  */
 
 const MINUTE_MS = 60_000;
@@ -36,24 +37,33 @@ export function dateWords(at: number, now: number): string {
 const count = (n: number, unit: string): string =>
   `${String(n)} ${unit}${n === 1 ? "" : "s"}`;
 
+/** How many UTC calendar days `to` is after `from`: 1 for 00:10 tomorrow seen from 23:50 tonight. */
+const daysBetween = (from: number, to: number): number =>
+  Math.floor(to / DAY_MS) - Math.floor(from / DAY_MS);
+
+/** "today", "tomorrow" or "in 3 days": the calendar days from `now` to a time after it. */
+function whenWords(expiresAt: number, now: number): string {
+  const days = daysBetween(now, expiresAt);
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  return `in ${count(days, "day")}`;
+}
+
 /** When a key ends from `now`, as a sentence: "Never ends", "Ends tomorrow", "Ends October 30". */
 export function endsWords(expiresAt: number | null, now: number): string {
   if (expiresAt === null) return "Never ends";
-  const left = expiresAt - now;
-  if (left <= 0) return "Ended";
-  if (left < DAY_MS) return "Ends today";
-  if (left < 2 * DAY_MS) return "Ends tomorrow";
-  if (left < 14 * DAY_MS)
-    return `Ends in ${count(Math.floor(left / DAY_MS), "day")}`;
+  if (expiresAt - now <= 0) return "Ended";
+  if (daysBetween(now, expiresAt) < 14)
+    return `Ends ${whenWords(expiresAt, now)}`;
   return `Ends ${dateWords(expiresAt, now)}`;
 }
 
-/** Whether a key ends soon enough to need a look. */
+/** Whether a key ends soon enough to need a look: before the seventh calendar day out. */
 export function endsSoon(expiresAt: number | null, now: number): boolean {
   return (
     expiresAt !== null &&
     expiresAt - now > 0 &&
-    expiresAt - now < ENDING_SOON_DAYS * DAY_MS
+    daysBetween(now, expiresAt) < ENDING_SOON_DAYS
   );
 }
 
@@ -63,14 +73,7 @@ export function endingTitle(
   expiresAt: number,
   now: number,
 ): string {
-  const left = expiresAt - now;
-  const when =
-    left < DAY_MS
-      ? "today"
-      : left < 2 * DAY_MS
-        ? "tomorrow"
-        : `in ${count(Math.floor(left / DAY_MS), "day")}`;
-  return `Key ${label} ends ${when}`;
+  return `Key ${label} ends ${whenWords(expiresAt, now)}`;
 }
 
 /** The right end of a key's row: "Never used", "Used 3 hours ago", "Used on March 2". */
@@ -82,9 +85,9 @@ export function usedWords(lastUsedAt: number | null, now: number): string {
     return `Used ${count(Math.floor(ago / MINUTE_MS), "minute")} ago`;
   if (ago < DAY_MS)
     return `Used ${count(Math.floor(ago / HOUR_MS), "hour")} ago`;
-  if (ago < 2 * DAY_MS) return "Used yesterday";
-  if (ago < 30 * DAY_MS)
-    return `Used ${count(Math.floor(ago / DAY_MS), "day")} ago`;
+  const days = daysBetween(lastUsedAt, now);
+  if (days === 1) return "Used yesterday";
+  if (days < 30) return `Used ${count(days, "day")} ago`;
   return `Used on ${dateWords(lastUsedAt, now)}`;
 }
 

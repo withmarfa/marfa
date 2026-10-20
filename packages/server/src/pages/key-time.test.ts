@@ -28,10 +28,10 @@ describe("when a key ends", () => {
     expect(endsWords(NOW - 1, NOW)).toBe("Ended");
   });
 
-  it("is soon from the moment before it happens until a week out, and not at the edges", () => {
+  it("is soon from the moment before it happens until the last day of the week, and not at the edges", () => {
     expect(endsSoon(NOW + 1, NOW)).toBe(true);
-    expect(endsSoon(NOW + 7 * DAY - 1, NOW)).toBe(true);
-    expect(endsSoon(NOW + 7 * DAY, NOW)).toBe(false);
+    expect(endsSoon(Date.UTC(2026, 9, 26, 23, 59, 59), NOW)).toBe(true);
+    expect(endsSoon(Date.UTC(2026, 9, 27), NOW)).toBe(false);
     expect(endsSoon(NOW, NOW)).toBe(false);
     expect(endsSoon(NOW - DAY, NOW)).toBe(false);
     expect(endsSoon(null, NOW)).toBe(false);
@@ -47,6 +47,54 @@ describe("when a key ends", () => {
     expect(endingTitle("backup", NOW + 3 * DAY + HOUR, NOW)).toBe(
       "Key backup ends in 3 days",
     );
+  });
+});
+
+describe("across midnight", () => {
+  const LATE = Date.UTC(2026, 9, 20, 23, 50);
+  const EARLY = Date.UTC(2026, 9, 20, 0, 10);
+
+  it("counts a key ending after midnight as ending tomorrow, however few minutes away", () => {
+    const after = Date.UTC(2026, 9, 21, 0, 10);
+    expect(after - LATE).toBeLessThan(HOUR);
+    expect(endsWords(after, LATE)).toBe("Ends tomorrow");
+    expect(endingTitle("backup", after, LATE)).toBe("Key backup ends tomorrow");
+  });
+
+  it("counts a key ending before the day is out as ending today, however many hours away", () => {
+    const before = Date.UTC(2026, 9, 20, 23, 59);
+    expect(before - EARLY).toBeGreaterThan(23 * HOUR);
+    expect(endsWords(before, EARLY)).toBe("Ends today");
+    expect(endingTitle("backup", before, EARLY)).toBe("Key backup ends today");
+  });
+
+  it("counts a key ending the day after tomorrow in days, though less than 48 hours away", () => {
+    const later = Date.UTC(2026, 9, 22, 0, 10);
+    expect(later - LATE).toBeLessThan(2 * DAY);
+    expect(endsWords(later, LATE)).toBe("Ends in 2 days");
+    expect(endingTitle("backup", later, LATE)).toBe(
+      "Key backup ends in 2 days",
+    );
+  });
+
+  it("counts the days to a date a week out by the calendar", () => {
+    expect(endsSoon(Date.UTC(2026, 9, 26, 23, 59), EARLY)).toBe(true);
+    expect(endsSoon(Date.UTC(2026, 9, 27, 0, 10), LATE)).toBe(false);
+    expect(
+      endsSoon(Date.UTC(2026, 9, 27, 0, 10), Date.UTC(2026, 9, 20, 0, 5)),
+    ).toBe(false);
+  });
+
+  it("counts a last use by the calendar too", () => {
+    expect(
+      usedWords(Date.UTC(2026, 9, 19, 23, 50), Date.UTC(2026, 9, 20, 0, 10)),
+    ).toBe("Used 20 minutes ago");
+    expect(
+      usedWords(Date.UTC(2026, 9, 19, 0, 10), Date.UTC(2026, 9, 20, 23, 50)),
+    ).toBe("Used yesterday");
+    expect(
+      usedWords(Date.UTC(2026, 9, 18, 23, 50), Date.UTC(2026, 9, 20, 0, 10)),
+    ).toBe("Used 2 days ago");
   });
 });
 
