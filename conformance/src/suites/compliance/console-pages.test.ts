@@ -30,6 +30,10 @@ const BROWSER = {
 /** The console pages a browser can open, each served at its own address. */
 const CONSOLE_PAGES = [
   "/auth/owner/manage",
+  "/auth/owner/activity",
+  "/auth/owner/settings",
+  "/auth/owner/settings/file-storage",
+  "/auth/owner/settings.json",
   "/auth/owner/keys",
   "/auth/owner/keys/new",
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000",
@@ -44,12 +48,18 @@ const CONSOLE_PAGES = [
   "/auth/owner/passkeys",
 ];
 
+/** The value of two settings that hold a secret, which no console page may carry. */
+const SECRET_SETTING = "sentinel-credential-value-0123456789abcdef";
+
 let server: FreshServer | undefined;
 let origin: string;
 
 beforeAll(async () => {
   server = await bootFreshServer("console-pages", {
     TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    S3_ACCESS_KEY_ID: SECRET_SETTING,
+    S3_SECRET_ACCESS_KEY: SECRET_SETTING,
+    S3_REGION: "witness-region",
   });
   const discovery = await fetch(
     `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
@@ -219,6 +229,69 @@ describe("the pages for API keys", () => {
       await get(`/auth/owner/keys/${id}`, { ...BROWSER, cookie })
     ).text();
     expect(page).toContain("Plaintext witness");
+  });
+});
+
+describe("the pages for activity and all settings", () => {
+  it("show the owner the log and every setting, and carry no secret's value", async () => {
+    const cookie = await signedInCookie();
+    const activity = await get("/auth/owner/activity", { ...BROWSER, cookie });
+    expect(activity.status).toBe(200);
+    expect(await activity.text()).toMatch(/<h1[^>]*>Activity<\/h1>/);
+
+    const read = await get("/auth/owner/settings.json", {
+      cookie,
+      accept: "application/json",
+    });
+    expect(read.status).toBe(200);
+    const body = await read.text();
+    const { data } = JSON.parse(body) as {
+      data: { name: string; group: string; secret: boolean; set: boolean }[];
+    };
+    for (const setting of data) {
+      expect(Object.keys(setting), setting.name).toEqual(
+        expect.arrayContaining([
+          "name",
+          "label",
+          "group",
+          "description",
+          "secret",
+          "live",
+          "set",
+        ]),
+      );
+      if (setting.secret)
+        expect(setting, setting.name).not.toHaveProperty("value");
+    }
+    const named = (name: string) => data.find((s) => s.name === name);
+    expect(named("S3_ACCESS_KEY_ID")).toMatchObject({
+      secret: true,
+      set: true,
+    });
+    expect(named("MARFA_AUTH_SECRET")).toMatchObject({ secret: true });
+    expect(named("S3_REGION")).toMatchObject({ secret: false });
+
+    const pages = [body];
+    pages.push(await (await get("/", { ...BROWSER, cookie })).text());
+    pages.push(await (await get("/?q=s3", { ...BROWSER, cookie })).text());
+    pages.push(
+      await (await get("/auth/owner/settings", { ...BROWSER, cookie })).text(),
+    );
+    for (const group of new Set(data.map((s) => s.group))) {
+      const slug = group
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      const res = await get(`/auth/owner/settings/${slug}`, {
+        ...BROWSER,
+        cookie,
+      });
+      expect(res.status, group).toBe(200);
+      pages.push(await res.text());
+    }
+    // Witness: the page does carry a setting that is not a secret.
+    expect(pages.join("\n")).toContain("witness-region");
+    for (const page of pages) expect(page).not.toContain(SECRET_SETTING);
   });
 });
 

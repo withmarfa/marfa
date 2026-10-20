@@ -724,6 +724,14 @@ The server MUST send `Cache-Control: no-store` on the page it answers to the own
 
 **Tests:** `compliance/console-pages.test.ts › is not cached`.
 
+### `instance/settings-owner-read`
+
+When the owner's browser session sends `GET /auth/owner/settings.json`, the server MUST answer `200` with a `data` list that holds, for each setting in the table at the end of this chapter, an entry with its `name`, `label`, `group`, `description`, `secret`, `live` and `set`, and its `value` in words unless it holds a secret.
+
+**Reason:** the console's All settings pages and its search read the settings from this one answer. `secret` is true for every setting that holds a credential, `live` is true for a setting the owner can also change while the server runs, and `set` says whether the environment states the setting. Nothing returns a secret's value (`authentication/console-settings-no-secret`).
+
+**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.
+
 ### `instance/root-search-key`
 
 When the owner's browser session requests `GET /` for a page with the query key `q`, the server MUST NOT refuse `q` as undeclared.

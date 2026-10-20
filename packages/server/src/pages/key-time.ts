@@ -103,3 +103,16 @@ export function lastUsedValue(lastUsedAt: number | null, now: number): string {
 export function createdWords(createdAt: number, now: number): string {
   return now - createdAt < MINUTE_MS ? "Just now" : dateWords(createdAt, now);
 }
+
+/** When something happened, for a row that lists many: "Just now", "3 hours ago", "Yesterday", "October 3". */
+export function happenedWords(at: number, now: number): string {
+  const ago = now - at;
+  if (ago < MINUTE_MS) return "Just now";
+  if (ago < HOUR_MS)
+    return `${count(Math.floor(ago / MINUTE_MS), "minute")} ago`;
+  if (ago < DAY_MS) return `${count(Math.floor(ago / HOUR_MS), "hour")} ago`;
+  const days = daysBetween(at, now);
+  if (days === 1) return "Yesterday";
+  if (days < 30) return `${count(days, "day")} ago`;
+  return dateWords(at, now);
+}
