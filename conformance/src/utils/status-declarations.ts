@@ -139,7 +139,7 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/jwks": [200],
   "GET /auth/sign-in": [200, 400],
   "POST /auth/sign-in": [302, 403],
-  "POST /auth/confirm": [200, 400, 401, 403, 429],
+  "POST /auth/confirm": [200, 400, 401, 403, 409, 429],
   "GET /auth/forgot-password": [200],
   "POST /auth/sign-in/email": [200, 400, 401, 403],
   "POST /auth/sign-out": [200, 500],
