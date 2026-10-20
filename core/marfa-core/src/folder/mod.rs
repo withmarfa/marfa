@@ -515,7 +515,7 @@ impl Folder {
         };
         let lost = elsewhere::lost(&self.core, &registry);
         let store = elsewhere::store_id(&self.core).ok();
-        match registry.register(&self.root, &self.folder, store.as_deref()) {
+        match registry.register(&self.root, &self.root_dir, &self.folder, store.as_deref()) {
             Ok(()) => {
                 elsewhere::listed_in(&self.core, &registry);
                 let said = lost.then(|| {

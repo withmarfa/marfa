@@ -24,6 +24,11 @@ pub struct Registered {
     /// directory takes the place of its old entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store: Option<String>,
+    /// The identity (device, inode and birth time) of the directory the
+    /// folder was admitted at, so a different directory standing at `dir`
+    /// is never taken for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -121,9 +126,16 @@ impl Registry {
     }
 
     /// Lists a folder again where the registry lost it or the directory
-    /// moved. A registry that cannot be read is left as it is.
-    pub fn register(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
-        self.list(dir, folder, store, Unreadable::Refuse)
+    /// moved, recording the identity of `root`, the directory the folder
+    /// holds open. A registry that cannot be read is left as it is.
+    pub(crate) fn register(
+        &self,
+        dir: &Path,
+        root: &Directory,
+        folder: &str,
+        store: Option<&str>,
+    ) -> Result<()> {
+        self.list(dir, root, folder, store, Unreadable::Refuse)
     }
 
     /// Lists a folder being added at `dir`, whose directory `root` holds,
@@ -141,6 +153,7 @@ impl Registry {
             dir: absolute(dir),
             folder: folder.to_string(),
             store: store.map(str::to_string),
+            root: root_identity(root),
         };
         let mut nested = None;
         // Judged under the lock, so two folders added at once cannot each
@@ -174,6 +187,7 @@ impl Registry {
     fn list(
         &self,
         dir: &Path,
+        root: &Directory,
         folder: &str,
         store: Option<&str>,
         unreadable: Unreadable,
@@ -182,6 +196,7 @@ impl Registry {
             dir: absolute(dir),
             folder: folder.to_string(),
             store: store.map(str::to_string),
+            root: root_identity(root),
         };
         self.change_unless(unreadable, Some(&entry), |listed| put(listed, &entry))
             .map(|_| ())
@@ -809,12 +824,27 @@ fn existing_prefix_resolved(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-/// Missing or unreadable roots are kept, since a disconnected volume or a
-/// replaced root cannot establish that the admitted folder was removed.
+/// The identity of the directory `root` holds open, as an entry records it.
+/// `None` where the file system keeps no birth time, which admission refuses.
+fn root_identity(root: &Directory) -> Option<String> {
+    super::identity::of(&root.metadata().ok()?).map(|identity| identity.key())
+}
+
+/// Whether the folder was removed from the directory it was admitted at. A
+/// missing or unreadable root is kept, since a disconnected volume cannot
+/// establish that the admitted folder was removed. So is a root that is not
+/// the admitted directory, such as an empty mount point or a recreated
+/// directory standing at the path, whatever it holds. An entry that records
+/// no admitted directory is judged by what its path holds.
 pub(super) fn gone(entry: &Registered) -> bool {
     let Ok(root) = Directory::open(&entry.dir) else {
         return false;
     };
+    if let Some(admitted) = entry.root.as_deref()
+        && root_identity(&root).as_deref() != Some(admitted)
+    {
+        return false;
+    }
     matches!(
         root.child(Path::new(STATE_DIR), false).and_then(|state| state.entry_identity(Path::new("core.sqlite"))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound
@@ -855,6 +885,12 @@ mod tests {
     /// Adds the folder at `dir` as a folder add does, with its directory open.
     fn add(registry: &Registry, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
         registry.add(dir, &Directory::open(dir).unwrap(), folder, store)
+    }
+
+    /// Lists the folder at `dir` as a pass of a folder does, with its
+    /// directory open.
+    fn register(registry: &Registry, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
+        registry.register(dir, &Directory::open(dir).unwrap(), folder, store)
     }
 
     fn folder_at(root: &Path, name: &str) -> PathBuf {
@@ -905,6 +941,107 @@ mod tests {
     }
 
     #[test]
+    fn a_root_replaced_by_another_directory_stays_listed_until_the_original_returns_and_loses_its_state()
+     {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let admitted = folder_at(base, "notes");
+        add(&registry, &admitted, "f1", Some("s1")).unwrap();
+        // The witness: a root whose own state is removed is unlisted by the
+        // same read.
+        let removed = folder_at(base, "removed");
+        add(&registry, &removed, "f2", Some("s2")).unwrap();
+        std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
+        let dirs = |registry: &Registry| -> Vec<PathBuf> {
+            registry
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
+        assert_eq!(dirs(&registry), vec![admitted.clone()]);
+
+        // An empty directory, as an unmounted mount point looks.
+        let away = base.join("notes-away");
+        std::fs::rename(&admitted, &away).unwrap();
+        std::fs::create_dir(&admitted).unwrap();
+        let before = written(&registry);
+        assert_eq!(dirs(&registry), vec![admitted.clone()]);
+        assert_eq!(
+            written(&registry),
+            before,
+            "a read that dropped nothing rewrote the file"
+        );
+
+        // A directory that holds another folder's state is not the folder
+        // that was admitted.
+        std::fs::remove_dir(&admitted).unwrap();
+        let other = folder_at(base, "notes");
+        assert_eq!(other, admitted);
+        assert_eq!(dirs(&registry), vec![admitted.clone()]);
+        std::fs::remove_dir_all(&admitted).unwrap();
+
+        // The original, back, is judged again: it keeps its entry with its
+        // state and loses it without.
+        std::fs::rename(&away, &admitted).unwrap();
+        assert_eq!(dirs(&registry), vec![admitted.clone()]);
+        std::fs::remove_dir_all(admitted.join(STATE_DIR)).unwrap();
+        assert_eq!(dirs(&registry), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn an_entry_that_records_no_admitted_directory_is_judged_by_what_its_path_holds() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let base = temp.path();
+        let registry = Registry::at(base.join(FILE_NAME));
+        let kept = folder_at(base, "kept");
+        let removed = folder_at(base, "removed");
+        std::fs::write(
+            registry.path(),
+            serde_json::json!({
+                "folders": [
+                    { "dir": kept, "folder": "f1", "store": "s1" },
+                    { "dir": removed, "folder": "f2", "store": "s2" },
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(removed.join(STATE_DIR)).unwrap();
+        let dirs = |registry: &Registry| -> Vec<PathBuf> {
+            registry
+                .folders()
+                .unwrap()
+                .into_iter()
+                .map(|entry| entry.dir)
+                .collect()
+        };
+        assert_eq!(
+            dirs(&registry),
+            vec![kept.clone()],
+            "an entry with no identity whose state was removed stayed listed"
+        );
+
+        // A pass that opens the folder records the identity, and from then
+        // on a directory replacing it is not taken for it.
+        register(&registry, &kept, "f1", Some("s1")).unwrap();
+        let [listed] = &registry.folders().unwrap()[..] else {
+            panic!("the folder is listed once");
+        };
+        assert!(listed.root.is_some(), "listing again recorded no identity");
+        let away = base.join("kept-away");
+        std::fs::rename(&kept, &away).unwrap();
+        std::fs::create_dir(&kept).unwrap();
+        assert_eq!(dirs(&registry), vec![kept.clone()]);
+        std::fs::remove_dir(&kept).unwrap();
+        std::fs::rename(&away, &kept).unwrap();
+        std::fs::remove_dir_all(kept.join(STATE_DIR)).unwrap();
+        assert_eq!(dirs(&registry), Vec::<PathBuf>::new());
+    }
+
+    #[test]
     fn a_folder_listed_as_it_is_registers_without_opening_another_folder() {
         let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let registry = Registry::at(temp.path().join(FILE_NAME));
@@ -915,7 +1052,7 @@ mod tests {
         // Only a look into the other folder's directory finds this.
         std::fs::remove_file(other.join(STATE_DIR).join("core.sqlite")).unwrap();
         let before = written(&registry);
-        registry.register(&own, "own", Some("store-own")).unwrap();
+        register(&registry, &own, "own", Some("store-own")).unwrap();
         assert_eq!(
             registry.read().unwrap().unwrap().len(),
             2,
@@ -928,7 +1065,7 @@ mod tests {
         );
         // The witness: a folder that is not listed as it is tidies the list.
         let moved = folder_at(temp.path(), "moved");
-        registry.register(&moved, "own", Some("store-own")).unwrap();
+        register(&registry, &moved, "own", Some("store-own")).unwrap();
         let listed: Vec<PathBuf> = registry
             .read()
             .unwrap()
@@ -995,7 +1132,7 @@ mod tests {
         // A spelling through `..` reaches the listed directory on any volume
         // without either path being a prefix of the other.
         let spelled = base.join("x/../a/notes");
-        registry.register(&spelled, "f1", Some("s1")).unwrap();
+        register(&registry, &spelled, "f1", Some("s1")).unwrap();
         let refused = |dir: &Path| {
             matches!(
                 add(&registry, dir, "f2", Some("s2")),
@@ -1026,7 +1163,7 @@ mod tests {
         let registry = Registry::at(base.join(FILE_NAME));
         let listed = folder_at(&base.join("a"), "notes");
         std::fs::create_dir(listed.join("inner")).unwrap();
-        registry.register(&listed, "f1", Some("s1")).unwrap();
+        register(&registry, &listed, "f1", Some("s1")).unwrap();
 
         for folded in [base.join("A"), base.join("a/NOTES/inner")] {
             // On a case-sensitive volume the spelling is another directory,
@@ -1054,14 +1191,13 @@ mod tests {
         let registry = Registry::at(base.join(FILE_NAME));
         let listed = folder_at(&base.join("a"), "notes");
         std::fs::create_dir(base.join("x")).unwrap();
-        registry
-            .register(&base.join("x/../a/notes"), "f1", Some("s1"))
-            .unwrap();
+        register(&registry, &base.join("x/../a/notes"), "f1", Some("s1")).unwrap();
 
         add(&registry, &listed, "f2", Some("s2")).unwrap();
         assert_eq!(
             registry.folders().unwrap(),
             vec![Registered {
+                root: root_identity(&Directory::open(&listed).unwrap()),
                 dir: listed,
                 folder: "f2".into(),
                 store: Some("s2".into()),
@@ -1249,11 +1385,15 @@ mod tests {
         let base = temp.path();
         let registry = Registry::at(base.join(FILE_NAME));
         let first = folder_at(&base.join("a"), "notes");
-        registry.register(&first, "f1", Some("s1")).unwrap();
-        let listed = |dir: &Path, folder: &str, store: &str| Registered {
+        register(&registry, &first, "f1", Some("s1")).unwrap();
+        let admitted = |dir: &Path| root_identity(&Directory::open(dir).unwrap());
+        let (first_root, second) = (admitted(&first), folder_at(&base.join("b"), "notes"));
+        let second_root = admitted(&second);
+        let listed = |dir: &Path, folder: &str, store: &str, root: &Option<String>| Registered {
             dir: dir.to_path_buf(),
             folder: folder.into(),
             store: Some(store.into()),
+            root: root.clone(),
         };
 
         std::fs::rename(base.join("a"), base.join("a-moved")).unwrap();
@@ -1261,16 +1401,18 @@ mod tests {
         std::os::unix::fs::symlink(base.join("plain"), base.join("a")).unwrap();
         assert_eq!(
             registry.folders().unwrap(),
-            vec![listed(&first, "f1", "s1")]
+            vec![listed(&first, "f1", "s1", &first_root)]
         );
 
-        let second = folder_at(&base.join("b"), "notes");
-        registry.register(&second, "f2", Some("s2")).unwrap();
+        register(&registry, &second, "f2", Some("s2")).unwrap();
         std::fs::remove_file(base.join("a")).unwrap();
         std::os::unix::fs::symlink(base.join("b"), base.join("a")).unwrap();
         assert_eq!(
             registry.folders().unwrap(),
-            vec![listed(&first, "f1", "s1"), listed(&second, "f2", "s2")]
+            vec![
+                listed(&first, "f1", "s1", &first_root),
+                listed(&second, "f2", "s2", &second_root)
+            ]
         );
     }
 
@@ -1855,9 +1997,13 @@ mod tests {
         // State whose store id cannot be read is not said to be anyone's.
         let sixth = base.join("f/notes");
         bound_folder(&sixth, "01a00000-0000-7000-8000-000000000006");
-        registry
-            .register(&sixth, "01a00000-0000-7000-8000-000000000006", Some("s6"))
-            .unwrap();
+        register(
+            &registry,
+            &sixth,
+            "01a00000-0000-7000-8000-000000000006",
+            Some("s6"),
+        )
+        .unwrap();
         assert_eq!(
             Folder::remove_at(&sixth).unwrap(),
             crate::folder::Removal::Unlisted {
@@ -1870,9 +2016,13 @@ mod tests {
         // An entry with no store cannot be shown to own the state there.
         let third = base.join("c/notes");
         bound_folder(&third, "01a00000-0000-7000-8000-000000000003");
-        registry
-            .register(&third, "01a00000-0000-7000-8000-000000000003", None)
-            .unwrap();
+        register(
+            &registry,
+            &third,
+            "01a00000-0000-7000-8000-000000000003",
+            None,
+        )
+        .unwrap();
         assert!(matches!(
             Folder::remove_at(&third).unwrap(),
             crate::folder::Removal::Unlisted { reason, .. } if reason.contains("lists no store")
@@ -1956,7 +2106,7 @@ mod tests {
         let one = folder_at(root.path(), "one");
         std::fs::write(registry.path(), b"").unwrap();
         assert!(registry.folders().is_err());
-        assert!(registry.register(&one, "f1", None).is_err());
+        assert!(register(&registry, &one, "f1", None).is_err());
         assert_eq!(std::fs::read(registry.path()).unwrap(), b"");
         add(&registry, &one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
@@ -2097,7 +2247,7 @@ mod tests {
                         served(&server, folder);
                         std::fs::create_dir(base.join(STATE_DIR)).unwrap();
                         std::fs::write(base.join(STATE_DIR).join("core.sqlite"), b"").unwrap();
-                        registry.register(base, "outer", Some("outer")).unwrap();
+                        register(&registry, base, "outer", Some("outer")).unwrap();
                     }
                 }
                 let before = tree(base);

@@ -3198,7 +3198,7 @@ marfa folders add [OPTIONS] --folder <ID> <DIR>
 
 ### marfa folders list
 
-List the folders on this machine, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
+List the folders on this machine, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory the folder opened: compare it for equality and do not parse it.
 
 ```text
 marfa folders list [OPTIONS]

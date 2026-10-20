@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -28,12 +29,15 @@ import { CliFolder, type HeldCommand } from "../../device/cli-adapter.js";
 import type { FolderHarness, FolderRow } from "./harness.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { ScriptedServer } from "../../device/scripted-server.js";
+import type { WireItemOptions } from "../../device/marfa-answers.js";
 import {
   EdgeDoor,
+  edit,
   put,
   read,
   scriptFolderWrites,
   sentTitles,
+  sentUpdates,
 } from "./folders.shared.js";
 
 /**
@@ -61,6 +65,8 @@ async function twoFolders(
     before?: (server: ScriptedServer) => void;
     /** More folders' settings the server holds, for folders the fixture adds. */
     others?: FolderSettings[];
+    /** Notes the server holds for the first folder when it hydrates. */
+    rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   } = {},
 ): Promise<{
   a: FolderHarness;
@@ -71,6 +77,7 @@ async function twoFolders(
   const edges = new EdgeDoor();
   const a = await folderHarness(`${label}-a`, {
     settings: tagged("a"),
+    ...(options.rows === undefined ? {} : { rows: options.rows }),
     events: [edges.stream()],
   });
   made.push(a);
@@ -349,6 +356,61 @@ describe("a watch of every folder", () => {
       watching: false,
       reason: "missing",
     });
+    expect(watch.running(), watch.stderr).toBe(true);
+  });
+
+  it("takes a folder up again once the directory it was added at returns after an empty one stood in its place", async () => {
+    const seed = "01a00000-0000-7000-8000-00000000e2a1";
+    const { a, b } = await twoFolders("every-root-returns", {
+      rows: {
+        "core.note": [
+          {
+            item: { id: seed, properties: { title: "Seed", body: "seed\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+    });
+    const watch = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      expect(watching(watch, a.dir), watch.stdout + watch.stderr).toBe(true);
+      expect(existsSync(join(a.dir, "Seed.md"))).toBe(true);
+    }, WAIT);
+
+    // An empty directory stands where the folder was, and the folder is
+    // elsewhere.
+    const away = `${realpathSync(a.dir)}-away`;
+    const told = linesFor(watch, a.dir).length;
+    renameSync(a.dir, away);
+    mkdirSync(a.dir);
+    await vi.waitFor(
+      () =>
+        expect(linesFor(watch, a.dir).length, watch.stdout).toBeGreaterThan(
+          told,
+        ),
+      WAIT,
+    );
+    const during = await b.folder.list();
+    expect(during.ok, JSON.stringify(during)).toBe(true);
+    expect(
+      during.ok && during.value.map((entry) => entry.folder).sort(),
+      "the empty directory took the folder off the list",
+    ).toEqual([a.settings.id, b.settings.id].sort());
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+
+    // The original returns, and its edit reaches the server with nothing
+    // added again.
+    rmSync(a.dir, { recursive: true });
+    renameSync(away, a.dir);
+    edit(a, "Seed.md", "\nseed\n", "\nedited after the folder returned\n");
+    await vi.waitFor(
+      () =>
+        expect(
+          sentUpdates(a).map((sent) => sent.id),
+          `the folder did not sync again once its directory returned: ${watch.stdout}${watch.stderr}`,
+        ).toEqual([seed]),
+      { ...WAIT, timeout: 90_000 },
+    );
     expect(watch.running(), watch.stderr).toBe(true);
   });
 

@@ -37,6 +37,10 @@ pub enum FoldersCommand {
     },
     /// List the folders on this machine, as its registry holds them. The
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
+    /// With --json, each entry has `dir`, `folder`, and where the registry
+    /// records them, `store` and `root`. `root` is an opaque value that
+    /// identifies the directory the folder opened: compare it for equality
+    /// and do not parse it.
     List,
     /// Take a folder off this machine: its own state under `.marfa` goes,
     /// and its files stay as plain files. Empty administrative directories
