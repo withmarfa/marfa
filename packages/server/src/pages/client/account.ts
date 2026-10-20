@@ -322,10 +322,6 @@ function setBusy(
   }
 }
 
-function isBusy(dialog: HTMLDialogElement): boolean {
-  return dialog.querySelector('.card[aria-busy="true"]') !== null;
-}
-
 /** Read the page again and swap in the region the server draws. */
 async function refresh(): Promise<boolean> {
   const live = document.querySelector("[data-live]");
@@ -441,16 +437,6 @@ export function initAccount(): void {
   document.addEventListener("submit", (event) => {
     void submit(event);
   });
-  // A dialog that is sending cannot be dismissed: its answer would have
-  // nobody waiting for it.
-  document.addEventListener(
-    "cancel",
-    (event) => {
-      if (event.target instanceof HTMLDialogElement && isBusy(event.target))
-        event.preventDefault();
-    },
-    true,
-  );
   document.addEventListener(
     "close",
     (event) => {

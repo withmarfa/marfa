@@ -938,6 +938,41 @@ describe("Password and passkeys, dates, stale sign-ins and refusals", () => {
   );
 
   inBrowser(
+    "keeps a dialog open on Escape while its change is being sent",
+    async () => {
+      await seedPasskey("seed-busy", "Busy", new Date());
+      const { page, context } = await open();
+      try {
+        await page.goto(origin + PASSKEYS);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await page.route("**/owner/passkeys/*", async (route) => {
+          if (route.request().method() !== "PATCH") return route.continue();
+          await held;
+          await route.continue();
+        });
+        const dialog = await manage(page, "Busy");
+        await dialog.getByLabel("Name").fill("Busy again");
+        await dialog.getByRole("button", { name: "Save name" }).click();
+        await dialog.locator('.card[aria-busy="true"]').waitFor();
+        await page.keyboard.press("Escape");
+        expect(await dialog.isVisible()).toBe(true);
+        release();
+        await done(page).getByText("Passkey renamed").waitFor();
+        // Witness: once nothing is being sent, the same key closes it.
+        await manage(page, "Busy again");
+        await page.keyboard.press("Escape");
+        await dialog.waitFor({ state: "hidden" });
+      } finally {
+        await context.close();
+        await dropSeededPasskeys();
+      }
+    },
+  );
+
+  inBrowser(
     "keeps Add hidden and the address notice shown where the address is an IP address",
     async () => {
       const reserved = await reserveOrigin();

@@ -1,6 +1,7 @@
 /**
  * Native `<dialog>` elements, opened by a button that names one and closed by
- * a button inside it, Escape, or a click on the backdrop. The browser traps
+ * a button inside it, Escape, or a click on the backdrop, none of which closes
+ * one that is sending a change. The browser traps
  * focus inside a modal dialog and inerts the page behind it; this module
  * returns focus to whatever opened it, which the browser does not do for
  * every opener.
@@ -11,7 +12,7 @@ const openers = new WeakMap<HTMLDialogElement, HTMLElement>();
 const answersItself = (dialog: Element | null): boolean =>
   dialog?.hasAttribute("data-confirm-dialog") === true;
 
-/** A dialog that is sending a change cannot be dismissed, or its answer would have nobody waiting for it. */
+/** A dialog that is sending a change cannot be dismissed by a button, the backdrop or Escape, or its answer would have nobody waiting for it. */
 const sending = (dialog: Element | null): boolean =>
   dialog?.querySelector('.card[aria-busy="true"]') != null;
 
@@ -83,6 +84,16 @@ export function initDialogs(): void {
     )
       target.close();
   });
+
+  // `cancel`, which Escape sends, does not bubble either.
+  document.addEventListener(
+    "cancel",
+    (event) => {
+      if (event.target instanceof HTMLDialogElement && sending(event.target))
+        event.preventDefault();
+    },
+    true,
+  );
 
   // `close` does not bubble, so it is heard on the way down.
   document.addEventListener(
