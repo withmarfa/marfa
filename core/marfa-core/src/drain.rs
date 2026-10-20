@@ -140,13 +140,8 @@ enum Classified {
 /// before the drain asks whether it fails alone.
 const ENVIRONMENTAL_STREAK: i64 = 3;
 
-/// The writes a drain sends to test the suspects, however many are queued: an
-/// outage costs the suspect and these, and no more.
-const TESTS_PER_DRAIN: usize = 3;
-
-/// A write that has met an environmental failure often enough to be tested:
-/// whether the server answers another write that depends on none of the
-/// suspects.
+/// A write that has met an environmental failure often enough to be asked
+/// about: whether the server answers a write that does not depend on it.
 struct Suspect {
     id: String,
     key: String,
@@ -156,6 +151,70 @@ struct Suspect {
     unavailable: String,
     /// Where the write's entry stands in the report's verdicts.
     verdict_at: usize,
+}
+
+/// What a pass has decided so far, which says which writes are ready.
+struct Standing<'a> {
+    rows: &'a HashMap<&'a str, &'a QueuedWrite>,
+    answers: &'a HashMap<String, Option<Verdict>>,
+    waiting: &'a HashSet<String>,
+    landing: &'a HashMap<String, String>,
+}
+
+/// The next write, in queue order from `from`, that can test a suspect: ready,
+/// depending on no write ahead of it that has not been sent, and short of the
+/// threshold itself. A write at the threshold is passed over, and so is every
+/// write that waits on one, so a write that follows or depends on a write
+/// passed over is not sent ahead of it.
+fn next_test(
+    core: &Core,
+    all: &[QueuedWrite],
+    from: usize,
+    tested: &HashSet<String>,
+    standing: &Standing,
+) -> Result<Option<usize>> {
+    let mut ahead = standing.waiting.clone();
+    for (at, candidate) in all.iter().enumerate().skip(from) {
+        if tested.contains(&candidate.id)
+            || standing
+                .answers
+                .get(&candidate.id)
+                .and_then(Option::as_ref)
+                .is_some()
+        {
+            continue;
+        }
+        let current = store::queued_write(&*core.conn()?, &candidate.id)?;
+        let candidate = current.as_ref().unwrap_or(candidate);
+        if candidate.environmental_streak < ENVIRONMENTAL_STREAK
+            && matches!(
+                readiness(
+                    candidate,
+                    standing.rows,
+                    standing.answers,
+                    &ahead,
+                    standing.landing,
+                ),
+                Readiness::Ready
+            )
+            && crate::body::rule::lost_body(&*core.conn()?, candidate)?.is_none()
+        {
+            return Ok(Some(at));
+        }
+        ahead.insert(candidate.id.clone());
+    }
+    Ok(None)
+}
+
+/// The pass ended without a landing: the suspect waits as any write does that
+/// met an environmental failure.
+fn leave_waiting(core: &Core, stuck: &Suspect, report: &mut DrainReport) -> Result<()> {
+    store::note_environmental(&*core.conn()?, &stuck.id, stuck.streak, &stuck.failure)?;
+    report.undelivered += 1;
+    if report.unavailable.is_none() {
+        report.unavailable = Some(stuck.unavailable.clone());
+    }
+    Ok(())
 }
 
 /// Whether the server asked the caller to slow down, which says nothing of
@@ -951,11 +1010,63 @@ fn send_queue(
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
     let mut lookups = Lookups::new();
-    let mut suspects: Vec<Suspect> = Vec::new();
-    let mut tests_sent = 0;
+    // The write whose test is pending, and whether the server has answered a
+    // write this pass.
+    let mut suspect: Option<Suspect> = None;
+    let mut landed = false;
+    // Sent out of queue order as a test, so the walk does not reach it again.
+    let mut tested: HashSet<String> = HashSet::new();
+    let mut cursor = 0;
 
-    for row in &all {
+    loop {
         crate::catch_up::refuse_if_stopped(stop)?;
+        // The pass ended while a suspect waited for its test.
+        if report.unavailable.is_some()
+            && let Some(stuck) = suspect.take()
+        {
+            leave_waiting(core, &stuck, &mut report)?;
+        }
+        let test_at = if suspect.is_some() {
+            let at = next_test(
+                core,
+                &all,
+                cursor,
+                &tested,
+                &Standing {
+                    rows: &rows,
+                    answers: &answers,
+                    waiting: &waiting,
+                    landing: &landing,
+                },
+            )?;
+            if at.is_none()
+                && let Some(stuck) = suspect.take()
+            {
+                // No write could test it, so the pass ends here.
+                leave_waiting(core, &stuck, &mut report)?;
+            }
+            at
+        } else {
+            None
+        };
+        let testing = test_at.is_some();
+        let row = match test_at {
+            Some(at) => {
+                let row = &all[at];
+                tested.insert(row.id.clone());
+                row
+            }
+            None => {
+                let Some(row) = all.get(cursor) else {
+                    break;
+                };
+                cursor += 1;
+                if tested.contains(&row.id) {
+                    continue;
+                }
+                row
+            }
+        };
         if answers.get(&row.id).and_then(Option::as_ref).is_some() {
             continue;
         }
@@ -1212,12 +1323,6 @@ fn send_queue(
         if let Ok(answer) = &answer {
             waited(&mut report, answer.retry_after_seconds);
         }
-        // A write sent while there are suspects tests them.
-        let testing = !suspects.is_empty();
-        if testing {
-            tests_sent += 1;
-        }
-
         let class = refine(row, &payload, &answer, classify(&answer));
         let environmental = class == Classified::Environmental;
         let taken = match store_fault(row) {
@@ -1258,23 +1363,14 @@ fn send_queue(
                 settled
             }
         };
-        let mut deferred = false;
+        let mut counted = None;
         if environmental && !rate_limited(&answer) && !not_the_writes(&answer) {
             let streak = row.environmental_streak + 1;
             let failure = failure_of(&answer);
-            if streak >= ENVIRONMENTAL_STREAK && tests_sent < TESTS_PER_DRAIN {
-                // The pass goes on to the next write that depends on no
-                // suspect, and ends there if that one is met as well and has
-                // not met failures enough to join them.
-                deferred = true;
-                suspects.push(Suspect {
-                    id: row.id.clone(),
-                    key: row.idempotency_key.clone(),
-                    streak,
-                    failure,
-                    unavailable: settled.unavailable.clone().unwrap_or_default(),
-                    verdict_at: report.verdicts.len(),
-                });
+            // A write sent to test another that meets the failure as well
+            // ends the pass, however long its own run.
+            if streak >= ENVIRONMENTAL_STREAK && !testing {
+                counted = Some((streak, failure));
             } else {
                 store::note_environmental(&*core.conn()?, &row.id, streak, &failure)?;
             }
@@ -1327,9 +1423,27 @@ fn send_queue(
         report
             .verdicts
             .push(verdict_of(answered, &settled, answered.answer.as_deref()));
-        if testing && !environmental && !stop {
-            // The server answered a write that waits on none of the suspects.
-            for stuck in std::mem::take(&mut suspects) {
+        // The write is at the threshold: if the server has answered a write
+        // this pass it is set aside at once, and if not it waits for a test.
+        let carry_on = counted.is_some();
+        if let Some((streak, failure)) = counted {
+            let stuck = Suspect {
+                id: row.id.clone(),
+                key: row.idempotency_key.clone(),
+                streak,
+                failure,
+                unavailable: settled.unavailable.clone().unwrap_or_default(),
+                verdict_at: report.verdicts.len() - 1,
+            };
+            if landed {
+                set_aside(core, &stuck, &mut report, &mut answers)?;
+            } else {
+                suspect = Some(stuck);
+            }
+        }
+        if answer.is_ok() && !environmental && !stop {
+            landed = true;
+            if testing && let Some(stuck) = suspect.take() {
                 set_aside(core, &stuck, &mut report, &mut answers)?;
             }
         }
@@ -1341,26 +1455,11 @@ fn send_queue(
             ));
             break;
         }
-        if settled.unavailable.is_some() && !deferred {
+        if settled.unavailable.is_some() && !carry_on {
             if settled.verdict.is_none() {
                 report.undelivered += 1;
             }
             report.unavailable = settled.unavailable;
-        }
-    }
-
-    // The pass ended with the suspects untested or the test met as well: they
-    // wait as any write does that met an environmental failure. A refused
-    // credential has parked them instead, and `stopped` counts them.
-    if report.stopped.is_none() {
-        for stuck in &suspects {
-            store::note_environmental(&*core.conn()?, &stuck.id, stuck.streak, &stuck.failure)?;
-            report.undelivered += 1;
-        }
-        if let Some(first) = suspects.first()
-            && report.unavailable.is_none()
-        {
-            report.unavailable = Some(first.unavailable.clone());
         }
     }
 
