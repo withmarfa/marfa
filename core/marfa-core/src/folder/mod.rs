@@ -6730,6 +6730,16 @@ mod tests {
             let report = folder.scan().unwrap();
             assert_eq!(report.renamed, 1, "{name}: {report:?}");
             assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            // The status measures the same: the note, not the file item.
+            let status = folder.status().unwrap();
+            let warned = |path: &str| {
+                let file = status.files.iter().find(|file| file.path == path);
+                file.unwrap_or_else(|| panic!("{path} has no status"))
+                    .warning
+                    .is_some()
+            };
+            assert!(warned("note.md"), "the status did not warn of the note");
+            assert!(!warned(name), "the status warned of {name}, a file item");
             // Edited at the document name, it still goes up as bytes.
             std::fs::write(dir.path().join(name), [bytes, b"."].concat()).unwrap();
             let report = folder.scan().unwrap();

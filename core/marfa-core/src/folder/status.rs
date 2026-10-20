@@ -164,16 +164,20 @@ impl Folder {
                 ),
             };
             // Only a text item is sent in a request, and only text is measured.
-            let text_item = match by_path.get(key.as_str()) {
-                Some(bound) => !self.file_item(&bound.item_id, &catalog)?,
-                None => true,
-            };
-            entry.warning = bytes
+            // The item is read only for a text near the limit.
+            let near = bytes
                 .as_deref()
-                .filter(|_| text_item && is_document(path))
+                .filter(|_| is_document(path))
                 .and_then(|bytes| text_of(bytes).ok())
-                .and_then(|text| near_limit(key, text))
-                .map(|flagged| flagged.reason);
+                .and_then(|text| near_limit(key, text));
+            if let Some(near) = near
+                && match by_path.get(key.as_str()) {
+                    Some(bound) => !self.file_item(&bound.item_id, &catalog)?,
+                    None => true,
+                }
+            {
+                entry.warning = Some(near.reason);
+            }
             files.push(entry);
         }
         for bound in &snapshot {
