@@ -2,6 +2,13 @@
 import { localHref } from "../pages/href.js";
 
 /**
+ * The longest address a sign-in will carry. A longer one is not one a page of
+ * Marfa's links to, and it would ride in the sign-in page's own address and
+ * form.
+ */
+export const MAX_RETURN_TO_LENGTH = 2048;
+
+/**
  * Where a sign-in may send the browser afterwards: `raw` resolved against the
  * issuer, kept only when it lands on the issuer's own origin, and answered as
  * the normalized path, query and fragment. Anything else is `/`.
@@ -13,6 +20,7 @@ import { localHref } from "../pages/href.js";
  */
 export function validateReturnTo(raw: unknown, issuer: string): string {
   if (typeof raw !== "string" || raw.length === 0) return "/";
+  if (raw.length > MAX_RETURN_TO_LENGTH) return "/";
   let base: URL;
   let target: URL;
   try {

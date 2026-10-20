@@ -9,7 +9,11 @@ import {
 } from "../pages/reading.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
-import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-return.js";
+import {
+  MAX_RETURN_TO_LENGTH,
+  synthesizeOauthReturnTo,
+  validateReturnTo,
+} from "./sign-in-return.js";
 import { renderSignInPage } from "./test-render.js";
 
 /**
@@ -264,6 +268,12 @@ describe("validateReturnTo", () => {
     expect(validateReturnTo(`${ISSUER}/auth/device`, ISSUER)).toBe(
       "/auth/device",
     );
+  });
+
+  it("carries an address up to the longest it allows and falls back to / for one longer", () => {
+    const fits = `/${"a".repeat(MAX_RETURN_TO_LENGTH - 1)}`;
+    expect(validateReturnTo(fits, ISSUER)).toBe(fits);
+    expect(validateReturnTo(`${fits}a`, ISSUER)).toBe("/");
   });
 
   it("falls back to / for anything that lands off the instance", () => {
@@ -968,7 +978,7 @@ describe("the sign-in page names the app that sent the person", () => {
 });
 
 describe("signing in with no app waiting", () => {
-  it("ends at the server's address, which tells a browser it is signed in", async () => {
+  it("ends at the server's address, which shows a signed-in browser Home", async () => {
     ctx = await createTestContext(undefined, {
       email: "erin@example.com",
       password: "correct horse",
@@ -999,17 +1009,17 @@ describe("signing in with no app waiting", () => {
     expect(page.headers.get("content-type")).toContain("text/html");
     expect(page.headers.get("cache-control")).toContain("no-store");
     const text = visibleText(await page.text());
-    expect(text).toContain("You're signed in");
-    expect(text).toContain("erin@example.com");
+    expect(text).toContain("Sign out");
+    expect(text).toContain("Older management page");
 
     // Witness: the same address with no session is the page that says
     // nobody is, and a program is still given the JSON whoever it is.
     const anonymous = await request(ctx.app, "GET", "/", {
       headers: { accept: "text/html" },
     });
-    expect(visibleText(await anonymous.text())).not.toContain(
-      "erin@example.com",
-    );
+    const anonymousText = visibleText(await anonymous.text());
+    expect(anonymousText).not.toContain("Sign out");
+    expect(anonymousText).toContain("Marfa is running");
     const program = await request(ctx.app, "GET", "/", { headers: { cookie } });
     expect(program.headers.get("content-type")).toContain("application/json");
   });
