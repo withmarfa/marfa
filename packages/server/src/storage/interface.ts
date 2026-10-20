@@ -1635,6 +1635,15 @@ export interface WebhookDeliveryStore {
   markCanceled(id: string, token: string, reason: string): Promise<boolean>;
   /** Settles every pending delivery of a subscription unsent, saying why. */
   cancelPending(webhookId: string, reason: string): Promise<void>;
+  /** Settles unsent, saying why, each pending delivery of a subscription
+   *  whose stored payload `selected` rejects. Clears the claim, so one in
+   *  flight cannot write its outcome over the cancel. A payload that does
+   *  not parse is left to its next attempt. */
+  cancelUnselected(
+    webhookId: string,
+    selected: (eventType: string, frame: Record<string, unknown>) => boolean,
+    reason: string,
+  ): Promise<void>;
   /** Removes settled deliveries older than the retention; one still
    *  retrying stays whatever its age, and one no claim can reach does not.
    *  Answers how many went. */

@@ -1,4 +1,4 @@
-import { and, eq, desc, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, desc, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult, WebhookDelivery } from "@withmarfa/shared";
 import {
@@ -303,6 +303,44 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
           eq(outboundWebhookDeliveries.status, "pending"),
         ),
       )
+      .run();
+  }
+
+  async cancelUnselected(
+    webhookId: string,
+    selected: (eventType: string, frame: Record<string, unknown>) => boolean,
+    reason: string,
+  ): Promise<void> {
+    const t = outboundWebhookDeliveries;
+    const rows = await this.db
+      .select({ id: t.id, event_type: t.event_type, payload: t.payload })
+      .from(t)
+      .where(and(eq(t.webhook_id, webhookId), eq(t.status, "pending")))
+      .all();
+    const rejected: string[] = [];
+    for (const row of rows) {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(row.payload ?? "");
+      } catch {
+        continue;
+      }
+      if (typeof frame !== "object" || frame === null) continue;
+      if (!selected(row.event_type, frame as Record<string, unknown>)) {
+        rejected.push(row.id);
+      }
+    }
+    if (rejected.length === 0) return;
+    await this.db
+      .update(t)
+      .set({
+        status: "canceled",
+        claim_token: null,
+        error: reason,
+        next_attempt_at: null,
+        ...SETTLED,
+      })
+      .where(and(inArray(t.id, rejected), eq(t.status, "pending")))
       .run();
   }
 

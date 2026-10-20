@@ -810,4 +810,128 @@ describe("when a delivery stops", () => {
     }
     expect(http.posts).toHaveLength(0);
   });
+
+  it("sends no pending delivery the subscription's events or type filter no longer select, at the filters it holds when the attempt runs", async () => {
+    const key = await owner();
+    const http = recorder();
+    const created = (id: string): PubsubEvent => ({
+      type: "created",
+      item: item(id),
+    });
+    const settle = async (id: string) => {
+      await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+      return row(id);
+    };
+
+    const named = await subscription(key.id, ["item.created", "item.deleted"]);
+    const byName = await pending(
+      named,
+      created("01HBYNAMEBYNAMEBYNAMEBYNA0"),
+      "item.created",
+    );
+    await ctx.storage.outboundWebhooks.update(named.id, {
+      events: ["item.deleted"],
+    });
+    expect(await settle(byName)).toMatchObject({
+      status: "canceled",
+      error: DELIVERY_CANCELED.unselected,
+    });
+
+    const filtered = await subscription(key.id, ["item.created"]);
+    await ctx.storage.outboundWebhooks.update(filtered.id, {
+      type_filter: "core.note",
+    });
+    const byType = await pending(
+      filtered,
+      created("01HBYTYPEBYTYPEBYTYPEBYT0"),
+      "item.created",
+    );
+    await ctx.storage.outboundWebhooks.update(filtered.id, {
+      type_filter: "core.task",
+    });
+    expect(await settle(byType)).toMatchObject({
+      status: "canceled",
+      error: DELIVERY_CANCELED.unselected,
+    });
+    expect(http.posts).toHaveLength(0);
+
+    // The witnesses: the same deliveries are sent while the subscription
+    // still selects them, and the filters are read when the attempt runs.
+    const kept = await subscription(key.id, ["item.created", "item.deleted"]);
+    await ctx.storage.outboundWebhooks.update(kept.id, {
+      type_filter: "core.note",
+    });
+    const unchanged = await pending(
+      kept,
+      created("01HKEPTKEPTKEPTKEPTKEPTK0"),
+      "item.created",
+    );
+    await ctx.storage.outboundWebhooks.update(kept.id, { active: true });
+    expect(await settle(unchanged)).toMatchObject({ status: "success" });
+
+    const widened = await subscription(key.id, ["item.created"]);
+    const again = await pending(
+      widened,
+      created("01HAGAINAGAINAGAINAGAIN00"),
+      "item.created",
+    );
+    await ctx.storage.outboundWebhooks.update(widened.id, {
+      events: ["item.deleted"],
+    });
+    await ctx.storage.outboundWebhooks.update(widened.id, {
+      events: ["item.created", "item.deleted"],
+    });
+    expect(await settle(again)).toMatchObject({ status: "success" });
+    expect(http.posts).toHaveLength(2);
+  });
+
+  it("holds a pending edge event to the subscription's events and not to its type filter", async () => {
+    const key = await owner();
+    const http = recorder();
+    const source = await itemWrites(ctx.storage).create({
+      writer: null,
+      type: "core.note",
+      tier: "library",
+      state: "active",
+      properties: { body: "edge source" },
+      source: "test/webhook-edges",
+    });
+    const webhook = await subscription(key.id, [
+      "edge.created",
+      "edge.deleted",
+    ]);
+    await ctx.storage.outboundWebhooks.update(webhook.id, {
+      type_filter: "core.task",
+    });
+    const sent = await pending(
+      webhook,
+      {
+        type: "edge_created",
+        edge: edge("edge_filtered_away", source.id),
+        sourceType: source.type,
+      },
+      "edge.created",
+    );
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(await row(sent)).toMatchObject({ status: "success" });
+
+    const unnamed = await pending(
+      webhook,
+      {
+        type: "edge_created",
+        edge: edge("edge_unnamed", source.id),
+        sourceType: source.type,
+      },
+      "edge.created",
+    );
+    await ctx.storage.outboundWebhooks.update(webhook.id, {
+      events: ["edge.deleted"],
+    });
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(await row(unnamed)).toMatchObject({
+      status: "canceled",
+      error: DELIVERY_CANCELED.unselected,
+    });
+    expect(http.posts).toHaveLength(1);
+  });
 });

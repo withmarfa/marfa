@@ -29,7 +29,11 @@ import {
 } from "../webhooks/outbound-http.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { WIRE_EVENT_NAMES, type WireEventName } from "../pubsub.js";
-import { DELIVERY_CANCELED, ownerCredential } from "../webhooks/delivery.js";
+import {
+  DELIVERY_CANCELED,
+  ownerCredential,
+  subscriptionSelects,
+} from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -374,7 +378,7 @@ const updateWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates a webhook and returns it. Fields you leave out keep their values. Changing `url`, or setting `active` to `false`, cancels its pending deliveries. To change the secret, create a new webhook.",
+    "Updates a webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -775,6 +779,12 @@ export function webhookRoutes(
           await storage.outboundWebhookDeliveries.cancelPending(
             id,
             DELIVERY_CANCELED.inactive,
+          );
+        } else {
+          await storage.outboundWebhookDeliveries.cancelUnselected(
+            id,
+            (eventType, frame) => subscriptionSelects(next, eventType, frame),
+            DELIVERY_CANCELED.unselected,
           );
         }
         return next;

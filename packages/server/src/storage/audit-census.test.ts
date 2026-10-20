@@ -60,7 +60,7 @@ const WRITES: Record<string, string> = {
     "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion beginCopyDeletionAttempt settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
   WebhookStore: "acknowledge create update delete",
   WebhookDeliveryStore:
-    "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cleanup",
+    "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cancelUnselected cleanup",
   OauthProviderStore:
     "widenClientScopes setConsentScopes upsertConsent revokeTokensForGrant revokeAuthorizationCodesForGrant revokeAccessTokensForGrant mintTokenPair createClient deleteIdleGrantlessClients markClientOffered updateLastUsedAt drain narrowDeviceCodeScope deleteDeviceCodesForGrant",
   AuditStore: "log cleanup",
