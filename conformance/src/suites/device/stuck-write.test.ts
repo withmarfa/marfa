@@ -1062,8 +1062,10 @@ describe("writes that each fail alone, and the write behind them", () => {
     // Nothing is queued that could test the rest, so they wait; every
     // upload meets the failure again until each has met it in three drains.
     const counts: number[] = [];
+    let minute = 12;
     for (let drain = 8; drain <= 24; drain += 1) {
-      clockAt((drain - 1) * 2);
+      minute = (drain - 1) * 2;
+      clockAt(minute);
       counts.push(writesOf((await drainSeen(own)).requests).length);
       if (
         (await queueOf(own))
@@ -1081,7 +1083,7 @@ describe("writes that each fail alone, and the write behind them", () => {
     // A note that lands is the test of the next upload, which is sent again
     // and set aside. The one after it is a suspect too, with no write left to
     // test it, so it waits for the next note.
-    clockAt(60);
+    clockAt(minute + 2);
     const later = await note(own, "later");
     const seen = await drainSeen(own);
     expect(
@@ -1101,7 +1103,7 @@ describe("writes that each fail alone, and the write behind them", () => {
     ]);
     expect((await queueOf(own))[5]?.id).toBe(later.id);
 
-    clockAt(62);
+    clockAt(minute + 4);
     await note(own, "later still");
     expect(
       labelsOf((await drainSeen(own)).requests),
@@ -1741,16 +1743,189 @@ describe("a write the server takes again before it is set aside", () => {
     });
     clockAt(0);
     for (let drain = 0; drain < 3; drain += 1) await drainOnce(own);
-    // An hour on, then half an hour back: the sends in the later stretch
-    // carry earlier times than those before it.
+    // Ten minutes on, then five minutes back: the sends in the later stretch
+    // carry earlier times than those before it. The run of the write at the
+    // head began again at the first failure after the clock went back, so it
+    // is tested again only once that run is five minutes old.
     const tested: string[] = [];
-    for (const minutes of [60, 60, 30, 30, 30, 30]) {
+    for (const minutes of [10, 10, 5, 5, 5, 11, 11, 11]) {
       clockAt(minutes);
       tested.push(labelsOf((await drainSeen(own)).requests)[1] ?? "none");
     }
     expect(
       tested,
-      "a clock set back made the test stick to one write instead of moving through the queue",
-    ).toEqual(["note 2", "note 3", "note 4", "note 2", "note 3", "note 4"]);
+      "a clock set back made the test stick to one write instead of moving through the queue, or did not delay the next test",
+    ).toEqual([
+      "note 2",
+      "note 3",
+      "none",
+      "none",
+      "none",
+      "note 4",
+      "note 2",
+      "note 3",
+    ]);
+  });
+});
+
+describe("a run of failures that is not one run", () => {
+  /** The drains of one stuck upload with a note behind it, one at each of these minutes. */
+  async function drainsAt(label: string, minutes: number[]) {
+    const stuck = await stuckUpload(label);
+    const seen: Awaited<ReturnType<typeof drainSeen>>[] = [];
+    for (const minute of minutes) {
+      clockAt(minute);
+      seen.push(await drainSeen(stuck.harness));
+    }
+    return { ...stuck, seen };
+  }
+
+  it("starts the run again for a failure more than fifteen minutes after the last, so a write that failed once and went unsent for an hour is not set aside", async () => {
+    // One failure, then an hour unsent, then two drains seconds apart. Counted
+    // from the first failure it would be a streak of three five minutes old,
+    // and the note behind would test it.
+    const { harness: own, seen } = await drainsAt("run-hour", [0, 60, 60]);
+    expect(
+      seen.map((one) => writesOf(one.requests)),
+      "a write that failed an hour before was tested after two failures seconds apart",
+    ).toEqual([[UPLOAD], [UPLOAD], [UPLOAD]]);
+    expect(
+      (await queueOf(own)).map((row) => [
+        row.verdict,
+        row.environmental_streak,
+      ]),
+      "the failure an hour old was kept in the streak",
+    ).toEqual([
+      [null, 2],
+      [null, 0],
+      [null, 0],
+    ]);
+  });
+
+  it("sets the write aside when no gap between its failures is more than fifteen minutes, though it never met three in five minutes", async () => {
+    // The witness for the case above: the same queue and failures, the gaps
+    // under fifteen minutes.
+    const {
+      harness: own,
+      upload,
+      seen,
+    } = await drainsAt("run-gaps", [0, 14, 28]);
+    expect(
+      seen.map((one) => writesOf(one.requests)),
+      "a run with gaps under fifteen minutes did not reach a suspect after five minutes",
+    ).toEqual([
+      [UPLOAD],
+      [UPLOAD],
+      [UPLOAD, `PATCH /items/${HELD.id}`, UPLOAD, CREATE],
+    ]);
+    expect(
+      (await queueOf(own))[0],
+      "the write was not set aside",
+    ).toMatchObject({
+      id: upload.id,
+      verdict: "blocked",
+      reason: "failing_alone",
+    });
+  });
+
+  it("starts the run again at the first failure more than fifteen minutes after the last, however often it happens", async () => {
+    const { harness: own, seen } = await drainsAt(
+      "run-sixteen",
+      [0, 16, 32, 48, 64, 80],
+    );
+    expect(
+      seen.map((one) => writesOf(one.requests)),
+      "a gap of sixteen minutes kept the run",
+    ).toEqual(Array(6).fill([UPLOAD]));
+    expect(
+      (await queueOf(own)).map((row) => row.verdict),
+      "a write failing every sixteen minutes was set aside",
+    ).toEqual([null, null, null]);
+  });
+
+  it("starts the run again when the first failure was met with the clock far ahead, so a suspect is reached within the usual five minutes", async () => {
+    const stuck = await stuckUpload("run-clock-ahead");
+    const { harness: own, upload } = stuck;
+    // The first failure with the clock a day ahead: it is later than any
+    // time the clock now reads.
+    clockAt(24 * 60);
+    await drainOnce(own);
+    clockAt(0);
+    for (let drain = 0; drain < 3; drain += 1) {
+      expect(
+        writesOf((await drainSeen(own)).requests),
+        "a failure from a clock ahead held the queue",
+      ).toEqual([UPLOAD]);
+    }
+    clockAt(4);
+    expect(
+      writesOf((await drainSeen(own)).requests),
+      "a write was tested before its run was five minutes old",
+    ).toEqual([UPLOAD]);
+    clockAt(6);
+    const reached = await drainSeen(own);
+    expect(
+      writesOf(reached.requests),
+      "a start ahead of the clock held the queue until the clock caught up",
+    ).toEqual([UPLOAD, `PATCH /items/${HELD.id}`, UPLOAD, CREATE]);
+    expect(
+      (await queueOf(own))[0],
+      "the write was not set aside",
+    ).toMatchObject({
+      id: upload.id,
+      verdict: "blocked",
+      reason: "failing_alone",
+    });
+  });
+});
+
+describe("a write sent to test that cannot be sent", () => {
+  it("ends the pass with nothing set aside, and sends no other write to test the same suspect", async () => {
+    harness = await hydratedHarness("test-unsendable", { rows: held() });
+    const own = harness;
+    const upload = async (label: string, mime: string) => {
+      const queued = await own.device.putBlob(
+        fileOf(`${label}.bin`, `bytes of ${label}\n`),
+        mime,
+      );
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (!queued.ok) throw new Error("unreachable: the assertion above threw");
+      return queued.value;
+    };
+    const stuck = await upload("stuck", "application/octet-stream");
+    // A MIME type no header can carry, so the request is never made.
+    const unsendable = await upload("unsendable", "text/plain\ninvalid");
+    const tests = await note(own, "test");
+    own.server.answer("POST", "/blobs", (request) =>
+      request.raw.toString().startsWith("bytes of stuck")
+        ? gateway(413, HTML_413)
+        : takeUpload(request),
+    );
+    scripted(own.server, { create: [createdAs] });
+    clockAt(0);
+    for (let drain = 0; drain < 3; drain += 1) await drainOnce(own);
+    clockAt(6);
+    const seen = await drainSeen(own);
+    expect(
+      writesOf(seen.requests),
+      "a second write was sent to test the suspect after the first could not be sent",
+    ).toEqual([UPLOAD]);
+    expect(
+      (await queueOf(own)).map((row) => [
+        row.id,
+        row.verdict,
+        row.reason,
+        row.refusals,
+      ]),
+      "the suspect was set aside, the write behind was answered, or the write that could not be made was not counted",
+    ).toEqual([
+      [stuck.id, null, null, 0],
+      [unsendable.id, null, null, 1],
+      [tests.id, null, null, 0],
+    ]);
+    expect(
+      seen.report.unavailable,
+      "the pass did not say it ended",
+    ).not.toBeNull();
   });
 });
