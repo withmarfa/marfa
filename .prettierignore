@@ -25,5 +25,3 @@ _ignore/
 
 # The Rust core workspace: Cargo and generated Node output, none of it Prettier's.
 core/
-# Written by packages/server/scripts/build-page-assets.ts.
-packages/server/src/pages/assets.generated.ts

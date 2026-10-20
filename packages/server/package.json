@@ -8,6 +8,7 @@
     "dist"
   ],
   "scripts": {
+    "prepare": "tsx scripts/build-page-assets.ts",
     "assets:build": "tsx scripts/build-page-assets.ts",
     "assets:watch": "tsx scripts/build-page-assets.ts --watch",
     "build": "pnpm run assets:build && tsup",
@@ -16,7 +17,7 @@
     "test:watch": "vitest",
     "dev": "pnpm run assets:build && tsx watch --import ./src/instrumentation.ts src/index.ts",
     "schema-sql:generate": "tsx scripts/generate-schema-sql.ts",
-    "generate:openapi": "tsx scripts/generate-openapi.ts"
+    "generate:openapi": "pnpm run assets:build && tsx scripts/generate-openapi.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",

@@ -145,6 +145,25 @@ const SERVER: readonly Job[] = [
 ];
 
 /**
+ * What the page system's styles, browser script and tests can change: the
+ * workspace's build, typecheck, lint and tests, and nothing a server boots
+ * from.
+ */
+const PAGE_ASSETS_AND_TESTS: readonly Job[] = ["workspace"];
+
+/**
+ * What a page's markup can change: the workspace, the compliance fixtures,
+ * which read pages as a person does, and the offline lane, which boots a
+ * server from the source. The device fixtures, the correctness and sync
+ * fixtures, the restore drill and the image never read a page.
+ */
+const PAGE_MARKUP: readonly Job[] = [
+  "workspace",
+  "conformance-offline",
+  "conformance-compliance",
+];
+
+/**
  * Every job that builds the `marfa` binary, and the core's own checks. Of
  * the conformance jobs only the device fixtures drive the binary.
  */
@@ -248,6 +267,40 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [
     /^packages\/server\/src\/storage\/policy\.ts$/,
     [...SERVER, "clients-freshness"],
+  ],
+  // The page system. Its stylesheet, browser script and browser tests are
+  // bundled into the page assets at build time. Only the workspace's build,
+  // typecheck, lint and tests read them: no fixture of the contract reads the
+  // stylesheet, the script or their hashes (`ci/ci-required.test.ts` fails
+  // when one starts to). A test beside them is read by nothing but Vitest.
+  [
+    /^packages\/server\/src\/pages\/(styles|client|browser)\//,
+    PAGE_ASSETS_AND_TESTS,
+  ],
+  [
+    /^packages\/server\/src\/pages\/([^/]+\/)?[^/]*\.test\.tsx?$/,
+    PAGE_ASSETS_AND_TESTS,
+  ],
+  // Test-only helpers of the page system, imported by no server code.
+  [
+    /^packages\/server\/src\/pages\/(test-fixture\.tsx|reading\.ts)$/,
+    PAGE_ASSETS_AND_TESTS,
+  ],
+  // The device approval screen's markup: the parts, the renderer and the
+  // views it is built from. The CLI scenario that signs a device in reads its
+  // fields, so a change here reaches that scenario too.
+  [
+    /^packages\/server\/src\/(pages\/(parts\/|render\.ts$|icons\.tsx$)|routes\/(device-approval|access-choices|access-notes|access-view)\.tsx$)/,
+    [...PAGE_MARKUP, "cli-scenarios"],
+  ],
+  // The other page views under `routes/`: one file for each page, rendered
+  // by a handler that is not in it. Only the compliance fixtures read their
+  // HTML, and the offline lane boots a server from the source. Not
+  // `http-error-page.tsx`, whose `prefersHtml` decides for every refusal
+  // whether the body is a page or JSON, and not a test.
+  [
+    /^packages\/server\/src\/routes\/(?!http-error-page\.)[^/]+(?<!\.test)\.tsx$/,
+    PAGE_MARKUP,
   ],
   [/^packages\/server\//, SERVER],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],

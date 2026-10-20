@@ -3,15 +3,22 @@
  * writes them into `src/pages/assets.generated.ts` as strings with their
  * content hashes.
  *
- * `pnpm build`, `pnpm dev` and the tests all read that one file, so all three
- * serve the same bytes, and `src/pages/assets.test.ts` fails when the file
- * does not match what this script would write now.
+ * The file is not committed. `pnpm build`, `pnpm dev`, the tests' global
+ * setup and the scripts that boot the server from source each write it from
+ * the sources before anything reads it, so all of them serve the same bytes
+ * and none can serve stale ones.
  *
  *   tsx scripts/build-page-assets.ts          build once
  *   tsx scripts/build-page-assets.ts --watch  build again when a source changes
  */
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  watch,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { build, transform } from "esbuild";
 
@@ -72,16 +79,25 @@ export function renderGeneratedModule(assets: PageAssets): string {
   ].join("\n");
 }
 
-async function write(): Promise<boolean> {
+/**
+ * Writes `assets.generated.ts` from the sources and says whether the file
+ * changed. A file that already holds the same bytes is left alone, so a
+ * rebuild does not move its modification time. The write goes to a file of
+ * its own first and is renamed over the target, so a process that starts
+ * while another writes reads the old file or the new one, never half of it.
+ */
+export async function writePageAssets(target = GENERATED): Promise<boolean> {
   const next = renderGeneratedModule(await buildPageAssets());
-  const current = existsSync(GENERATED) ? readFileSync(GENERATED, "utf8") : "";
+  const current = existsSync(target) ? readFileSync(target, "utf8") : "";
   if (current === next) return false;
-  writeFileSync(GENERATED, next);
+  const staging = `${target}.${String(process.pid)}.tmp`;
+  writeFileSync(staging, next);
+  renameSync(staging, target);
   return true;
 }
 
 async function main(): Promise<void> {
-  const changed = await write();
+  const changed = await writePageAssets();
   console.log(
     changed ? "Page assets written." : "Page assets already up to date.",
   );
@@ -97,7 +113,7 @@ async function main(): Promise<void> {
       return;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      write().then(
+      writePageAssets().then(
         (rewritten) => {
           if (rewritten) console.log("Page assets rebuilt.");
         },

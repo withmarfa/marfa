@@ -1,16 +1,26 @@
 /**
  * The stylesheet and script are built from sources by
- * `scripts/build-page-assets.ts` and committed as `assets.generated.ts`, which
- * `build`, `dev` and the tests all serve. This fails when the committed file
- * no longer matches its sources, so none of the three can serve stale bytes.
+ * `scripts/build-page-assets.ts` into `assets.generated.ts`, which Git
+ * ignores. The tests' global setup writes it before any file runs, so these
+ * tests see what the sources build to now.
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   buildPageAssets,
   renderGeneratedModule,
+  writePageAssets,
 } from "../../scripts/build-page-assets.js";
 import { PAGE_ASSETS, pageAssetUrl } from "./assets.js";
 
@@ -22,22 +32,33 @@ const sha1 = (text: string): string =>
 
 describe("the generated page assets", () => {
   it("are what the sources build to now", async () => {
-    const built = await buildPageAssets();
-    expect(
-      sha1(readFileSync(GENERATED, "utf8")),
-      "assets.generated.ts is stale; run `pnpm --filter @withmarfa/server assets:build`",
-    ).toBe(sha1(renderGeneratedModule(built)));
+    expect(readFileSync(GENERATED, "utf8")).toBe(
+      renderGeneratedModule(await buildPageAssets()),
+    );
+    // Nothing is left to write, so no process rewrites the file under another.
+    expect(await writePageAssets()).toBe(false);
   }, 60_000);
 
-  it("would be caught if a source changed and nobody rebuilt", async () => {
-    const built = await buildPageAssets();
-    const committed = readFileSync(GENERATED, "utf8");
-    expect(
-      renderGeneratedModule({ ...built, css: `${built.css}.x{}` }),
-    ).not.toBe(committed);
-    expect(renderGeneratedModule({ ...built, js: `${built.js};0` })).not.toBe(
-      committed,
-    );
+  it("are written whole, and only when they differ", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "marfa-assets-"));
+    const target = join(dir, "assets.generated.ts");
+    try {
+      const expected = renderGeneratedModule(await buildPageAssets());
+
+      // Witness: a missing file and a stale one are both written.
+      expect(await writePageAssets(target)).toBe(true);
+      expect(readFileSync(target, "utf8")).toBe(expected);
+      writeFileSync(target, "// stale\n");
+      expect(await writePageAssets(target)).toBe(true);
+      expect(readFileSync(target, "utf8")).toBe(expected);
+
+      const written = statSync(target).mtimeMs;
+      expect(await writePageAssets(target)).toBe(false);
+      expect(statSync(target).mtimeMs).toBe(written);
+      expect(readdirSync(dir)).toEqual(["assets.generated.ts"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 60_000);
 
   it("carry the hash of their own bytes", () => {

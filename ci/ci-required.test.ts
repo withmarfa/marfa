@@ -165,6 +165,56 @@ describe("what a change runs", () => {
     ],
     ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
     [
+      "a page style, browser script or browser test",
+      [
+        "packages/server/src/pages/styles/parts.css",
+        "packages/server/src/pages/client/picker.ts",
+        "packages/server/src/pages/browser/home.browser.test.ts",
+      ],
+      ["ci-sqlite", "workspace"],
+    ],
+    [
+      "a page unit test or a helper only tests import",
+      [
+        "packages/server/src/pages/parts.test.tsx",
+        "packages/server/src/pages/test-fixture.tsx",
+      ],
+      ["ci-sqlite", "workspace"],
+    ],
+    [
+      "a page part, which the device approval screen is built from",
+      ["packages/server/src/pages/parts/rows.tsx"],
+      [
+        "ci-sqlite",
+        "workspace",
+        ...OFFLINE,
+        "conformance-compliance",
+        "cli-scenarios",
+      ],
+    ],
+    [
+      "a console or sign-in page view",
+      [
+        "packages/server/src/routes/sign-in-page.tsx",
+        "packages/server/src/routes/key-pages.tsx",
+      ],
+      ["ci-sqlite", "workspace", ...OFFLINE, "conformance-compliance"],
+    ],
+    [
+      "the page that decides whether a refusal is a page or JSON",
+      ["packages/server/src/routes/http-error-page.tsx"],
+      SERVER,
+    ],
+    [
+      "page logic that handlers read, and the route that serves the assets",
+      [
+        "packages/server/src/pages/recent-sign-in.ts",
+        "packages/server/src/pages/assets.ts",
+        "packages/server/src/routes/auth-pages.ts",
+      ],
+      SERVER,
+    ],
+    [
       "a type definition, which the core's catalog is written from",
       ["packages/types/core/note.json"],
       [...SERVER, "types-freshness", "clients-freshness"],
@@ -629,7 +679,12 @@ function closure(entries: string[]): string[] {
       /(?:from\s+|import\s*\(\s*|import\s+)["'](\.{1,2}\/[^"']+)["']/g,
     )) {
       const spec = resolve(dirname(file), match[1] ?? "");
-      const found = [spec, spec.replace(/\.js$/, ".ts"), `${spec}.ts`].find(
+      const found = [
+        spec,
+        spec.replace(/\.js$/, ".ts"),
+        spec.replace(/\.js$/, ".tsx"),
+        `${spec}.ts`,
+      ].find(
         (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
       );
       expect(
@@ -805,6 +860,146 @@ describe("the conformance shards", () => {
         "conformance-compliance",
       );
     }
+  });
+});
+
+describe("the page system's lanes", () => {
+  const SERVER_SRC = "packages/server/src";
+  const production = (file: string) =>
+    /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file);
+  /** A page file whose change reaches the whole server, as the rules leave it. */
+  const wholeServer = (file: string) => affected(file).has("restore-drill");
+
+  /** The local files a source file imports by value, and the rest by type. */
+  function imports(file: string): { value: string[]; type: string[] } {
+    const out: { value: string[]; type: string[] } = { value: [], type: [] };
+    const text = readFileSync(join(ROOT, file), "utf8");
+    for (const match of text.matchAll(
+      /(?:import|export)\s+(type\s+)?([^;]*?)\s+from\s+["'](\.{1,2}\/[^"']+)["']/g,
+    )) {
+      const spec = resolve(dirname(join(ROOT, file)), match[3] ?? "");
+      const found = [
+        spec,
+        spec.replace(/\.js$/, ".ts"),
+        spec.replace(/\.js$/, ".tsx"),
+      ].find(
+        (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+      );
+      if (found !== undefined)
+        out[match[1] === undefined ? "value" : "type"].push(
+          relative(ROOT, found),
+        );
+    }
+    return out;
+  }
+
+  it("reach no fixture of the contract through the stylesheet, the script or their hashes", () => {
+    const reader =
+      /pages\.(css|js)|assets\.generated|PAGE_(CSS|JS|ASSETS)|auth\/static\/pages/;
+    // Witness: the declared statuses of the asset routes name the files, so
+    // the pattern finds a file that names them. Only a declaration of which
+    // statuses the route may answer does, and no fixture asks for the file.
+    const declaration = "conformance/src/utils/status-declarations.ts";
+    expect(reader.test(readFileSync(join(ROOT, declaration), "utf8"))).toBe(
+      true,
+    );
+    const readers = [...walk("conformance/src"), ...walk("conformance/scripts")]
+      .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
+      .filter((file) => !file.includes("status-declarations"))
+      .filter((file) => reader.test(readFileSync(join(ROOT, file), "utf8")));
+    expect(readers).toEqual([]);
+  });
+
+  it("are read as HTML by the compliance fixtures and, for the device approval screen, one CLI scenario", () => {
+    const helpers = /utils\/(page-html|approval-form)/;
+    const reads = walk("conformance/src/suites")
+      .filter((file) => /\.tsx?$/.test(file))
+      .filter((file) => helpers.test(readFileSync(join(ROOT, file), "utf8")))
+      .map((file) => relative("conformance/src/suites", file));
+    // Witness: the helpers are used, by the fixtures that read pages.
+    expect(reads.length).toBeGreaterThan(0);
+    expect(
+      [...new Set(reads.map((file) => file.split("/")[0]))].sort(),
+    ).toEqual(["cli", "compliance"]);
+    expect(reads.filter((file) => file.startsWith("cli/"))).toEqual([
+      "cli/login.test.ts",
+    ]);
+  });
+
+  it("hold every file the device approval screen is built from to the CLI scenarios", () => {
+    const view = (file: string) =>
+      /^packages\/server\/src\/(pages\/(parts\/|render\.ts$|icons\.tsx$)|routes\/[^/]+\.tsx$)/.test(
+        file,
+      );
+    const seen = new Set<string>();
+    const stack = [`${SERVER_SRC}/routes/device-approval.tsx`];
+    for (let file = stack.pop(); file !== undefined; file = stack.pop()) {
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const next = imports(file);
+      stack.push(...next.value.filter(view), ...next.type.filter(view));
+    }
+    expect(seen.size).toBeGreaterThan(10);
+    expect(
+      [...seen]
+        // `prefersHtml` keeps it among the whole server's files.
+        .filter((file) => !wholeServer(file))
+        .filter((file) => !affected(file).has("cli-scenarios")),
+    ).toEqual([]);
+    // The views no CLI scenario reads do not run them.
+    expect(affected(`${SERVER_SRC}/routes/sign-in-page.tsx`)).not.toContain(
+      "cli-scenarios",
+    );
+  });
+
+  it("keep a page view from being a route, so its change reaches no handler", () => {
+    const registers =
+      /new (OpenAPI)?Hono\b|createRoute\(|\.(get|post|put|patch|delete|all|use)\(\s*["'`]\//;
+    // Witness: a file that does register routes matches.
+    expect(
+      registers.test(
+        readFileSync(join(ROOT, SERVER_SRC, "routes/auth-pages.ts"), "utf8"),
+      ),
+    ).toBe(true);
+    const views = walk(`${SERVER_SRC}/routes`).filter(
+      (file) => /\/[^/]+\.tsx$/.test(file) && production(file),
+    );
+    expect(views.length).toBeGreaterThan(10);
+    expect(
+      views.filter((file) =>
+        registers.test(readFileSync(join(ROOT, file), "utf8")),
+      ),
+    ).toEqual([]);
+  });
+
+  it("leave the whole server every page file that code outside the pages reads", () => {
+    // A page file that a handler, the middleware or the error handler imports
+    // by value can change what the server does with no page involved, so its
+    // change runs everything. A type is erased and moves nothing.
+    const outside = walk(SERVER_SRC)
+      .filter(production)
+      .filter((file) => !file.startsWith(`${SERVER_SRC}/pages/`))
+      .filter((file) => !/\/routes\/[^/]+\.tsx$/.test(file));
+    const read = new Set(
+      outside.flatMap((file) =>
+        imports(file).value.filter((target) =>
+          target.startsWith(`${SERVER_SRC}/pages/`),
+        ),
+      ),
+    );
+    // Witness: handlers do read page files.
+    expect([...read]).toContain(`${SERVER_SRC}/pages/recent-sign-in.ts`);
+    expect([...read].filter((file) => !wholeServer(file))).toEqual([]);
+  });
+
+  it("are generated when needed and never committed", () => {
+    expect(tracked()).not.toContain(`${SERVER_SRC}/pages/assets.generated.ts`);
+    const ignored = execFileSync(
+      "git",
+      ["check-ignore", `${SERVER_SRC}/pages/assets.generated.ts`],
+      { cwd: ROOT, encoding: "utf8" },
+    ).trim();
+    expect(ignored).toBe(`${SERVER_SRC}/pages/assets.generated.ts`);
   });
 });
 

@@ -1,8 +1,10 @@
 /**
  * Vitest global setup for the server package.
  *
- * Two jobs. First, it refuses to run against a stale build (see
- * `assertBuiltDepsAreFresh`). Second, it sweeps temporary directories
+ * Three jobs. First, it writes the page assets, the one generated file the
+ * server's source imports, so the tests serve what the sources build to now.
+ * Second, it refuses to run against a stale build (see
+ * `assertBuiltDepsAreFresh`). Third, it sweeps temporary directories
  * abandoned by earlier runs (see `sweepStaleTempDirs`). Every test file
  * gets its own database via `mkdtempSync` in `createTestContext`.
  *
@@ -12,6 +14,7 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { writePageAssets } from "../scripts/build-page-assets.js";
 import * as clock from "./clock.js";
 
 /**
@@ -153,8 +156,9 @@ function assertBuiltDepsAreFresh(): void {
   );
 }
 
-export default function setup(): () => Promise<void> {
+export default async function setup(): Promise<() => Promise<void>> {
   assertBuiltDepsAreFresh();
+  await writePageAssets();
   sweepStaleTempDirs();
 
   return () => Promise.resolve();
