@@ -106,7 +106,7 @@ import { getPermissionBundles } from "../config.js";
 import { readInstanceName } from "../instance-name.js";
 import { renderConsentScreen } from "./consent.js";
 import { resolveSelection } from "./access-model.js";
-import { profileWriteDescription } from "./scope-copy.js";
+import { isExactTypeScope, profileWriteDescription } from "./scope-copy.js";
 import { webOriginsOf } from "../auth/web-origins.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -1564,12 +1564,7 @@ export async function resolveTypeLabels(
   const ids = new Set<string>();
   for (const literal of literals) {
     const scope = parseScope(literal);
-    if (
-      scope?.kind === "type" &&
-      scope.typePattern !== "*" &&
-      !scope.typePattern.endsWith(".*")
-    )
-      ids.add(scope.typePattern);
+    if (scope && isExactTypeScope(scope)) ids.add(scope.typePattern);
   }
   const found = await Promise.all(
     [...ids].map(async (id) => [id, (await storage.types.get(id))?.label]),

@@ -73,6 +73,15 @@ export function pluralNoun(label: string): string {
     : noun.charAt(0).toLowerCase() + noun.slice(1);
 }
 
+/** Whether a scope names one item type exactly, which has a label of its own. */
+export function isExactTypeScope(scope: ParsedScope): boolean {
+  return (
+    scope.kind === "type" &&
+    scope.typePattern !== "*" &&
+    !scope.typePattern.endsWith(".*")
+  );
+}
+
 /** Title-case the most specific segment of a dotted type pattern, for scopes
  *  outside the curated label map (e.g. a third-party app's custom request). */
 export function humanizeType(typePattern: string): string {

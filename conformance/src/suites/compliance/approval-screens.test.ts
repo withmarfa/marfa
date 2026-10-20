@@ -862,6 +862,28 @@ describe("what an approval grants an app whose access ended while the screen was
     ]);
   });
 
+  it("denies a post of the read the app held, on a screen that offered it beside the write, once the app is disconnected", async () => {
+    const asked = "core.note:read core.note:write";
+    const app = await register(asked);
+    const first = await consentScreen(app, "core.note:read");
+    const sent = await decide(server, origin, cookie, first.consent, true, [
+      "core.note:read",
+    ]);
+    expect(sent?.searchParams.get("code")).toBeTruthy();
+    const screen = await consentScreen(app, asked);
+    const readOnly = selectNamed(screen.html, "Note")?.options.find(
+      (o) => o.label === "Read only",
+    );
+    // The held level is offered, and posts nothing.
+    expect(readOnly?.value).toBe("");
+    await disconnect(app);
+    const denied = await decide(server, origin, cookie, screen.consent, true, [
+      readOnly?.value ?? "?",
+    ]);
+    expect(denied?.searchParams.get("error")).toBe("access_denied");
+    expect(denied?.searchParams.get("code")).toBeNull();
+  });
+
   it("refuses the device code of a screen left open once the app is disconnected, and grants nothing", async () => {
     const app = await holder();
     const device = await deviceScreen(app, ASKED);

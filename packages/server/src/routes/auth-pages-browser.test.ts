@@ -373,6 +373,42 @@ inBrowser("the policy, in a browser", () => {
     }
   });
 
+  it("keeps the cursor where it was when the device code is rewritten, and deletes across the dash", async () => {
+    const page = await newPage();
+    try {
+      await page.goto(`${origin}/auth/device`);
+      const code = page.getByLabel("Code");
+      await code.pressSequentially("abcdefgh");
+      expect(await code.inputValue()).toBe("ABCD-EFGH");
+
+      // A correction in the middle: the cursor stays after what was typed.
+      await code.press("Home");
+      for (let i = 0; i < 2; i++) await code.press("ArrowRight");
+      await code.pressSequentially("zq");
+      expect(await code.inputValue()).toBe("ABZQ-CDEF");
+
+      // Backspace with the cursor just after the dash deletes the character
+      // before the dash, where the dash alone would only be written back.
+      await code.fill("");
+      await code.pressSequentially("abcdefgh");
+      await code.press("Home");
+      for (let i = 0; i < 5; i++) await code.press("ArrowRight");
+      await code.press("Backspace");
+      expect(await code.inputValue()).toBe("ABCE-FGH");
+      // And the cursor is where the deletion was.
+      await code.pressSequentially("d");
+      expect(await code.inputValue()).toBe("ABCD-EFGH");
+
+      // Delete with the cursor just before the dash deletes the character after it.
+      await code.press("Home");
+      for (let i = 0; i < 4; i++) await code.press("ArrowRight");
+      await code.press("Delete");
+      expect(await code.inputValue()).toBe("ABCD-FGH");
+    } finally {
+      await page.context().close();
+    }
+  });
+
   it("refuses an inline script and an inline style that carry no nonce", async () => {
     const page = await newPage();
     try {

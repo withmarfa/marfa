@@ -10,11 +10,11 @@
 
 export type Level = "none" | "read" | "write";
 
-const RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
+export const LEVEL_RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
 /** Whether `level` is above `held`: a choice that adds access. */
 export const addsAccess = (level: Level, held: Level): boolean =>
-  RANK[level] > RANK[held];
+  LEVEL_RANK[level] > LEVEL_RANK[held];
 
 /**
  * The level a control's value gives. An empty value adds nothing: it is no
@@ -35,7 +35,7 @@ export function listWords(items: readonly string[]): string {
 const capitalize = (text: string): string =>
   text.charAt(0).toUpperCase() + text.slice(1);
 
-const lowerFirst = (text: string): string =>
+export const lowerFirst = (text: string): string =>
   text.charAt(0).toLowerCase() + text.slice(1);
 
 /** More than this many names are counted, with the first few named. */

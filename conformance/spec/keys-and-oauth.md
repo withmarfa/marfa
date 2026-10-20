@@ -1123,7 +1123,7 @@ When a signed-in person's authorization request names scopes no standing consent
 
 ### `keys-and-oauth/consent-accepted`
 
-When a person accepts on the consent screen, the server MUST send the browser to the request's redirect URI with a `code` and the request's `state`.
+When a person approves on the consent screen and `keys-and-oauth/consent-nothing-denies` does not apply, the server MUST send the browser to the request's redirect URI with a `code` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends the code for an accepted consent to the redirect URI with the request's state`.
 
@@ -1143,7 +1143,7 @@ Where a request names a scope other than `openid` and `offline_access` that the 
 
 ### `keys-and-oauth/consent-ticked`
 
-When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds.
+When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
 
 **Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what the person chose, though its origin is allowed`.
 
@@ -1335,11 +1335,11 @@ While an app holds access to a type, the server MUST NOT offer, on the consent s
 
 ### `keys-and-oauth/approval-keep-held`
 
-While an app holds the read of an item type or of the profile and a request names the write of it and not the read, the server MUST offer, on the consent screen or the device approval page, the choice read only, which adds no scope to the approval, beside the choice read and edit.
+While an app holds the read of an item type or of the profile and a request names the write of it, the server MUST offer, on the consent screen or the device approval page, the choice read only, which posts no scope, beside the choice read and edit.
 
-**Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new.
+**Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new. It posts no scope even where the request names the read, so a screen left open while the person disconnects the app does not count the read as newly chosen.
 
-**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`.
+**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`, `› denies a post of the read the app held, on a screen that offered it beside the write, once the app is disconnected`.
 
 ### `keys-and-oauth/approval-never-lowers`
 

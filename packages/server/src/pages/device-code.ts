@@ -12,3 +12,13 @@ export function formatDeviceCode(typed: string): string {
     .slice(0, 8);
   return code.length > 4 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
 }
+
+/** How many letters and digits of `typed` come before `position`. */
+export function charactersBefore(typed: string, position: number): number {
+  return typed.slice(0, position).replace(/[^A-Za-z0-9]/g, "").length;
+}
+
+/** Where the cursor sits in a formatted code after `count` letters and digits. */
+export function positionAfter(formatted: string, count: number): number {
+  return Math.min(count > 4 ? count + 1 : count, formatted.length);
+}

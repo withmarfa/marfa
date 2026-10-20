@@ -655,10 +655,8 @@ describe("renderConsentScreen: what starts on", () => {
       bundles: [ON, OFF],
       priorScopes: ["core.note:read"],
     });
-    expect(defaultSubmission(html, "scopes")).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
+    // The held read is the level the notes control starts at, and posts nothing.
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
   });
 
   it("starts a scope on when any on-by-default bundle offers it", () => {

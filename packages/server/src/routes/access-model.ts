@@ -26,7 +26,9 @@ import {
 import {
   dataSummary,
   heldSummary,
+  LEVEL_RANK,
   levelOfValue,
+  lowerFirst,
   powersSummary,
   profileSummary,
   type HeldLevel,
@@ -41,13 +43,12 @@ import {
 import { reachLine } from "./scope-openness.js";
 import {
   humanizeType,
+  isExactTypeScope,
   pluralNoun,
   SCOPE_LABELS,
   SCOPE_NOUNS,
   scopeTitle,
 } from "./scope-copy.js";
-
-const RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
 const LEVEL_LABELS: Record<Level, string> = {
   none: "No access",
@@ -183,15 +184,6 @@ function isCarried(literal: string, held: readonly string[]): boolean {
   return isMechanism(literal) || grantCoversScope(held, literal);
 }
 
-const lowerFirst = (text: string): string =>
-  text.charAt(0).toLowerCase() + text.slice(1);
-
-/** Whether a scope names one item type exactly, which has a label of its own. */
-const isExactType = (scope: ParsedScope): boolean =>
-  scope.kind === "type" &&
-  scope.typePattern !== "*" &&
-  !scope.typePattern.endsWith(".*");
-
 /** The label an exact item type carries: the instance's, then the shipped registry's. */
 function typeLabel(pattern: string, input: AccessInput): string {
   return (
@@ -223,7 +215,7 @@ function describe(
       ? undefined
       : input.wildcardExpansions?.[scope.typePattern];
   const reach = reachLine(scope, expansion);
-  if (isExactType(scope)) {
+  if (isExactTypeScope(scope)) {
     const label = typeLabel(scope.typePattern, input);
     return {
       title: label,
@@ -302,16 +294,17 @@ export function buildAccess(input: AccessInput): AccessModel {
     const top: Level = ask.write !== undefined ? "write" : "read";
     // Held in full: shown, not offered. The server adds it to what the
     // approval grants while the app still holds it (see `resolveSelection`).
-    if (RANK[floor] >= RANK[top]) return null;
+    if (LEVEL_RANK[floor] >= LEVEL_RANK[top]) return null;
     // The floor is none or read here: an app that holds write holds all of
-    // any ask. The lowest choice adds nothing to the token. It is no access,
-    // or, where the app holds a read the request does not name a literal for,
-    // that held read, so a person can decline what is asked and keep what is
-    // held.
-    const options: { level: Level; value: string }[] = [];
-    if (floor === "none" || ask.read === undefined)
-      options.push({ level: floor, value: "" });
-    if (ask.read !== undefined)
+    // any ask. The lowest choice is the level the app holds, and it always
+    // posts nothing: it is no access, or the held read, which the server adds
+    // while it is still held. A held literal is never a value the page posts,
+    // so an approval after the app was disconnected cannot count it as newly
+    // chosen.
+    const options: { level: Level; value: string }[] = [
+      { level: floor, value: "" },
+    ];
+    if (floor === "none" && ask.read !== undefined)
       options.push({ level: "read", value: ask.read });
     if (ask.write !== undefined)
       options.push({ level: "write", value: ask.write });

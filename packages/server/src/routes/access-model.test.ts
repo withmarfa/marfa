@@ -365,17 +365,40 @@ describe("buildAccess", () => {
     ]);
   });
 
-  it("offers the read the request names, not an empty choice, when the request names the held level", () => {
+  it("offers the held level as the empty choice, even when the request names its literal", () => {
     const model = buildAccess({
       scopes: [scope("core.note:read"), scope("core.note:write")],
       held: ["core.note:read"],
       bundles,
     });
     expect(model.data[0]?.options).toEqual([
-      { value: "core.note:read", label: "Read only" },
+      { value: "", label: "Read only" },
       { value: "core.note:write", label: "Read and edit" },
     ]);
   });
+
+  it.each([
+    [["core.note:read", "core.note:write"], ["core.note:read"]],
+    [["profile:read", "profile:write"], ["profile:read"]],
+    [["core.*:read", "core.note:write"], ["core.*:read"]],
+  ])(
+    "never offers a value the app holds, so picking the level it holds posts nothing and a disconnected app regains nothing (%j)",
+    (asked, held) => {
+      const model = buildAccess({ scopes: asked.map(scope), held, bundles });
+      const row = [...model.data, ...model.profile].find(
+        (r) => r.kind === "level",
+      );
+      const posted = row?.kind === "level" ? row.options[0]?.value : undefined;
+      expect(posted).toBe("");
+      // The consent the app held has since been ended.
+      expect(resolveSelection(asked, [posted ?? "?"], [])).toMatchObject({
+        ok: true,
+        chosen: false,
+      });
+      for (const option of row?.kind === "level" ? row.options : [])
+        expect(grantCoversScope(held, option.value)).toBe(false);
+    },
+  );
 
   describe("offersEdit", () => {
     const offers = (...literals: string[]): boolean =>
