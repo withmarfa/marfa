@@ -71,6 +71,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("updateKey", "keys update"),
     reached("getConfig", "config get"),
     reached("replaceConfig", "config replace"),
+    reached("updateConfig", "config update"),
     reached("listPlatformTypeDrift", "types drift"),
     reached("deletePlatformType", "types prune"),
     reached("exportData", "export"),

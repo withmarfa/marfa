@@ -815,6 +815,7 @@ fn a_map_clear_conflicts_with_replacement_and_global_clear() {
 fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(config::get_request().path(), "/config");
     assert_eq!(config::replace_request(json!({})).method, Method::Put);
+    assert_eq!(config::update_request(json!({})).method, Method::Patch);
     let exported = export::request(&export::ExportArgs {
         format: Some(export::ExportFormat::Archive),
         type_: Some("core.note".into()),

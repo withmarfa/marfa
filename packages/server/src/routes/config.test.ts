@@ -204,6 +204,44 @@ describe("Instance config — round trips", () => {
     expect(auditResult.data[0]?.resource_type).toBe("config");
   });
 
+  it("PATCH changes only the settings it names and removes one set to null", async () => {
+    const patch = (body: Record<string, unknown>) =>
+      request(configCtx.app, "PATCH", "/config", {
+        key: configCtx.workingKey,
+        body,
+      });
+    await writeInstanceConfig(configCtx.storage.settings, {
+      name: "Home",
+      trash_retention_days: 7,
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+
+    const changed = await patch({ audit_retention_days: 30 });
+    expect(changed.status).toBe(200);
+    expect(await readInstanceConfig(configCtx.storage.settings)).toEqual({
+      name: "Home",
+      trash_retention_days: 7,
+      enforcement: { strict_mode: { types: ["core.note"] } },
+      audit_retention_days: 30,
+    });
+
+    const cleared = await patch({ trash_retention_days: null, name: "Office" });
+    expect(cleared.status).toBe(200);
+    expect(await readInstanceConfig(configCtx.storage.settings)).toEqual({
+      name: "Office",
+      enforcement: { strict_mode: { types: ["core.note"] } },
+      audit_retention_days: 30,
+    });
+
+    const mistyped = await patch({ audit_retention_day: 1 });
+    expect(mistyped.status).toBe(400);
+    const outOfRange = await patch({ trash_retention_days: -1 });
+    expect(outOfRange.status).toBe(400);
+    expect((await readInstanceConfig(configCtx.storage.settings))?.name).toBe(
+      "Office",
+    );
+  });
+
   it("takes back the body GET handed over, identity and all", async () => {
     // The use a full-replacement door is actually put to. `instance_id` is
     // in every read, so a client that reads, edits one lever and sends the

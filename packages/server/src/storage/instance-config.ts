@@ -15,6 +15,23 @@ export async function readInstanceConfig(
   return safeJsonParse<InstanceConfig>(raw, {}, "instance config");
 }
 
+/**
+ * The stored configuration with `changes` applied: a setting named is
+ * replaced whole, a setting named `null` is removed, and every other setting
+ * stays as it was.
+ */
+export function mergeInstanceConfig(
+  stored: InstanceConfig | null,
+  changes: { [K in keyof InstanceConfig]?: InstanceConfig[K] | null },
+): InstanceConfig {
+  const merged: Record<string, unknown> = { ...stored };
+  for (const [setting, value] of Object.entries(changes)) {
+    if (value === null) delete merged[setting];
+    else if (value !== undefined) merged[setting] = value;
+  }
+  return merged as InstanceConfig;
+}
+
 export function writeInstanceConfig(
   settings: SettingsStore,
   config: InstanceConfig,

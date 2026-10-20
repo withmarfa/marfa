@@ -235,6 +235,7 @@ type Fill = "unknown" | "well-formed" | "malformed";
 const TAKES_ANY_BODY: Record<string, string> = {
   "POST /blobs": "the bytes of a blob",
   "PUT /config": "an empty object is an update that changes nothing",
+  "PATCH /config": "an empty object is an update that changes nothing",
 };
 
 /** The codes in the table at the end of `spec/errors.md`. */

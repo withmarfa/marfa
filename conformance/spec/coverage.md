@@ -144,12 +144,13 @@ Fixture paths are under `src/suites/`.
 
 ## Audit and instance configuration
 
-| Operation     | Status  | Fixture                                                                | Notes                                                                                                                                                                |
-| ------------- | ------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /audit`  | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts`           | Filters, exclusive bounds, cursor, `audit.read` gate.                                                                                                                |
-| `GET /`       | covered | `compliance/instance.test.ts`, `compliance/unauthenticated.test.ts`    | Name, build, `instance_id`, the contract version and the feature list, without a credential. The owner's browser is shown Home (`compliance/console-pages.test.ts`). |
-| `GET /config` | covered | `compliance/schema-enforcement.test.ts`, `compliance/instance.test.ts` | Carries `instance_id` beside the levers.                                                                                                                             |
-| `PUT /config` | covered | `compliance/schema-enforcement.test.ts`                                | Strict mode, source allowlist, source filter; wholesale replacement; `instance_id` round trips and one naming another instance is refused.                           |
+| Operation       | Status  | Fixture                                                                | Notes                                                                                                                                                                |
+| --------------- | ------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /audit`    | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts`           | Filters, exclusive bounds, cursor, `audit.read` gate.                                                                                                                |
+| `GET /`         | covered | `compliance/instance.test.ts`, `compliance/unauthenticated.test.ts`    | Name, build, `instance_id`, the contract version and the feature list, without a credential. The owner's browser is shown Home (`compliance/console-pages.test.ts`). |
+| `GET /config`   | covered | `compliance/schema-enforcement.test.ts`, `compliance/instance.test.ts` | Carries `instance_id` beside the levers.                                                                                                                             |
+| `PUT /config`   | covered | `compliance/schema-enforcement.test.ts`                                | Strict mode, source allowlist, source filter; wholesale replacement; `instance_id` round trips and one naming another instance is refused.                           |
+| `PATCH /config` | covered | `compliance/instance-config.test.ts`                                   | Changes only the settings named; `null` removes one; the refusals of `PUT`.                                                                                          |
 
 ## Connectors
 
