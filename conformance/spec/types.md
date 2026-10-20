@@ -356,7 +356,7 @@ When an item names a value for a `url` field, or an element of an array field wh
 
 When a `url` value of a special scheme has a host that is ASCII once percent-decoded, the server MUST take the host whatever its labels hold, including a label that starts `xn--` and is not valid Punycode, except as `types/url-host-refused` states.
 
-**Reason:** the standard lowercases an ASCII host and does not judge its labels, so `http://xn--`, `http://xn--%41` and `http://xn--xn---yna/` are URLs. The platform's `URL` gives three answers across Node 22, 24 and 26, and the `url` crate in a device's core gave a fourth. The rule is the standard's, so one value has one answer on every server and every device (`device/url-trimmed`).
+**Reason:** the standard lowercases an ASCII host and does not judge its labels, so `http://xn--`, `http://xn--%41` and `http://xn--xn---yna/` are URLs.
 
 **Tests:** `compliance/field-types.test.ts › takes the url %s on a create`, `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
 
