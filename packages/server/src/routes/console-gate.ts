@@ -17,6 +17,13 @@ import { prefersHtml } from "./http-error-page.js";
 import { setNoStore } from "./no-store.js";
 import { validateReturnTo } from "./sign-in-return.js";
 
+/**
+ * The longest page address (path and query) a console page sends to sign in
+ * to come back to. A longer one would ride in the sign-in page's own address
+ * and form, so the person lands on Home instead.
+ */
+export const MAX_CONSOLE_RETURN_TO_LENGTH = 2048;
+
 /** The owner's browser session, or `null` when this request has none. */
 export async function ownerBrowserSession(
   storage: Storage,
@@ -68,10 +75,11 @@ export function consoleGate(
     setNoStore(c);
     if (!(await getClaimStatus(storage)).claimed) return c.redirect("/setup");
     const url = new URL(c.req.url);
-    const returnTo = validateReturnTo(
-      `${url.pathname}${url.search}`,
-      c.var.config.authBaseUrl,
-    );
+    const wanted = `${url.pathname}${url.search}`;
+    const returnTo =
+      wanted.length > MAX_CONSOLE_RETURN_TO_LENGTH
+        ? "/"
+        : validateReturnTo(wanted, c.var.config.authBaseUrl);
     return c.redirect(
       `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
     );

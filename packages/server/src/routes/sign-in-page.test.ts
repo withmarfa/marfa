@@ -10,7 +10,6 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
 import {
-  MAX_RETURN_TO_LENGTH,
   synthesizeOauthReturnTo,
   validateReturnTo,
 } from "./sign-in-return.js";
@@ -270,10 +269,10 @@ describe("validateReturnTo", () => {
     );
   });
 
-  it("carries an address up to the longest it allows and falls back to / for one longer", () => {
-    const fits = `/${"a".repeat(MAX_RETURN_TO_LENGTH - 1)}`;
-    expect(validateReturnTo(fits, ISSUER)).toBe(fits);
-    expect(validateReturnTo(`${fits}a`, ISSUER)).toBe("/");
+  it("carries a long address whole, as an authorize request can be", () => {
+    const long = `/auth/authorize?${new URLSearchParams({ state: "s".repeat(6000), client_id: "abc" }).toString()}`;
+    expect(long.length).toBeGreaterThan(6000);
+    expect(validateReturnTo(long, ISSUER)).toBe(long);
   });
 
   it("falls back to / for anything that lands off the instance", () => {

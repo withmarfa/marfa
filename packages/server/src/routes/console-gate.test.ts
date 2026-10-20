@@ -4,6 +4,7 @@ import { createPageRegistry, HOME_GROUPS } from "../pages/registry.js";
 import { pageForms, pageLinks, visibleText } from "../pages/reading.js";
 import { HOSTILE } from "../pages/test-fixture.js";
 import { createConsolePages } from "./console.js";
+import { MAX_CONSOLE_RETURN_TO_LENGTH } from "./console-gate.js";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
 
 const BROWSER = {
@@ -54,8 +55,18 @@ describe("a console page, asked for by a browser that is not signed in", () => {
   });
 
   it("sends an address too long to carry to sign in with no way back, so it lands on Home", async () => {
-    const res = await asBrowser(`/auth/owner/manage?x=${"a".repeat(3000)}`);
+    const room = MAX_CONSOLE_RETURN_TO_LENGTH - "/auth/owner/manage?x=".length;
+    const fits = `/auth/owner/manage?x=${"a".repeat(room)}`;
+    expect(fits).toHaveLength(MAX_CONSOLE_RETURN_TO_LENGTH);
+    // Witness: the longest address that fits is carried whole.
+    const carried = await asBrowser(fits);
+    expect(carried.headers.get("location")).toBe(
+      `/auth/sign-in?return_to=${encodeURIComponent(fits)}`,
+    );
+    const res = await asBrowser(`${fits}a`);
+    expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+    expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
   it("is sent back to the page it asked for once it has signed in", async () => {

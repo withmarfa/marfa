@@ -97,6 +97,20 @@ describe("a console page asked for by a browser that is not signed in", () => {
     expect(page.headers.get("content-type")).toContain("text/html");
   });
 
+  it("goes to sign in with no way back for an address too long to carry", async () => {
+    const base = "/auth/owner/manage?x=";
+    const fits = `${base}${"a".repeat(2048 - base.length)}`;
+    expect(fits).toHaveLength(2048);
+    // Witness: the longest address that fits is carried whole.
+    const carried = await get(fits, BROWSER);
+    expect(carried.headers.get("location")).toBe(
+      `/auth/sign-in?return_to=${encodeURIComponent(fits)}`,
+    );
+    const res = await get(`${fits}a`, BROWSER);
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/auth/sign-in?return_to=%2F");
+  });
+
   it("is sent back to the page once it has signed in", async () => {
     const wanted = "/auth/owner/manage?tab=keys";
     const res = await fetch(`${server!.apiUrl}/auth/sign-in`, {

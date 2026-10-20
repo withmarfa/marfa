@@ -202,11 +202,11 @@ The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manag
 
 ### `authentication/console-sign-in`
 
-When a browser that holds no owner session asks a console page for HTML, the server MUST answer `302` to `/auth/sign-in` with the page's path and query, percent-encoded, as `return_to`.
+When a browser that holds no owner session asks a console page for HTML, the server MUST answer `302` to `/auth/sign-in` with the page's path and query, percent-encoded, as `return_to`, or with `/` as `return_to` when the path and query together are longer than 2048 characters.
 
-**Reason:** a person who opens a bookmarked page after the session ended was handed a bare error with no way on, and signing in then sends them back to where they were (`keys-and-oauth/return-to-kept`).
+**Reason:** a person who opens a bookmarked page after the session ended was handed a bare error with no way on, and signing in then sends them back to where they were (`keys-and-oauth/return-to-kept`). An address longer than that would ride in the sign-in page's own address and form, so the person lands on Home instead. The limit belongs to the console pages: the sign-in page carries any other `return_to`, such as an authorization request, whole.
 
-**Tests:** `compliance/console-pages.test.ts › goes to sign in, carrying the page's path and query as where to return`, `compliance/console-pages.test.ts › is sent back to the page once it has signed in`, `compliance/console-pages.test.ts › is sent to sign in again when its session has ended`.
+**Tests:** `compliance/console-pages.test.ts › goes to sign in, carrying the page's path and query as where to return`, `compliance/console-pages.test.ts › goes to sign in with no way back for an address too long to carry`, `compliance/console-pages.test.ts › is sent back to the page once it has signed in`, `compliance/console-pages.test.ts › is sent to sign in again when its session has ended`.
 
 ### `authentication/console-sign-in-no-store`
 
