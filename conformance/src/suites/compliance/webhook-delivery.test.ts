@@ -535,6 +535,7 @@ describe("outbound webhook delivery", () => {
     }));
     const reason =
       "The subscription's events or type filter no longer select this event.";
+    const subs = new Map<string, { id: string }>();
     try {
       const create = async (
         label: string,
@@ -551,7 +552,6 @@ describe("outbound webhook delivery", () => {
         return created.data;
       };
       const both = ["item.created", "item.deleted"];
-      const subs = new Map<string, { id: string }>();
       subs.set("events-narrowed", await create("events-narrowed", both));
       subs.set(
         "type-narrowed",
@@ -651,6 +651,10 @@ describe("outbound webhook delivery", () => {
         expect(bodies, label).toEqual([earlier, later]);
       }
     } finally {
+      // Deleted here and not at the file's end: six live subscriptions to
+      // every note would queue a failing delivery for each note the later
+      // tests write, and the poller claims 50 due rows per run.
+      for (const sub of subs.values()) await client.deleteWebhook(sub.id);
       await hook.close();
     }
   });

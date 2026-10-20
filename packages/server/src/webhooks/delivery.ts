@@ -172,7 +172,8 @@ function ownerName(owner: WebhookOwner): string {
  *
  * Asked at every attempt rather than once at scheduling, because a retry
  * runs long after the event: the subscription may since have been removed,
- * turned off or pointed elsewhere, and its credential revoked or narrowed.
+ * turned off, pointed elsewhere or narrowed to exclude the event, and its
+ * credential revoked or narrowed.
  */
 export async function deliveryInReach(
   storage: Storage,
