@@ -50,9 +50,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --error-border: #fecaca;
   --error-fg: #991b1b;
 
-  /* Callout — the single boxed caution (unverified app). Amber so it reads
-     as advisory, not error. */
-
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
   --r-card: 26px;
@@ -98,7 +95,7 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --error-bg: #1f1212;
     --error-border: #3d1f1f;
     --error-fg: #fca5a5;
-        
+
     --shadow: none;
   }
   :root .card {
