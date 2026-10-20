@@ -8,10 +8,10 @@ const row = (properties: Record<string, unknown>) => ({
 });
 
 describe("liveConnectionRefusal", () => {
-  it("names the grants route for a live app", () => {
+  it("names the door that ends a live app", () => {
     expect(
       liveConnectionRefusal(row({ kind: "app", status: "active" })),
-    ).toContain("DELETE /auth/grants/01a0");
+    ).toContain("DELETE /owner/sign-ins/01a0");
   });
 
   it("lets a revoked connection go, and anything that is not a connection", () => {

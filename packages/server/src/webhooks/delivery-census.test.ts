@@ -50,6 +50,8 @@ const OUTBOUND: Record<string, string> = {
     "runs in the owner's browser and calls this server's own passkey door; it sends no webhook delivery",
   "pages/client/setup.ts":
     "runs in the owner's browser and calls this server's own setup doors; it sends no webhook delivery",
+  "pages/client/sign-ins.ts":
+    "runs in the owner's browser and calls this server's own sign-in doors; it sends no webhook delivery",
   "pages/client/sign-out.ts":
     "runs in the owner's browser and calls this server's own sign-out door; it sends no webhook delivery",
   "routes/account-pages.ts":

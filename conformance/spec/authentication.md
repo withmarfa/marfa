@@ -126,7 +126,7 @@ If a change that needs a sign-in from the last five minutes comes from an owner 
 
 **Reason:** A page recognises this refusal to open the dialog, so every door that needs a recent sign-in refuses in the same words.
 
-**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`.
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`, `› refuses a session created more than five minutes ago and ends none, until the owner confirms`.
 
 ### `authentication/confirm-replaces`
 
@@ -196,6 +196,14 @@ If a request to `POST /auth/confirm` comes from an origin other than the instanc
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
 
+### `authentication/sign-out-others`
+
+When an owner browser session created in the last five minutes sends `POST /auth/revoke-other-sessions`, the server MUST answer `200`, end every other browser session of the owner, and keep the session that sent it.
+
+**Reason:** the Browsers page signs out every browser but the one the owner is using, so the owner is not signed out of the page that asked. The browsers' sessions end and the apps they approved stay connected (`keys-and-oauth/app-outlives-browser`), because an app is not the browser that approved it. A session older than five minutes is refused as `authentication/recent-refusal` says.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › ends every other browser session of the owner and keeps the one that sent it`, `compliance/browser-sessions.test.ts › through ending the other sessions leaves every app connected`.
+
 ### `authentication/passkey-register-recent`
 
 If a browser session created more than five minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
@@ -204,7 +212,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/restore`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/restore`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 

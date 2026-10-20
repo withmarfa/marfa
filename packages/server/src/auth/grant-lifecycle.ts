@@ -1,7 +1,11 @@
-import type { ApiKey, Item } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
-import type { AuditLogEntry, Storage } from "../storage/interface.js";
+import type {
+  AuditLogEntry,
+  Storage,
+  StoredApiKey,
+} from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
 import type { WrittenBy } from "./version-writer.js";
@@ -14,7 +18,7 @@ import * as clock from "../clock.js";
  * and the `system.connection { kind: "app" }` projection Marfa keeps beside
  * it. Every transition has to move both, or the two disagree and the
  * disagreement is invisible: a consent row with no projection answers the
- * next authorize silently while the Manage Marfa page shows nothing to revoke,
+ * next authorize silently while the Connected apps page shows nothing to disconnect,
  * and a projection with no consent row lists an app whose tokens the
  * plugin has already forgotten. The functions here are the one writer per
  * transition, called from the user-facing routes and from the plugin
@@ -57,7 +61,7 @@ export async function listActiveAppGrants(storage: Storage): Promise<Item[]> {
 export async function keysMintedByApp(
   storage: Storage,
   opts: { clientId: string | undefined },
-): Promise<ApiKey[]> {
+): Promise<StoredApiKey[]> {
   if (!opts.clientId) return [];
   const keys = await storage.keys.list();
   return keys.filter((k) => k.oauth_client_id === opts.clientId);
@@ -91,8 +95,8 @@ export async function revokeProjectedGrant(
      *
      * Off unless the caller asks, because a key is not a token: it was minted
      * deliberately, it appears in the person's own key list, and it is meant
-     * to outlive the session that made it. So the Manage Marfa page offers it
-     * as a separate button and the API door takes an explicit flag, and the
+     * to outlive the session that made it. So the Connected apps page asks with a
+     * switch at Disconnect, the API doors take an explicit flag, and the
      * expiry sweep, which has nobody to ask, leaves them alone.
      */
     revokeKeys?: boolean;

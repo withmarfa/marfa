@@ -13,9 +13,9 @@
  * every connected app and revoke any of them. So the boundary is tested
  * with keys that differ only in whether they hold `grants.manage`.
  *
- * The session-gated twin (`POST /auth/grants/:id/revoke`) is a different
- * surface with a different principal — the signed-in human acting on their
- * own grants — and is unaffected.
+ * The owner's own door (`DELETE /owner/sign-ins/:id`) is a different surface
+ * with a different principal — the signed-in human acting on their own
+ * grants — and is unaffected.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";

@@ -1940,7 +1940,7 @@ export interface OauthProviderStore {
    * That mattered more than the ten-minute code lifetime suggests, because
    * redeeming a code after the revoke yields a refresh token that rotates
    * indefinitely — a short race converting into a permanent grant while the
-   * user's own Manage Marfa page shows the app as gone.
+   * owner's Connected apps page shows the app as gone.
    *
    * Called by `revokeTokensForGrant`, so every revocation path gets it.
    * Idempotent.

@@ -18,9 +18,9 @@ import type { Item } from "@withmarfa/shared";
  * projection and the plugin's consent row, with the app's tokens hanging
  * off the pair. Removing or retiring the projection leaves the tokens live
  * and the consent row standing, so the app keeps working and the next
- * authorize is answered silently, while the Manage Marfa page has nothing left
- * to show a Disconnect button for. `DELETE /auth/grants/{id}` and its
- * form-friendly twin run the cascade that drops all of it first.
+ * authorize is answered silently, while the Connected apps page has nothing left
+ * to show a Disconnect button for. `DELETE /owner/sign-ins/{id}` and
+ * `DELETE /auth/grants/{id}` run the cascade that drops all of it first.
  *
  * **Liveness is the grant's own axis, `properties.status`, and only that.**
  * The revoke cascade writes `status: "revoked"` and leaves the lifecycle
@@ -58,8 +58,8 @@ export function liveConnectionRefusal(
     if (props.status === "revoked") return undefined;
     return (
       `Grant ${item.id} is still live. Revoke it first with ` +
-      `DELETE /auth/grants/${item.id} or POST /auth/grants/${item.id}/revoke, ` +
-      `which drop the app's tokens and its stored consent. Removing the row ` +
+      `DELETE /owner/sign-ins/${item.id}, which drops the app's tokens and ` +
+      `its stored consent. Removing the row ` +
       `here would leave both behind with nothing listing them.`
     );
   }

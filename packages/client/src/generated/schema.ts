@@ -5926,7 +5926,7 @@ export interface operations {
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `edge_constraint_violation`: an edge type on the item has `cascade_on_delete: block`, and such an edge exists.
-             *     - `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.
+             *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
                 headers: {
@@ -7832,7 +7832,7 @@ export interface operations {
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
              *     - `invalid_transition`: the item is not in the trash.
-             *     - `validation_error`: the item is a live `system.connection` (revoke its grant with `DELETE /auth/grants/{id}` first), or `version` is not a positive whole number.
+             *     - `validation_error`: the item is a live `system.connection` (end it with `DELETE /owner/sign-ins/{id}` first), or `version` is not a positive whole number.
              */
             400: {
                 headers: {

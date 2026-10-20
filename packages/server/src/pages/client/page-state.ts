@@ -55,3 +55,10 @@ export async function refusalText(response: Response): Promise<string> {
     ? (await messageOf(response)) || SETUP_WORDS.somethingWrong
     : SETUP_WORDS.somethingWrong;
 }
+
+/** The button a page marks with `data-hook="name"`, or null when it has none. */
+export const hook = (
+  root: ParentNode,
+  name: string,
+): HTMLButtonElement | null =>
+  root.querySelector<HTMLButtonElement>(`[data-hook="${name}"]`);

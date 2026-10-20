@@ -34,6 +34,9 @@ const CONSOLE_PAGES = [
   "/auth/owner/keys/new",
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000",
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000/copy",
+  "/auth/owner/apps",
+  "/auth/owner/apps/00000000-0000-4000-8000-000000000000",
+  "/auth/owner/browsers",
   "/auth/owner/restore",
   "/auth/owner/general",
   "/auth/owner/health",
@@ -103,9 +106,21 @@ describe("a console page asked for by a browser that is not signed in", () => {
     expect(page.headers.get("content-type")).toContain("text/html");
   });
 
+  it("answers the page of an app that is not connected 404, under the same sign-in rules", async () => {
+    const cookie = await signedInCookie();
+    const path = "/auth/owner/apps/00000000-0000-4000-8000-000000000000";
+    const page = await get(path, { ...BROWSER, cookie });
+    expect(page.status).toBe(404);
+    expect(page.headers.get("content-type")).toContain("text/html");
+    // Witness: without the session the same address is the redirect to sign in.
+    expect((await get(path, BROWSER)).status).toBe(302);
+  });
+
   it("serves the Profile page and the Password and passkeys page to the signed-in owner, each under its heading", async () => {
     const cookie = await signedInCookie();
     for (const [path, heading] of [
+      ["/auth/owner/apps", "Connected apps"],
+      ["/auth/owner/browsers", "Browsers"],
       ["/auth/owner/profile", "Profile"],
       ["/auth/owner/passkeys", "Password and passkeys"],
     ] as const) {

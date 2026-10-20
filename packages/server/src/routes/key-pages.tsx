@@ -117,6 +117,23 @@ export function listHref(view: {
   return text === "" ? KEYS_HREF : `${KEYS_HREF}?${text}`;
 }
 
+/** A key's row in a list: its name, what it holds and when it ends, linking to its page. */
+export function KeyRows(props: { rows: readonly KeyListRow[] }) {
+  return (
+    <>
+      {props.rows.map((row) => (
+        <Row
+          title={row.label}
+          description={row.description}
+          descriptionTone={row.endsSoon ? "warn" : undefined}
+          value={row.value}
+          href={keyHref(row.id)}
+        />
+      ))}
+    </>
+  );
+}
+
 function emptyList(tab: KeyTab, query: string) {
   if (query !== "")
     return (
@@ -207,17 +224,11 @@ export function KeyListPage(props: KeyListParams) {
           />
         )}
         <RowGroup oneLine>
-          {props.rows.length === 0
-            ? emptyList(tab, query)
-            : props.rows.map((row) => (
-                <Row
-                  title={row.label}
-                  description={row.description}
-                  descriptionTone={row.endsSoon ? "warn" : undefined}
-                  value={row.value}
-                  href={keyHref(row.id)}
-                />
-              ))}
+          {props.rows.length === 0 ? (
+            emptyList(tab, query)
+          ) : (
+            <KeyRows rows={props.rows} />
+          )}
         </RowGroup>
         <Pager
           pagination={pagination}

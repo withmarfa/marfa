@@ -145,6 +145,12 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/owner/general":
     "general settings page authenticated by direct owner session",
   "GET /auth/owner/health": "health page authenticated by direct owner session",
+  "GET /auth/owner/apps":
+    "connected apps list authenticated by direct owner session",
+  "GET /auth/owner/apps/:id":
+    "one connected app's page authenticated by direct owner session",
+  "GET /auth/owner/browsers":
+    "browsers page authenticated by direct owner session",
   "GET /auth/owner/keys": "API keys list authenticated by direct owner session",
   "GET /auth/owner/keys/new":
     "key creation page authenticated by direct owner session",

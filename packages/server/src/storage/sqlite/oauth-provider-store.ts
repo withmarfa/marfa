@@ -661,8 +661,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * **`state = 'active'` is part of the identity, not a filter.** Every
    * caller either re-establishes the grant, stamps it, or names it in an
    * audit row, and each of those describes a record a person is supposed to
-   * be able to find and disconnect. The two surfaces that offer that button
-   * — `GET /auth/grants` and the Manage Marfa page built on it — list a row
+   * be able to find and disconnect. The surfaces that offer that button
+   * — `GET /auth/grants`, `GET /owner/sign-ins` and the Connected apps page — list a row
    * only when its `state` is active AND its `properties.status` is active, so a row failing
    * either axis is beyond every revoke interface the product has.
    *
