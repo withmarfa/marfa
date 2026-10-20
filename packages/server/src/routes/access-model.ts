@@ -10,9 +10,12 @@
  * thing they name: a level select for an item type, a link type, a metadata
  * area or a profile row, and a switch for a power or a single profile claim.
  * Every value a control submits is one of the request's own literals (an
- * empty value means no access), because the OAuth provider issues only
- * literals the signed request named. A choice is therefore the request
- * narrowed and never widened, and {@link resolveSelection} checks it as such.
+ * empty value means no access), and a choice is therefore the request
+ * narrowed and never widened. The one exception is a request for all data,
+ * where the person may choose types instead: each type control submits a
+ * scope the all-data scope covers, which the provider cannot issue from the
+ * request as signed, so the decision signs it again
+ * (`auth/narrow-signed-query.ts`). {@link resolveSelection} checks both.
  */
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {

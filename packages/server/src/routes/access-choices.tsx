@@ -172,8 +172,9 @@ export interface AccessChoicesProps {
  * holds, then one row to open for each kind of thing it asks for. Each row
  * says in a line what the choice beneath it gives, and opens in place with no
  * script. Every control is a field named `scopes` whose value is a scope
- * literal the request named, so the form posts the same way with or without a
- * script. What the app holds is never posted: the server adds it.
+ * literal the request named, except the controls for types chosen in place of
+ * all data, which are named `types`. The form posts the same way with or
+ * without a script. What the app holds is never posted: the server adds it.
  */
 export function AccessChoices(props: AccessChoicesProps) {
   const { model } = props;
