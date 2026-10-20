@@ -127,6 +127,7 @@ import {
 } from "./middleware/idempotency.js";
 import { healthRoutes, instanceReadCaller } from "./routes/health.js";
 import { storageProbes } from "./routes/health-probes.js";
+import { consoleHealth } from "./routes/console-health.js";
 import {
   refuseUndeclaredKeysOf,
   refuseUndeclaredQueryKeys,
@@ -479,6 +480,17 @@ export function createApp(
   // somebody pointing a client at an address is asking.
   app.openAPIRegistry.registerPath(instanceDescriptionRoute);
   const consolePages = options.consolePages ?? CONSOLE_PAGES;
+  const probes = storageProbes(storage, {
+    sqlitePath: config.sqlitePath,
+    blobPath: config.blobPath,
+  });
+  const health = consoleHealth({
+    storage,
+    blobs,
+    config,
+    probes,
+    housekeeping,
+  });
   app.get("/", async (c) => {
     const wantsPage = prefersHtml(c.req.header("accept"));
     // The owner's browser may search Home; nobody else sends the root a query.
@@ -505,7 +517,7 @@ export function createApp(
           instanceName,
           address: new URL(config.authBaseUrl).host,
           registry: consolePages.registry,
-          reading: await consolePages.read({ storage, config, auth }),
+          reading: await consolePages.read({ storage, config, auth, health }),
           query: homeSearchQuery(c.req.query("q")),
         }),
       );
@@ -526,50 +538,41 @@ export function createApp(
   // must be. Detailed diagnostics check instance.read independently.
   app.route(
     "/health",
-    healthRoutes(
-      storage,
-      blobs,
-      config,
-      storageProbes(storage, {
-        sqlitePath: config.sqlitePath,
-        blobPath: config.blobPath,
-      }),
-      async (c) => {
-        if (options.localAuthority) return true;
-        const authorization = c.req.header("authorization");
-        try {
-          if (authorization !== undefined) {
-            if (authorization.startsWith("Bearer marfa_at_")) {
-              const token = await storage.oauthProvider?.validateAccessToken(
-                hashApiKey(
-                  authorization.slice("Bearer marfa_at_".length),
-                  config.apiKeySalt,
-                ),
-              );
-              return (
-                token?.userId !== null &&
-                token?.scopes.includes("instance.read") === true
-              );
-            }
-            return await instanceReadCaller(
-              storage,
-              config.apiKeySalt,
-            )(authorization);
+    healthRoutes(storage, blobs, config, probes, async (c) => {
+      if (options.localAuthority) return true;
+      const authorization = c.req.header("authorization");
+      try {
+        if (authorization !== undefined) {
+          if (authorization.startsWith("Bearer marfa_at_")) {
+            const token = await storage.oauthProvider?.validateAccessToken(
+              hashApiKey(
+                authorization.slice("Bearer marfa_at_".length),
+                config.apiKeySalt,
+              ),
+            );
+            return (
+              token?.userId !== null &&
+              token?.scopes.includes("instance.read") === true
+            );
           }
-          if (auth) requireSecureOwnerTransport(auth);
-          const session = await auth?.getSession(c.req.raw.headers, {
-            readOnly: true,
-          });
-          return (
-            session !== null &&
-            session !== undefined &&
-            (await storage.owner?.find())?.id === session.user.id
-          );
-        } catch {
-          return false;
+          return await instanceReadCaller(
+            storage,
+            config.apiKeySalt,
+          )(authorization);
         }
-      },
-    ),
+        if (auth) requireSecureOwnerTransport(auth);
+        const session = await auth?.getSession(c.req.raw.headers, {
+          readOnly: true,
+        });
+        return (
+          session !== null &&
+          session !== undefined &&
+          (await storage.owner?.find())?.id === session.user.id
+        );
+      } catch {
+        return false;
+      }
+    }),
   );
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
@@ -864,7 +867,7 @@ export function createApp(
     app.route("/setup", setupRoutes(storage, auth));
     if (options.localAuthority)
       app.route("/_control", controlRoutes(storage, auth, config.authBaseUrl));
-    app.route("/auth/owner", ownerPages(storage, auth));
+    app.route("/auth/owner", ownerPages(storage, auth, { config, health }));
   }
   // The harness's clock and fault routes: on the private socket alone, and
   // only when the instance was started for testing.

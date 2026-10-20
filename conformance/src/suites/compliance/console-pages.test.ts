@@ -35,6 +35,8 @@ const CONSOLE_PAGES = [
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000",
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000/copy",
   "/auth/owner/restore",
+  "/auth/owner/general",
+  "/auth/owner/health",
   "/auth/owner/profile",
   "/auth/owner/passkeys",
 ];

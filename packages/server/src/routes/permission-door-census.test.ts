@@ -129,6 +129,7 @@ const STANDING: Record<string, string> = {
   "POST /webhooks/:id/deliveries/:delivery_id/redeliver": "webhooks.manage",
   "GET /config": "config.manage",
   "PUT /config": "config.manage",
+  "PATCH /config": "config.manage",
   "GET /audit": "audit.read",
   "POST /keys": "keys.mint",
   "GET /keys": "keys.manage or keys.mint",
@@ -216,6 +217,8 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
     "POST /setup/name",
     "GET /auth/owner/manage",
     "GET /auth/owner/restore",
+    "GET /auth/owner/general",
+    "GET /auth/owner/health",
     "GET /auth/owner/keys",
     "GET /auth/owner/keys/new",
     "GET /auth/owner/keys/:id",
@@ -286,7 +289,7 @@ const PERMISSION_CALLS: Record<
     because: "rechecks the permission enforced by the standing rule",
   },
   "routes/config.ts": {
-    asks: { "config.manage": 2 },
+    asks: { "config.manage": 3 },
     because: "rechecks the permission enforced by the standing rule",
   },
   "routes/keys.ts": {

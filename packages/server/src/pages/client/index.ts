@@ -7,6 +7,8 @@ import { initCopy } from "./copy.js";
 import { initDeviceCode } from "./device-code.js";
 import { initDialogs } from "./dialog.js";
 import { initForms } from "./form.js";
+import { initGeneral } from "./general.js";
+import { initHealth } from "./health.js";
 import { localizeDates } from "./local-date.js";
 import { initKeys } from "./keys.js";
 import { initPasskey } from "./passkey.js";
@@ -33,6 +35,8 @@ function start(): void {
   initConfirm();
   initSignOut();
   initKeys();
+  initGeneral();
+  initHealth();
 }
 
 if (document.readyState === "loading")

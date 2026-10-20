@@ -113,6 +113,12 @@ describe("the configuration door", () => {
     expect(cleared).toEqual({ instance_id: instanceId });
     const readAgain = await client.getConfig();
     expect(readAgain.data).toEqual({ instance_id: instanceId });
+
+    const patched = await client.patchConfig(lever);
+    expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    await expectMatchesSchema("PATCH", "/config", 200, patched.data);
+    expect(patched.data).toEqual({ instance_id: instanceId, ...lever });
+    await setConfig({});
   });
 
   it("takes a body back as read, and refuses one addressed elsewhere", async () => {
@@ -196,7 +202,7 @@ describe("the configuration door", () => {
     expect(accepted.status, JSON.stringify(accepted.error)).toBe(200);
   });
 
-  it("refuses both doors to a key without config.manage", async () => {
+  it("refuses all three doors to a key without config.manage", async () => {
     const narrowed = await clientWithSource(
       "config-no-settings",
       `${ctx.source}-config-no-settings`,
@@ -209,6 +215,10 @@ describe("the configuration door", () => {
     expect(write.status).toBe(403);
     expect(write.error?.error.code).toBe("forbidden");
     expect(write.error?.error.details?.required_scope).toBe("config.manage");
+    const patch = await narrowed.patchConfig({});
+    expect(patch.status).toBe(403);
+    expect(patch.error?.error.code).toBe("forbidden");
+    expect(patch.error?.error.details?.required_scope).toBe("config.manage");
   });
 });
 

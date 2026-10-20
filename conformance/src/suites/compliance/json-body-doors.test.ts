@@ -522,6 +522,7 @@ describe("a request the door would refuse before it reads the body", () => {
     const doors: { door: string; permission: string }[] = [
       { door: "POST /webhooks", permission: "webhooks.manage" },
       { door: "PUT /config", permission: "config.manage" },
+      { door: "PATCH /config", permission: "config.manage" },
       { door: "POST /keys", permission: "keys.mint" },
     ];
     const way = plainTextWay();
@@ -536,7 +537,10 @@ describe("a request the door would refuse before it reads the body", () => {
       expect(refusal.error.code, door).toBe("forbidden");
       expect(refusal.error.details?.required_scope, door).toBe(permission);
 
-      const holder = await mintKey(`holds-${permission}`, [permission]);
+      const holder = await mintKey(
+        `holds-${permission}-${door.replace(/\W+/g, "-")}`,
+        [permission],
+      );
       const answered = await send(door, way, holder);
       expect(answered.status, door).toBe(400);
       expect(

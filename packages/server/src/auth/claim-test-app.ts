@@ -34,8 +34,9 @@ export async function createClaimTestApp(
   });
   await auth.ready;
   const app = new Hono<AppEnv>();
+  const config = loadConfig({ MARFA_AUTH_BASE_URL: baseURL, ...settings });
   app.use("*", async (c, next) => {
-    c.set("config", loadConfig({ MARFA_AUTH_BASE_URL: baseURL, ...settings }));
+    c.set("config", config);
     await next();
   });
   app.use("*", pageSecurityPolicy);
@@ -44,7 +45,17 @@ export async function createClaimTestApp(
   app.use("*", directAuthorityMiddleware(storage, auth, baseURL));
   app.route("/setup", setupRoutes(storage, auth));
   app.route("/owner", ownerRoutes(storage, auth));
-  app.route("/auth/owner", ownerPages(storage, auth));
+  app.route(
+    "/auth/owner",
+    ownerPages(storage, auth, {
+      config,
+      health: {
+        read: () => Promise.resolve({ status: "ok", components: {} }),
+        objectStore: () => Promise.resolve(null),
+        jobs: () => Promise.resolve([]),
+      },
+    }),
+  );
   app.route("/auth/static", authStaticRoutes());
   app.route("/auth", confirmRoutes(storage, auth));
   app.route("/auth", authRoutes(storage, auth));

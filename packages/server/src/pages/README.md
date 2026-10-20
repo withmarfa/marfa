@@ -209,7 +209,11 @@ the page's own address again to swap in the region marked `data-live`, so the
 browser never draws a row. `client/local-date.ts` is shared: any page that
 shows a date writes it with `LocalDate`, and the script does the rest.
 `client/save-bar.ts` is shared: any edit page calls `initSaveBar` for its
-form. `client/index.ts` starts them all. They use the DOM only: no `innerHTML`, and styles are set through `element.style` where needed.
+form. `client/page-state.ts` is shared too: the flash a page keeps across its
+own reload, the busy state of a button and the words for a refused request.
+`client/general.ts` sends only the controls that changed on General through
+`PATCH /config`, and `client/health.ts` runs a housekeeping job from its Run
+now button. `client/index.ts` starts them all. They use the DOM only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
 password toggle, the shortcut hint, Sign out, a list's Rows per page) hidden, and the script shows it, so a
 browser without the script has no control that does nothing.

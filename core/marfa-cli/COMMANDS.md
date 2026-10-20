@@ -1599,6 +1599,19 @@ marfa config replace [OPTIONS]
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
 
+### marfa config update
+
+Change only the settings the body names; `null` removes one. Needs `config.manage`.
+
+```text
+marfa config update [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
 ## export
 
 Export the instance's data.

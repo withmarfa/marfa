@@ -1153,6 +1153,15 @@ export class MarfaClient {
     });
   }
 
+  async patchConfig(
+    changes: Record<string, unknown>,
+  ): Promise<ApiResponse<unknown>> {
+    return this.request<unknown>("/config", {
+      method: "PATCH",
+      body: changes,
+    });
+  }
+
   async addTags(
     id: string,
     tags: string[],

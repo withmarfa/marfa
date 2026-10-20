@@ -824,7 +824,7 @@ When the server completes an unfinished database, the server MUST leave the rows
 
 ## The configuration operations
 
-`GET /config` and `PUT /config` hold the instance's display name, levers and retention settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
+`GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and retention settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
 
 ### `instance/config-name`
 
@@ -955,6 +955,26 @@ When a key holding `config.manage` sends `PUT /config` with a body that leaves o
 **Reason:** a setting left out goes back to its default.
 
 **Tests:** `compliance/instance-config.test.ts › takes away each setting a later PUT leaves out`.
+
+### `instance/config-patch-merges`
+
+When a key holding `config.manage` sends `PATCH /config`, the server MUST set each setting the body names to the value sent, leave every setting the body does not name as it was, and answer the configuration as stored beside the instance's identity.
+
+**Reason:** `PUT /config` replaces the whole, so two callers that each read the configuration, change one setting and send it back undo each other. A patch names only what it changes.
+
+**Tests:** `compliance/instance-config.test.ts › changes only the settings a PATCH names, so a second caller's change is not undone`.
+
+### `instance/config-patch-clears`
+
+When a key holding `config.manage` sends `PATCH /config` with a setting set to `null`, the server MUST remove that setting, so that `GET /config` answers no field for it and leaves the other settings as they were.
+
+**Tests:** `compliance/instance-config.test.ts › changes only the settings a PATCH names, so a second caller's change is not undone`.
+
+### `instance/config-patch-refused`
+
+If a key holding `config.manage` sends `PATCH /config` with a key the server does not know, a retention outside its range or an `instance_id` other than the instance's own, then the server MUST answer `400 validation_error` and keep the stored configuration.
+
+**Tests:** `compliance/instance-config.test.ts › refuses a PATCH it would refuse as a PUT, and keeps the configuration`.
 
 ### `instance/config-audit`
 

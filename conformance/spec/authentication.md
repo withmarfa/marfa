@@ -204,7 +204,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/restore`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/restore`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 

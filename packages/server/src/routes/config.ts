@@ -13,6 +13,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
+  mergeInstanceConfig,
   readInstanceConfig,
   writeInstanceConfig,
 } from "../storage/instance-config.js";
@@ -139,7 +140,58 @@ const InstanceConfigWriteSchema = z.strictObject({
   ...instanceConfigShape(true),
 });
 
-/** Both configuration doors take `config.manage`. */
+const CLEARS = " `null` removes it, so the server's default applies.";
+
+const clearableDays = (what: string) =>
+  z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_DAYS)
+    .nullable()
+    .optional()
+    .describe(`${what} ${KEPT_FOREVER}${CLEARS}`);
+
+/**
+ * The patch shape: the write shape with each setting clearable by `null`.
+ * Strict for the reason `PUT` is: a key one letter wrong would otherwise be
+ * dropped while the answer says the change was made.
+ */
+const InstanceConfigPatchSchema = z.strictObject({
+  instance_id: InstanceConfigWriteSchema.shape.instance_id,
+  name: InstanceNameSchema.nullable()
+    .optional()
+    .describe(`The instance's display name.${CLEARS}`),
+  enforcement: EnforcementWriteSchema.nullable()
+    .optional()
+    .describe(
+      "The instance's enforcement levers. Sending this replaces all three levers, so include every lever you want on. `null` removes them all.",
+    ),
+  audit_retention_days: clearableDays(
+    "Days Marfa keeps audit log entries and outbound webhook delivery history.",
+  ),
+  event_log_retention_hours: z
+    .number()
+    .int()
+    .min(0)
+    .max(MAX_RETENTION_HOURS)
+    .nullable()
+    .optional()
+    .describe(
+      `Hours Marfa keeps events, which a stream can replay from a cursor, and the answers it replays for an \`Idempotency-Key\`. ${KEPT_FOREVER}${CLEARS}`,
+    ),
+  trash_retention_days: clearableDays(
+    "Days an item stays in the trash before Marfa purges it.",
+  ),
+  inbound_handled_retention_days: clearableDays(
+    "Days Marfa keeps inbound webhook deliveries a connector has marked handled.",
+  ),
+  inbound_pending_retention_days: clearableDays(
+    "Days Marfa keeps inbound webhook deliveries no connector has marked handled.",
+  ),
+});
+
+/** Every configuration door takes `config.manage`. */
 const managesConfig = standingPermission("config.manage");
 
 const CONFIG_MANAGE_REFUSAL =
@@ -188,7 +240,7 @@ const putConfigRoute = createRoute({
   tags: ["Instance"],
   summary: "Replace the configuration",
   description:
-    "Replaces the instance configuration with the body and returns it. A setting you leave out goes back to its default, so send the whole configuration with your change. Requires `config.manage`.",
+    "Replaces the instance configuration with the body and returns it. A setting you leave out goes back to its default, so send the whole configuration with your change. To change only some settings, use `PATCH`. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
   middleware: managesConfig,
   request: {
@@ -236,8 +288,79 @@ const putConfigRoute = createRoute({
   },
 });
 
+const patchConfigRoute = createRoute({
+  operationId: "updateConfig",
+  method: "patch",
+  path: "/",
+  tags: ["Instance"],
+  summary: "Update the configuration",
+  description:
+    "Changes only the settings the body names and returns the whole configuration. A setting you leave out stays as it is, and `null` removes one so its default applies. `enforcement` is one setting: send every lever you want on. Requires `config.manage`.",
+  security: [{ bearerAuth: [] }],
+  middleware: managesConfig,
+  request: {
+    body: {
+      content: {
+        "application/json": { schema: InstanceConfigPatchSchema },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: InstanceConfigSchema },
+      },
+      description: "Returns the configuration as stored.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            "missing_required_field",
+          ]),
+        },
+      },
+      description:
+        "- `missing_required_field`: a lever lacks `types` or `sources`.\n- `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: CONFIG_MANAGE_REFUSAL,
+    },
+  },
+});
+
 export function configRoutes(storage: Storage, instanceId: string) {
   const router = createOpenAPIRouter<AppEnv>();
+
+  function refuseOtherInstance(addressed: string | undefined): void {
+    if (addressed === undefined || addressed === instanceId) return;
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "instance_id names a different instance",
+      {
+        errors: [
+          {
+            path: "instance_id",
+            message: `this instance is ${instanceId}`,
+          },
+        ],
+      },
+    );
+  }
 
   router.openapi(getConfigRoute, async (c) => {
     requirePermission(c, "config.manage");
@@ -252,20 +375,7 @@ export function configRoutes(storage: Storage, instanceId: string) {
   router.openapi(putConfigRoute, async (c) => {
     requirePermission(c, "config.manage");
     const { instance_id: addressed, ...rest } = c.req.valid("json");
-    if (addressed !== undefined && addressed !== instanceId) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "instance_id names a different instance",
-        {
-          errors: [
-            {
-              path: "instance_id",
-              message: `this instance is ${instanceId}`,
-            },
-          ],
-        },
-      );
-    }
+    refuseOtherInstance(addressed);
     // No cast. What is left after the identity is removed and
     // `InstanceConfig` are the same type, because the schema declares every
     // field the interface does — a cast between them would hide a field this
@@ -286,6 +396,33 @@ export function configRoutes(storage: Storage, instanceId: string) {
     // Echoed with the identity the read carries, so the two doors answer the
     // same shape and a client can send back what either one gave it.
     return c.json({ ...body, instance_id: instanceId }, 200);
+  });
+
+  router.openapi(patchConfigRoute, async (c) => {
+    requirePermission(c, "config.manage");
+    const { instance_id: addressed, ...changes } = c.req.valid("json");
+    refuseOtherInstance(addressed);
+
+    // Read and written in one transaction, so a second caller's change
+    // between the two cannot be written over.
+    const stored = await runAuditedTransaction(
+      storage,
+      async () => {
+        const merged = mergeInstanceConfig(
+          await readInstanceConfig(storage.settings),
+          changes,
+        );
+        await writeInstanceConfig(storage.settings, merged);
+        return merged;
+      },
+      {
+        client_ip: c.get("clientIp") ?? null,
+        key_id: authorityId(c),
+        action: "config.update",
+        resource_type: "config",
+      },
+    );
+    return c.json({ ...stored, instance_id: instanceId }, 200);
   });
 
   return router;

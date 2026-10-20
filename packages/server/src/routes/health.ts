@@ -15,9 +15,9 @@ import {
 } from "./health-probes.js";
 import { errorReason } from "../error-text.js";
 
-type Status = "ok" | "degraded" | "down";
+export type Status = "ok" | "degraded" | "down";
 
-interface ComponentStatus {
+export interface ComponentStatus {
   status: Status;
   latency_ms?: number;
   error?: string;
@@ -49,12 +49,15 @@ const TIMED_OUT = Symbol("probe-timed-out");
  * waiting for any more, and left unhandled it would be reported as a fault
  * over a health check.
  */
-async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
+async function withBudget<T>(
+  work: Promise<T>,
+  budgetMs: number = PROBE_TIMEOUT_MS,
+): Promise<T | typeof TIMED_OUT> {
   let timer: NodeJS.Timeout | undefined;
   const budget = new Promise<typeof TIMED_OUT>((resolveBudget) => {
     timer = setTimeout(() => {
       resolveBudget(TIMED_OUT);
-    }, PROBE_TIMEOUT_MS);
+    }, budgetMs);
   });
   try {
     return await Promise.race([
@@ -103,10 +106,11 @@ export function instanceReadCaller(
 async function timed(
   work: () => Promise<unknown>,
   heldMessage: string,
+  budgetMs: number = PROBE_TIMEOUT_MS,
 ): Promise<ComponentStatus> {
   const started = performance.now();
   try {
-    const outcome = await withBudget(work());
+    const outcome = await withBudget(work(), budgetMs);
     const latencyMs = Math.round(performance.now() - started);
     return outcome === TIMED_OUT
       ? { status: "degraded", latency_ms: latencyMs, error: heldMessage }
@@ -170,6 +174,89 @@ async function diskComponent(
   }
 }
 
+/** What the machine and its stores answer right now, and the worst of it. */
+export interface HealthReading {
+  status: Status;
+  components: Record<string, ComponentStatus>;
+}
+
+/**
+ * Asks each component and gives the worst answer. `GET /health` and the
+ * owner console's Health page read the instance through this one function,
+ * so they cannot disagree about what is down.
+ */
+export async function readHealth(
+  storage: Pick<Storage, "keys">,
+  blobs: Pick<BlobLayer, "disk">,
+  config: Pick<AppConfig, "diskReserveBytes">,
+  probes: HealthProbes,
+): Promise<HealthReading> {
+  const components: Record<string, ComponentStatus> = {};
+
+  // Database. `down` and `degraded` are different answers and the
+  // difference is the useful part: `down` means the database refused,
+  // `degraded` means we could not get an answer inside the budget, which
+  // is what a held database looks like from here.
+  //
+  // Latency rides every branch rather than only the healthy one. A probe
+  // that failed after 1.9 seconds and one that failed in 5ms are different
+  // faults, and the branch that reported no number was the one where the
+  // number said most. On the timed-out branch it is the budget by
+  // construction, which is worth publishing anyway: a watcher graphing this
+  // sees the climb and then the cap rather than a gap.
+  components.database = await timed(
+    () => storage.keys.count(),
+    `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
+  );
+
+  // A committed write, because a database that reads can still refuse
+  // every write: a volume remounted read-only, a disk that is full, a log
+  // that cannot grow. Under the same budget, since a write queues behind
+  // the writes ahead of it.
+  components.database_write = await timed(
+    () => probes.write(),
+    `no write committed within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
+  );
+
+  // Room to write into. Unknown is not down: a volume the probe could not
+  // read says so as `degraded`, and only a measured shortage is `down`.
+  components.disk = await diskComponent(probes, config.diskReserveBytes ?? 0);
+
+  // Blob storage. The disk store, which every upload lands on, under the
+  // same budget: a held disk is a fault this door exists to report.
+  components.blob_storage = await timed(
+    () => blobs.disk.has("sha256:healthcheck"),
+    `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
+  );
+
+  const statuses = Object.values(components).map((one) => one.status);
+  const overall: Status = statuses.includes("down")
+    ? "down"
+    : statuses.includes("degraded")
+      ? "degraded"
+      : "ok";
+
+  return { status: overall, components };
+}
+
+/**
+ * The attached object store, asked the same way, or `null` when the instance
+ * has none. `GET /health` leaves it out: it reports the disk store every
+ * upload lands on.
+ */
+export function objectStoreComponent(
+  blobs: Pick<BlobLayer, "s3">,
+  budgetMs: number = PROBE_TIMEOUT_MS,
+): Promise<ComponentStatus | null> {
+  const store = blobs.s3;
+  if (store === null) return Promise.resolve(null);
+  return timed(
+    () => store.has("sha256:healthcheck"),
+    `no answer within ${String(budgetMs)}ms`,
+    budgetMs,
+  );
+}
+
 /**
  * Placement is stated per environment rather than read from a provider's
  * own variables, because nothing outside that provider sets those and a
@@ -192,50 +279,12 @@ export function healthRoutes(
   const { versionFile: version, placement } = config;
 
   router.get("/", refuseUndeclaredQueryKeys([]), async (c) => {
-    const components: Record<string, ComponentStatus> = {};
-
-    // Database. `down` and `degraded` are different answers and the
-    // difference is the useful part: `down` means the database refused,
-    // `degraded` means we could not get an answer inside the budget, which
-    // is what a held database looks like from here.
-    //
-    // Latency rides every branch rather than only the healthy one. A probe
-    // that failed after 1.9 seconds and one that failed in 5ms are different
-    // faults, and the branch that reported no number was the one where the
-    // number said most. On the timed-out branch it is the budget by
-    // construction, which is worth publishing anyway: a watcher graphing this
-    // sees the climb and then the cap rather than a gap.
-    components.database = await timed(
-      () => storage.keys.count(),
-      `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
+    const { status: overall, components } = await readHealth(
+      storage,
+      blobs,
+      config,
+      probes,
     );
-
-    // A committed write, because a database that reads can still refuse
-    // every write: a volume remounted read-only, a disk that is full, a log
-    // that cannot grow. Under the same budget, since a write queues behind
-    // the writes ahead of it.
-    components.database_write = await timed(
-      () => probes.write(),
-      `no write committed within ${String(PROBE_TIMEOUT_MS)}ms — the database may be held`,
-    );
-
-    // Room to write into. Unknown is not down: a volume the probe could not
-    // read says so as `degraded`, and only a measured shortage is `down`.
-    components.disk = await diskComponent(probes, config.diskReserveBytes ?? 0);
-
-    // Blob storage. The disk store, which every upload lands on, under the
-    // same budget: a held disk is a fault this door exists to report.
-    components.blob_storage = await timed(
-      () => blobs.disk.has("sha256:healthcheck"),
-      `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
-    );
-
-    const statuses = Object.values(components).map((one) => one.status);
-    const overall: Status = statuses.includes("down")
-      ? "down"
-      : statuses.includes("degraded")
-        ? "degraded"
-        : "ok";
 
     // The text of an error is the database's or the operating system's own,
     // and carries paths and driver detail. This door takes no credential,

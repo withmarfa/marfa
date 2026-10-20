@@ -722,7 +722,7 @@ When a type names a `retention_policy`, the server MUST store it and answer it o
 
 ## Enforcement levers
 
-`GET /config` and `PUT /config` hold the instance's levers beside its retention settings.
+`GET /config`, `PUT /config` and `PATCH /config` hold the instance's levers beside its retention settings.
 
 ### `types/config`
 
@@ -744,9 +744,9 @@ If `PUT /config` names `enforcement.strict_mode` without `types`, or `enforcemen
 
 ### `types/config-permission`
 
-If a key without `config.manage` sends `GET /config` or `PUT /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
+If a key without `config.manage` sends `GET /config`, `PUT /config` or `PATCH /config`, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage`.
 
-**Tests:** `compliance/schema-enforcement.test.ts › refuses both doors to a key without config.manage`.
+**Tests:** `compliance/schema-enforcement.test.ts › refuses all three doors to a key without config.manage`.
 
 ### `types/strict-mode`
 

@@ -5,7 +5,7 @@ import { safeJsonParse } from "./json-utils.js";
 /** The settings key the instance configuration is held under. */
 export const INSTANCE_CONFIG_KEY = "instance_config";
 
-/** The instance configuration `GET/PUT /config` reads and writes,
+/** The instance configuration `GET /config`, `PUT /config` and `PATCH /config` read and write,
  *  or `null` when nothing has been written. */
 export async function readInstanceConfig(
   settings: SettingsStore,
@@ -13,6 +13,21 @@ export async function readInstanceConfig(
   const raw = await settings.get(INSTANCE_CONFIG_KEY);
   if (raw === null) return null;
   return safeJsonParse<InstanceConfig>(raw, {}, "instance config");
+}
+
+/**
+ * The stored configuration with `changes` applied: a setting named is
+ * replaced whole, a setting named `null` is removed, and every other setting
+ * stays as it was.
+ */
+export function mergeInstanceConfig(
+  stored: InstanceConfig | null,
+  changes: { [K in keyof InstanceConfig]?: InstanceConfig[K] | null },
+): InstanceConfig {
+  const merged = { ...stored, ...changes };
+  return Object.fromEntries(
+    Object.entries(merged).filter(([, value]) => value != null),
+  );
 }
 
 export function writeInstanceConfig(

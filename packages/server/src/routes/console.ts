@@ -16,6 +16,7 @@ import type { AppConfig } from "../config.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
+import type { ConsoleHealth } from "./console-health.js";
 
 /** What Home's row for a page says at its right end. */
 export interface HomeValue {
@@ -40,6 +41,8 @@ export interface ConsoleReads {
   config: AppConfig;
   /** Present where the owner can sign in; a page that reads sign-ins leaves its value out without it. */
   auth?: MarfaAuth;
+  /** Present where the server runs housekeeping; Health leaves its value out without it. */
+  health?: ConsoleHealth;
 }
 
 export interface ConsoleRegistration extends Registration {

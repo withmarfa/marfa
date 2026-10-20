@@ -513,6 +513,74 @@ describe("GET /config and PUT /config", () => {
     }
   }, 120_000);
 
+  it("changes only the settings a PATCH names, so a second caller's change is not undone", async () => {
+    const client = configKey();
+    const minted = await rootIdentity(server!);
+    try {
+      await put(client, { trash_retention_days: 30 });
+
+      // Two callers read the same configuration, then each changes one
+      // setting. Sent as PUTs, the second would erase the first's.
+      const first = await client.patchConfig({ audit_retention_days: 31 });
+      const second = await client.patchConfig({
+        event_log_retention_hours: 100,
+      });
+      expect(first.status, JSON.stringify(first.error)).toBe(200);
+      expect(second.status, JSON.stringify(second.error)).toBe(200);
+      const both = {
+        instance_id: minted,
+        trash_retention_days: 30,
+        audit_retention_days: 31,
+        event_log_retention_hours: 100,
+      };
+      expect(second.data).toEqual(both);
+      expect(await read(client)).toEqual(both);
+
+      // The witness: a PUT of one setting does remove the rest.
+      await put(client, { event_log_retention_hours: 100 });
+      expect(await read(client)).toEqual({
+        instance_id: minted,
+        event_log_retention_hours: 100,
+      });
+
+      await put(client, EVERYTHING);
+      const cleared = await client.patchConfig({
+        trash_retention_days: null,
+        enforcement: null,
+      });
+      expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+      const { trash_retention_days, enforcement, ...kept } = EVERYTHING;
+      expect(trash_retention_days).toBeDefined();
+      expect(enforcement).toBeDefined();
+      expect(await read(client)).toEqual({ instance_id: minted, ...kept });
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+
+  it("refuses a PATCH it would refuse as a PUT, and keeps the configuration", async () => {
+    const client = configKey();
+    const held = await put(client, { audit_retention_days: 31 });
+    try {
+      for (const [label, body] of [
+        ["a key it does not know", { trash_retention_day: 30 }],
+        ["a retention out of range", { trash_retention_days: -1 }],
+        ["another instance", { instance_id: ELSEWHERE }],
+      ] as const) {
+        const refused = await client.patchConfig(body);
+        expect(refused.status, label).toBe(400);
+        expect(refused.error?.error.code, label).toBe("validation_error");
+        expect(await read(client), label).toEqual(held);
+      }
+
+      // The witness: the same door takes a body that is right.
+      const taken = await client.patchConfig({ trash_retention_days: 30 });
+      expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+    } finally {
+      await put(client, {});
+    }
+  }, 120_000);
+
   it("records a config.update audit entry for the key that wrote, and none for a refused write", async () => {
     const client = configKey();
     const second = await operatorClient().createKey({

@@ -268,7 +268,8 @@ export const HOME_GROUPS: readonly GroupDefinition[] = [
       {
         id: "health",
         title: "Health",
-        description: "How Marfa is running, and its housekeeping",
+        description:
+          "Whether things are working, and the jobs Marfa runs itself",
       },
       {
         id: "activity",

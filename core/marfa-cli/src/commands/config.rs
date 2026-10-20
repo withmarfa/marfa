@@ -13,6 +13,9 @@ pub enum ConfigCommand {
     Get,
     /// Replace the instance configuration whole. Needs `config.manage`.
     Replace(BodySource),
+    /// Change only the settings the body names; `null` removes one. Needs
+    /// `config.manage`.
+    Update(BodySource),
 }
 
 pub fn get_request() -> Request {
@@ -23,10 +26,15 @@ pub fn replace_request(body: serde_json::Value) -> Request {
     Request::put(&["config"]).json(body)
 }
 
+pub fn update_request(body: serde_json::Value) -> Request {
+    Request::patch(&["config"]).json(body)
+}
+
 pub fn run(command: ConfigCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         ConfigCommand::Get => get_request(),
         ConfigCommand::Replace(body) => replace_request(body.read()?),
+        ConfigCommand::Update(body) => update_request(body.read()?),
     };
     out.value(&remote.json(&request)?)
 }
