@@ -4318,6 +4318,30 @@ If the process that holds a folder does not let it go within 10 seconds of a com
 
 **Tests:** `device/folders-handover.test.ts › refuses a command once a suspended watch has not let the folder go in 10 seconds, and both go on once it resumes`.
 
+### `folders/writer-lock-unwritable`
+
+If a folder's writer lock file cannot be written when a command works the folder, then the CLI MUST refuse the command `store` with exit 4, naming the lock file.
+
+**Reason:** a lock file that cannot be written holds no lock, so a command that took the folder on it would leave a watch or another command free to take the folder too, and two processes would work one folder (`folders/handover-asked`).
+
+**Tests:** `device/folders-handover.test.ts › refuses a command that works the folder, and still reads it`.
+
+### `folders/status-lock-unwritable`
+
+While a folder's writer lock file cannot be written, the CLI MUST report the folder's status.
+
+**Reason:** a status reads the store and takes no lock, so a lock file it cannot write is no reason to hide where the folder stands.
+
+**Tests:** `device/folders-handover.test.ts › refuses a command that works the folder, and still reads it`.
+
+### `folders/handover-request-unwritable`
+
+If another process holds a folder and the request file a command asks it by cannot be written, then the CLI MUST refuse the command `store` with exit 4, naming the request file, once the wait of `folders/handover-wait-refused` ends.
+
+**Reason:** a request file that cannot be written holds no request, so the holder is never asked to let go. The command waits for a holder that ends on its own, and says why it could not ask when it stops waiting.
+
+**Tests:** `device/folders-handover.test.ts › refuses a command that asks a watch for the folder once the request file cannot be written`.
+
 ### `folders/handover-step-whole`
 
 If a command asks a running `folders watch` for a folder while the watch's pass waits on the server's answer to a write, then the CLI MUST let the folder go only after that answer is taken in.
