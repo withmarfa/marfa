@@ -1068,13 +1068,13 @@ When an item's time differs from its creation time or a file already carries a n
 
 ### `folders/time-invalid`
 
-If a non-null `occurred_at` value is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
+If a non-null `occurred_at` value in a document not bound to a file item is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a line that is no time, and sends nothing for the file`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/own-field-validation`
 
-If frontmatter names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
+If the frontmatter of a document not bound to a file item names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads own-field lines in each form a file can hold them`, `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
@@ -1318,7 +1318,7 @@ When a document's refused tag or property name or tag count is corrected, a devi
 
 ### `folders/unreadable-yaml`
 
-If Markdown frontmatter is malformed, has a non-text key, duplicates a key, or uses a YAML merge key, then a device MUST flag the file `unreadable`.
+If the Markdown frontmatter of a document not bound to a file item is malformed, has a non-text key, duplicates a key, or uses a YAML merge key, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
@@ -1354,7 +1354,7 @@ When an unreadable document is repaired, a device MUST process its edit normally
 
 ### `folders/encoding-flag`
 
-If a document is not UTF-8 text or contains a NUL byte, then a device MUST flag it `encoding` with the reason.
+If a document not bound to a file item is not UTF-8 text or contains a NUL byte, then a device MUST flag it `encoding` with the reason.
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
@@ -1387,6 +1387,22 @@ When a document is saved as UTF-8 without NUL bytes, a device MUST admit its con
 When a non-document file contains bytes that are not valid UTF-8 or include NUL, a device MUST admit those bytes as a file item rather than apply document encoding restrictions.
 
 **Tests:** `device/folders-contract-a.test.ts › applies default properties to documents but not file items`.
+
+### `folders/file-item-doc-name-sent`
+
+When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
+
+**Reason:** the item's kind, not the file's name, says how its bytes are read, and a pull can place a file item at a document name. Frontmatter that does not parse and bytes that are not UTF-8 are then the file item's own content.
+
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
+
+### `folders/file-item-doc-name-unflagged`
+
+When a file at a document name is bound to a file item, a device MUST NOT flag it `unreadable` or `encoding`.
+
+**Reason:** a flag holds a document whose text the device cannot read, and a file item's bytes are not read as text. A document not bound to a file item, a new file included, is still held by `folders/unreadable-yaml` and `folders/encoding-flag`.
+
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
 
 ## Document versions
 

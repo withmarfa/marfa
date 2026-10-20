@@ -6388,4 +6388,100 @@ describe("a file that is not a document", () => {
       "the file's text was sent as a document's body",
     ).toBeUndefined();
   });
+
+  it("sends a file item pulled to a document name as its bytes, whatever they hold", async () => {
+    const itemId = "01a00000-0000-7000-8000-0000000000f7";
+    const noteId = "01a00000-0000-7000-8000-0000000000f8";
+    const text = Buffer.from("plain text a server holds as a file\n");
+    harness = await folderHarness("folder-file-at-document-name", {
+      settings,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: itemId,
+              type: "core.file",
+              properties: {
+                title: "notes.md",
+                blob_ref: hashOf(text),
+                mime_type: "text/markdown",
+              },
+            },
+          },
+        ],
+        "core.note": [
+          {
+            item: {
+              id: noteId,
+              properties: { title: "Witness", body: "as it was\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, text);
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(text);
+
+    const uploads = () =>
+      harness.server.requests
+        .filter((request) => request.pathname === "/blobs")
+        .map((request) => request.raw);
+    const bytesSentFor = (id: string) =>
+      sentUpdates(harness)
+        .filter((sent) => sent.id === id)
+        .map((sent) => sent.body);
+
+    const cases: Array<[string, Buffer, string]> = [
+      // Valid UTF-8 that does not parse as frontmatter.
+      [
+        "frontmatter that does not parse",
+        Buffer.from("---\ntitle: [x\n---\n"),
+        "unreadable",
+      ],
+      // Latin-1, which is no UTF-8: an accent is one byte, 0xE9.
+      [
+        "bytes that are not UTF-8",
+        Buffer.from("caf\xe9\n", "latin1"),
+        "encoding",
+      ],
+      // UTF-16 with no byte-order mark: each letter beside a NUL.
+      ["bytes that hold NUL", Buffer.from("wide\n", "utf16le"), "encoding"],
+    ];
+    for (const [label, edited, flag] of cases) {
+      const sent = bytesSentFor(itemId).length;
+      const held = bytesSentFor(noteId).length;
+      writeFileSync(join(harness.dir, "notes.md"), edited);
+      // The witness: a note holding the same bytes is held, not sent.
+      writeFileSync(join(harness.dir, "Witness.md"), edited);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+        `${label}: the file item was held, or the note was not`,
+      ).toEqual([["Witness.md", flag]]);
+      expect(
+        uploads().some((raw) => raw.equals(edited)),
+        `${label}: the file item's bytes were not uploaded`,
+      ).toBe(true);
+      const patches = bytesSentFor(itemId).slice(sent);
+      expect(patches, label).toHaveLength(1);
+      expect(
+        (patches[0]?.properties as Record<string, unknown>).blob_ref,
+        label,
+      ).toBe(hashOf(edited));
+      expect(
+        (patches[0]?.properties as Record<string, unknown>).body,
+        `${label}: the file's text was sent as a document's body`,
+      ).toBeUndefined();
+      expect(
+        bytesSentFor(noteId).slice(held),
+        `${label}: the note was sent`,
+      ).toEqual([]);
+      expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(edited);
+    }
+  });
 });
