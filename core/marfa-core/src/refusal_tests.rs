@@ -256,8 +256,7 @@ fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
         "not a url",
         "\u{85}https://example.com",
         "http://xn--é/",
-        "http://xn--",
-        "http://xn--%41",
+        "http://bücher.xn--",
         "   ",
     ] {
         let error = core
@@ -270,7 +269,12 @@ fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
         );
     }
     assert!(core.queue().unwrap().is_empty());
-    for taken in ["http://xn--mnchen-3ya.de", "https://xn--80ak6aa92e.com/"] {
+    for taken in [
+        "http://xn--mnchen-3ya.de",
+        "https://xn--80ak6aa92e.com/",
+        "http://xn--",
+        "http://xn--%41",
+    ] {
         let queued = core
             .create_item(&bookmark(serde_json::json!({ "url": taken })))
             .unwrap();

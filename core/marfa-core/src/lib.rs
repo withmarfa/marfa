@@ -49,6 +49,7 @@ mod tier_tests;
 mod time;
 #[cfg(test)]
 mod upload_credential_tests;
+mod url_host;
 mod validation;
 mod watch;
 #[cfg(test)]
@@ -3912,8 +3913,8 @@ mod tests {
         for body in [
             r#"{"weight":9999999999999999999}"#,
             r#"{"a":{"b":[1152921504606846976]}}"#,
-        ] {
             r#"{"a":[1,{"b":-0}]}"#,
+        ] {
             refused(
                 core.write_extension("row", "acme.x", body).map(|_| ()),
                 "an extension",

@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{THUMBNAIL_MAX_BYTES, Thumbnail};
+use crate::url_host;
 
 /// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
 /// removed through its own URL path, so one longer could be written and never
@@ -222,16 +223,20 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
 /// A `url` value as the server holds it, or `None` where the server refuses
 /// it. The server trims the text as JavaScript's `trim` does, judges it as the
 /// WHATWG URL standard does, and keeps it without the tabs and line breaks the
-/// standard ignores. It also refuses a host label that starts `xn--` and is not
-/// valid Punycode, which the standard keeps as written and the `url` crate
-/// refuses.
+/// standard ignores. The `url` crate parts from the standard on some authorities,
+/// which `url_host` corrects.
 pub(crate) fn url_value(text: &str) -> Option<String> {
     let kept: String = text
         .trim_matches(js::is_space)
         .chars()
         .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
         .collect();
-    url::Url::parse(&kept).is_ok().then_some(kept)
+    let taken = if url::Url::parse(&kept).is_ok() {
+        !url_host::authority_is_refused(&kept)
+    } else {
+        url_host::ascii_host_is_taken(&kept)
+    };
+    taken.then_some(kept)
 }
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
@@ -450,6 +455,26 @@ mod tests {
             ("HTTP://XN--MNCHEN-3YA.DE/x", "HTTP://XN--MNCHEN-3YA.DE/x"),
             ("https://example.com/xn--", "https://example.com/xn--"),
             ("foo://xn--/", "foo://xn--/"),
+            ("http://xn--", "http://xn--"),
+            ("http://xn--/", "http://xn--/"),
+            ("http://xn--%41", "http://xn--%41"),
+            ("http://XN--%41/p", "http://XN--%41/p"),
+            ("http://a.xn--%41.b:80/p", "http://a.xn--%41.b:80/p"),
+            ("http://u@xn--%41/", "http://u@xn--%41/"),
+            ("http://%78n--/", "http://%78n--/"),
+            ("http://a.b.c.xn--pokxncvks", "http://a.b.c.xn--pokxncvks"),
+            ("http://user:pw@xn--:8080/p", "http://user:pw@xn--:8080/p"),
+            ("http://xn--xn---yna/", "http://xn--xn---yna/"),
+            ("http://xn----pfa.xn--4db/", "http://xn----pfa.xn--4db/"),
+            ("http:xn--", "http:xn--"),
+            ("http:\\\\xn--\\p", "http:\\\\xn--\\p"),
+            ("http://xn--!", "http://xn--!"),
+            ("http://xn--%7E", "http://xn--%7E"),
+            ("file://xn--/p", "file://xn--/p"),
+            ("wss://xn--a.example/", "wss://xn--a.example/"),
+            ("http://xn--a.1x/", "http://xn--a.1x/"),
+            ("foo://h:80/p", "foo://h:80/p"),
+            ("foo://u@h", "foo://u@h"),
             ("http://[::1]/", "http://[::1]/"),
             ("mailto:a@b.c", "mailto:a@b.c"),
             ("\u{1}https://example.com/", "\u{1}https://example.com/"),
@@ -462,20 +487,8 @@ mod tests {
             "",
             "   ",
             "\u{200b}https://example.com",
-            "http://xn--",
-            "http://xn--/",
-            "http://xn--%41",
-            "http://XN--%41/p",
-            "http://a.xn--%41.b:80/p",
-            "http://u@xn--%41/",
-            "http://%78n--/",
-            "http://a.b.c.xn--pokxncvks",
-            "http://user:pw@xn--:8080/p",
             "http://bücher.xn--",
             "http://xn--a.münchen.de/",
-            "http:xn--",
-            "http://xn--!",
-            "http://xn--%7E",
             "http://xn--é/",
             "http://xn--%e9/",
             "http://xn--%c3%a9/",
@@ -488,6 +501,15 @@ mod tests {
             "http://xn--[::1]/",
             "//example.com",
             "http://example.com:99999",
+            "http://xn--a.1/",
+            "http://xn--a.0x1/",
+            "http://xn--a.1./",
+            "http://xn--a.0x/",
+            "foo://@",
+            "foo://u@/p",
+            "foo://h:80\\p",
+            "foo://h:\\p",
+            "foo://[::1]:80\\p",
         ] {
             assert_eq!(url_value(text), None, "{text:?}");
         }
