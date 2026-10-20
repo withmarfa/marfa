@@ -12,7 +12,7 @@ on:
   # when `macos` is set, so that what only macOS has stays tested: file
   # watching, name case, Finder packages and a real keychain.
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "7 4 * * *"
   workflow_dispatch:
     inputs:
       macos:
