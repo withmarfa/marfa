@@ -36,9 +36,7 @@ import {
   createdWords,
   endingTitle,
   endsSoon,
-  endsWords,
   lastUsedValue,
-  usedWords,
   dateWords,
 } from "../pages/key-time.js";
 import { ALL_EXTENSIONS } from "../pages/access-summary.js";
@@ -52,6 +50,7 @@ import { CONSOLE_PAGES } from "./console.js";
 import type { AttentionItem } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { homeSearchQuery } from "./home-page.js";
+import { appNames, keyListRows, timeOf, withReads } from "./key-rows.js";
 import {
   KEYS_HREF,
   NEW_KEY_HREF,
@@ -62,7 +61,6 @@ import {
   renderKeyPage,
   renderMissingKeyPage,
   type KeyDetail,
-  type KeyListRow,
   type KeyTab,
 } from "./key-pages.js";
 
@@ -122,34 +120,6 @@ CONSOLE_PAGES.register("keys", {
   },
 });
 
-const timeOf = (text: string | null | undefined): number | null => {
-  if (!text) return null;
-  const at = Date.parse(text);
-  return Number.isNaN(at) ? null : at;
-};
-
-/** The names of the apps that made keys, by registered client. */
-async function appNames(
-  storage: Storage,
-  keys: readonly StoredApiKey[],
-): Promise<Map<string, string | null>> {
-  const ids = [
-    ...new Set(
-      keys.flatMap((key) =>
-        key.oauth_client_id === undefined ? [] : [key.oauth_client_id],
-      ),
-    ),
-  ];
-  const names = new Map<string, string | null>();
-  await Promise.all(
-    ids.map(async (id) => {
-      const client = await storage.oauthProvider?.getClient(id);
-      names.set(id, client?.name ?? null);
-    }),
-  );
-  return names;
-}
-
 /** The registered clients that still hold a live grant. */
 async function connectedClients(storage: Storage): Promise<Set<string>> {
   const grants = await listActiveAppGrants(storage);
@@ -160,14 +130,6 @@ async function connectedClients(storage: Storage): Promise<Set<string>> {
         : [],
     ),
   );
-}
-
-/** The scopes a key holds with the read each write brings, so Read only is offered under Read and edit. */
-function withReads(scopes: readonly string[]): string[] {
-  const all = new Set(scopes);
-  for (const literal of scopes)
-    if (literal.endsWith(":write")) all.add(`${literal.slice(0, -6)}:read`);
-  return [...all];
 }
 
 const parsed = (literals: readonly string[]): ParsedScope[] =>
@@ -182,32 +144,6 @@ function madeByWords(app: { name: string | null; connected: boolean }): string {
   return app.name === null
     ? "An app that is no longer connected"
     : `${app.name}, no longer connected`;
-}
-
-/** "Made by X. ", or nothing for a key the owner made. */
-function makerLine(
-  key: StoredApiKey,
-  names: ReadonlyMap<string, string | null>,
-): string {
-  if (key.oauth_client_id === undefined) return "";
-  const name = names.get(key.oauth_client_id);
-  return `Made by ${name ?? "an app"}. `;
-}
-
-function listRow(
-  key: StoredApiKey,
-  names: ReadonlyMap<string, string | null>,
-  summary: string,
-  now: number,
-): KeyListRow {
-  const ends = timeOf(key.expires_at);
-  return {
-    id: key.id,
-    label: key.label,
-    description: `${makerLine(key, names)}${summary}. ${endsWords(ends, now)}.`,
-    endsSoon: endsSoon(ends, now),
-    value: usedWords(timeOf(key.last_used_at), now),
-  };
 }
 
 /** The denials a key holds, by map: the entries at `none`, which a scope cannot say. */
@@ -271,12 +207,6 @@ export function keyRoutes(storage: Storage) {
       parsePageSize(c.req.query("size")),
     );
     const slice = shown.slice(pagination.from, pagination.to);
-    const names = await appNames(storage, slice);
-    const heldBy = new Map(slice.map((key) => [key.id, scopesOfKey(key)]));
-    const words = await readAccessWords(
-      storage,
-      withReads([...heldBy.values()].flatMap((held) => held.scopes)),
-    );
     send(c);
     return c.html(
       renderKeyListPage({
@@ -285,14 +215,7 @@ export function keyRoutes(storage: Storage) {
         tab,
         query,
         counts,
-        rows: slice.map((key) => {
-          const held = heldBy.get(key.id) ?? scopesOfKey(key);
-          const summary =
-            held.scopes.length === 0
-              ? "No access"
-              : describeHeld(held.scopes, words, held).summary;
-          return listRow(key, names, summary, now);
-        }),
+        rows: await keyListRows(storage, slice, now),
         pagination,
       }),
     );

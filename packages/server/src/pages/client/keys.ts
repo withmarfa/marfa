@@ -32,7 +32,7 @@ import {
 import { SETUP_WORDS } from "../setup-words.js";
 import { messageOf, sendConfirmed, signInAgain } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
-import { busy, keepFlash, refusalText, showFlash } from "./page-state.js";
+import { busy, hook, keepFlash, refusalText, showFlash } from "./page-state.js";
 import { initSaveBar, type SaveBar } from "./save-bar.js";
 
 const KEYS_HREF = "/auth/owner/keys";
@@ -101,9 +101,6 @@ const field = (
 
 const isEndChoice = (value: string): value is EndChoice =>
   (END_CHOICES as readonly string[]).includes(value);
-
-const hook = (root: ParentNode, name: string): HTMLButtonElement | null =>
-  root.querySelector<HTMLButtonElement>(`[data-hook="${name}"]`);
 
 function setAvailable(button: HTMLElement | null, available: boolean): void {
   if (!button) return;
