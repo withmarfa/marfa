@@ -58,13 +58,11 @@ impl WriterLock {
     /// The lock in the file `name` of the directory `vfs` reaches. Without
     /// `create`, a file that is not there is an error.
     ///
-    /// SQLite opens a file it cannot open for writing read-only without
-    /// saying so, and a read-only connection takes `BEGIN EXCLUSIVE` as a read
-    /// transaction that holds only a shared lock. macOS refuses a create that
-    /// races another create of the same name with `ENOENT`, which makes SQLite
-    /// fall back to that, so a claim that is not checked can report the writer
-    /// role while holding nothing. The file exists by then, so a second open
-    /// is a write open.
+    /// SQLite can fall back to a read-only open when concurrent creates on
+    /// macOS make one open fail with `ENOENT`. `BEGIN EXCLUSIVE` on that
+    /// connection succeeds with only a shared lock, so it cannot establish
+    /// writer ownership. Retrying after creation can obtain a writable
+    /// connection.
     #[cfg(unix)]
     pub(crate) fn claim_named(
         vfs: &crate::directory_vfs::DirectoryVfs,
