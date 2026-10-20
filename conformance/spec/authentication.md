@@ -256,7 +256,7 @@ The server MUST NOT include a key's plaintext in any page under `/auth/owner/key
 
 ### `authentication/console-settings-no-secret`
 
-The server MUST NOT include the value of a setting that holds a secret in any page under `/auth/owner/settings`, in the answer to `GET /auth/owner/settings.json`, or in Home, and MUST say of such a setting only whether it is set.
+Where a setting holds a secret, the server MUST NOT include its value in any page under `/auth/owner/settings`, in the answer to `GET /auth/owner/settings.json`, or in Home; those say only whether it is set.
 
 **Reason:** the settings are read once, from the environment, and are not written anywhere the owner can read them again, so a page the server draws, which a cache, a log or a later visit can read, must never hold a secret that was never meant to be shown (`instance/settings-refused-secret-hidden` holds the same line for the log).
 
