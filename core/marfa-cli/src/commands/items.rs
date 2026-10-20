@@ -666,6 +666,7 @@ pub fn occurrences_request(from: &str, to: &str, type_: Option<&str>) -> Request
 
 pub fn bulk_request(args: &BulkArgs) -> Result<Request, CliError> {
     let text = super::read_text(&args.file)?;
+    marfa_core::refuse_inexact_integers(&text)?;
     let parsed: Value = serde_json::from_str(&text)
         .map_err(|error| CliError::Invalid(format!("the body is not JSON: {error}")))?;
     let mut body = match parsed {

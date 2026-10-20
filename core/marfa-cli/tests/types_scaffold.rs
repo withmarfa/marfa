@@ -366,3 +366,45 @@ fn a_working_copy_declares_what_it_printed_unchanged() {
     assert_eq!(refused.code, 1, "{}", refused.stderr);
     std::fs::remove_dir_all(folder).unwrap();
 }
+
+#[test]
+fn a_working_copy_refuses_a_definition_with_a_whole_number_a_float_would_change() {
+    let folder = scratch("declare-number");
+    let store = folder.join("store.sqlite");
+    let store = store.to_str().unwrap();
+    let made = marfa(&["device", "--db", store, "status"], &[]);
+    assert_eq!(made.code, 0, "{}", made.stderr);
+    let declare = |definitions: &str| {
+        marfa(
+            &[
+                "device",
+                "--db",
+                store,
+                "types",
+                "declare",
+                "--definitions",
+                definitions,
+            ],
+            &[],
+        )
+    };
+    // Witness: the same definition with a number a float keeps is declared.
+    let kept = declare(r#"{"id":"user.note","version":1152921504606847000,"fields":{}}"#);
+    assert_eq!(kept.code, 0, "{}", kept.stderr);
+    for (definition, number, served) in [
+        (
+            r#"{"id":"user.note","version":99999999999999999999999,"fields":{}}"#,
+            "99999999999999999999999",
+            "1e+23",
+        ),
+        (r#"{"id":"user.note","version":-0,"fields":{}}"#, "-0", "0"),
+    ] {
+        let refused = declare(definition);
+        assert_eq!(refused.code, 1, "{}", refused.stderr);
+        let expected = format!(
+            "version: Must be a whole number that Marfa serves back with the same digits, not {number}, which it serves as {served}. Send it as a string."
+        );
+        assert!(refused.stderr.contains(&expected), "{}", refused.stderr);
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}

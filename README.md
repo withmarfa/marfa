@@ -44,7 +44,7 @@ To run Marfa on a computer you own or in a container of your own, follow [Deploy
 
 ## Try it locally
 
-You need macOS or Linux, with Git, [Node.js](https://nodejs.org) 22.12 or later and [pnpm](https://pnpm.io/installation). On Linux, also install the `acl` package, which the server uses to check who may reach its private socket. Clone Marfa into a short path, such as your home directory: the server keeps its private socket inside the clone and refuses to start when that path is too long. Then build Marfa and start the server:
+You need macOS or Linux, with Git, [Node.js](https://nodejs.org) 22.14 or later and [pnpm](https://pnpm.io/installation). On Linux, also install the `acl` package, which the server uses to check who may reach its private socket. Clone Marfa into a short path, such as your home directory: the server keeps its private socket inside the clone and refuses to start when that path is too long. Then build Marfa and start the server:
 
 ```bash
 cd ~

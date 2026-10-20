@@ -191,3 +191,170 @@ fn a_copy_with_no_server_is_refused_a_read_of_the_servers_catalog() {
     );
     assert!(core.item_types().is_ok());
 }
+
+fn bookmark(properties: serde_json::Value) -> crate::Draft {
+    crate::Draft {
+        r#type: "core.bookmark".into(),
+        properties: properties.as_object().unwrap().clone(),
+        ..Default::default()
+    }
+}
+
+fn payload_of(core: &Core, queued: &crate::QueuedWrite) -> serde_json::Value {
+    let conn = core.conn().unwrap();
+    let payload: String = conn
+        .query_row(
+            "SELECT payload FROM queue WHERE id = ?1",
+            [&queued.id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    serde_json::from_str(&payload).unwrap()
+}
+
+#[test]
+fn a_url_is_trimmed_in_the_row_and_in_the_queued_write_as_the_server_keeps_it() {
+    let core = copy(&Scripted::start());
+    let queued = core
+        .create_item(&bookmark(serde_json::json!({
+            "url": "\u{3000}https://example.com/a\u{feff}",
+            "source_url": " https://exa\tmple.com/b ",
+            "title": "  kept as written  ",
+        })))
+        .unwrap();
+    let id = queued.item_id.clone().unwrap();
+    let held = core.get(&id).unwrap().unwrap();
+    assert_eq!(held.properties["url"], "https://example.com/a");
+    assert_eq!(held.properties["source_url"], "https://example.com/b");
+    assert_eq!(held.properties["title"], "  kept as written  ");
+    let sent = payload_of(&core, &queued);
+    assert_eq!(sent["properties"]["url"], "https://example.com/a");
+
+    let edit = crate::Edit {
+        properties: serde_json::json!({ "url": "\u{feff}https://example.com/c " })
+            .as_object()
+            .unwrap()
+            .clone(),
+        base_version: Some(held.version),
+        ..Default::default()
+    };
+    let queued = core.update_item(&id, &edit).unwrap();
+    assert_eq!(
+        core.get(&id).unwrap().unwrap().properties["url"],
+        "https://example.com/c"
+    );
+    assert_eq!(
+        payload_of(&core, &queued)["properties"]["url"],
+        "https://example.com/c"
+    );
+}
+
+#[test]
+fn a_url_the_server_refuses_is_refused_and_one_it_takes_is_not() {
+    let core = copy(&Scripted::start());
+    for refused in [
+        "not a url",
+        "\u{85}https://example.com",
+        "http://xn--é/",
+        "http://bücher.xn--",
+        "   ",
+    ] {
+        let error = core
+            .create_item(&bookmark(serde_json::json!({ "url": refused })))
+            .unwrap_err();
+        assert!(
+            matches!(&error, CoreError::Validation { code, message }
+                if code == "invalid_properties" && message == "url: Must be a valid URL"),
+            "{refused:?}: {error:?}"
+        );
+    }
+    assert!(core.queue().unwrap().is_empty());
+    for taken in [
+        "http://xn--mnchen-3ya.de",
+        "https://xn--80ak6aa92e.com/",
+        "http://xn--",
+        "http://xn--%41",
+    ] {
+        let queued = core
+            .create_item(&bookmark(serde_json::json!({ "url": taken })))
+            .unwrap();
+        let id = queued.item_id.unwrap();
+        assert_eq!(core.get(&id).unwrap().unwrap().properties["url"], taken);
+    }
+}
+
+#[test]
+fn a_whole_number_a_float_would_change_is_refused_before_it_is_queued() {
+    let core = copy(&Scripted::start());
+    let mut kept = 0;
+    for (value, refused) in [
+        (1_500_000_000_000_000_001_i64, Some("1500000000000000000")),
+        (9_223_372_036_854_775_807, Some("9223372036854776000")),
+        (-9_007_199_254_740_993, Some("-9007199254740992")),
+        (1_152_921_504_606_846_976, Some("1152921504606847000")),
+        (1_152_921_504_606_847_000, None),
+        (9_007_199_254_740_991, None),
+    ] {
+        for (properties, field) in [
+            (serde_json::json!({ "undeclared": value }), "undeclared"),
+            (
+                serde_json::json!({ "nested": { "list": [0, value] } }),
+                "nested.list.1",
+            ),
+        ] {
+            let result = core.create_item(&bookmark(properties));
+            if let Some(kept_as) = refused {
+                let Err(CoreError::Validation { code, message }) = result else {
+                    panic!("{value} at {field} was not refused");
+                };
+                assert_eq!(code, "invalid_properties");
+                assert_eq!(
+                    message,
+                    format!(
+                        "{field}: Must be a whole number that Marfa serves back with the same digits, not {value}, which it serves as {kept_as}. Send it as a string."
+                    )
+                );
+            } else {
+                result.unwrap();
+                kept += 1;
+            }
+        }
+    }
+    assert_eq!(core.queue().unwrap().len(), kept);
+}
+
+#[test]
+fn a_float_a_binding_hands_over_is_held_in_the_digits_the_server_serves() {
+    // The Node binding passes these large JavaScript numbers as floats,
+    // as does the Swift binding's `Number(f64)` case.
+    // Swift's separate `Integer(i64)` case reaches the integer guard.
+    let core = copy(&Scripted::start());
+    let float = |number: f64| serde_json::Number::from_f64(number).unwrap();
+    for (number, served) in [
+        (2f64.powi(60), "1152921504606847000"),
+        (-(2f64.powi(60)), "-1152921504606847000"),
+        (9_007_199_254_740_992.0, "9007199254740992"),
+        (1e20, "100000000000000000000"),
+        (1e21, "1e+21"),
+    ] {
+        let queued = core
+            .create_item(&bookmark(
+                serde_json::json!({ "n": float(number), "list": [float(number)] }),
+            ))
+            .unwrap();
+        let id = queued.item_id.clone().unwrap();
+        let row: String = core
+            .conn()
+            .unwrap()
+            .query_row("SELECT properties FROM items WHERE id = ?1", [&id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(row, format!(r#"{{"n":{served},"list":[{served}]}}"#));
+        // The witness that the text differs and the number does not: the write
+        // carries the float as it was given, which the server reads as the
+        // same number.
+        let payload = payload_of(&core, &queued);
+        assert_eq!(payload["properties"]["n"].as_f64(), Some(number));
+    }
+}

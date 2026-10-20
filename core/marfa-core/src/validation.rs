@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use crate::error::CoreError;
 use crate::js;
 use crate::model::{THUMBNAIL_MAX_BYTES, Thumbnail};
+use crate::url_host;
 
 /// Longest tag, in UTF-16 code units: the server's `MAX_TAG_LENGTH`. A tag is
 /// removed through its own URL path, so one longer could be written and never
@@ -183,7 +184,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>
             Some(values) => elements(definition, values)?,
         },
         "object" => if value.is_object() { None } else { expected("object") },
-        "url" => if value.as_str().is_some_and(|text| url::Url::parse(text).is_ok()) { None } else { Some("Must be a valid URL".into()) },
+        "url" => if value.as_str().is_some_and(|text| url_value(text).is_some()) { None } else { Some("Must be a valid URL".into()) },
         "email" => if value.as_str().is_some_and(email) { None } else { Some("Must be a valid email address".into()) },
         "date" => if value.as_str().is_some_and(date) { None } else { Some("Must be a calendar date (YYYY-MM-DD)".into()) },
         "datetime" => if value.as_str().is_some_and(|text| date(text) || datetime(text)) { None } else { Some("Must be a calendar date or ISO 8601 datetime with an offset".into()) },
@@ -217,6 +218,25 @@ fn elements(definition: &Value, values: &[Value]) -> Result<Option<String>, Core
         }
     }
     Ok(None)
+}
+
+/// A `url` value as the server holds it, or `None` where the server refuses
+/// it. The server trims the text as JavaScript's `trim` does, judges it as the
+/// WHATWG URL standard does, and keeps it without the tabs and line breaks the
+/// standard ignores. The `url` crate parts from the standard on some authorities,
+/// which `url_host` corrects.
+pub(crate) fn url_value(text: &str) -> Option<String> {
+    let kept: String = text
+        .trim_matches(js::is_space)
+        .chars()
+        .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
+        .collect();
+    let taken = if url::Url::parse(&kept).is_ok() {
+        !url_host::authority_is_refused(&kept)
+    } else {
+        url_host::ascii_host_is_taken(&kept)
+    };
+    taken.then_some(kept)
 }
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
@@ -404,6 +424,94 @@ mod tests {
             "a@例子.test",
         ] {
             assert!(!email(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_url_is_trimmed_and_judged_as_the_server_does() {
+        // Each expectation is what the server answers: JavaScript's `trim`,
+        // `URL.canParse` of the result, and the result without tabs and line
+        // breaks as the stored value.
+        for (text, stored) in [
+            ("https://example.com/a", "https://example.com/a"),
+            ("  https://example.com/a  ", "https://example.com/a"),
+            (
+                "\u{3000}https://example.com/a\u{3000}",
+                "https://example.com/a",
+            ),
+            ("\u{feff}https://example.com/a", "https://example.com/a"),
+            (
+                "\u{feff}https://example.com/a\u{feff}",
+                "https://example.com/a",
+            ),
+            (
+                "\u{a0}https://example.com/a\u{2028}",
+                "https://example.com/a",
+            ),
+            ("https://exa\tmple.com/a\nb\r", "https://example.com/ab"),
+            ("ht\ttps://example.com", "https://example.com"),
+            ("https://münchen.de/straße", "https://münchen.de/straße"),
+            ("http://xn--mnchen-3ya.de/", "http://xn--mnchen-3ya.de/"),
+            ("HTTP://XN--MNCHEN-3YA.DE/x", "HTTP://XN--MNCHEN-3YA.DE/x"),
+            ("https://example.com/xn--", "https://example.com/xn--"),
+            ("foo://xn--/", "foo://xn--/"),
+            ("http://xn--", "http://xn--"),
+            ("http://xn--/", "http://xn--/"),
+            ("http://xn--%41", "http://xn--%41"),
+            ("http://XN--%41/p", "http://XN--%41/p"),
+            ("http://a.xn--%41.b:80/p", "http://a.xn--%41.b:80/p"),
+            ("http://u@xn--%41/", "http://u@xn--%41/"),
+            ("http://%78n--/", "http://%78n--/"),
+            ("http://a.b.c.xn--pokxncvks", "http://a.b.c.xn--pokxncvks"),
+            ("http://user:pw@xn--:8080/p", "http://user:pw@xn--:8080/p"),
+            ("http://xn--xn---yna/", "http://xn--xn---yna/"),
+            ("http://xn----pfa.xn--4db/", "http://xn----pfa.xn--4db/"),
+            ("http:xn--", "http:xn--"),
+            ("http:\\\\xn--\\p", "http:\\\\xn--\\p"),
+            ("http://xn--!", "http://xn--!"),
+            ("http://xn--%7E", "http://xn--%7E"),
+            ("file://xn--/p", "file://xn--/p"),
+            ("wss://xn--a.example/", "wss://xn--a.example/"),
+            ("http://xn--a.1x/", "http://xn--a.1x/"),
+            ("foo://h:80/p", "foo://h:80/p"),
+            ("foo://u@h", "foo://u@h"),
+            ("http://[::1]/", "http://[::1]/"),
+            ("mailto:a@b.c", "mailto:a@b.c"),
+            ("\u{1}https://example.com/", "\u{1}https://example.com/"),
+        ] {
+            assert_eq!(url_value(text).as_deref(), Some(stored), "{text:?}");
+        }
+        for text in [
+            "\u{85}https://example.com/a",
+            "not a url",
+            "",
+            "   ",
+            "\u{200b}https://example.com",
+            "http://bücher.xn--",
+            "http://xn--a.münchen.de/",
+            "http://xn--é/",
+            "http://xn--%e9/",
+            "http://xn--%c3%a9/",
+            "http://xn--%2f/",
+            "http://xn--%20/",
+            "http://xn--%3a80/",
+            "http://xn--%2541/",
+            "http://xn--a%00/",
+            "https://xn--a b/",
+            "http://xn--[::1]/",
+            "//example.com",
+            "http://example.com:99999",
+            "http://xn--a.1/",
+            "http://xn--a.0x1/",
+            "http://xn--a.1./",
+            "http://xn--a.0x/",
+            "foo://@",
+            "foo://u@/p",
+            "foo://h:80\\p",
+            "foo://h:\\p",
+            "foo://[::1]:80\\p",
+        ] {
+            assert_eq!(url_value(text), None, "{text:?}");
         }
     }
 

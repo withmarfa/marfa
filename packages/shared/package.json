@@ -21,11 +21,13 @@
   },
   "dependencies": {
     "zod": "^4.6.5",
-    "uuidv7": "^1.2.1"
+    "uuidv7": "^1.2.1",
+    "whatwg-url": "^17.3.0"
   },
   "devDependencies": {
     "@withmarfa/types": "workspace:*",
     "@types/node": "^26.6.4",
+    "@types/whatwg-url": "^13.0.0",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3"
   }

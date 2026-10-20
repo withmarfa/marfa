@@ -326,6 +326,28 @@ If a write leaves out a property its type requires, or names one the type declar
 
 **Tests:** `compliance/validation.test.ts › rejects core.note with no properties with invalid_properties naming body`, `compliance/core-message.test.ts › rejects a message missing body with invalid_properties naming it`, `compliance/entity-subtypes.test.ts › rejects entity without required name with invalid_properties naming it`, `compliance/highlight.test.ts › rejects a highlight missing the required text property`, `compliance/thumbnails.test.ts › refuses a thumbnail over the cap or not an image, naming the field`.
 
+### `items/property-number-exact`
+
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then the server MUST answer `400 invalid_properties` with `details.errors` naming the value in `field`, as `list.1`, and the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. Send it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
+
+**Reason:** the server holds a number as a 64-bit float and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. The same holds for `-0`, which the float keeps as negative zero and the server serves as `0`. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
+
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
+
+### `items/property-number-exact-bulk`
+
+If an entry of `POST /items/bulk` or `POST /edges/bulk` names a value `items/property-number-exact` refuses, then the server MUST answer `400 invalid_properties` for the whole batch, with the entry's position in `details.index`, and write none of its entries.
+
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`.
+
+### `items/property-number-kept`
+
+When a write names a property whose value is a whole number written with the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, or a number written with a fraction or an exponent, the server MUST take it as the float it names, whatever its size, and serve it back in those digits.
+
+**Reason:** every whole number a float holds exactly up to 2^53 is written in those digits, except `-0`, which `items/property-number-exact` refuses, and so is `1152921504606847000`, which the server serves for a stored 2^60, so a value read back can be written back and read again as the same number. A number with a fraction or an exponent names a float, not digits.
+
+**Tests:** `compliance/exact-integers.test.ts › keeps %s as the number a float holds`, `› leaves the digits of a string alone`, `device/property-validation-live.test.ts › keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› holds the digits %s as written on the server and in the local row, before and after a drain`.
+
 ### `items/property-name-empty`
 
 If a write names a property with no characters, other than an archive restore, then the server MUST answer `400 validation_error`.

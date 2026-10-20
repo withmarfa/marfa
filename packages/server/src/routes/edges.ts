@@ -343,7 +343,9 @@ const createEdgeRoute = createRoute({
             properties: z
               .record(z.string(), z.unknown())
               .optional()
-              .describe("The edge's properties. Leave it out for none."),
+              .describe(
+                "The edge's properties. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
+              ),
           }),
         },
       },
@@ -497,7 +499,7 @@ const updateEdgeRoute = createRoute({
               .record(z.string(), z.unknown())
               .optional()
               .describe(
-                "Properties to merge over the edge's. Required unless an end moves.",
+                "Properties to merge over the edge's. Required unless an end moves. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
               ),
             source_id: z
               .string()

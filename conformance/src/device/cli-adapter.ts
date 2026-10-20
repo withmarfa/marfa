@@ -228,6 +228,11 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Item>(["items", "get", id]);
   }
 
+  /** The row as the device prints it, unparsed, so the digits of a number can be read as held. */
+  async getText(id: string): Promise<Outcome<string>> {
+    return this.invokeText([...this.prefix(), "items", "get", id]);
+  }
+
   /** What a folder's search holds, answered from the copy (`device/folder-list`). */
   async listInFolder(
     folder: string,
@@ -332,7 +337,7 @@ export class CliDevice implements DeviceUnderTest {
       "--type",
       draft.type,
       "--properties",
-      JSON.stringify(draft.properties ?? {}),
+      draft.propertiesText ?? JSON.stringify(draft.properties ?? {}),
     ];
     for (const tag of draft.tags ?? []) args.push("--tag", tag);
     if (draft.tier !== undefined) args.push("--tier", draft.tier);
@@ -739,7 +744,7 @@ export class CliDevice implements DeviceUnderTest {
       "--type",
       edge.type,
       "--properties",
-      JSON.stringify(edge.properties ?? {}),
+      edge.propertiesText ?? JSON.stringify(edge.properties ?? {}),
     ];
     if (edge.id !== undefined) args.push("--id", edge.id);
     return this.json<QueuedWrite>(args);
@@ -749,6 +754,7 @@ export class CliDevice implements DeviceUnderTest {
     id: string,
     edit: {
       properties: Record<string, unknown>;
+      propertiesText?: string;
       version?: number;
       source_id?: string;
       target_id?: string;
@@ -759,7 +765,7 @@ export class CliDevice implements DeviceUnderTest {
       "update",
       id,
       "--properties",
-      JSON.stringify(edit.properties),
+      edit.propertiesText ?? JSON.stringify(edit.properties),
     ];
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
@@ -803,13 +809,22 @@ export class CliDevice implements DeviceUnderTest {
     namespace: string,
     body: Record<string, unknown>,
   ): Promise<Outcome<QueuedWrite>> {
+    return this.writeExtensionText(item, namespace, JSON.stringify(body));
+  }
+
+  /** The data as JSON text, where a number's digits are the point. */
+  async writeExtensionText(
+    item: string,
+    namespace: string,
+    text: string,
+  ): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>([
       "extensions",
       "write",
       item,
       namespace,
       "--body",
-      JSON.stringify(body),
+      text,
     ]);
   }
 

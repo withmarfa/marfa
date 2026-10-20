@@ -126,7 +126,7 @@ const BulkInputItemSchema = z.object({
     ),
   type: z.string().describe("The item's type identifier, such as `core.note`."),
   properties: WrittenPropertiesSchema.optional().describe(
-    "The item's properties, checked against the type's schema. If the instance's strict mode names the type, an undeclared property is refused as `invalid_properties` with `details.code` `unknown_property`.",
+    "The item's properties, checked against the type's schema. Strict mode refuses an undeclared property as `invalid_properties` (`details.code` `unknown_property`). A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
   ),
   properties_mode: z
     .enum(["merge", "replace"])
@@ -252,12 +252,13 @@ const bulkRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_properties",
             "bulk_atomic_rollback",
           ]),
         },
       },
       description:
-        "- `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.",
+        "- `validation_error`: the body is malformed, has an undeclared key or has over 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `invalid_properties`: an entry's `properties` hold a whole number a 64-bit float can't keep.\n- `bulk_atomic_rollback`: an `atomic` entry was refused and nothing was written (`details.code`, `details.index`). The status is the refusal's own.",
     },
     401: {
       content: {
@@ -339,13 +340,14 @@ const bulkActionRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_properties",
             "bulk_confirmation_required",
             "bulk_cap_exceeded",
           ]),
         },
       },
       description:
-        '- `validation_error`: the body or `filter` is malformed or has an undeclared key or an empty field, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.\n- `missing_required_field`: a field the action needs is missing.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
+        '- `validation_error`: the body is malformed or has an undeclared or empty field, or `update_tags` has no `add` or `remove`.\n- `missing_required_field`: a needed field is missing.\n- `invalid_properties`: `patch` holds a whole number a 64-bit float cannot keep.\n- `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.\n- `bulk_cap_exceeded`: more items match than `max_items` allows.',
     },
     401: {
       content: {

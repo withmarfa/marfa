@@ -93,7 +93,7 @@ const BulkEdgeInputItemSchema = z
       .record(z.string(), z.unknown())
       .optional()
       .describe(
-        "The edge's properties. On an existing edge they merge over its own. Leave it out for none.",
+        "The edge's properties. On an existing edge they merge over its own. Leave it out for none. A whole number whose digits a 64-bit float doesn't keep is refused: send it as a string.",
       ),
     /** The version this entry was based on, where the triple resolves an
      *  edge that already exists. Optional for the same reason it is optional
@@ -165,12 +165,13 @@ const edgesBulkRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_properties",
             "bulk_atomic_rollback",
           ]),
         },
       },
       description:
-        "- `validation_error`: the body is malformed, has an undeclared key, or has more than 5,000 entries.\n- `missing_required_field`: `edges` is missing, or an entry lacks `source_id`, `target_id` or `edge_type`.\n- `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is that refusal's own.",
+        "- `validation_error`: the body is malformed, has an undeclared key or has over 5,000 entries.\n- `missing_required_field`: a required field is missing.\n- `invalid_properties`: an entry's `properties` hold a whole number a 64-bit float can't keep.\n- `bulk_atomic_rollback`: an `atomic` entry was refused and nothing was written (`details.code`, `details.index`). The status is the refusal's own.",
     },
     401: {
       content: {

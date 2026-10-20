@@ -96,7 +96,7 @@ const FolderDefaultsSchema = z
       "The tier a new file takes if its frontmatter names none.",
     ),
     properties: WrittenPropertiesSchema.optional().describe(
-      "Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property.",
+      "Properties a new file takes where its frontmatter doesn't set them. A default for the type's body field is never taken: the file's body is that property. A whole number whose digits a 64-bit float doesn't keep is refused.",
     ),
     tags: z
       .array(TagSchema)
@@ -385,10 +385,12 @@ const notFound = {
 };
 
 const SETTING_MALFORMED =
-  "a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it. A key the body or a setting doesn't declare is named in `details.unknown_body_fields`.";
+  "a setting is malformed or undeclared, such as a `system.*` type or a `first_placement` outside the folder. `details.errors[0].path` or `details.unknown_body_fields` names it.";
 
-const SETTING_TYPE_UNKNOWN =
-  "- `unknown_type`: a setting names a type that isn't registered.";
+const SETTING_TYPE_UNKNOWN = "- `unknown_type`: a setting's type is unknown.";
+
+const SETTING_PROPERTIES_INEXACT =
+  "- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.";
 
 const createRefusal = {
   400: {
@@ -398,10 +400,11 @@ const createRefusal = {
           "validation_error",
           "missing_required_field",
           "unknown_type",
+          "invalid_properties",
         ]),
       },
     },
-    description: `- \`validation_error\`: ${SETTING_MALFORMED}\n- \`missing_required_field\`: \`title\` is missing.\n${SETTING_TYPE_UNKNOWN}`,
+    description: `- \`validation_error\`: ${SETTING_MALFORMED}\n- \`missing_required_field\`: \`title\` is missing.\n${SETTING_TYPE_UNKNOWN}\n${SETTING_PROPERTIES_INEXACT}`,
   },
 };
 
@@ -415,10 +418,11 @@ const updateRefusal = {
           "unknown_type",
           "invalid_id",
           "invalid_transition",
+          "invalid_properties",
         ]),
       },
     },
-    description: `- \`validation_error\`: a setting is malformed (\`details.errors[0].path\` names it), a key is undeclared (\`details.unknown_body_fields\` names it), the body names no setting, or the query has \`conflict\`.\n- \`missing_required_field\`: \`version\` is missing.\n${SETTING_TYPE_UNKNOWN}\n- \`invalid_id\`: the ID is malformed.\n- \`invalid_transition\`: the folder is revoked.`,
+    description: `- \`validation_error\`: a setting is malformed or undeclared (\`details.errors[0].path\` or \`details.unknown_body_fields\` names it).\n- \`missing_required_field\`: \`version\` is missing.\n${SETTING_TYPE_UNKNOWN}\n${SETTING_PROPERTIES_INEXACT}\n- \`invalid_id\`: the ID is invalid.\n- \`invalid_transition\`: the folder is revoked.`,
   },
 };
 

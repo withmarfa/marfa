@@ -343,6 +343,122 @@ fn edges_are_created_between_two_items_and_updated_under_a_version() {
 }
 
 #[test]
+fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_properties() {
+    let refused = |error: CliError, what: &str| {
+        let message = error.to_string();
+        assert!(
+            message.contains("Must be a whole number that Marfa serves back with the same digits"),
+            "{what}: {message}"
+        );
+    };
+    let text = r#"{"a":{"b":[9999999999999999999]}}"#;
+    let expected = "a.b.0: Must be a whole number that Marfa serves back with the same digits, not 9999999999999999999, which it serves as 10000000000000000000. Send it as a string.";
+    let error = PropertyArgs {
+        properties: Some(text.into()),
+        props: vec![],
+    }
+    .read()
+    .unwrap_err();
+    assert!(error.to_string().contains(expected), "{error}");
+    refused(
+        items::create_request(&items::CreateArgs {
+            type_: "core.note".into(),
+            properties: PropertyArgs {
+                properties: Some(text.into()),
+                props: vec![],
+            },
+            ..Default::default()
+        })
+        .unwrap_err(),
+        "items create",
+    );
+    refused(
+        edges::create_request(&edges::EdgeCreateArgs {
+            source: "a".into(),
+            target: "b".into(),
+            type_: "references".into(),
+            properties: Some(text.into()),
+            ..Default::default()
+        })
+        .unwrap_err(),
+        "edges create",
+    );
+    refused(
+        edges::update_request("e", Some(text), (None, None), 1).unwrap_err(),
+        "edges update",
+    );
+    refused(
+        BodySource {
+            body: Some(text.into()),
+            ..Default::default()
+        }
+        .read()
+        .unwrap_err(),
+        "a body",
+    );
+    let folder = folders::SettingsArgs {
+        defaults: Some(text.into()),
+        ..Default::default()
+    };
+    refused(folder.read().unwrap_err(), "folder defaults");
+
+    let dir = std::env::temp_dir().join(format!("marfa-cli-bulk-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("items.json");
+    std::fs::write(
+        &file,
+        r#"[{"type":"core.note","properties":{"n":1152921504606846976}}]"#,
+    )
+    .unwrap();
+    let bulk = items::bulk_request(&items::BulkArgs {
+        file: file.clone(),
+        ..Default::default()
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+    refused(bulk.unwrap_err(), "items bulk");
+
+    let edges = dir.join("edges.json");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (text, expected) in [
+        (
+            r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":99999999999999999999999}}]"#,
+            "0.properties.n: Must be a whole number that Marfa serves back with the same digits, not 99999999999999999999999, which it serves as 1e+23. Send it as a string.",
+        ),
+        (
+            r#"{"edges":[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":-0}}]}"#,
+            "edges.0.properties.n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string.",
+        ),
+    ] {
+        std::fs::write(&edges, text).unwrap();
+        let bulk = edges::bulk_request(&edges::EdgeBulkArgs {
+            file: edges.clone(),
+            ..Default::default()
+        });
+        let error = bulk.unwrap_err().to_string();
+        assert!(error.contains(expected), "{text}: {error}");
+    }
+    std::fs::write(
+        &edges,
+        r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":1152921504606847000,"m":1.5,"s":"99999999999999999999999"}}]"#,
+    )
+    .unwrap();
+    let kept = edges::bulk_request(&edges::EdgeBulkArgs {
+        file: edges.clone(),
+        ..Default::default()
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(kept.is_ok(), "{kept:?}");
+
+    // The witnesses: the same shapes with a number a float keeps, and a string.
+    for ok in [
+        r#"{"a":{"b":[1152921504606847000]}}"#,
+        r#"{"a":"9999999999999999999","b":1.5}"#,
+    ] {
+        assert!(object(ok, "--properties").is_ok(), "{ok}");
+    }
+}
+
+#[test]
 fn a_search_sends_its_query_and_its_narrowing() {
     let request = search::request(&search::SearchArgs {
         query: "zebra crossing".into(),

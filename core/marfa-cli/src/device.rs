@@ -12,7 +12,9 @@ use crate::error::{CliError, Exit};
 use crate::interrupt::{stop_after, stop_on_interrupt};
 use crate::output;
 use crate::remote::{Named, Session, renewing};
-use crate::values::{ItemState, SliceTier, SortDirection, SortField, Tier, properties};
+use crate::values::{
+    ItemState, SliceTier, SortDirection, SortField, Tier, item_properties, properties,
+};
 
 #[derive(Debug, Args)]
 pub struct DeviceArgs {
@@ -1002,7 +1004,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     let draft = Draft {
                         r#type: args.type_,
                         id: args.id,
-                        properties: properties(&args.properties)?,
+                        properties: item_properties(&args.properties)?,
                         tags: args.tags,
                         tier: args.tier.map(Into::into),
                         source: args.source,
@@ -1014,7 +1016,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Update(args) => {
                     let edit = Edit {
-                        properties: properties(&args.properties)?,
+                        properties: item_properties(&args.properties)?,
                         base_version: args.version,
                         source_id: args.source_id,
                         r#type: args.type_,
@@ -1206,7 +1208,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         source_id: source,
                         target_id: target,
                         edge_type: type_,
-                        properties: properties(&props)?,
+                        properties: item_properties(&props)?,
                         id,
                     };
                     output::queued_one(&core.create_edge(&draft)?, json)
@@ -1219,7 +1221,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     target,
                 } => {
                     let edit = EdgeEdit {
-                        properties: properties(&props)?,
+                        properties: item_properties(&props)?,
                         base_version: version,
                         source_id: source,
                         target_id: target,
@@ -1388,6 +1390,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         })?,
                         (None, None) => unreachable!("one of the two is required"),
                     };
+                    marfa_core::refuse_inexact_integers(&text)?;
                     let parsed: serde_json::Value = serde_json::from_str(&text)
                         .map_err(|error| CliError::Invalid(format!("not JSON: {error}")))?;
                     let definitions = match parsed {

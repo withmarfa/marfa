@@ -16,8 +16,10 @@ notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 # `preserve_order`: without it a folder writes a person's frontmatter back
-# in alphabetical order.
-serde_json = { version = "1", features = ["preserve_order"] }
+# in alphabetical order. `float_roundtrip`: the default parse of a long number
+# can land one place from the nearest float, which JavaScript, and so the
+# server, always reads, and a number then differs between the two.
+serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 sha2 = "0.11"
 hex = "0.4"
 base64 = "0.23"
