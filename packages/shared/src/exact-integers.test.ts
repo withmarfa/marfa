@@ -39,6 +39,7 @@ describe("isKeptInteger", () => {
     "999999999999999868928",
     "1000000000000000000000",
     "1000000000000000000001",
+    "-0",
     "9".repeat(400),
   ])(
     "refuses %s, which is not the digits JavaScript prints for its float",
@@ -48,12 +49,18 @@ describe("isKeptInteger", () => {
   );
 });
 
-it.each(["0", "-0", "-9007199254740991", "9007199254740992"])(
+it.each(["0", "-1", "-9007199254740991", "9007199254740992"])(
   "keeps %s, a safe integer, whatever JavaScript prints",
   (source) => {
     expect(isKeptInteger(source)).toBe(true);
   },
 );
+
+it("refuses -0, which the shortcut for a short number would have kept", () => {
+  expect(String(Number("-0"))).toBe("0");
+  expect(isKeptInteger("-0")).toBe(false);
+  expect(isKeptInteger("0")).toBe(true);
+});
 
 describe("inexactIntegerMessage", () => {
   it.each([
@@ -158,6 +165,30 @@ describe("findInexactIntegers", () => {
       ]);
     },
   );
+
+  it.each([
+    ['{"a":-0}', ["a"]],
+    ['{"a":[1,{"b":-0}]}', ["a", "1", "b"]],
+    ['{"a":-0,"b":0}', ["a"]],
+    ["-0", []],
+    ['{ "a" : -0 }', ["a"]],
+  ])("finds -0 in %s", (text, path) => {
+    expect(findInexactIntegers(text)).toEqual([{ source: "-0", path }]);
+  });
+
+  it.each([
+    ['{"a":"-0"}', "a string"],
+    ['{"a":"x\\"-0"}', "a string with an escaped quote"],
+    ['{"a":-0.0}', "a fraction"],
+    ['{"a":-0e0}', "an exponent"],
+    ['{"a":-0E5}', "an upper-case exponent"],
+    ['{"a":1e-0}', "the sign of an exponent"],
+    ['{"a":1E-0}', "the sign of an upper-case exponent"],
+    ['{"a":"2026-01-01","b":-1,"c":0}', "a date, a negative number and zero"],
+    ['{"-0":1}', "a key"],
+  ])("leaves %s alone, a %s", (text) => {
+    expect(findInexactIntegers(text)).toEqual([]);
+  });
 
   it("names a member whose key is empty", () => {
     expect(findInexactIntegers('{"":{"":1500000000000000001}}')).toEqual([

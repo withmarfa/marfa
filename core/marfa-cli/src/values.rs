@@ -171,6 +171,18 @@ mod tests {
     }
 
     #[test]
+    fn item_properties_refuse_a_negative_zero_the_server_would_serve_as_zero() {
+        let error = item_properties(r#"{"a": {"b": [-0]}}"#).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("a.b.0: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."),
+            "{error}"
+        );
+        assert!(item_properties(r#"{"a": 0, "b": -0.0, "c": -1}"#).is_ok());
+    }
+
+    #[test]
     fn item_properties_read_a_number_as_the_float_javascript_reads() {
         // The nearest float to these digits is 999999999999999868928; a parse
         // that is off by one place in the last bit reads 1e21.

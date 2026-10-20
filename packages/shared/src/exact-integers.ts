@@ -14,9 +14,11 @@ const MIN_DIGITS = 16;
  * Whether the whole number written as `source` (JSON's integer grammar,
  * optional minus then digits) is served back with the digits it was written
  * with: they are the shortest digits that name the float it rounds to, as
- * `String(Number(source))` prints them. Every safe integer is.
+ * `String(Number(source))` prints them. Every safe integer is but `-0`, which
+ * is served as `0`.
  */
 export function isKeptInteger(source: string): boolean {
+  if (source === "-0") return false;
   const digits = source.startsWith("-") ? source.length - 1 : source.length;
   if (digits < MIN_DIGITS) return true;
   return String(Number(source)) === source;
@@ -50,19 +52,19 @@ type Reviver = (
 ) => unknown;
 
 const WHOLE_NUMBER = /^-?\d+$/;
-const DIGIT_RUN = /\d{16,}/g;
+const CANDIDATE = /\d{16,}|-0(?![\d.eE])/g;
 
 /**
  * Whether `text` holds a whole number token that is not kept as written: a run
- * of 16 or more digits outside a string, with no `.`, `e` or `E` joined to it.
- * It reads the text once without parsing it, so a body that holds no such
+ * of 16 or more digits, or a `-0`, outside a string, with no `.`, `e` or `E`
+ * joined to it. It reads the text once without parsing it, so a body that holds no such
  * token costs a scan, whatever else it holds (the digits of a string, of a
  * fraction or of an exponent, and a great many objects).
  */
 function holdsInexactToken(text: string): boolean {
   let inString = false;
   let scanned = 0;
-  for (const run of text.matchAll(DIGIT_RUN)) {
+  for (const run of text.matchAll(CANDIDATE)) {
     const start = run.index;
     for (let at = scanned; at < start; at += 1) {
       const code = text.charCodeAt(at);
@@ -79,6 +81,11 @@ function holdsInexactToken(text: string): boolean {
     const after = text.charAt(end);
     if (after === "." || after === "e" || after === "E") continue;
     const before = text.charAt(start - 1);
+    if (run[0] === "-0") {
+      // After an `e` it is the sign of an exponent.
+      if (before === "e" || before === "E") continue;
+      return true;
+    }
     const signed = before === "-" || before === "+";
     const lead = text.charAt(signed ? start - 2 : start - 1);
     if (before === "." || lead === "e" || lead === "E") continue;

@@ -3913,6 +3913,7 @@ mod tests {
             r#"{"weight":9999999999999999999}"#,
             r#"{"a":{"b":[1152921504606846976]}}"#,
         ] {
+            r#"{"a":[1,{"b":-0}]}"#,
             refused(
                 core.write_extension("row", "acme.x", body).map(|_| ()),
                 "an extension",
@@ -3933,7 +3934,7 @@ mod tests {
         core.write_extension(
             "row",
             "acme.x",
-            r#"{"weight":1152921504606847000,"s":"9999999999999999999"}"#,
+            r#"{"weight":1152921504606847000,"s":"9999999999999999999","zero":-0.0,"minus":-1}"#,
         )
         .unwrap();
         assert_eq!(core.queue().unwrap().len(), 3);

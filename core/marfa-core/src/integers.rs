@@ -25,8 +25,12 @@ fn served_as(source: &str) -> Option<String> {
 }
 
 /// Whether the whole number written as `source` is served back with the
-/// digits it was written with. Every safe integer is.
+/// digits it was written with. Every safe integer is but `-0`, which is served
+/// as `0`.
 pub(crate) fn kept(source: &str) -> bool {
+    if source == "-0" {
+        return false;
+    }
     let digits = source.strip_prefix('-').unwrap_or(source);
     digits.len() < MIN_DIGITS || served_as(source).is_some_and(|served| served == source)
 }
@@ -97,10 +101,11 @@ pub(crate) fn refuse_in_value(properties: &Map<String, Value>) -> Result<(), Cor
 /// already a float once parsed. Text that is not JSON is left to the caller's
 /// own parse.
 pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
-    if !text
-        .as_bytes()
+    let bytes = text.as_bytes();
+    if !bytes
         .windows(MIN_DIGITS)
         .any(|window| window.iter().all(u8::is_ascii_digit))
+        && !bytes.windows(2).any(|window| window == b"-0")
     {
         return Ok(());
     }
@@ -108,7 +113,6 @@ pub fn refuse_inexact_integers(text: &str) -> Result<(), CoreError> {
     // array's current index.
     let mut frames: Vec<(bool, String)> = Vec::new();
     let mut expecting_key = false;
-    let bytes = text.as_bytes();
     let mut at = 0;
     while at < bytes.len() {
         match bytes[at] {
@@ -172,7 +176,7 @@ mod tests {
     fn a_whole_number_is_kept_when_its_digits_are_the_ones_javascript_prints() {
         for source in [
             "0",
-            "-0",
+            "-1",
             "9007199254740991",
             "-9007199254740991",
             "9007199254740992",
@@ -203,6 +207,7 @@ mod tests {
             "999999999999999868928",
             "1000000000000000000000",
             "1000000000000000000001",
+            "-0",
         ] {
             assert!(!kept(source), "{source}");
         }
@@ -215,6 +220,7 @@ mod tests {
             ("1152921504606846976", Some("1152921504606847000")),
             ("-9007199254740993", Some("-9007199254740992")),
             ("1000000000000000000000", Some("1e+21")),
+            ("-0", Some("0")),
             (
                 "123456789012345678901234567890",
                 Some("1.2345678901234568e+29"),
@@ -275,6 +281,38 @@ mod tests {
     #[test]
     fn text_reads_a_number_beyond_64_bits_as_written() {
         assert!(refuse_inexact_integers(r#"{"max": 99999999999999999999999}"#).is_err());
+    }
+
+    #[test]
+    fn text_refuses_a_negative_zero_and_names_it() {
+        for (text, member) in [
+            (r#"{"a": -0}"#, "a"),
+            (r#"{"a": [1, {"b": -0}]}"#, "a.1.b"),
+            (r#"{ "a" : -0 , "b": 0}"#, "a"),
+        ] {
+            let Err(CoreError::Validation { message, .. }) = refuse_inexact_integers(text) else {
+                panic!("expected a refusal of {text}");
+            };
+            assert_eq!(
+                message,
+                format!(
+                    "{member}: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."
+                ),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn text_leaves_a_zero_that_is_not_a_negative_whole_number_alone() {
+        for text in [
+            r#"{"a": 0, "b": -1, "c": 0.0}"#,
+            r#"{"a": -0.0, "b": -0e0, "c": -0E5, "d": 1e-0}"#,
+            r#"{"a": "-0", "b": "2026-01-01"}"#,
+            r#"{"-0": 1}"#,
+        ] {
+            assert!(refuse_inexact_integers(text).is_ok(), "{text}");
+        }
     }
 
     #[test]

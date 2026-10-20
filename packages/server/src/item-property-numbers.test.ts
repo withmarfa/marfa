@@ -44,6 +44,7 @@ const KEPT_AS: Record<string, string> = {
   "9223372036854775807": "9223372036854776000",
   "-9007199254740993": "-9007199254740992",
   "1152921504606846976": "1152921504606847000",
+  "-0": "0",
 };
 
 function refusal(source: string): string {
@@ -81,6 +82,7 @@ const REFUSED = [
   ["9223372036854775807", "9223372036854775807"],
   ["-9007199254740993", "-9007199254740993"],
   ["1152921504606846976", "1152921504606846976"],
+  ["-0", "-0"],
 ] as const;
 
 /** The properties of an event, hand-written so the digits reach the server as typed. */
