@@ -355,8 +355,8 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
-    /// The write keeps meeting an environmental failure while the writes
-    /// sent to test it are taken.
+    /// The write keeps meeting an environmental failure while the server
+    /// answers other writes.
     FailingAlone,
 }
 

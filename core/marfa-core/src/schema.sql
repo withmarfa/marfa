@@ -184,8 +184,9 @@ CREATE TABLE IF NOT EXISTS queue (
   -- break the `CHECK` and abort its transaction rather than go `dead`.
   refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals BETWEEN 0 AND 5),
   -- The drains in a row in which this write met an environmental failure. Not
-  -- a refusal count: it is never held against the ceiling. Every other answer
-  -- and every release sets it back to zero.
+  -- a refusal count: it is never held against the ceiling. An answer that is
+  -- not an environmental failure, and every release, set it back to zero; a
+  -- `429` leaves it as it was.
   environmental_streak INTEGER NOT NULL DEFAULT 0 CHECK (environmental_streak >= 0),
   -- A JSON `{"status": ..., "text": ...}`: what the write last met when the
   -- failure was environmental, `status` null where nothing answered and
