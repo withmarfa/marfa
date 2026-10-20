@@ -14,7 +14,6 @@ use crate::error::CoreError;
 pub(crate) const DIRECTORY_LOCK: &str = "core.sqlite.writer-lock";
 
 /// How often a lock file is opened to get a connection that can write.
-#[cfg(unix)]
 const OPENS: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,8 +43,7 @@ impl WriterLock {
         };
         let path = lock_path(store);
         crate::owner_only(&path)?;
-        let claim = Connection::open(&path)?;
-        Self::claim_connection(claim)
+        Self::claim_opened(&path.display().to_string(), || Ok(Connection::open(&path)?))
     }
 
     #[cfg(unix)]
@@ -57,12 +55,6 @@ impl WriterLock {
 
     /// The lock in the file `name` of the directory `vfs` reaches. Without
     /// `create`, a file that is not there is an error.
-    ///
-    /// SQLite can fall back to a read-only open when concurrent creates on
-    /// macOS make one open fail with `ENOENT`. `BEGIN EXCLUSIVE` on that
-    /// connection succeeds with only a shared lock, so it cannot establish
-    /// writer ownership. Retrying after creation can obtain a writable
-    /// connection.
     #[cfg(unix)]
     pub(crate) fn claim_named(
         vfs: &crate::directory_vfs::DirectoryVfs,
@@ -74,14 +66,30 @@ impl WriterLock {
         if create {
             flags |= rusqlite::OpenFlags::SQLITE_OPEN_CREATE;
         }
+        Self::claim_opened(name, || vfs.open(name, flags))
+    }
+
+    /// The lock on the file `open` opens, named `file` in an error. Every lock
+    /// is claimed here, so none can be the writer on a connection that cannot
+    /// write.
+    ///
+    /// SQLite opens a file read-only without saying so when it cannot open it
+    /// for writing, and `BEGIN EXCLUSIVE` on that connection succeeds with
+    /// only a shared lock. That also happens to a file whose creation raced
+    /// another's on macOS (one open fails with `ENOENT`), so a read-only
+    /// connection is opened again before the claim is refused.
+    fn claim_opened(
+        file: &str,
+        mut open: impl FnMut() -> Result<Connection, CoreError>,
+    ) -> Result<Self, CoreError> {
         for _ in 0..OPENS {
-            let claim = vfs.open(name, flags)?;
+            let claim = open()?;
             if !claim.is_readonly("main")? {
                 return Self::claim_connection(claim);
             }
         }
         Err(CoreError::Store(format!(
-            "{name} cannot be opened for writing, so it cannot be locked"
+            "{file} cannot be opened for writing, so it cannot be locked: check that it is writable"
         )))
     }
 
@@ -225,6 +233,32 @@ mod tests {
         let claim = WriterLock::claim_named(&vfs, name, true).unwrap();
         assert_eq!(claim.handle(), Handle::Writer);
         assert!(WriterLock::held_named(&vfs, name).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_store_lock_that_cannot_be_written_is_refused_every_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("core.sqlite");
+        let lock = dir.path().join("core.sqlite.writer-lock");
+        drop(WriterLock::claim(Some(&store)).unwrap());
+        let mode = |mode| {
+            std::fs::set_permissions(&lock, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        mode(0o400);
+        for attempt in ["first", "second"] {
+            let claim = WriterLock::claim(Some(&store));
+            assert!(
+                matches!(&claim, Err(CoreError::Store(message)) if message.contains("core.sqlite.writer-lock")),
+                "{attempt} claim: {:?}",
+                claim.map(|lock| lock.handle())
+            );
+        }
+        // The witness: with the file writable again, the same call claims it.
+        mode(0o600);
+        let claim = WriterLock::claim(Some(&store)).unwrap();
+        assert_eq!(claim.handle(), Handle::Writer);
     }
 
     #[cfg(unix)]
