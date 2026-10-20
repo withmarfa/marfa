@@ -315,7 +315,7 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself.",
+    "Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself, without `revoke_keys`.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
@@ -341,7 +341,7 @@ const endSignInRoute = createRoute({
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
       ["forbidden"],
-      `${SIGN_IN_DOOR_REFUSAL}, or the browser signed in more than five minutes ago and the ID names another sign-in.`,
+      `${SIGN_IN_DOOR_REFUSAL}, or the browser signed in more than five minutes ago and the ID names another sign-in or \`revoke_keys\` is \`true\`.`,
     ),
     404: failure(["sign_in_not_found"], SIGN_IN_NOT_FOUND),
   },

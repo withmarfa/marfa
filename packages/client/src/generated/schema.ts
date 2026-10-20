@@ -1488,7 +1488,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself.
+         * @description Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself, without `revoke_keys`.
          */
         delete: operations["endSignIn"];
         options?: never;
@@ -22437,7 +22437,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago and the ID names another sign-in. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the owner's browser session or the local command's authority, or the browser signed in more than five minutes ago and the ID names another sign-in or `revoke_keys` is `true`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
