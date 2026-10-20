@@ -69,6 +69,31 @@ describe("a console page, asked for by a browser that is not signed in", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
+  it("treats a HEAD for a page as the GET it stands for", async () => {
+    const head = (headers: Record<string, string>) =>
+      ctx.app.request("/auth/owner/manage?tab=keys", {
+        method: "HEAD",
+        headers,
+      });
+    const out = await head(BROWSER);
+    expect(out.status).toBe(302);
+    expect(out.headers.get("location")).toBe(
+      `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/manage?tab=keys")}`,
+    );
+    expect(out.headers.get("cache-control")).toContain("no-store");
+    // Witness: with the owner's session the same HEAD is the page's headers.
+    const signedIn = await head({ ...BROWSER, cookie: ctx.owner.cookie });
+    expect(signedIn.status).toBe(200);
+    expect(signedIn.headers.get("content-security-policy")).toContain(
+      "connect-src 'self'",
+    );
+    expect(await signedIn.text()).toBe("");
+    // A program's HEAD keeps the refusal it always had.
+    const program = await head({ accept: "application/json" });
+    expect(program.status).toBe(401);
+    expect(program.headers.get("location")).toBeNull();
+  });
+
   it("is sent back to the page it asked for once it has signed in", async () => {
     const res = await request(ctx.app, "POST", "/auth/sign-in", {
       headers: { origin: "http://localhost:0" },
