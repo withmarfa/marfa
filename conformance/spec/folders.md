@@ -1068,13 +1068,13 @@ When an item's time differs from its creation time or a file already carries a n
 
 ### `folders/time-invalid`
 
-If a non-null `occurred_at` value is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
+If a non-null `occurred_at` value in a document not bound to a file item is not text or cannot be read as a valid time, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › flags a line that is no time, and sends nothing for the file`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
 ### `folders/own-field-validation`
 
-If frontmatter names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
+If the frontmatter of a document not bound to a file item names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads own-field lines in each form a file can hold them`, `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
@@ -1318,7 +1318,7 @@ When a document's refused tag or property name or tag count is corrected, a devi
 
 ### `folders/unreadable-yaml`
 
-If Markdown frontmatter is malformed, has a non-text key, duplicates a key, or uses a YAML merge key, then a device MUST flag the file `unreadable`.
+If the Markdown frontmatter of a document not bound to a file item is malformed, has a non-text key, duplicates a key, or uses a YAML merge key, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`, `device/folders-contract-a.test.ts › holds duplicate YAML keys and empty or out-of-range dates while admitting a valid date`.
 
@@ -1354,7 +1354,7 @@ When an unreadable document is repaired, a device MUST process its edit normally
 
 ### `folders/encoding-flag`
 
-If a document is not UTF-8 text or contains a NUL byte, then a device MUST flag it `encoding` with the reason.
+If a document not bound to a file item is not UTF-8 text or contains a NUL byte, then a device MUST flag it `encoding` with the reason.
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
@@ -1387,6 +1387,38 @@ When a document is saved as UTF-8 without NUL bytes, a device MUST admit its con
 When a non-document file contains bytes that are not valid UTF-8 or include NUL, a device MUST admit those bytes as a file item rather than apply document encoding restrictions.
 
 **Tests:** `device/folders-contract-a.test.ts › applies default properties to documents but not file items`.
+
+### `folders/file-item-doc-name-sent`
+
+When the bytes of a non-empty file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
+
+**Reason:** the item's kind, not the file's name, says how its bytes are read, and a pull can place a file item at a document name. Frontmatter that does not parse and bytes that are not UTF-8 are then the file item's own content.
+
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
+
+### `folders/file-item-doc-name-unflagged`
+
+When a scan finds a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item, a device MUST NOT flag the file `unreadable` or `encoding`.
+
+**Reason:** a flag holds a document whose text the device cannot read, and a file item's bytes are not read as text. A document not bound to a file item, a new file included, is still held by `folders/unreadable-yaml` and `folders/encoding-flag`.
+
+**Tests:** `device/folders-placement.test.ts › sends a file item pulled to a document name as its bytes, whatever they hold`.
+
+### `folders/file-item-doc-name-emptied`
+
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item is empty, a device MUST leave the item's bytes as they were until the file holds bytes.
+
+**Reason:** the server holds no empty blob, and an editor empties a file before it writes it.
+
+**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
+
+### `folders/file-item-doc-name-emptied-scan`
+
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item is empty, a device MUST send the other files of the same scan.
+
+**Reason:** one file waiting for its bytes fails no pass. An emptied document is still sent as an empty document.
+
+**Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
 
 ## Document versions
 
@@ -2104,9 +2136,9 @@ When an embedded file needs uploading, a device MUST leave its size-limit decisi
 
 ### `folders/markdown-extensions`
 
-When a file has a `.md` or `.markdown` extension in any letter case, a device MUST read its Markdown metadata.
+When a file with a `.md` or `.markdown` extension in any letter case is not bound to a file item, a device MUST read its Markdown metadata.
 
-**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`.
+**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`, `device/folders-placement.test.ts › reads a new note written where a moved file item was as a note`.
 
 ### `folders/id-rename`
 
@@ -2242,7 +2274,7 @@ When an unbound document names a file item as its ID, a device MUST create a sep
 
 ### `folders/raw-text-body`
 
-When a file has a `.txt` extension in any letter case, a device MUST treat its complete text as the document body without reading or writing frontmatter.
+When a file with a `.txt` extension in any letter case is not bound to a file item, a device MUST treat its complete text as the document body without reading or writing frontmatter.
 
 **Tests:** `device/folders-identity.test.ts › reads a .txt file that opens with a --- block as a body`, `device/folders-identity.test.ts › reads a .txt file whatever the case of its extension`, `device/folders-identity.test.ts › follows a rename by device, inode and birth time`.
 
@@ -3984,7 +4016,9 @@ When another registered folder holds a file whose bytes can be read but are not 
 
 When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
 
-**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Reason:** a file at a document name is read as a document, and a document without an id line is a new item, so a `.txt` note moved to another folder as `.md` is a new item there.
+
+**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`.
 
 ### `folders/moved-awaiting-peer`
 
