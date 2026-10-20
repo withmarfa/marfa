@@ -240,6 +240,110 @@ describe("PATCH /webhooks/:id", () => {
   });
 });
 
+describe("PATCH /webhooks/:id on a pending delivery", () => {
+  const UNSELECTED =
+    "The subscription's events or type filter no longer select this event.";
+
+  async function pendingNote(
+    webhook: WebhookResponse,
+    due: boolean,
+  ): Promise<string> {
+    return ctx.storage.outboundWebhookDeliveries.schedule({
+      eventId: 1n,
+      webhookId: webhook.id,
+      eventType: "item.created",
+      payload: JSON.stringify({
+        event_type: "item.created",
+        item: { id: "01HPATCHPENDINGNOTE0000000", type: "core.note" },
+      }),
+      webhookUrl: webhook.url,
+      // Out of reach of `claimToken`, which claims whatever is due.
+      nextAttemptAt: new Date(Date.now() + (due ? 0 : 3_600_000)).toISOString(),
+    });
+  }
+
+  async function patch(id: string, body: Record<string, unknown>) {
+    const res = await request(ctx.app, "PATCH", `/webhooks/${id}`, {
+      key: ctx.workingKey,
+      body,
+    });
+    expect(res.status).toBe(200);
+  }
+
+  async function statusOf(webhookId: string, id: string) {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/webhooks/${webhookId}/deliveries`,
+      { key: ctx.workingKey },
+    );
+    const body = (await res.json()) as {
+      data: { id: string; status: string; error: string | null }[];
+    };
+    return body.data.find((d) => d.id === id);
+  }
+
+  it("settles it unsent at once when events or type_filter are narrowed past its event, and leaves it when they are not", async () => {
+    const byEvents = await createWebhook({
+      url: "https://example.com/narrow-events",
+      events: ["item.created", "item.deleted"],
+    });
+    const byType = await createWebhook({
+      url: "https://example.com/narrow-type",
+      events: ["item.created"],
+    });
+    await patch(byType.id, { type_filter: "core.note" });
+    const eventsRow = await pendingNote(byEvents, false);
+    const typeRow = await pendingNote(byType, false);
+
+    // Witnesses: changes that still select the event, or touch neither field.
+    await patch(byEvents.id, { active: true });
+    await patch(byEvents.id, { events: ["item.created", "item.updated"] });
+    await patch(byType.id, { type_filter: "core.note" });
+    expect(await statusOf(byEvents.id, eventsRow)).toMatchObject({
+      status: "pending",
+    });
+    expect(await statusOf(byType.id, typeRow)).toMatchObject({
+      status: "pending",
+    });
+
+    await patch(byEvents.id, { events: ["item.deleted"] });
+    await patch(byType.id, { type_filter: "core.task" });
+    expect(await statusOf(byEvents.id, eventsRow)).toMatchObject({
+      status: "canceled",
+      error: UNSELECTED,
+    });
+    expect(await statusOf(byType.id, typeRow)).toMatchObject({
+      status: "canceled",
+      error: UNSELECTED,
+    });
+  });
+
+  it("ends a delivery claimed in flight canceled, not success, when the same PATCH narrows past its event", async () => {
+    const webhook = await createWebhook({
+      url: "https://example.com/narrow-in-flight",
+      events: ["item.created", "item.deleted"],
+    });
+    const id = await pendingNote(webhook, true);
+    const token = await claimToken(id);
+
+    await patch(webhook.id, { events: ["item.deleted"] });
+
+    expect(
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(
+        id,
+        token,
+        200,
+        1,
+      ),
+    ).toBe(false);
+    expect(await statusOf(webhook.id, id)).toMatchObject({
+      status: "canceled",
+      error: UNSELECTED,
+    });
+  });
+});
+
 describe("DELETE /webhooks/:id", () => {
   it("deletes a webhook and records an audit entry", async () => {
     const created = await createWebhook({

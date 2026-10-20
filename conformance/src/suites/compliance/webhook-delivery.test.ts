@@ -34,8 +34,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await receiver.close();
   await cleanup(ctx);
+  await receiver.close();
 });
 
 /** A key the run's key mints with `webhooks.manage` and the reach given. */
@@ -121,6 +121,13 @@ interface ScriptedReceiver {
   url: string;
   hookUrl: (label: string) => string;
   attempts: (label: string) => Attempt[];
+  /**
+   * The subscriptions made on this receiver. `close` deletes them first: a
+   * subscription left active after its receiver is gone queues a failing
+   * delivery for every later note, and the attempt job claims only 50 due
+   * rows per run, so a backlog of them starves a fresh delivery.
+   */
+  webhooks: { id: string; owner: MarfaClient }[];
   close: () => Promise<void>;
 }
 
@@ -128,6 +135,7 @@ async function startScriptedReceiver(
   answer: (label: string, attempt: number) => Answer,
 ): Promise<ScriptedReceiver> {
   const byLabel = new Map<string, Attempt[]>();
+  const webhooks: ScriptedReceiver["webhooks"] = [];
   const server: Server = createServer((req, res) => {
     let body = "";
     req.on("data", (chunk: Buffer) => {
@@ -158,7 +166,11 @@ async function startScriptedReceiver(
     url,
     hookUrl: (label) => `${url}/${label}`,
     attempts: (label) => byLabel.get(label) ?? [],
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    webhooks,
+    close: async () => {
+      for (const { id, owner } of webhooks) await owner.deleteWebhook(id);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
@@ -175,6 +187,7 @@ async function subscribe(
   });
   expect(created.status, JSON.stringify(created.error)).toBe(201);
   trackWebhook(ctx, created.data.id, owner);
+  hook.webhooks.push({ id: created.data.id, owner });
   return { id: created.data.id, secret: created.data.secret };
 }
 
@@ -535,8 +548,8 @@ describe("outbound webhook delivery", () => {
     }));
     const reason =
       "The subscription's events or type filter no longer select this event.";
-    const subs = new Map<string, { id: string }>();
     try {
+      const subs = new Map<string, { id: string }>();
       const create = async (
         label: string,
         events: string[],
@@ -549,6 +562,7 @@ describe("outbound webhook delivery", () => {
         });
         expect(created.status, JSON.stringify(created.error)).toBe(201);
         trackWebhook(ctx, created.data.id, client);
+        hook.webhooks.push({ id: created.data.id, owner: client });
         return created.data;
       };
       const both = ["item.created", "item.deleted"];
@@ -558,10 +572,13 @@ describe("outbound webhook delivery", () => {
         await create("type-narrowed", ["item.created"], "core.note"),
       );
       subs.set("unrelated", await create("unrelated", both, "core.note"));
-      subs.set("events-restored", await create("events-restored", both));
       subs.set(
-        "type-restored",
-        await create("type-restored", ["item.created"], "core.note"),
+        "events-widened-again",
+        await create("events-widened-again", both),
+      );
+      subs.set(
+        "type-widened-again",
+        await create("type-widened-again", ["item.created"], "core.note"),
       );
       subs.set("control", await create("control", both));
       const earlier = await makeNote("filters-narrowed");
@@ -587,22 +604,50 @@ describe("outbound webhook delivery", () => {
       await patch("events-narrowed", { events: ["item.deleted"] });
       await patch("type-narrowed", { type_filter: "core.task" });
       await patch("unrelated", { active: true });
-      await patch("events-restored", { events: ["item.deleted"] });
-      await patch("events-restored", { events: both });
-      await patch("type-restored", { type_filter: "core.task" });
-      await patch("type-restored", { type_filter: "core.note" });
+      await patch("events-widened-again", { events: ["item.deleted"] });
+      await patch("events-widened-again", { events: both });
+      await patch("type-widened-again", { type_filter: "core.task" });
+      await patch("type-widened-again", { type_filter: "core.note" });
 
+      // Settled by the PATCH itself, before any retry has run, and not
+      // revived by widening the field again.
+      for (const label of [
+        "events-narrowed",
+        "type-narrowed",
+        "events-widened-again",
+        "type-widened-again",
+      ]) {
+        const rows = await client.listWebhookDeliveries(subs.get(label)!.id);
+        expect(rows.data.data, label).toHaveLength(1);
+        expect(rows.data.data[0], label).toMatchObject({
+          status: "canceled",
+          error: reason,
+          attempt: 1,
+        });
+      }
+
+      // Every subscription's retry is due once the last first attempt is
+      // 1.5 seconds old, and each still selecting the event is retried by
+      // the run that finds it due, so waiting for both (not the control
+      // alone) leaves none to the job's own 30 second cadence.
       const lastFirst = Math.max(
         ...[...subs.keys()].map((label) => hook.attempts(label)[0]!.at),
       );
       await runRetriesUntil(
         () =>
-          hook.attempts("control").length >= 2 &&
-          Date.now() >= lastFirst + 1500,
-        "the retry of the untouched subscription",
+          Date.now() >= lastFirst + 1500 &&
+          ["unrelated", "control"].every(
+            (label) => hook.attempts(label).length >= 2,
+          ),
+        "the retry of every subscription that still selects the event",
       );
 
-      for (const label of ["events-narrowed", "type-narrowed"]) {
+      for (const label of [
+        "events-narrowed",
+        "type-narrowed",
+        "events-widened-again",
+        "type-widened-again",
+      ]) {
         expect(
           await deliveryOf(subs.get(label)!.id, () => true),
           label,
@@ -617,12 +662,7 @@ describe("outbound webhook delivery", () => {
           1,
         );
       }
-      for (const label of [
-        "unrelated",
-        "events-restored",
-        "type-restored",
-        "control",
-      ]) {
+      for (const label of ["unrelated", "control"]) {
         expect(
           await deliveryOf(subs.get(label)!.id, (r) => r.status === "success"),
           label,
@@ -651,10 +691,6 @@ describe("outbound webhook delivery", () => {
         expect(bodies, label).toEqual([earlier, later]);
       }
     } finally {
-      // Deleted here and not at the file's end: six live subscriptions to
-      // every note would queue a failing delivery for each note the later
-      // tests write, and the poller claims 50 due rows per run.
-      for (const sub of subs.values()) await client.deleteWebhook(sub.id);
       await hook.close();
     }
   });
@@ -1129,6 +1165,7 @@ describe("outbound webhook delivery", () => {
       });
       expect(created.status).toBe(201);
       trackWebhook(ctx, created.data.id, client);
+      hook.webhooks.push({ id: created.data.id, owner: client });
       expect(created.data.secret).toBe(secret);
       await makeNote("supplied");
       await waitFor("the delivery", async () =>
@@ -1158,6 +1195,7 @@ describe("outbound webhook delivery", () => {
       silent.listen(0, "127.0.0.1", resolve),
     );
     const silentPort = (silent.address() as { port: number }).port;
+    const unreachableIds: string[] = [];
     try {
       const unreachable = await client.createWebhook({
         url: closedUrl,
@@ -1171,6 +1209,7 @@ describe("outbound webhook delivery", () => {
       expect(timedOut.status).toBe(201);
       trackWebhook(ctx, unreachable.data.id, client);
       trackWebhook(ctx, timedOut.data.id, client);
+      unreachableIds.push(unreachable.data.id, timedOut.data.id);
       await makeNote("no-answer");
 
       const first = await deliveryOf(
@@ -1192,6 +1231,7 @@ describe("outbound webhook delivery", () => {
         expect(row.error).not.toMatch(/127\.0\.0\.1|:\d{4,5}/);
       }
     } finally {
+      for (const id of unreachableIds) await client.deleteWebhook(id);
       for (const socket of sockets) socket.destroy();
       await new Promise<void>((resolve) => silent.close(() => resolve()));
     }

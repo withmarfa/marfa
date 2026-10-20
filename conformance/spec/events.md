@@ -1323,17 +1323,9 @@ When a subscription is pointed at another URL or turned off, the server MUST set
 
 ### `events/cancel-unselected`
 
-When the `events` or the `type_filter` of a subscription no longer select the event of one of its pending deliveries, the server MUST settle that delivery unsent with the `error` `The subscription's events or type filter no longer select this event.`
+When `PATCH /webhooks/{id}` sets `events` or `type_filter` so that they no longer select the event of one of the subscription's pending deliveries, the server MUST settle that delivery unsent, with the `error` `The subscription's events or type filter no longer select this event.`, before it answers.
 
-**Reason:** `events/delivery-unmatched` and `events/webhook-filter-matches` hold for a delivery that waits for a retry, so a receiver is not sent an event the owner has since excluded.
-
-**Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
-
-### `events/cancel-unselected-live`
-
-When the server attempts a pending delivery, the server MUST select it against the `events` and the `type_filter` the subscription holds at that attempt.
-
-**Reason:** a change to either field made by any route is covered, and a field narrowed and widened again before the attempt leaves the delivery selected. Widening a field queues no delivery for an event it did not select when the event was published.
+**Reason:** `events/delivery-unmatched` and `events/webhook-filter-matches` hold for a delivery that waits for a retry, so the delivery log shows it `canceled` at once and a receiver is not sent an event the owner has since excluded. A delivery being sent when the change commits ends `canceled` too. A change that still selects the event, or touches neither field, settles nothing, and widening a field again revives nothing already settled. A server also checks the filters it holds at each attempt, so no route to a change leaves a delivery to be sent.
 
 **Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
 

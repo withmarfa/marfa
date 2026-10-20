@@ -39,8 +39,8 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await receiver.close();
   await cleanup(ctx);
+  await receiver.close();
 });
 
 describe("outbound webhooks", () => {
@@ -74,6 +74,7 @@ describe("outbound webhooks", () => {
 
   it("redelivers a retained failed row to the current address with stable identity", async () => {
     const refusal = await startReceiver({ status: 400 });
+    let subscriptionId: string | undefined;
     try {
       const created = await client.createWebhook({
         url: refusal.hookUrl("refused"),
@@ -81,6 +82,7 @@ describe("outbound webhooks", () => {
       });
       expect(created.status).toBe(201);
       trackWebhook(ctx, created.data.id, client);
+      subscriptionId = created.data.id;
       const item = await client.createItem(
         createNote({
           source: ctx.source,
@@ -191,6 +193,11 @@ describe("outbound webhooks", () => {
       expect(b.delivery_id).toBe(a.delivery_id);
       expect(b.delivered_at).not.toBe(a.delivered_at);
     } finally {
+      // Deleted before the receiver closes, so no failing delivery is left
+      // for the attempt job to keep claiming.
+      if (subscriptionId !== undefined) {
+        await client.deleteWebhook(subscriptionId);
+      }
       await refusal.close();
     }
   });

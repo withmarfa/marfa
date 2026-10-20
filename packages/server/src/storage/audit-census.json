@@ -403,6 +403,7 @@
     "boundary": "Audited subscription and owned failed-delivery redelivery transitions; no audit on duplicate/refusal; audit-atomicity.test.ts.",
     "calls": {
       "WebhookDeliveryStore.cancelPending": 3,
+      "WebhookDeliveryStore.cancelUnselected": 1,
       "WebhookDeliveryStore.reopen": 1,
       "WebhookStore.create": 1,
       "WebhookStore.delete": 1,
