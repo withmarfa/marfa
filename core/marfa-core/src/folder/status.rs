@@ -4,7 +4,9 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::edge_types::EdgeTypes;
-use super::{Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state};
+use super::{
+    Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state, text_of,
+};
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
@@ -161,9 +163,16 @@ impl Folder {
                     (&settings, &catalog, &edge_types),
                 ),
             };
+            // Only a text item is sent in a request, and only text is measured.
+            let text_item = match by_path.get(key.as_str()) {
+                Some(bound) => !self.file_item(&bound.item_id, &catalog)?,
+                None => true,
+            };
             entry.warning = bytes
                 .as_deref()
-                .and_then(|bytes| near_limit(key, &String::from_utf8_lossy(bytes)))
+                .filter(|_| text_item && is_document(path))
+                .and_then(|bytes| text_of(bytes).ok())
+                .and_then(|text| near_limit(key, text))
                 .map(|flagged| flagged.reason);
             files.push(entry);
         }

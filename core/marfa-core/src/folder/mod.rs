@@ -109,8 +109,24 @@ fn text_of(bytes: &[u8]) -> std::result::Result<&str, &'static str> {
     Ok(text)
 }
 
-/// Measured as the JSON string the text is sent in; a file item's bytes go up
-/// outside the request.
+/// The text the scan keeps of a file. A document whose bytes are not UTF-8
+/// is held as one whose frontmatter does not parse is: decoded, it would be
+/// sent and written back with every byte that is not replaced. Any other file
+/// is decoded only where a text item asks for its body (`Scanned::document`).
+/// Neither is copied here, so a large file that is not text is never held in
+/// memory twice.
+fn kept_text(path: &Path, bytes: &[u8]) -> (String, Option<&'static str>) {
+    if !is_document(path) {
+        return (String::new(), None);
+    }
+    match text_of(bytes) {
+        Ok(text) => (text.to_string(), None),
+        Err(reason) => (String::new(), Some(reason)),
+    }
+}
+
+/// Measured as the JSON string the text is sent in. The caller asks only for a
+/// text item: a file item's bytes go up outside the request, whatever its name.
 fn near_limit(key: &str, text: &str) -> Option<Flagged> {
     if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
         return None;
@@ -1408,6 +1424,8 @@ impl Scanned {
     }
 
     fn document(&self) -> document::Document {
+        #[cfg(test)]
+        tests::DOCUMENTS_READ.with(|read| read.set(read.get() + 1));
         if carries_frontmatter(&self.path) {
             document::read(&self.text)
         } else if is_document(&self.path) {
@@ -1600,7 +1618,7 @@ impl Folder {
                 }
                 // Held below; its id line, which is ASCII, still names its item.
                 let Ok(text) = text_of(&bytes) else {
-                    named.extend(document::id_line(&String::from_utf8_lossy(&bytes)));
+                    named.extend(document::id_line_of(&bytes));
                     early.insert(path.clone(), bytes);
                     continue;
                 };
@@ -1739,19 +1757,7 @@ impl Folder {
                 report.skipped += 1;
                 continue;
             }
-            // A document whose bytes are not UTF-8 is held as one whose
-            // frontmatter does not parse is: decoded, it would be sent and
-            // written back with every byte that is not replaced. Any other
-            // file is decoded only where a text item asks for its body, so a
-            // large file item is never held in memory twice.
-            let (text, not_text) = if !is_document(&path) {
-                (String::new(), None)
-            } else {
-                match text_of(&bytes) {
-                    Ok(text) => (text.to_string(), None),
-                    Err(reason) => (String::from_utf8_lossy(&bytes).into_owned(), Some(reason)),
-                }
-            };
+            let (text, not_text) = kept_text(&path, &bytes);
             let decodes = not_text.is_none();
             let read = (decodes && carries_frontmatter(&path)).then(|| document::read(&text));
             let unreadable = match not_text {
@@ -1764,7 +1770,7 @@ impl Folder {
             };
             // An unreadable file still names its item, so a move keeps it.
             let id = match &read {
-                _ if !decodes && carries_frontmatter(&path) => document::id_line(&text),
+                _ if !decodes && carries_frontmatter(&path) => document::id_line_of(&bytes),
                 Some(read) if read.unreadable.is_some() => document::id_line(&text),
                 Some(read) => read
                     .front
@@ -1893,13 +1899,10 @@ impl Folder {
             }
             // A file item's file is its bytes, whatever its name says.
             let bytes_item = || -> Result<bool> {
-                Ok(match &claim {
-                    Some(claim) => self
-                        .core
-                        .get(&claim.item_id)?
-                        .is_some_and(|item| bytes_of(&item, &catalog).is_some()),
-                    None => false,
-                })
+                match &claim {
+                    Some(claim) => self.file_item(&claim.item_id, &catalog),
+                    None => Ok(false),
+                }
             };
             if let Some(reason) = &file.unreadable
                 && (!encoding(reason) || !bytes_item()?)
@@ -1967,7 +1970,9 @@ impl Folder {
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
-                        report.warnings.extend(near_limit(&file.key, &file.text));
+                        report
+                            .warnings
+                            .extend(self.size_warning(file, &item_id, &catalog)?);
                     } else {
                         report.unchanged += 1;
                     }
@@ -2030,7 +2035,9 @@ impl Folder {
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
-                        report.warnings.extend(near_limit(&file.key, &file.text));
+                        report
+                            .warnings
+                            .extend(self.size_warning(file, &item_id, &catalog)?);
                         // Edited where the pull moved it, it is no longer
                         // the file an old buffer was read from.
                         if !file.folded {
@@ -2046,7 +2053,10 @@ impl Folder {
                 }) => {
                     self.unbind_if_still(&bound)?;
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
-                    let document = carries_frontmatter(&file.path).then(|| file.document());
+                    // A file item's bytes are no document, whatever its name now.
+                    let document = (carries_frontmatter(&file.path)
+                        && !self.file_item(&item_id, &catalog)?)
+                    .then(|| file.document());
                     let retitle =
                         self.renamed_title(&item_id, &bound, file, document.as_ref(), &catalog)?;
                     // A title typed in the line in the same pass goes first,
@@ -2099,7 +2109,9 @@ impl Folder {
                         &mut work,
                         &mut report.flagged,
                     )? {
-                        report.warnings.extend(near_limit(&file.key, &file.text));
+                        report
+                            .warnings
+                            .extend(self.size_warning(file, &item_id, &catalog)?);
                     }
                     self.place(&item_id, &file.key, &withheld)?;
                     report.renamed += 1;
@@ -2696,6 +2708,30 @@ impl Folder {
             }
         }
         Ok((claims, waiting))
+    }
+
+    /// Whether the copy holds the item, and as bytes rather than as a document.
+    /// The item decides, not the name of the file it is at.
+    fn file_item(&self, item_id: &str, catalog: &Catalog) -> Result<bool> {
+        Ok(self
+            .core
+            .get(item_id)?
+            .is_some_and(|item| bytes_of(&item, catalog).is_some()))
+    }
+
+    fn size_warning(
+        &self,
+        file: &Scanned,
+        item_id: &str,
+        catalog: &Catalog,
+    ) -> Result<Option<Flagged>> {
+        Ok(
+            if file.unreadable.is_some() || self.file_item(item_id, catalog)? {
+                None
+            } else {
+                near_limit(&file.key, &file.text)
+            },
+        )
     }
 
     fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
@@ -6437,12 +6473,35 @@ mod tests {
         assert_eq!(captured.read_settled(Some(settle)).unwrap(), None);
     }
 
-    #[test]
-    fn a_scanned_file_item_is_bound_with_no_text_copy_of_its_bytes() {
+    thread_local! {
+        /// How many times this thread's scans built a document from a file.
+        pub(super) static DOCUMENTS_READ: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    fn documents_read() -> usize {
+        DOCUMENTS_READ.with(std::cell::Cell::get)
+    }
+
+    /// A folder over a fresh directory, with a copy that holds its settings.
+    fn scanned_folder() -> (tempfile::TempDir, Folder) {
+        scanned_folder_with(serde_json::json!({ "search": {} }), None)
+    }
+
+    /// The same, with these settings and, where given, these types in the
+    /// copy's catalog.
+    fn scanned_folder_with(settings: Value, types: Option<Value>) -> (tempfile::TempDir, Folder) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state = dir.path().join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
         let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        if let Some(types) = types {
+            let mut catalog = crate::builtin::catalog().unwrap();
+            catalog
+                .types
+                .extend(serde_json::from_value::<Vec<crate::wire::WireType>>(types).unwrap());
+            crate::store::replace_catalog(&core.conn().unwrap(), &catalog).unwrap();
+        }
         let id = "01a00000-0000-7000-8000-000000000001";
         crate::store::upsert_item(
             &core.conn().unwrap(),
@@ -6451,7 +6510,7 @@ mod tests {
                 "system.folder",
                 "active",
                 "2026-01-01T00:00:00Z",
-                serde_json::json!({ "search": {} }),
+                settings,
             ),
             None,
             &Default::default(),
@@ -6460,6 +6519,12 @@ mod tests {
         settings_file::bind(&core, id).unwrap();
         drop(core);
         let folder = Folder::open(dir.path(), None).unwrap();
+        (dir, folder)
+    }
+
+    #[test]
+    fn a_scanned_file_item_is_bound_with_no_text_copy_of_its_bytes() {
+        let (dir, folder) = scanned_folder();
         // Lone continuation bytes, none of them UTF-8, so a lossy decode
         // would triple them.
         let binary: Vec<u8> = (0..1 << 20).map(|at| 0x80 | (at % 64) as u8).collect();
@@ -6488,6 +6553,189 @@ mod tests {
             )
             .unwrap();
         assert!(stored < 1024, "the bindings hold {stored} bytes of text");
+    }
+
+    #[test]
+    fn the_scan_keeps_no_text_of_a_document_that_is_not_text() {
+        // Lone continuation bytes, none of them UTF-8.
+        let binary: Vec<u8> = (0..4096).map(|at| 0x80 | (at % 64) as u8).collect();
+        let wide = "wide\n"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        for name in ["a.md", "a.markdown", "a.txt"] {
+            let (text, reason) = kept_text(Path::new(name), &binary);
+            assert_eq!((text.as_str(), reason), ("", Some(NOT_UTF8)), "{name}");
+            let (text, reason) = kept_text(Path::new(name), &wide);
+            assert_eq!((text.as_str(), reason), ("", Some(HOLDS_NUL)), "{name}");
+            // The witness: the same name with text in it keeps the text.
+            let (text, reason) = kept_text(Path::new(name), b"a note\n");
+            assert_eq!((text.as_str(), reason), ("a note\n", None), "{name}");
+        }
+        // A file that is no document is decoded by no one but a text item.
+        let (text, reason) = kept_text(Path::new("a.bin"), &binary);
+        assert_eq!((text.as_str(), reason), ("", None));
+    }
+
+    #[test]
+    fn a_file_item_renamed_to_a_document_name_stays_a_file_item_and_is_not_decoded() {
+        // Lone continuation bytes, none of them UTF-8.
+        let binary: Vec<u8> = (0..1 << 16).map(|at| 0x80 | (at % 64) as u8).collect();
+        for name in ["archive.md", "archive.markdown", "archive.txt"] {
+            let (dir, folder) = scanned_folder();
+            std::fs::write(dir.path().join("archive.bin"), &binary).unwrap();
+            // The witness: a note's rename does build its document.
+            std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+            assert_eq!(folder.scan().unwrap().created, 2);
+            let item = |path: &str| {
+                state::bound_at(&folder.core.conn().unwrap(), path)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{path} is not bound"))
+                    .item_id
+            };
+            let (file_item, note_item) = (item("archive.bin"), item("note.md"));
+
+            std::fs::rename(dir.path().join("note.md"), dir.path().join("moved.md")).unwrap();
+            let before = documents_read();
+            assert_eq!(folder.scan().unwrap().renamed, 1);
+            assert!(
+                documents_read() > before,
+                "a note's rename read no document"
+            );
+
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join(name)).unwrap();
+            let before = documents_read();
+            let report = folder.scan().unwrap();
+            assert_eq!(
+                documents_read(),
+                before,
+                "{name} was read as a document though its item is bytes"
+            );
+            assert_eq!(report.renamed, 1, "{name}: {report:?}");
+            assert!(report.flagged.is_empty(), "{name}: {:?}", report.flagged);
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            assert_eq!(item("moved.md"), note_item);
+            let held = folder.core.get(&file_item).unwrap().unwrap();
+            let conn = folder.core.conn().unwrap();
+            assert!(bytes_of(&held, &Catalog::load(&conn).unwrap()).is_some());
+            assert!(state::bound_at(&conn, "archive.bin").unwrap().is_none());
+            let bound = state::bound_at(&conn, name).unwrap().expect(name);
+            assert_eq!(bound.item_id, file_item, "{name} lost its item");
+            assert!(bound.held.is_none(), "{name} is held: {:?}", bound.held);
+            assert!(
+                bound.presentation.is_none(),
+                "{name} is bound with a text copy"
+            );
+            assert_eq!(bound.content_hash, state::hash(&binary));
+        }
+    }
+
+    #[test]
+    fn a_document_that_is_not_utf8_is_held_and_keeps_its_item_by_its_id_line() {
+        let (dir, folder) = scanned_folder();
+        std::fs::write(dir.path().join("note.md"), "a note\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let item_id = {
+            let conn = folder.core.conn().unwrap();
+            state::bound_at(&conn, "note.md").unwrap().unwrap().item_id
+        };
+        // Latin-1, as an older editor saves it, moved to another name.
+        let mut latin1 = format!("---\nmarfa_id: {item_id}\n---\ncaf").into_bytes();
+        latin1.extend([0xe9, b'\n']);
+        // Much more of it is not text than the id line is.
+        latin1.extend((0..1 << 16).map(|at| 0x80 | (at % 64) as u8));
+        std::fs::remove_file(dir.path().join("note.md")).unwrap();
+        std::fs::write(dir.path().join("cafe.md"), &latin1).unwrap();
+        std::fs::write(dir.path().join("dump.txt"), &latin1).unwrap();
+        std::fs::write(
+            dir.path().join("wide.txt"),
+            "wide\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let before = documents_read();
+        let report = folder.scan().unwrap();
+        assert_eq!(documents_read(), before);
+        let mut flagged: Vec<(&str, &str)> = report
+            .flagged
+            .iter()
+            .map(|flagged| (flagged.path.as_str(), flagged.flag))
+            .collect();
+        flagged.sort_unstable();
+        assert_eq!(
+            flagged,
+            [
+                ("cafe.md", "encoding"),
+                ("dump.txt", "encoding"),
+                ("wide.txt", "encoding")
+            ],
+            "{report:?}"
+        );
+        let reasons: HashMap<&str, &str> = report
+            .flagged
+            .iter()
+            .map(|flagged| (flagged.path.as_str(), flagged.reason.as_str()))
+            .collect();
+        assert_eq!(reasons["cafe.md"], NOT_UTF8);
+        assert_eq!(reasons["dump.txt"], NOT_UTF8);
+        assert_eq!(reasons["wide.txt"], HOLDS_NUL);
+        assert_eq!((report.created, report.updated), (0, 0), "{report:?}");
+        let conn = folder.core.conn().unwrap();
+        let bound = state::bound_at(&conn, "cafe.md").unwrap().unwrap();
+        assert_eq!(
+            bound.item_id, item_id,
+            "the id line no longer names its item"
+        );
+        assert_eq!(
+            bound.held.as_deref(),
+            Some(format!("{}{NOT_UTF8}", state::UNREADABLE).as_str())
+        );
+        assert!(state::bound_at(&conn, "note.md").unwrap().is_none());
+        for path in ["dump.txt", "wide.txt"] {
+            assert!(state::bound_at(&conn, path).unwrap().is_none(), "{path}");
+        }
+    }
+
+    #[test]
+    fn a_file_item_at_a_document_name_gets_no_size_warning() {
+        // 200 KB of control characters, each sent as six: past the limit.
+        let valid = "\u{1}".repeat(200_000);
+        // Lone continuation bytes, each three as replacement characters.
+        let invalid: Vec<u8> = vec![0x80; 400_000];
+        for (name, bytes) in [("big.md", valid.as_bytes()), ("big.txt", &invalid)] {
+            let (dir, folder) = scanned_folder_with(
+                serde_json::json!({ "search": {}, "defaults": { "type": "user.large_text" } }),
+                Some(serde_json::json!([
+                    {
+                        "id": "user.large_text",
+                        "display_hints": { "title_field": "title", "body_field": "body" },
+                        "fields": {
+                            "title": { "type": "string" },
+                            "body": { "type": "string", "maxLength": 1_000_000 },
+                        },
+                    },
+                ])),
+            );
+            std::fs::write(dir.path().join("big.bin"), bytes).unwrap();
+            // The witness: a note this size is warned of.
+            std::fs::write(dir.path().join("note.md"), &valid).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.created, 2, "{report:?}");
+            let warned: Vec<&str> = report.warnings.iter().map(|w| w.path.as_str()).collect();
+            assert_eq!(warned, ["note.md"], "{name}: {report:?}");
+
+            std::fs::rename(dir.path().join("big.bin"), dir.path().join(name)).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.renamed, 1, "{name}: {report:?}");
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            // Edited at the document name, it still goes up as bytes.
+            std::fs::write(dir.path().join(name), [bytes, b"."].concat()).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.updated, 1, "{name}: {report:?}");
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+        }
     }
 
     #[test]

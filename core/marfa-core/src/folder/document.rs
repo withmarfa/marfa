@@ -182,14 +182,34 @@ pub fn read(text: &str) -> Document {
 
 /// The `marfa_id` line of frontmatter that does not parse, read as text.
 pub fn id_line(text: &str) -> Option<String> {
-    let mut lines = text.strip_prefix(MARK).unwrap_or(text).lines();
-    if lines.next()? != FENCE {
+    id_line_of(text.as_bytes())
+}
+
+/// The longest line of frontmatter read for the id: a line past it is no
+/// fence and no id, so a file of bytes is never decoded whole to look for one.
+const LINE_LIMIT: usize = 1 << 16;
+
+/// `id_line` over bytes that may not be text. It decodes the frontmatter one
+/// line at a time and stops at its closing fence, so a large file that is not
+/// a document is not copied.
+pub fn id_line_of(bytes: &[u8]) -> Option<String> {
+    let bytes = bytes
+        .strip_prefix(MARK.encode_utf8(&mut [0; 4]).as_bytes())
+        .unwrap_or(bytes);
+    let mut lines = bytes
+        .split(|byte| *byte == b'\n')
+        .map(|line| line.strip_suffix(b"\r").unwrap_or(line));
+    if lines.next()? != FENCE.as_bytes() {
         return None;
     }
     lines
+        .filter(|line| line.len() <= LINE_LIMIT)
+        .map(String::from_utf8_lossy)
         .take_while(|line| line.trim_end() != FENCE)
-        .find_map(|line| line.strip_prefix("marfa_id:"))
-        .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
+        .find_map(|line| {
+            line.strip_prefix("marfa_id:")
+                .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
+        })
         .filter(|id| !id.is_empty())
 }
 
@@ -381,6 +401,60 @@ fn to_yaml(value: &Value) -> Yaml {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_id_line_of_bytes_is_the_id_line_of_their_text() {
+        // The text reading the bytes' reading replaced.
+        let by_text = |text: &str| {
+            let mut lines = text.strip_prefix(MARK).unwrap_or(text).lines();
+            if lines.next()? != FENCE {
+                return None;
+            }
+            lines
+                .take_while(|line| line.trim_end() != FENCE)
+                .find_map(|line| line.strip_prefix("marfa_id:"))
+                .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
+                .filter(|id| !id.is_empty())
+        };
+        for text in [
+            "---\nmarfa_id: 01a\n---\nbody\n",
+            "---\r\ntitle: x\r\nmarfa_id: \"01a\"\r\n---\r\n",
+            "\u{feff}---\nmarfa_id: '01a'\n---\n",
+            "---\nmarfa_id: 01a\n--- \nmarfa_id: 02b\n",
+            "---\nmarfa_id:\nmarfa_id: 02b\n---\n",
+            "---\ntitle: [unclosed\nmarfa_id: 01a",
+            "---\n---\nmarfa_id: 01a\n",
+            "--\nmarfa_id: 01a\n---\n",
+            "\nmarfa_id: 01a\n",
+            "---",
+            "---\n",
+            "",
+        ] {
+            assert_eq!(id_line_of(text.as_bytes()), by_text(text), "{text:?}");
+            assert_eq!(id_line(text), by_text(text), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn the_id_line_is_read_from_bytes_that_are_not_text() {
+        let mut latin1 = b"---\nmarfa_id: 01a\ntitle: caf".to_vec();
+        latin1.extend([0xe9, b'\n']);
+        latin1.extend(b"---\n");
+        latin1.extend([0x80; 4096]);
+        assert_eq!(id_line_of(&latin1).as_deref(), Some("01a"));
+        // Past the closing fence, a line naming an id is body.
+        let mut body = b"---\ntitle: x\n---\n".to_vec();
+        body.extend([0xff, b'\n']);
+        body.extend(b"marfa_id: 02b\n");
+        assert_eq!(id_line_of(&body), None);
+        // Bytes that open with no fence are not read past their first line.
+        assert_eq!(id_line_of(&[0x80; 4096]), None);
+        // A line too long to be a fence or an id is not one.
+        let mut long = b"---\n".to_vec();
+        long.extend(vec![0x80; LINE_LIMIT + 1]);
+        long.extend(b"\nmarfa_id: 01a\n---\n");
+        assert_eq!(id_line_of(&long).as_deref(), Some("01a"));
+    }
 
     #[test]
     fn unindented_sequence_edits_keep_child_source() {
