@@ -572,3 +572,17 @@ it.each([
   if (!local.ok)
     expect(local.refusal.raw).toContain("url: Must be a valid URL");
 });
+
+it.each([["http://Ⴍ𿣍ꡨ֮.Ⴞ/"], ["https://𾢬.ܩ.쯙5/"]])(
+  "refuses the url %j on the device where the server takes it",
+  async (written) => {
+    const properties = { title: "t", url: written };
+    const server = await client.createItem({ type: valuesType, properties });
+    expect(server.ok, JSON.stringify(server.error)).toBe(true);
+    if (server.ok) trackItem(ctx, server.data.item.id);
+    const local = await device.create({ type: valuesType, properties });
+    expect(local.ok).toBe(false);
+    if (!local.ok)
+      expect(local.refusal.raw).toContain("url: Must be a valid URL");
+  },
+);

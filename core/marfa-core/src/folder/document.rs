@@ -2,7 +2,9 @@
 //! file read in and written straight back out must be the same file.
 
 use serde_json::{Map, Value};
-use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
+use yaml_rust2::parser::{MarkedEventReceiver, Parser, Tag};
+use yaml_rust2::scanner::{Marker, ScanError, TScalarStyle};
+use yaml_rust2::{Event, Yaml, YamlEmitter, YamlLoader};
 
 use crate::body::text::links;
 use crate::error::CoreError;
@@ -118,7 +120,7 @@ fn frontmatter(text: &str) -> Front<'_> {
             return Front::Body;
         }
     };
-    let documents = match YamlLoader::load_from_str(front) {
+    let documents = match load(front) {
         Ok(documents) => documents,
         Err(error) => return Front::Unreadable(error.to_string()),
     };
@@ -297,7 +299,7 @@ pub fn canonical(front: &Map<String, Value>, body: &str) -> Result<String, CoreE
 }
 
 pub fn read_map(text: &str) -> Result<Map<String, Value>, String> {
-    let documents = YamlLoader::load_from_str(text).map_err(|error| error.to_string())?;
+    let documents = load(text).map_err(|error| error.to_string())?;
     let Some(Yaml::Hash(hash)) = documents.first() else {
         return Err("it is not one map of settings".into());
     };
@@ -322,6 +324,49 @@ pub fn write_map(map: &Map<String, Value>) -> Result<String, CoreError> {
         .dump(&to_yaml(&Value::Object(map.clone())))
         .map_err(|error| CoreError::Invalid(format!("these settings will not render: {error}")))?;
     Ok(format!("{}\n", rendered.trim_start_matches("---\n")))
+}
+
+/// The documents of `text`, with a scalar that is a minus sign and zeros read
+/// as the real `-0`. The loader reads it as the integer 0 and drops the sign,
+/// which is the number JSON's `-0` names and the server does not serve back.
+fn load(text: &str) -> Result<Vec<Yaml>, ScanError> {
+    let documents = YamlLoader::load_from_str(text)?;
+    if !text.contains("-0") {
+        return Ok(documents);
+    }
+    let mut marked = NegativeZero(YamlLoader::default());
+    Parser::new_from_str(text).load(&mut marked, true)?;
+    // The first pass found no error, and the rewrite adds none: keys that
+    // collide after it collided before it.
+    Ok(marked.0.documents().to_vec())
+}
+
+/// Feeds a [`YamlLoader`] the events of a document, writing a plain scalar of
+/// `-` and zeros, which the loader would read as an integer, as the real `-0`.
+struct NegativeZero(YamlLoader);
+
+impl MarkedEventReceiver for NegativeZero {
+    fn on_event(&mut self, event: Event, mark: Marker) {
+        let event = match event {
+            Event::Scalar(text, TScalarStyle::Plain, anchor, tag)
+                if text.len() > 1
+                    && text.starts_with('-')
+                    && text[1..].bytes().all(|byte| byte == b'0')
+                    && tag.as_ref().is_none_or(|tag| {
+                        tag.handle == "tag:yaml.org,2002:"
+                            && matches!(tag.suffix.as_str(), "int" | "float")
+                    }) =>
+            {
+                let float = Tag {
+                    handle: "tag:yaml.org,2002:".into(),
+                    suffix: "float".into(),
+                };
+                Event::Scalar("-0".into(), TScalarStyle::Plain, anchor, Some(float))
+            }
+            event => event,
+        };
+        self.0.on_event(event, mark);
+    }
 }
 
 /// Why a YAML value is not an item's property.
@@ -969,6 +1014,44 @@ mod tests {
             let witness = &document.unreadable;
             assert!(witness.is_none(), "{number} was refused: {witness:?}");
         }
+    }
+
+    #[test]
+    fn a_negative_zero_holds_the_document_as_json_does() {
+        for spelling in ["-0", "-00", "-000", "!!int -0", "!!float -0"] {
+            let document = read(&format!("---\nn: {spelling}\n---\nThe body.\n"));
+            assert_eq!(
+                document.unreadable.as_deref(),
+                Some(
+                    "n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."
+                ),
+                "{spelling} was kept in a file's frontmatter"
+            );
+        }
+        let nested = read("---\nouter:\n  - id: -0\n---\nThe body.\n");
+        assert!(
+            nested
+                .unreadable
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("outer.0.id: ")),
+            "{:?}",
+            nested.unreadable
+        );
+        // The witnesses: the same field written as zero, or as text, is taken.
+        for spelling in [
+            "0", "+0", "00", "\"-0\"", "'-0'", "!!str -0", "-0.5", "-1", "-0x0",
+        ] {
+            let document = read(&format!("---\nn: {spelling}\n---\nThe body.\n"));
+            let witness = &document.unreadable;
+            assert!(witness.is_none(), "{spelling} was refused: {witness:?}");
+        }
+        assert_eq!(read("---\nn: 0\n---\n").front["n"], serde_json::json!(0));
+        assert_eq!(
+            read("---\nn: \"-0\"\n---\n").front["n"],
+            serde_json::json!("-0")
+        );
+        assert!(read_map("n: -0\n").is_err());
+        assert_eq!(read_map("n: 0\n").unwrap()["n"], serde_json::json!(0));
     }
 
     #[test]

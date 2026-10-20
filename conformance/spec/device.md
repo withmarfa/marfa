@@ -2836,9 +2836,9 @@ If a write to an item, or to an edge or an item's extension, names a value, at a
 
 ### `device/number-exact-folder-flagged`
 
-If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest digits that name the 64-bit float it parses to, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
+If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest digits that name the 64-bit float it parses to, or a `-` followed by zeros, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
 
-**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits. A YAML loader reads `-0` as the integer 0, so a document that names it is taken.
+**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits. A YAML loader reads `-0` as the integer 0 and drops the sign, so the device reads the written text: a plain `-` followed by zeros is the `-0` that `items/property-number-exact` refuses, and `0` is taken.
 
 **Tests:** `device/property-validation.test.ts › flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended`.
 
@@ -2860,11 +2860,19 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do.
+When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do, except as `device/url-idna-unassigned` states.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the row shown before the answer must be the row stored after it.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
+
+### `device/url-idna-unassigned`
+
+If a write names a `url` value of a special scheme whose host has a code point that is unassigned in the Unicode version of the IDNA tables the device uses, then a device MUST refuse `validation` the write naming the field, and queue nothing, whether or not the server takes the value.
+
+**Reason:** the tables are those of the `idna` crate, which this repository does not own and does not copy, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are taken by the server and refused by the device. The device refuses and does not change the text, so nothing is lost, and the server takes the same value written online.
+
+**Tests:** `device/property-validation-live.test.ts › refuses the url %j on the device where the server takes it`.
 
 ### `device/unknown-type-write`
 

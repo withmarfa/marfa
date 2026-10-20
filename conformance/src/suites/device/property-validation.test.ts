@@ -678,6 +678,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     ["9999999999999999999", "10000000000000000000"],
     ["1152921504606846976", "1152921504606847000"],
     ["-1152921504606846976", "-1152921504606847000"],
+    ["-0", "0"],
   ])(
     "flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended",
     async (digits, served) => {
