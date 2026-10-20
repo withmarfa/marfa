@@ -36,6 +36,8 @@ const OUTBOUND: Record<string, string> = {
     "posts 500 alerts to the URL the operator configures; no credential names it",
   "pages/client/account.ts":
     "runs in the owner's browser and calls this server's own owner, password and passkey doors; it sends no webhook delivery",
+  "pages/client/command-search.ts":
+    "runs in the owner's browser and reads this server's own settings door; it sends no webhook delivery",
   "pages/client/confirm.ts":
     "runs in the owner's browser and calls this server's own confirmation and passkey doors; it sends no webhook delivery",
   "pages/client/general.ts":
