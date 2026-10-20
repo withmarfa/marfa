@@ -57,7 +57,10 @@ interface Opened {
 }
 
 async function open(
-  options: { scheme?: "light" | "dark"; width?: number } = {},
+  options: {
+    scheme?: "light" | "dark";
+    width?: number;
+  } = {},
 ): Promise<Opened> {
   const context = await browser.newContext({
     colorScheme: options.scheme ?? "light",
@@ -564,18 +567,19 @@ describe("A key", () => {
       try {
         const id = await makeKey(context, "Narrowing key");
         await page.goto(`${origin}/auth/owner/keys/${id}`);
-        const save = page.getByRole("button", { name: "Save changes" });
-        await save.waitFor();
-        expect(await save.getAttribute("aria-disabled")).toBe("true");
+        const bar = page.locator("[data-save-bar]");
+        const save = page.getByRole("button", { name: "Save", exact: true });
+        await page.getByRole("button", { name: "Revoke" }).waitFor();
+        expect(await bar.isVisible()).toBe(false);
         await powers(page).click();
         await page.locator('input[value="instance.read"]').uncheck();
-        expect(await save.getAttribute("aria-disabled")).toBeNull();
+        await save.waitFor();
         // Discard puts back what the page said.
         await page.getByRole("button", { name: "Discard" }).click();
         expect(
           await page.locator('input[value="instance.read"]').isChecked(),
         ).toBe(true);
-        expect(await save.getAttribute("aria-disabled")).toBe("true");
+        expect(await bar.isVisible()).toBe(false);
 
         await page.locator('input[value="instance.read"]').uncheck();
         await save.click();
@@ -584,6 +588,7 @@ describe("A key", () => {
         expect((await ctx.storage.keys.get(id))?.type_permissions).toEqual({
           "core.note": "write",
         });
+        expect(await bar.isVisible()).toBe(false);
 
         // A page opened before another change cannot lift what the key holds now.
         const stale = await context.newPage();
@@ -594,7 +599,7 @@ describe("A key", () => {
           .locator("select[name=scopes]")
           .first()
           .selectOption({ index: 1 });
-        await stale.getByRole("button", { name: "Save changes" }).click();
+        await stale.getByRole("button", { name: "Save", exact: true }).click();
         await stale
           .locator("[data-notice=problem]")
           .waitFor({ state: "visible" });
@@ -649,7 +654,7 @@ describe("A key", () => {
         await powers(page).click();
         await page.locator('input[value="instance.read"]').uncheck();
         await ctx.storage.keys.revoke(id);
-        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         const problem = page.locator("[data-notice=problem]");
         await problem.waitFor({ state: "visible" });
         expect(await problem.innerText()).toContain("revoked");
@@ -685,7 +690,7 @@ describe("A key", () => {
         expect(values).toEqual(["current", "30", "90"]);
 
         await ends.selectOption("90");
-        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         await page.getByText("Saved").waitFor();
         const saved = (await ctx.storage.keys.get(id))?.expires_at;
         expect(Date.parse(saved ?? "")).toBeLessThan(Date.parse(current));
@@ -751,7 +756,7 @@ describe("A key", () => {
         });
         expect(patched.status(), await patched.text()).toBe(200);
 
-        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         const problem = page.locator("[data-notice=problem]");
         await problem.waitFor({ state: "visible" });
         expect(await problem.innerText()).toContain(
@@ -765,8 +770,143 @@ describe("A key", () => {
         await page.reload();
         await powers(page).click();
         await page.locator('input[value="instance.read"]').uncheck();
-        await page.getByRole("button", { name: "Save changes" }).click();
+        await page.getByRole("button", { name: "Save", exact: true }).click();
         await page.getByText("Saved").waitFor();
+        expect((await ctx.storage.keys.get(id))?.permissions).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+});
+
+const countOf = (page: Page) =>
+  page.locator("[data-save-bar-count]").textContent();
+const statusOf = (page: Page) =>
+  page.locator("[data-save-bar-status]").textContent();
+
+describe("the save bar on a key's page", () => {
+  inBrowser(
+    "appears on a change, counts each control, and hides when the form is back as it loaded",
+    async () => {
+      const { page, context, errors, violations } = await open();
+      try {
+        const id = await makeKey(context, "Counting key");
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        const bar = page.locator("[data-save-bar]");
+        await page.getByRole("button", { name: "Revoke" }).waitFor();
+        // Witness for everything below: nothing has changed, so nothing shows.
+        expect(await bar.isVisible()).toBe(false);
+        expect(await page.locator("[data-hook=save-discard]").count()).toBe(1);
+        expect(await statusOf(page)).toBe("");
+
+        await powers(page).click();
+        const read = page.locator('input[value="instance.read"]');
+        await read.uncheck();
+        await bar.waitFor();
+        expect(await countOf(page)).toBe("1 change");
+        expect(await statusOf(page)).toContain("1 change");
+        // The bar appearing does not take the focus from where the person is.
+        expect(
+          await page.evaluate(
+            () =>
+              document
+                .querySelector("[data-save-bar]")
+                ?.contains(document.activeElement) ?? true,
+          ),
+        ).toBe(false);
+        expect(
+          await page.evaluate(
+            () => document.activeElement?.getAttribute("value") ?? "",
+          ),
+        ).toBe("instance.read");
+
+        await page.locator("#key-ends").selectOption("30");
+        expect(await countOf(page)).toBe("2 changes");
+        expect(await statusOf(page)).toContain("2 changes");
+
+        // Putting one back counts one fewer; putting both back hides the bar.
+        await page.locator("#key-ends").selectOption("never");
+        expect(await countOf(page)).toBe("1 change");
+        await read.check();
+        await bar.waitFor({ state: "hidden" });
+        expect(await statusOf(page)).toBe("");
+        expect(await violations()).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "puts every control back on Discard, hides, and leaves the focus on a control",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const id = await makeKey(context, "Discarded key");
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        await powers(page).click();
+        const read = page.locator('input[value="instance.read"]');
+        await read.uncheck();
+        await page.locator("#key-ends").selectOption("90");
+        const bar = page.locator("[data-save-bar]");
+        await bar.waitFor();
+        expect(await countOf(page)).toBe("2 changes");
+
+        await page.getByRole("button", { name: "Discard" }).click();
+        await bar.waitFor({ state: "hidden" });
+        expect(await read.isChecked()).toBe(true);
+        expect(await page.locator("#key-ends").inputValue()).toBe("never");
+        // The pressed button is gone, so the focus goes to the first thing that had changed.
+        expect(await page.evaluate(() => document.activeElement?.id)).toBe(
+          "key-ends",
+        );
+        // Witness: nothing was sent.
+        expect((await ctx.storage.keys.get(id))?.permissions).toEqual([
+          "instance.read",
+        ]);
+        // Changing again shows the bar again.
+        await read.uncheck();
+        await bar.waitFor();
+        expect(await countOf(page)).toBe("1 change");
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "is reached by the keyboard after the controls and the revoke card, and saves with Enter",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const id = await makeKey(context, "Keyboard saved key");
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        await powers(page).click();
+        const read = page.locator('input[value="instance.read"]');
+        await read.focus();
+        await page.keyboard.press("Space");
+        await page.locator("[data-save-bar]").waitFor();
+        // Pressing Space moved nothing: the focus is where the person was.
+        expect(
+          await page.evaluate(
+            () => document.activeElement?.getAttribute("value") ?? "",
+          ),
+        ).toBe("instance.read");
+
+        const seen: string[] = [];
+        for (let step = 0; step < 80 && !seen.includes("Save"); step += 1) {
+          await page.keyboard.press("Tab");
+          const name = await page.evaluate(
+            () => document.activeElement?.textContent.trim() ?? "",
+          );
+          if (name === "Revoke" || name === "Discard" || name === "Save")
+            seen.push(name);
+        }
+        expect(seen).toEqual(["Revoke", "Discard", "Save"]);
+        await page.keyboard.press("Enter");
+        await page.getByText("Saved", { exact: true }).waitFor();
         expect((await ctx.storage.keys.get(id))?.permissions).toEqual([]);
       } finally {
         await context.close();

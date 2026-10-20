@@ -11,6 +11,7 @@ import { PASSWORD_MAX, PASSWORD_MIN } from "../auth/password-limits.js";
 import {
   Button,
   ConsolePage,
+  DangerRow,
   Dialog,
   EmptyState,
   LocalDate,
@@ -183,17 +184,15 @@ function ManageDialogs(props: { passkey: PasskeyView; index: number }) {
             autocomplete="off"
             full
           />
-          <RowGroup>
-            <Row
-              title="Remove passkey"
-              description="You can still sign in with your password"
-              buttons={
-                <Button kind="danger-quiet" opens={remove}>
-                  Remove passkey
-                </Button>
-              }
-            />
-          </RowGroup>
+          <DangerRow
+            title="Remove passkey"
+            description="You can still sign in with your password"
+            action={
+              <Button kind="danger-quiet" opens={remove}>
+                Remove passkey
+              </Button>
+            }
+          />
         </form>
       </Dialog>
       <Dialog

@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  pageButtons,
   pageFields,
   pageForms,
   pageLinks,
+  pageRegions,
   visibleText,
 } from "../pages/reading.js";
 import { HOSTILE, LONG_UNBROKEN } from "../pages/test-fixture.js";
@@ -229,14 +231,30 @@ describe("a key's own page", () => {
     expect(form).toBeDefined();
   });
 
-  it("offers Save and Discard disabled, and Revoke behind a question", async () => {
+  it("shows Save and Discard only in a bar that starts hidden, and Revoke in a card of its own behind a question", async () => {
     await clearKeys();
     const key = await seed("backup");
     const { html } = await page(`/auth/owner/keys/${key.id}`);
-    expect(html).toMatch(
-      /<button[^>]*aria-disabled="true"[^>]*>\s*Save changes/,
+    expect(
+      pageRegions(html).find((region) => region.label === "Unsaved changes"),
+    ).toMatchObject({ label: "Unsaved changes", hidden: true });
+    const buttons = pageButtons(html);
+    expect(buttons.map((button) => button.text)).toEqual(
+      expect.arrayContaining(["Revoke", "Discard", "Save"]),
     );
-    expect(html).toMatch(/<button[^>]*aria-disabled="true"[^>]*>\s*Discard/);
+    // The form it saves has the id the Save button names, and nothing says "Nothing has changed".
+    expect(pageForms(html).length).toBeGreaterThan(0);
+    expect(buttons.find((button) => button.text === "Save")?.form).toBe(
+      "key-form",
+    );
+    expect(html).toContain('id="key-form"');
+    expect(visibleText(html)).not.toContain("Nothing has changed");
+    // Keyboard order follows the page: Revoke, then Discard, then Save.
+    const order = buttons
+      .map((button) => button.text)
+      .filter((text) => ["Revoke", "Discard", "Save"].includes(text));
+    // (The dialog's own Revoke button follows them.)
+    expect(order.slice(0, 3)).toEqual(["Revoke", "Discard", "Save"]);
     expect(visibleText(html)).toContain("Revoke backup?");
     expect(visibleText(html)).toContain("This can't be undone");
   });

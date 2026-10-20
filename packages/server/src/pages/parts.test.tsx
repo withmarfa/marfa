@@ -23,12 +23,14 @@ import {
 } from "./parts/layout.js";
 import { ListToolbar, Pager, Tabs } from "./parts/list.js";
 import {
-  ClosingAction,
+  DangerRow,
   DisclosureRow,
   Row,
   RowGroup,
   RowNote,
 } from "./parts/rows.js";
+import { SaveBar } from "./parts/save-bar.js";
+import { pageButtons, pageRegions, visibleText } from "./reading.js";
 import { PageShell } from "./parts/shell.js";
 import { pageAssetUrl } from "./assets.js";
 import { paginate } from "./navigation.js";
@@ -313,18 +315,85 @@ describe("rows", () => {
     );
     expect(html(<RowGroup>x</RowGroup>)).toContain('class="group"');
   });
+});
 
-  it("stands a closing action under a line, without a group box", () => {
-    const out = html(
-      <ClosingAction>
-        <Row
-          title="Revoke"
-          buttons={<Button kind="danger-quiet">Revoke</Button>}
-        />
-      </ClosingAction>,
+describe("a destructive action", () => {
+  const revoke = (
+    <DangerRow
+      title="Revoke this key"
+      description="Scripts using it stop working at once. Can't be undone."
+      action={
+        <Button kind="danger-quiet" opens="revoke-dialog">
+          Revoke
+        </Button>
+      }
+    />
+  );
+
+  it("is one row in a card of its own, with its words and its button", () => {
+    const out = html(revoke);
+    expect(visibleText(out)).toBe(
+      "Revoke this key Scripts using it stop working at once. Can't be undone. Revoke",
     );
-    expect(out.startsWith('<div class="closing">')).toBe(true);
-    expect(out).not.toContain("group");
+    expect(pageButtons(out)).toEqual([
+      expect.objectContaining({ text: "Revoke", type: "button" }),
+    ]);
+    // The card is the same box every row sits in, drawn with a border and no fill.
+    expect(out.startsWith('<div class="group quiet">')).toBe(true);
+    expect(out.match(/class="row/g)).toHaveLength(1);
+    expect(out).toMatch(/<span class="ends"><button /);
+  });
+
+  it("puts the button after the words, where a keyboard reaches it last", () => {
+    const out = html(revoke);
+    expect(out.indexOf("Revoke this key")).toBeLessThan(out.indexOf("<button"));
+  });
+
+  it("escapes what it is given", () => {
+    const out = html(
+      <DangerRow title={HOSTILE} description={HOSTILE} action={<span />} />,
+    );
+    expect(out).not.toContain("<script>window");
+  });
+});
+
+describe("the save bar", () => {
+  const bar = html(<SaveBar form="key-form" />);
+
+  it("starts hidden, so a page with nothing changed shows no Save or Discard", () => {
+    const group = pageRegions(bar).find((region) => region.role === "group");
+    expect(group).toMatchObject({ label: "Unsaved changes", hidden: true });
+  });
+
+  it("offers Discard, then Save, which sends the form it belongs to", () => {
+    expect(pageButtons(bar)).toEqual([
+      expect.objectContaining({
+        text: "Discard",
+        type: "button",
+        form: undefined,
+      }),
+      expect.objectContaining({
+        text: "Save",
+        type: "submit",
+        form: "key-form",
+      }),
+    ]);
+  });
+
+  it("keeps a polite status line outside the hidden bar, so a reader hears it appear", () => {
+    const status = pageRegions(bar).find((region) => region.role === "status");
+    expect(status).toMatchObject({ live: "polite", hidden: false });
+    expect(bar.indexOf('role="status"')).toBeLessThan(
+      bar.indexOf('role="group"'),
+    );
+  });
+
+  it("says nothing of a count until the script knows one", () => {
+    expect(visibleText(bar)).toBe("Discard Save");
+  });
+
+  it("names the form it saves by id, and refuses an empty one", () => {
+    expect(() => html(<SaveBar form="" />)).toThrow();
   });
 });
 

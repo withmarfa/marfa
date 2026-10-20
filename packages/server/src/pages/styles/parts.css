@@ -579,8 +579,7 @@ dialog.palette::backdrop {
 .row.has-d {
   min-height: var(--row-height-detail);
 }
-.group > .row:first-child,
-.closing > .row:first-child {
+.group > .row:first-child {
   border-top: 0;
 }
 a.row,
@@ -673,8 +672,9 @@ button.row:hover .rt {
   gap: var(--space-2);
   flex-shrink: 0;
 }
-.closing {
-  border-top: 1px solid var(--line);
+/* A destructive action's card: the same box as any group, with a border and no fill */
+.group.quiet {
+  background: transparent;
 }
 
 /* Controls */
@@ -767,6 +767,64 @@ button.row:hover .rt {
   font-size: var(--small-size);
   line-height: var(--small-line);
   color: var(--fg2);
+}
+
+/* The save bar: pinned to the bottom of the viewport while a form differs from what the page loaded */
+.savebar-host {
+  display: contents;
+}
+.savebar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  height: calc(var(--savebar-height) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  animation: savebar-in 0.15s ease-out;
+}
+.savebar-in {
+  box-sizing: border-box;
+  height: 100%;
+  max-width: calc(var(--col) + 48px);
+  margin: 0 auto;
+  padding-left: max(var(--space-6), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--space-6), env(safe-area-inset-right, 0px));
+}
+/* The row's inner edges are the cards': their border and inner padding in from the column. */
+.savebar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  height: 100%;
+  padding-inline: calc(var(--space-4) + 1px);
+}
+.savebar-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+}
+.savebar-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+body:has(.savebar:not([hidden])) .col {
+  padding-bottom: calc(
+    var(--savebar-height) + var(--space-6) + env(safe-area-inset-bottom, 0px)
+  );
+}
+@keyframes savebar-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
 }
 
 .input {
@@ -1250,6 +1308,10 @@ button.row:hover .rt {
   }
   .card .row {
     flex-wrap: nowrap;
+  }
+  .savebar-in {
+    padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
+    padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
   }
   .formfoot {
     flex-wrap: wrap;

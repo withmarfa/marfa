@@ -22,7 +22,7 @@ import {
   Section,
 } from "./parts/layout.js";
 import { ListToolbar, Pager, Tabs } from "./parts/list.js";
-import { ClosingAction, Row, RowGroup } from "./parts/rows.js";
+import { DangerRow, Row, RowGroup } from "./parts/rows.js";
 import { PageShell } from "./parts/shell.js";
 import { paginate, type PageSize } from "./navigation.js";
 import { renderDocument } from "./render.js";
@@ -294,17 +294,15 @@ export function FixturePage(props: FixtureOptions) {
           </div>
         </Section>
 
-        <ClosingAction>
-          <Row
-            title="Sign out other browsers"
-            description="Ends every sign-in but this one"
-            buttons={
-              <Button kind="danger-quiet" opens="confirm">
-                Sign out others
-              </Button>
-            }
-          />
-        </ClosingAction>
+        <DangerRow
+          title="Sign out other browsers"
+          description="Ends every sign-in but this one"
+          action={
+            <Button kind="danger-quiet" opens="confirm">
+              Sign out others
+            </Button>
+          }
+        />
       </ConsoleColumn>
       <Dialog
         id="confirm"

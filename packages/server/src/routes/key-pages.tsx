@@ -18,8 +18,8 @@ import {
 } from "../pages/navigation.js";
 import {
   Button,
-  ClosingAction,
   ConsolePage,
+  DangerRow,
   Dialog,
   EmptyState,
   FormFoot,
@@ -30,6 +30,7 @@ import {
   Row,
   RowGroup,
   RowInput,
+  SaveBar,
   SearchField,
   Section,
   Select,
@@ -609,6 +610,7 @@ export function KeyPage(props: KeyPageParams) {
       currentItemHref={keyHref(props.id)}
     >
       <form
+        id="key-form"
         class="stack-24"
         method="post"
         action={keyHref(props.id)}
@@ -690,41 +692,17 @@ export function KeyPage(props: KeyPageParams) {
             </RowGroup>
           </Section>
         )}
-        <FormFoot
-          note={<span data-reason>Nothing changes until you save.</span>}
-        >
-          <Button
-            kind="outline"
-            type="button"
-            ariaDisabled
-            hook="key-discard"
-            data={{ idle: "Nothing has changed" }}
-          >
-            Discard
-          </Button>
-          <Button
-            kind="primary"
-            type="submit"
-            ariaDisabled
-            loadingLabel="Saving..."
-            hook="key-submit"
-            data={{ idle: "Nothing has changed" }}
-          >
-            Save changes
-          </Button>
-        </FormFoot>
       </form>
-      <ClosingAction>
-        <Row
-          title="Revoke this key"
-          description="Scripts using it stop working at once. Can't be undone."
-          buttons={
-            <Button kind="danger-quiet" opens="key-revoke-dialog">
-              Revoke
-            </Button>
-          }
-        />
-      </ClosingAction>
+      <DangerRow
+        title="Revoke this key"
+        description="Scripts using it stop working at once. Can't be undone."
+        action={
+          <Button kind="danger-quiet" opens="key-revoke-dialog">
+            Revoke
+          </Button>
+        }
+      />
+      <SaveBar form="key-form" />
       <Dialog
         id="key-revoke-dialog"
         title={`Revoke ${props.label}?`}

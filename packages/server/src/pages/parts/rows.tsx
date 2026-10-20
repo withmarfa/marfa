@@ -197,12 +197,32 @@ export function RowGroup(props: RowGroupProps) {
   );
 }
 
+export interface DangerRowProps {
+  id?: string;
+  title: string;
+  /** What it does and whether it can be undone. */
+  description?: string | Child;
+  /** The button, which names the act: "Revoke", "Sign out others". */
+  action: Child;
+}
+
 /**
- * What ends a page by acting on the whole of it (revoke, sign out the others):
- * rows without a box, under a thin line.
+ * A destructive or closing action (revoke a key, disconnect an app, sign out
+ * the other browsers, remove a connector): one row in a card of its own, with
+ * a border and no fill, so it reads as secondary to the filled cards above it.
+ * Its words sit on the card's left inner edge and its button on the right.
  */
-export function ClosingAction(props: { children?: Child }) {
-  return <div class="closing">{props.children}</div>;
+export function DangerRow(props: DangerRowProps) {
+  return (
+    <div class="group quiet">
+      <Row
+        id={props.id}
+        title={props.title}
+        description={props.description}
+        buttons={props.action}
+      />
+    </div>
+  );
 }
 
 export interface DisclosureRowProps {

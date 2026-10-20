@@ -118,3 +118,61 @@ export function pageLinks(html: string): { href: string; text: string }[] {
     text: visibleText(link[2] ?? ""),
   }));
 }
+
+export interface PageButton {
+  /** The words on it. */
+  text: string;
+  /** `button`, `submit` or `reset`: a button with no type is a submit button inside a form, as a browser reads it. */
+  type: string;
+  /** The id of the form it belongs to when that is not the one around it. */
+  form: string | undefined;
+  hidden: boolean;
+  /** Reads as unavailable but still takes focus. */
+  unavailable: boolean;
+}
+
+/** Every button on the page, in the order a keyboard reaches them. */
+export function pageButtons(html: string): PageButton[] {
+  return [
+    ...html.matchAll(
+      /<button\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/button>/gi,
+    ),
+  ].map((button) => {
+    const attributes = attributesOf(button[1] ?? "");
+    return {
+      text: visibleText(button[2] ?? ""),
+      type: attributes.get("type") ?? "submit",
+      form: attributes.get("form"),
+      hidden: attributes.has("hidden"),
+      unavailable:
+        attributes.has("disabled") ||
+        attributes.get("aria-disabled") === "true",
+    };
+  });
+}
+
+export interface PageRegion {
+  role: string;
+  /** Its accessible name, if the markup gives one. */
+  label: string | undefined;
+  /** How a screen reader treats a change inside it: `polite`, `assertive` or none. */
+  live: string | undefined;
+  hidden: boolean;
+}
+
+/** Every element with an ARIA `role`, in the order the page lists them. */
+export function pageRegions(html: string): PageRegion[] {
+  const regions: PageRegion[] = [];
+  for (const tag of html.matchAll(START_TAG("[a-z][a-z0-9]*"))) {
+    const attributes = attributesOf(tag[2] ?? "");
+    const role = attributes.get("role");
+    if (role === undefined) continue;
+    regions.push({
+      role,
+      label: attributes.get("aria-label"),
+      live: attributes.get("aria-live"),
+      hidden: attributes.has("hidden"),
+    });
+  }
+  return regions;
+}

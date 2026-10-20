@@ -240,7 +240,7 @@ inBrowser("API keys, with a sign-in older than five minutes", () => {
         .click();
       await page.locator('input[value="instance.read"]').uncheck();
       clock.advanceClock(6 * MINUTE);
-      await page.getByRole("button", { name: "Save changes" }).click();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
       expect(await dialogOf(page).innerText()).toContain(
         "Changing a key needs a recent sign-in.",
       );
@@ -280,7 +280,7 @@ inBrowser("API keys, with a sign-in older than five minutes", () => {
         )
           patches += 1;
       });
-      await page.getByRole("button", { name: "Save changes" }).click();
+      await page.getByRole("button", { name: "Save", exact: true }).click();
       await dialogOf(page).waitFor();
       expect(patches).toBe(1);
 
