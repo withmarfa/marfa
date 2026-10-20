@@ -232,10 +232,10 @@ pub(crate) fn url_value(text: &str) -> Option<String> {
     (url::Url::parse(&kept).is_ok() || parses_ignoring_punycode(&kept)).then_some(kept)
 }
 
-/// The standard converts a host to ASCII ignoring invalid Punycode: a label
-/// that starts `xn--` and does not decode stays as written. The `url` crate
-/// refuses such a host, so the labels of that kind are replaced by one it
-/// takes and the rest of the address is judged as written.
+/// The standard percent-decodes a host and converts it to ASCII ignoring
+/// invalid Punycode: a label that starts `xn--` and does not decode stays as
+/// written. The `url` crate refuses such a host, so the labels of that kind are
+/// replaced by one it takes and the rest of the address is judged as written.
 fn parses_ignoring_punycode(text: &str) -> bool {
     let Some(start) = text.find("://").map(|at| at + 3) else {
         return false;
@@ -250,8 +250,19 @@ fn parses_ignoring_punycode(text: &str) -> bool {
     let host_end = authority[host_start..]
         .find(':')
         .map_or(authority.len(), |at| host_start + at);
+    let Some(host) = percent_decoded(&authority[host_start..host_end]) else {
+        return false;
+    };
+    // A character the decoding brought in must not reshape the address.
+    if host.chars().any(|ch| {
+        ch.is_ascii_control()
+            || matches!(ch, ' ' | '#' | '%' | '/' | ':' | '<' | '>' | '?' | '@')
+            || matches!(ch, '[' | '\\' | ']' | '^' | '|')
+    }) {
+        return false;
+    }
     let mut replaced = false;
-    let labels: Vec<&str> = authority[host_start..host_end]
+    let labels: Vec<&str> = host
         .split('.')
         .map(|label| {
             let punycode = label
@@ -273,6 +284,33 @@ fn parses_ignoring_punycode(text: &str) -> bool {
             &after[authority_end..],
         ))
         .is_ok()
+}
+
+/// A host with its `%XX` escapes replaced by the bytes they name, read as
+/// UTF-8. `None` where those bytes are not UTF-8.
+fn percent_decoded(host: &str) -> Option<String> {
+    let bytes = host.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        let pair = bytes.get(at + 1..at + 3).and_then(|pair| {
+            let digits = std::str::from_utf8(pair).ok()?;
+            u8::from_str_radix(digits, 16)
+                .ok()
+                .filter(|_| digits.bytes().all(|b| b.is_ascii_hexdigit()))
+        });
+        match (bytes[at], pair) {
+            (b'%', Some(byte)) => {
+                decoded.push(byte);
+                at += 3;
+            }
+            (byte, _) => {
+                decoded.push(byte);
+                at += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 // The server uses Zod's practical email pattern, rather than RFC 5322 or
@@ -488,6 +526,11 @@ mod tests {
             ("ht\ttps://example.com", "https://example.com"),
             ("http://xn--", "http://xn--"),
             ("http://xn--/", "http://xn--/"),
+            ("http://xn--%41", "http://xn--%41"),
+            ("http://XN--%41/p", "http://XN--%41/p"),
+            ("http://a.xn--%41.b:80/p", "http://a.xn--%41.b:80/p"),
+            ("http://u@xn--%41/", "http://u@xn--%41/"),
+            ("http://%78n--/", "http://%78n--/"),
             ("https://münchen.de/straße", "https://münchen.de/straße"),
             ("http://a.b.c.xn--pokxncvks", "http://a.b.c.xn--pokxncvks"),
             ("HTTP://XN--ABC/x?y#z", "HTTP://XN--ABC/x?y#z"),
@@ -505,6 +548,13 @@ mod tests {
             "   ",
             "\u{200b}https://example.com",
             "http://xn--é/",
+            "http://xn--%e9/",
+            "http://xn--%c3%a9/",
+            "http://xn--%2f/",
+            "http://xn--%20/",
+            "http://xn--%3a80/",
+            "http://xn--%2541/",
+            "http://xn--a%00/",
             "https://xn--a b/",
             "http://xn--[::1]/",
             "//example.com",
