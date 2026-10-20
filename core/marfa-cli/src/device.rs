@@ -1379,6 +1379,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         })?,
                         (None, None) => unreachable!("one of the two is required"),
                     };
+                    marfa_core::refuse_inexact_integers(&text)?;
                     let parsed: serde_json::Value = serde_json::from_str(&text)
                         .map_err(|error| CliError::Invalid(format!("not JSON: {error}")))?;
                     let definitions = match parsed {

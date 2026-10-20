@@ -417,6 +417,38 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     std::fs::remove_dir_all(&dir).unwrap();
     refused(bulk.unwrap_err(), "items bulk");
 
+    let edges = dir.join("edges.json");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (text, expected) in [
+        (
+            r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":99999999999999999999999}}]"#,
+            "0.properties.n: Must be a whole number that Marfa serves back with the same digits, not 99999999999999999999999, which it serves as 1e+23. Send it as a string.",
+        ),
+        (
+            r#"{"edges":[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":-0}}]}"#,
+            "edges.0.properties.n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string.",
+        ),
+    ] {
+        std::fs::write(&edges, text).unwrap();
+        let bulk = edges::bulk_request(&edges::EdgeBulkArgs {
+            file: edges.clone(),
+            ..Default::default()
+        });
+        let error = bulk.unwrap_err().to_string();
+        assert!(error.contains(expected), "{text}: {error}");
+    }
+    std::fs::write(
+        &edges,
+        r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":1152921504606847000,"m":1.5,"s":"99999999999999999999999"}}]"#,
+    )
+    .unwrap();
+    let kept = edges::bulk_request(&edges::EdgeBulkArgs {
+        file: edges.clone(),
+        ..Default::default()
+    });
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(kept.is_ok(), "{kept:?}");
+
     // The witnesses: the same shapes with a number a float keeps, and a string.
     for ok in [
         r#"{"a":{"b":[1152921504606847000]}}"#,
