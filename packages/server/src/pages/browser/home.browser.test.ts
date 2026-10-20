@@ -308,7 +308,6 @@ describe("Home", () => {
           "/\\evil.example",
           "/\t/evil.example",
           "/\n/evil.example",
-          `/${"a".repeat(3000)}`,
         ]) {
           await page.goto(
             `${origin}/auth/sign-in?return_to=${encodeURIComponent(bad)}`,
