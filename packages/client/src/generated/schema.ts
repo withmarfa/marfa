@@ -2650,14 +2650,14 @@ export interface components {
             error?: components["schemas"]["BulkEntryError"] & unknown;
         };
         /** @description An error response. */
-        BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal: {
+        BulkAtomicRollbackOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "bulk_atomic_rollback" | "missing_required_field" | "validation_error";
+                code: "bulk_atomic_rollback" | "invalid_properties" | "missing_required_field" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2724,14 +2724,14 @@ export interface components {
             result?: components["schemas"]["BulkActionResult"] & unknown;
         };
         /** @description An error response. */
-        BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal: {
+        BulkCapExceededOrBulkConfirmationRequiredOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "bulk_cap_exceeded" | "bulk_confirmation_required" | "missing_required_field" | "validation_error";
+                code: "bulk_cap_exceeded" | "bulk_confirmation_required" | "invalid_properties" | "missing_required_field" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -2822,6 +2822,23 @@ export interface components {
             /** @description The item's extension namespaces that you can read, each mapped to its data. */
             extensions: {
                 [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
                     [key: string]: unknown;
                 };
             };
@@ -3931,6 +3948,23 @@ export interface components {
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
         };
+        /** @description An error response. */
+        InvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "invalid_properties" | "missing_required_field" | "unknown_type" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /** @description Which items the folder holds. */
         FolderSearch: {
             /** @description The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`. */
@@ -3967,14 +4001,14 @@ export interface components {
             fraction?: number;
         };
         /** @description An error response. */
-        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
+        InvalidIdOrInvalidPropertiesOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "invalid_id" | "invalid_transition" | "missing_required_field" | "unknown_type" | "validation_error";
+                code: "invalid_id" | "invalid_properties" | "invalid_transition" | "missing_required_field" | "unknown_type" | "validation_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -8264,9 +8298,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is malformed, has a key this operation doesn't declare, or has more than 5,000 entries.
+             * @description - `validation_error`: the body is malformed, has an undeclared key or has over 5,000 entries.
              *     - `missing_required_field`: a required field is missing.
-             *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is the one that refusal carries alone.
+             *     - `invalid_properties`: an entry's `properties` hold a whole number a 64-bit float can't keep.
+             *     - `bulk_atomic_rollback`: an `atomic` entry was refused and nothing was written (`details.code`, `details.index`). The status is the refusal's own.
              */
             400: {
                 headers: {
@@ -8279,7 +8314,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkAtomicRollbackOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -8532,8 +8567,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body or `filter` is malformed or has an undeclared key or an empty field, `update_tags` has neither `add` nor `remove`, or `expected_ids` is empty or not on a purge.
-             *     - `missing_required_field`: a field the action needs is missing.
+             * @description - `validation_error`: the body is malformed or has an undeclared or empty field, or `update_tags` has no `add` or `remove`.
+             *     - `missing_required_field`: a needed field is missing.
+             *     - `invalid_properties`: `patch` holds a whole number a 64-bit float cannot keep.
              *     - `bulk_confirmation_required`: a purge without `confirm: "PURGE"`.
              *     - `bulk_cap_exceeded`: more items match than `max_items` allows.
              */
@@ -8549,7 +8585,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkCapExceededOrBulkConfirmationRequiredOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -9944,6 +9980,7 @@ export interface operations {
             /**
              * @description - `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.
              *     - `invalid_id`: the ID is not a valid item ID.
+             *     - `invalid_properties`: the body holds a whole number a 64-bit float can't keep.
              */
             400: {
                 headers: {
@@ -9957,7 +9994,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -11775,9 +11812,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body is malformed, has an undeclared key, or has more than 5,000 entries.
-             *     - `missing_required_field`: `edges` is missing, or an entry lacks `source_id`, `target_id` or `edge_type`.
-             *     - `bulk_atomic_rollback`: with `atomic` true, an entry was refused and nothing was written. `details.code` and `details.index` give its code and position. The status is that refusal's own.
+             * @description - `validation_error`: the body is malformed, has an undeclared key or has over 5,000 entries.
+             *     - `missing_required_field`: a required field is missing.
+             *     - `invalid_properties`: an entry's `properties` hold a whole number a 64-bit float can't keep.
+             *     - `bulk_atomic_rollback`: an `atomic` entry was refused and nothing was written (`details.code`, `details.index`). The status is the refusal's own.
              */
             400: {
                 headers: {
@@ -11790,7 +11828,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkAtomicRollbackOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -19058,9 +19096,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed, such as a `system.*` type, an invalid `filter` or a `first_placement` directory outside the folder. `details.errors[0].path` names it. A key the body or a setting doesn't declare is named in `details.unknown_body_fields`.
+             * @description - `validation_error`: a setting is malformed or undeclared, such as a `system.*` type or a `first_placement` outside the folder. `details.errors[0].path` or `details.unknown_body_fields` names it.
              *     - `missing_required_field`: `title` is missing.
-             *     - `unknown_type`: a setting names a type that isn't registered.
+             *     - `unknown_type`: a setting's type is unknown.
+             *     - `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.
              */
             400: {
                 headers: {
@@ -19074,7 +19113,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
@@ -19274,10 +19313,11 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed (`details.errors[0].path` names it), a key is undeclared (`details.unknown_body_fields` names it), the body names no setting, or the query has `conflict`.
+             * @description - `validation_error`: a setting is malformed or undeclared (`details.errors[0].path` or `details.unknown_body_fields` names it).
              *     - `missing_required_field`: `version` is missing.
-             *     - `unknown_type`: a setting names a type that isn't registered.
-             *     - `invalid_id`: the ID is malformed.
+             *     - `unknown_type`: a setting's type is unknown.
+             *     - `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.
+             *     - `invalid_id`: the ID is invalid.
              *     - `invalid_transition`: the folder is revoked.
              */
             400: {
@@ -19292,7 +19332,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidPropertiesOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */

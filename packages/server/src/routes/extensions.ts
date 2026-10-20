@@ -229,11 +229,12 @@ const setExtensionRoute = createRoute({
             "validation_error",
             "missing_required_field",
             "invalid_id",
+            "invalid_properties",
           ]),
         },
       },
       description:
-        "- `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.\n- `invalid_id`: the ID is not a valid item ID.",
+        "- `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.\n- `invalid_id`: the ID is not a valid item ID.\n- `invalid_properties`: the body holds a whole number a 64-bit float can't keep.",
     },
     401: {
       content: {
