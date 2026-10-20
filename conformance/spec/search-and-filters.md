@@ -1408,6 +1408,14 @@ When `GET /export?format=archive` selects an edge whose edge type is not registe
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 
+### `search-and-filters/archive-edges-end-unregistered`
+
+When `GET /export?format=archive` selects an edge with an end that is an item of a type that is not registered, the server MUST NOT refuse the export because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
+
+**Reason:** the export checks the selection with the restore's checks (`search-and-filters/archive-restorable`), and a restore takes such an edge (`search-and-filters/restore-edges-end-unregistered`). A forced delete leaves the items of a type and the edges between them (`types/delete-force`), so an instance that refused to export them could not be backed up.
+
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
+
 ### `search-and-filters/archive-validation-retry`
 
 If an archive selection fails restore validation, then the server MUST restart `GET /export?format=archive` from the beginning once before sending archive bytes.
@@ -1638,7 +1646,7 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 
 When `POST /restore` skips an edge, the server MUST count it in `edges_skipped_reasons` under exactly one of these reasons: `already_present` when the instance already holds the edge, `endpoint_missing` when, once the archive's items are written, the instance holds no item under an endpoint's id, in the bin or out of it, `malformed` when the line does not give both endpoints and the edge type as strings, and otherwise the error code that `POST /edges` would answer for the edge, other than `edge_type_not_found`, which a restore does not give (`search-and-filters/restore-edges-unregistered`).
 
-**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin`, `search-and-filters/restore-edges-unregistered` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
+**Reason:** a restore judges each edge as `POST /edges` does, except where `search-and-filters/restore-edges-bin`, `search-and-filters/restore-edges-unregistered`, `search-and-filters/restore-edges-end-unregistered` and `edges/properties-restore-kept` say otherwise and for an `in-folder` edge to a revoked folder, which it keeps as the folder kept it (`edges/folder-revoked-keeps`). It skips an edge it refuses rather than refusing the archive.
 
 **Tests:** `compliance/restore-archive.test.ts › answers ten counts, each for the kind of thing it counts, on the first restore and on a repeat`, `› counts an edge that POST /edges would refuse under the code of its refusal, and keeps one whose type nothing registers`, `compliance/archive-scalars.test.ts › refuses an invalid edge version even when its endpoint is missing`.
 
@@ -1953,6 +1961,22 @@ If an archived edge's `edge_type` is a string that is not an edge-type identifie
 **Reason:** a forced delete leaves an edge under an identifier an edge type was registered with (`search-and-filters/restore-edges-unregistered`), so an identifier that none could have been is an archive that no instance wrote. A line that gives the edge type as no string is skipped as `malformed` (`search-and-filters/restore-edge-skips`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › judges an edge of an unregistered type by what needs no edge type, still holds a registered one to its constraints, and refuses an edge whose type is no identifier`.
+
+### `search-and-filters/restore-edges-end-unregistered`
+
+When `POST /restore` meets an edge with an end that is an item of a type that is not registered once the archive's own types are, the server MUST NOT refuse the edge because the edge type's `source_type_constraints` or `target_type_constraints` do not admit that end.
+
+**Reason:** a forced delete removes a type and keeps its items and the edges between them (`types/delete-force`), and the type's parent and roles go with it, so no entry in the list, whether it names a registered type or not, can be judged against the end. `POST /edges` still refuses such an end (`edges/endpoint-unregistered`), and every other refusal of a restored edge is unchanged (`search-and-filters/restore-edge-skips`).
+
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› keeps an edge whose target constraint names the deleted type`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`, `› restores an older archive whose item type is not registered, keeping the edge its constraint named the type for`.
+
+### `search-and-filters/restore-edges-end-registered`
+
+When `POST /restore` meets an edge with an end that is an item of a registered type, the server MUST judge that end against the edge type's constraint list as `POST /edges` does, whether or not the list also names a type that is not registered.
+
+**Reason:** a type that other types name as parent cannot be deleted (`types/delete-subtypes`), so every ancestor of a registered type is registered, and an entry naming a type that is not registered admits no registered type.
+
+**Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`, `› judges a constraint that lists a registered and a deleted type by the endpoint: an end of the deleted type is kept, and an end of a registered type must be one the list names`.
 
 ### `search-and-filters/restore-snapshot-held`
 

@@ -277,6 +277,32 @@ describe("restore validates the edges it writes", () => {
     expect(edgeCount).toBe(0);
   });
 
+  it("keeps an edge whose end is of an item type nothing registers, and still refuses a registered end the edge does not allow", async () => {
+    // The witness above: with both ends notes, `in-collection` is refused.
+    // An end of a type a forced delete removed has no parent or role left to
+    // judge by, so the archive's edge stands; a note on the other end is
+    // still no container.
+    const gone = { [B]: "acme.gone" };
+    const kept = await restoreEdges(
+      [edgeLine({ source_id: A, target_id: B, edge_type: "in-collection" })],
+      gone,
+    );
+    expect(kept.result.edges_imported).toBe(1);
+    expect(kept.result.edges_skipped).toBe(0);
+    expect(kept.edges).toMatchObject([
+      { source_id: A, target_id: B, edge_type: "in-collection" },
+    ]);
+
+    const refused = await restoreEdges(
+      [edgeLine({ source_id: A, target_id: C, edge_type: "in-collection" })],
+      gone,
+    );
+    expect(refused.result.edges_imported).toBe(0);
+    expect(refused.result.edges_skipped_reasons).toMatchObject({
+      edge_constraint_violation: 1,
+    });
+  });
+
   it("refuses the edge that would close a cycle", async () => {
     const { result, edgeCount } = await restoreEdges([
       edgeLine({ source_id: A, target_id: B, edge_type: "parent-of" }),
