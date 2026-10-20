@@ -70,6 +70,45 @@ The words are grouped by topic.
 | **local authority** | Authority supplied only by the private Unix socket to a process running under the server's operating-system account. It is not an API key and cannot be asserted through public HTTP.                                                                                                                                                                                                                                                                                                                                                 |
 | **setup code**      | A machine-issued proof that authorizes one owner claim. It grants no API access and stops working when setup closes or its generation is replaced.                                                                                                                                                                                                                                                                                                                                                                                    |
 
+### Access words
+
+Access is read the same way wherever a person sees it: on the pages where they approve it, on a key's page, on an app's page and in the CLI's output. For each kind of thing it is one level, and a short list of named powers. The server builds the description in `packages/server/src/routes/access-model.ts`, from the words in `scope-copy.ts` and `permission-labels.ts` beside it; the CLI keeps the same words in `core/marfa-cli/src/access.rs`; `ci/access-words.test.ts` holds both to the tables below. A row the table does not title, such as an item type or a link type, is named by its own label on a page and as the scope writes it in the CLI (`core.note`, `edge.references`).
+
+| Level   | The word      |
+| ------- | ------------- |
+| `none`  | No access     |
+| `read`  | Read only     |
+| `write` | Read and edit |
+
+| Row                   | The title                  |
+| --------------------- | -------------------------- |
+| `*`                   | All your data              |
+| `content`             | Your content               |
+| `user.*`              | Your custom types          |
+| `edge.*`              | Links between items        |
+| `profile`             | Profile                    |
+| `profile.name`        | Name                       |
+| `profile.email`       | Email address              |
+| `profile.avatar`      | Avatar                     |
+| `metadata`            | Definitions on your server |
+| `metadata.types`      | Custom data types          |
+| `metadata.edge_types` | Custom relationship types  |
+
+| Power               | The title                                                   |
+| ------------------- | ----------------------------------------------------------- |
+| `keys.mint`         | Make, see, edit and revoke keys                             |
+| `keys.manage`       | See, edit, narrow and revoke every key                      |
+| `grants.manage`     | See and disconnect other apps                               |
+| `config.manage`     | See and change Marfa's settings                             |
+| `instance.read`     | See health, metrics, storage and job status                 |
+| `instance.maintain` | Run housekeeping, reset platform types and cancel bulk jobs |
+| `schema.write`      | Replace or remove type definitions                          |
+| `blobs.manage`      | Read and add any file, and manage file storage              |
+| `webhooks.manage`   | Manage webhooks that send events to other services          |
+| `connectors.manage` | See, manage and remove all connectors                       |
+| `audit.read`        | Read the activity log                                       |
+| `items.purge`       | Delete items in the trash for good                          |
+
 ### The instance
 
 | Word                 | What it means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |

@@ -14,6 +14,10 @@ interface RowCommon {
   badge?: string;
   value?: string;
   valueTone?: "danger";
+  /** Starts hidden, for a row the script shows once it knows it can work. */
+  hidden?: boolean;
+  /** Read by the browser module that drives the page, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
 }
 
 /** Ends in its value, if any, and a chevron: it opens something. */
@@ -123,7 +127,12 @@ export function Row(props: RowProps) {
   }
   if (props.control !== undefined) {
     return (
-      <div class={className} id={props.id}>
+      <div
+        class={className}
+        id={props.id}
+        hidden={props.hidden}
+        {...dataAttributes(props.data)}
+      >
         {props.for ? (
           <label class="grow" for={props.for}>
             {text}
@@ -137,7 +146,12 @@ export function Row(props: RowProps) {
     );
   }
   return (
-    <div class={className} id={props.id}>
+    <div
+      class={className}
+      id={props.id}
+      hidden={props.hidden}
+      {...dataAttributes(props.data)}
+    >
       <div class="grow">{text}</div>
       {value}
       {props.buttons !== undefined && <span class="ends">{props.buttons}</span>}

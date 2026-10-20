@@ -10,9 +10,12 @@
  * thing they name: a level select for an item type, a link type, a metadata
  * area or a profile row, and a switch for a power or a single profile claim.
  * Every value a control submits is one of the request's own literals (an
- * empty value means no access), because the OAuth provider issues only
- * literals the signed request named. A choice is therefore the request
- * narrowed and never widened, and {@link resolveSelection} checks it as such.
+ * empty value means no access), and a choice is therefore the request
+ * narrowed and never widened. The one exception is a request for all data,
+ * where the person may choose types instead: each type control submits a
+ * scope the all-data scope covers, which the provider cannot issue from the
+ * request as signed, so the decision signs it again
+ * (`auth/narrow-signed-query.ts`). {@link resolveSelection} checks both.
  */
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
@@ -24,9 +27,11 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import {
+  CHOOSE_TYPES,
   dataSummary,
   heldSummary,
   LEVEL_RANK,
+  listWords,
   levelOfValue,
   lowerFirst,
   powersSummary,
@@ -40,6 +45,7 @@ import {
   PERMISSION_GROUPS,
   permissionDescription,
 } from "./permission-labels.js";
+import type { ChoosableType } from "./access-types.js";
 import { reachLine } from "./scope-openness.js";
 import {
   humanizeType,
@@ -50,11 +56,20 @@ import {
   scopeTitle,
 } from "./scope-copy.js";
 
-const LEVEL_LABELS: Record<Level, string> = {
+export { CHOOSE_TYPES };
+
+/** The word for each level, on every page and in the CLI (`GLOSSARY.md`, "Access words"). */
+export const LEVEL_LABELS: Record<Level, string> = {
   none: "No access",
   read: "Read only",
   write: "Read and edit",
 };
+
+/** The choice beside the levels of an ask for all data. */
+export const CHOOSE_TYPES_LABEL = "Choose types";
+
+/** The title of the row for the global type wildcard. */
+export const ALL_DATA_TITLE = "All your data";
 
 /** The literal a parsed scope came from, which is what a control submits. */
 function scopeLiteral(scope: ParsedScope): string {
@@ -74,10 +89,24 @@ export interface LevelOption {
   label: string;
 }
 
+/**
+ * The types a person may choose one by one in place of all data. The all-data
+ * row offers {@link CHOOSE_TYPES} beside its levels, and these rows are what
+ * it means.
+ */
+export interface ChooseTypes {
+  /** What the all-data control posts for this choice. */
+  value: string;
+  /** Every type the person may choose, in the order the page lists them. */
+  rows: LevelRow[];
+}
+
 /** One thing the app asks for at up to two levels. */
 export interface LevelRow {
   kind: "level";
   id: string;
+  /** The field the control posts under; `scopes` where it is left out. */
+  name?: "types";
   title: string;
   description?: string;
   /** What the row is for in a sentence about the choice, lower case and plural. */
@@ -87,6 +116,8 @@ export interface LevelRow {
   /** Lowest first. Never above the request, never below what the app holds. */
   options: LevelOption[];
   selected: string;
+  /** Present on a row for all data when the person may choose types instead. */
+  choose?: ChooseTypes;
 }
 
 /** One thing the app asks for that is simply on or off. */
@@ -151,8 +182,20 @@ export interface AccessInput {
    * comes from the shipped registry, so a caller passes only what it looked up.
    */
   typeLabels?: Record<string, string>;
+  /**
+   * The item types a person may choose in place of all data, when the
+   * request names it. Without them an ask for all data is a level and no
+   * more.
+   */
+  chooseTypes?: readonly ChoosableType[];
   bundles: readonly PermissionBundle[];
 }
+
+/** What a caller looked up to name a scope in words; a pattern it leaves out is named from the registry. */
+type Words = Pick<
+  AccessInput,
+  "descriptions" | "wildcardExpansions" | "typeLabels"
+>;
 
 interface Ask {
   key: string;
@@ -185,7 +228,7 @@ function isCarried(literal: string, held: readonly string[]): boolean {
 }
 
 /** The label an exact item type carries: the instance's, then the shipped registry's. */
-function typeLabel(pattern: string, input: AccessInput): string {
+function typeLabel(pattern: string, input: Words): string {
   return (
     input.typeLabels?.[pattern] ??
     getTypeSchema(pattern)?.label ??
@@ -207,7 +250,7 @@ function typeLabel(pattern: string, input: AccessInput): string {
  */
 function describe(
   scope: ParsedScope,
-  input: AccessInput,
+  input: Words,
 ): { title: string; noun: string; description?: string } {
   const sentence = input.descriptions?.[scope.typePattern];
   const expansion =
@@ -225,8 +268,8 @@ function describe(
   }
   if (scope.kind === "type" && scope.typePattern === "*")
     return {
-      title: "All your data",
-      noun: "all your data",
+      title: ALL_DATA_TITLE,
+      noun: lowerFirst(ALL_DATA_TITLE),
       description: reach || undefined,
     };
   if (scope.kind === "oidc" || scope.kind === "permission") {
@@ -257,7 +300,16 @@ function describe(
 }
 
 /** Build the controls for a request. */
-export function buildAccess(input: AccessInput): AccessModel {
+export function buildAccess(given: AccessInput): AccessModel {
+  const input: AccessInput = {
+    ...given,
+    typeLabels: {
+      ...Object.fromEntries(
+        (given.chooseTypes ?? []).map((type) => [type.id, type.label]),
+      ),
+      ...given.typeLabels,
+    },
+  };
   const held = input.held ?? [];
   const returning = held.some((literal) => !isMechanism(literal));
   const withheld = [...scopesOfferedOffByDefaultOnly(input.bundles)];
@@ -289,7 +341,7 @@ export function buildAccess(input: AccessInput): AccessModel {
   let counter = 0;
   const nextId = (): string => `access-${String(++counter)}`;
 
-  const rowFor = (ask: Ask): LevelRow | null => {
+  const rowFor = (ask: Ask, name?: "types"): LevelRow | null => {
     const floor = levelHeld(held, ask.scope.typePattern);
     const top: Level = ask.write !== undefined ? "write" : "read";
     // Held in full: shown, not offered. The server adds it to what the
@@ -317,6 +369,7 @@ export function buildAccess(input: AccessInput): AccessModel {
     return {
       kind: "level",
       id: nextId(),
+      ...(name === undefined ? {} : { name }),
       title,
       noun,
       held: floor,
@@ -329,6 +382,28 @@ export function buildAccess(input: AccessInput): AccessModel {
     };
   };
 
+  /** The types to choose in place of all data, one level control each. */
+  const chooseFor = (ask: Ask): ChooseTypes | undefined => {
+    if (ask.scope.kind !== "type" || ask.scope.typePattern !== "*")
+      return undefined;
+    const rows: LevelRow[] = [];
+    for (const type of input.chooseTypes ?? []) {
+      const parsed = parseScope(`${type.id}:read`);
+      if (!parsed) continue;
+      const row = rowFor(
+        {
+          key: `type:${type.id}`,
+          scope: parsed,
+          read: ask.read === undefined ? undefined : `${type.id}:read`,
+          write: ask.write === undefined ? undefined : `${type.id}:write`,
+        },
+        "types",
+      );
+      if (row) rows.push(row);
+    }
+    return rows.length > 0 ? { value: CHOOSE_TYPES, rows } : undefined;
+  };
+
   const data: LevelRow[] = [];
   const profile: (LevelRow | SwitchRow)[] = [];
   const patternOf = new Map<string, string>();
@@ -336,6 +411,11 @@ export function buildAccess(input: AccessInput): AccessModel {
   for (const ask of asks.values()) {
     const row = rowFor(ask);
     if (!row) continue;
+    const choose = chooseFor(ask);
+    if (choose) {
+      row.choose = choose;
+      row.options.push({ value: CHOOSE_TYPES, label: CHOOSE_TYPES_LABEL });
+    }
     patternOf.set(row.id, ask.scope.typePattern);
     if (
       (ask.scope.kind === "type" || ask.scope.kind === "content") &&
@@ -394,7 +474,7 @@ export function buildAccess(input: AccessInput): AccessModel {
       ),
     );
 
-  const heldList = heldRows(held, input);
+  const heldList = describeHeld(held, input);
   const empty = {
     data: returning ? "Nothing new turned on" : "No access to your data",
     profile: returning ? "Nothing new turned on" : "No access to your profile",
@@ -436,44 +516,198 @@ export function buildAccess(input: AccessInput): AccessModel {
   };
 }
 
+/** A power a credential holds, by its title. */
+export interface HeldPower {
+  title: string;
+  /** The line under the title wherever a person decides on the power, if it has one. */
+  description?: string;
+  /** Deletes data with no way back. */
+  destructive: boolean;
+}
+
 /**
- * Everything the app holds, one line for each thing, at the level it holds
- * it, and the line the group of them says.
+ * What a credential holds, described once for every page that shows it: the
+ * approval pages (as "Already allowed"), and a key's or an app's page. It is
+ * the words the approval controls use, so one grant reads the same wherever
+ * it is shown.
  */
-function heldRows(
+export interface HeldAccess {
+  /** One line for each thing held, in the order held: the box on the approval pages. */
+  rows: HeldRow[];
+  /** What is held of the person's data, links and definitions, at the level held. */
+  data: HeldRow[];
+  /** What is held of the person's profile, at the level held. */
+  profile: HeldRow[];
+  /** The powers held, in the order held. */
+  powers: HeldPower[];
+  /** The line for the whole box. */
+  summary: string;
+  /** The line for each group, as the approval controls say it. */
+  summaries: { data: string; profile: string; powers: string };
+}
+
+/**
+ * What a key holds that a scope cannot say: a thing held at no access beside
+ * a wider grant, and an extension namespace, which no scope names.
+ */
+export interface HeldExtras {
+  /**
+   * Scope literals, at either level, that name a thing held at no access: a
+   * key that reads all data and is denied one type. Shown as no access.
+   */
+  denied?: readonly string[];
+  /** An extension namespace and the level it is held at. */
+  extensions?: Readonly<Record<string, Level>>;
+}
+
+/**
+ * Describe the scopes a credential holds: an app's consent or a key's
+ * permissions read as scopes ({@link scopesOfKey}). The mechanisms
+ * (`openid`, `offline_access`) are no access and are left out.
+ */
+export function describeHeld(
   held: readonly string[],
-  input: AccessInput,
-): { rows: HeldRow[]; summary: string } {
+  words: Words,
+  extras: HeldExtras = {},
+): HeldAccess {
   const rows = new Map<string, HeldRow>();
+  const data: HeldRow[] = [];
+  const profile: HeldRow[] = [];
+  const powers: HeldPower[] = [];
   const levels: HeldLevel[] = [];
+  const dataLevels: HeldLevel[] = [];
+  const profileLevels: HeldLevel[] = [];
   const seen: string[] = [];
-  const powers: string[] = [];
+  const powerTitles: string[] = [];
+  const keyOf = (scope: ParsedScope, literal: string): string =>
+    isLevelKind(scope) ? `${scope.kind}:${scope.typePattern}` : literal;
+  const denied = new Map<string, { scope: ParsedScope; profile: boolean }>();
+  for (const literal of extras.denied ?? []) {
+    const scope = parseScope(literal);
+    if (scope && isLevelKind(scope))
+      denied.set(keyOf(scope, literal), {
+        scope,
+        profile: scope.kind === "profile",
+      });
+  }
   for (const literal of held) {
     const scope = parseScope(literal);
     if (!scope || (scope.kind === "oidc" && isMechanism(literal))) continue;
-    const key = isLevelKind(scope)
-      ? `${scope.kind}:${scope.typePattern}`
-      : literal;
-    if (rows.has(key)) continue;
-    const { title, noun } = describe(scope, input);
+    const key = keyOf(scope, literal);
+    if (rows.has(key) || denied.has(key)) continue;
+    const { title, noun } = describe(scope, words);
     if (isLevelKind(scope)) {
       const level = levelHeld(held, scope.typePattern);
-      rows.set(key, { title, value: LEVEL_LABELS[level] });
+      const row = { title, value: LEVEL_LABELS[level] };
+      rows.set(key, row);
       levels.push({ noun, level });
+      if (scope.kind === "profile") {
+        profile.push(row);
+        profileLevels.push({ noun, level });
+      } else {
+        data.push(row);
+        dataLevels.push({ noun, level });
+      }
     } else {
-      rows.set(key, { title, value: "On" });
-      if (scope.kind === "permission") powers.push(title);
-      else seen.push(title);
+      const row = { title, value: "On" };
+      rows.set(key, row);
+      if (scope.kind === "permission") {
+        powerTitles.push(title);
+        powers.push({
+          title,
+          description:
+            scope.permission === undefined
+              ? undefined
+              : permissionDescription(scope.permission),
+          destructive:
+            scope.permission !== undefined &&
+            DESTRUCTIVE_PERMISSIONS.has(scope.permission),
+        });
+      } else {
+        seen.push(title);
+        profile.push(row);
+      }
     }
   }
+  // Held at no access: shown as such, and said in the line, because a wider
+  // grant beside it would otherwise read as covering it.
+  const noAccess = { data: [] as string[], profile: [] as string[] };
+  for (const [key, { scope, profile: isProfile }] of denied) {
+    const { title, noun } = describe(scope, words);
+    const row = { title, value: LEVEL_LABELS.none };
+    rows.set(key, row);
+    (isProfile ? profile : data).push(row);
+    (isProfile ? noAccess.profile : noAccess.data).push(noun);
+  }
+  for (const [namespace, level] of Object.entries(extras.extensions ?? {})) {
+    const row = { title: namespace, value: LEVEL_LABELS[level] };
+    rows.set(`extension:${namespace}`, row);
+    data.push(row);
+    if (level === "none") noAccess.data.push(namespace);
+    else {
+      levels.push({ noun: namespace, level });
+      dataLevels.push({ noun: namespace, level });
+    }
+  }
+  const none = {
+    data: "No access to your data",
+    profile: "No access to your profile",
+  };
+  const withNoAccess = (
+    line: string,
+    empty: string,
+    nouns: readonly string[],
+  ): string => {
+    if (nouns.length === 0) return line;
+    const denial = `no access to ${listWords(nouns)}`;
+    return line === empty
+      ? denial.charAt(0).toUpperCase() + denial.slice(1)
+      : `${line}; ${denial}`;
+  };
   return {
     rows: [...rows.values()],
-    summary: heldSummary(levels, seen, powers),
+    data,
+    profile,
+    powers,
+    summary: heldSummary(levels, seen, powerTitles),
+    summaries: {
+      data: withNoAccess(
+        dataSummary(
+          dataLevels.map((pick) => ({ ...pick, held: "none" })),
+          none.data,
+        ),
+        none.data,
+        noAccess.data,
+      ),
+      profile: withNoAccess(
+        profileSummary(
+          profileLevels.map((pick) => ({ ...pick, held: "none" })),
+          seen,
+          none.profile,
+        ),
+        none.profile,
+        noAccess.profile,
+      ),
+      powers: `${String(powers.length)} turned on`,
+    },
   };
 }
 
 export type Selection =
   { ok: true; scopes: string[]; chosen: boolean } | { ok: false };
+
+/** The type controls of a submission: what they posted, and what the page offered. */
+export interface TypeChoices {
+  /** Every value the type controls posted, a scope literal or empty. */
+  values: readonly string[];
+  /** The ids of the item types the page offered, in the order it listed them. */
+  offered: readonly string[];
+}
+
+const isAllDataScope = (literal: string): boolean => {
+  const scope = parseScope(literal);
+  return scope?.kind === "type" && scope.typePattern === "*";
+};
 
 /**
  * Read a submission back against the request it answers and the consent the
@@ -486,11 +720,21 @@ export type Selection =
  * read, so "Read and edit" is the same grant a person had before a level was
  * one control.
  *
+ * Where the request names all data, the person may choose types instead: the
+ * all-data control then posts {@link CHOOSE_TYPES} and the type controls
+ * post the scopes chosen. Each is a type the page offered, at a level the
+ * all-data scope the request named covers, so the choice is still the
+ * request narrowed. Chosen types are granted in place of the all-data scope,
+ * never beside it. The type controls are read only when types were chosen:
+ * a page without a script posts them all the same, and one that names a type
+ * deleted since the page was drawn means nothing while all data is kept.
+ *
  * What the app holds rides along from the consent passed in, never from the
  * submission: the scopes the request names that this consent covers are
- * added, so a held scope stays in the token only while it is still held. A
- * screen left open while the person ended the app's access therefore gives
- * back nothing it showed as allowed.
+ * added, and so are the scopes it holds under an all-data scope the request
+ * names, so a held scope stays in the token only while it is still held and
+ * choosing types never drops one. A screen left open while the person ended
+ * the app's access therefore gives back nothing it showed as allowed.
  *
  * `chosen` is whether the person chose anything new. A mechanism, or a
  * scope the app already holds, is never a choice. Where the request names
@@ -503,11 +747,35 @@ export function resolveSelection(
   requested: readonly string[],
   submitted: readonly string[],
   held: readonly string[],
+  types?: TypeChoices,
 ): Selection {
   const named = new Set(requested);
-  const picked = [...new Set(submitted.filter((v) => v !== ""))];
+  const choosing = submitted.includes(CHOOSE_TYPES);
+  const picked = [
+    ...new Set(submitted.filter((v) => v !== "" && v !== CHOOSE_TYPES)),
+  ];
   if (picked.some((v) => !named.has(v))) return { ok: false };
+
+  const allData = requested.filter(isAllDataScope);
+  const offered = types?.offered ?? [];
+  const typeValues = [
+    ...new Set((types?.values ?? []).filter((v) => v !== "")),
+  ];
+  const underAsk = (literal: string): boolean => {
+    const scope = parseScope(literal);
+    return (
+      scope?.kind === "type" &&
+      (scope.operation === "read" || scope.operation === "write") &&
+      isExactTypeScope(scope) &&
+      offered.includes(scope.typePattern) &&
+      allData.some((wide) => grantCoversScope([wide], literal))
+    );
+  };
+  if (choosing && typeValues.some((v) => !underAsk(v))) return { ok: false };
+  if (choosing && allData.length === 0) return { ok: false };
+
   const scopes = new Set(picked);
+  if (choosing) for (const literal of typeValues) scopes.add(literal);
   for (const literal of requested)
     if (!isMechanism(literal) && grantCoversScope(held, literal))
       scopes.add(literal);
@@ -515,16 +783,52 @@ export function resolveSelection(
     const scope = parseScope(literal);
     if (scope?.operation !== "write" || !isLevelKind(scope)) continue;
     const read = `${scope.typePattern}:read`;
-    if (named.has(read) && grantCoversScope([literal], read)) scopes.add(read);
+    if (
+      (named.has(read) && grantCoversScope([literal], read)) ||
+      (typeValues.includes(literal) &&
+        allData.some(
+          (wide) => wide.endsWith(":read") && grantCoversScope([wide], read),
+        ))
+    )
+      scopes.add(read);
   }
+
+  // What the app holds under all data, kept unless something chosen already
+  // covers it.
+  const kept = held.filter((literal) => {
+    const scope = parseScope(literal);
+    return (
+      scope !== null &&
+      !scopes.has(literal) &&
+      isExactTypeScope(scope) &&
+      offered.includes(scope.typePattern) &&
+      allData.some((wide) => grantCoversScope([wide], literal))
+    );
+  });
+  for (const literal of kept)
+    if (![...scopes].some((other) => grantCoversScope([other], literal)))
+      scopes.add(literal);
+
   const offersChoice = requested.some((v) => !isCarried(v, held));
+  const chosenValues = choosing ? [...picked, ...typeValues] : picked;
   const chosen = offersChoice
-    ? picked.some((v) => !isCarried(v, held))
+    ? chosenValues.some((v) => !isCarried(v, held))
     : scopes.size > 0;
-  // In the request's order, whatever order the form arrived in.
+  // In the request's order, whatever order the form arrived in, then the
+  // types in the order the page lists them.
+  const asked = new Set(requested);
+  const order = (literal: string): number =>
+    offered.indexOf(parseScope(literal)?.typePattern ?? "");
+  const extra = [...scopes]
+    .filter((literal) => !asked.has(literal))
+    .sort(
+      (a, b) =>
+        order(a) - order(b) ||
+        (a.endsWith(":read") ? 0 : 1) - (b.endsWith(":read") ? 0 : 1),
+    );
   return {
     ok: true,
-    scopes: [...new Set(requested)].filter((v) => scopes.has(v)),
+    scopes: [...[...asked].filter((v) => scopes.has(v)), ...extra],
     chosen,
   };
 }

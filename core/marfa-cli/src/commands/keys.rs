@@ -2,9 +2,10 @@ use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
 use super::{insert_opt, object, pairs};
+use crate::access;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 use crate::values::Tier;
@@ -465,8 +466,71 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
     match &command {
         KeysCommand::Create(_) => print_minted(&answer, out),
         KeysCommand::Revoke { id } => out.report(&answer, || format!("revoked key {id}")),
-        _ => out.value(&answer),
+        KeysCommand::List => out.report(&answer, || listing(&answer)),
+        _ => out.report(&answer, || key_text(&answer)),
     }
+}
+
+/// One line naming a key, then what it claims and when it was made and used,
+/// then what it holds in the words the pages use.
+fn key_text(key: &Value) -> String {
+    let field = |name: &str| key.get(name).and_then(Value::as_str);
+    let text = |name: &str| printable(field(name).unwrap_or(""));
+    let mut line = format!("{}  {}", text("id"), text("label"));
+    if let Some(tier) = field("default_tier") {
+        line.push_str(&format!("  tier {}", printable(tier)));
+    }
+    match field("expires_at") {
+        Some(at) => line.push_str(&format!("  expires {}", printable(at))),
+        None => line.push_str("  no expiry"),
+    }
+    let mut lines = Vec::new();
+    if let Some(source) = field("source") {
+        lines.push(format!("source {}", printable(source)));
+    }
+    if let Some(sources) = key.get("sources").and_then(Value::as_array) {
+        let claimed: Vec<String> = sources
+            .iter()
+            .filter_map(Value::as_str)
+            .map(printable)
+            .collect();
+        lines.push(if claimed.is_empty() {
+            "claims nothing besides its own source".to_string()
+        } else {
+            format!("claims {}", claimed.join(", "))
+        });
+    }
+    if let Some(app) = field("oauth_client_id") {
+        lines.push(format!("made by the app {}", printable(app)));
+    }
+    if let Some(created) = field("created_at") {
+        let used = match field("last_used_at") {
+            Some(at) => format!("last used {}", printable(at)),
+            None => "never used".to_string(),
+        };
+        lines.push(format!("created {}  {used}", printable(created)));
+    }
+    if let Some(over) = key.get("enforcement_override").filter(|v| !v.is_null()) {
+        lines.push(format!(
+            "enforcement override {}",
+            printable(&over.to_string())
+        ));
+    }
+    lines.extend(access::lines_for_key(key));
+    access::indented(&line, &lines)
+}
+
+/// Each key as `key_text` writes it, one after another.
+fn listing(answer: &Value) -> String {
+    let keys = answer
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if keys.is_empty() {
+        return "(none)".to_string();
+    }
+    keys.iter().map(key_text).collect::<Vec<_>>().join("\n")
 }
 
 /// Checked against the server first, so a wrong key fails here, not later.
@@ -522,10 +586,113 @@ fn read_line(empty: &str) -> Result<String, CliError> {
 
 /// A minted key is shown once, so the plaintext leads the line.
 fn print_minted(answer: &Value, out: &Printer) -> Result<(), CliError> {
-    out.report(answer, || {
-        let key = answer.get("key").and_then(Value::as_str).unwrap_or("");
-        let id = answer.get("id").and_then(Value::as_str).unwrap_or("");
-        let label = answer.get("label").and_then(Value::as_str).unwrap_or("");
-        format!("{key}\nkey {id} ({label}); the plaintext is shown once, keep it now")
-    })
+    out.report(answer, || minted_text(answer))
+}
+
+fn minted_text(answer: &Value) -> String {
+    let key = answer.get("key").and_then(Value::as_str).unwrap_or("");
+    let id = answer.get("id").and_then(Value::as_str).unwrap_or("");
+    let label = answer.get("label").and_then(Value::as_str).unwrap_or("");
+    let first = format!("{key}\nkey {id} ({label}); the plaintext is shown once, keep it now");
+    access::indented(&first, &access::lines_for_key(answer))
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    fn key() -> Value {
+        json!({
+            "id": "key_1",
+            "label": "Reader",
+            "default_tier": "library",
+            "source": "reader-source",
+            "sources": ["shared-a", "shared-b"],
+            "created_at": "2026-10-01T09:00:00.000Z",
+            "last_used_at": "2026-10-19T12:30:00.000Z",
+            "expires_at": null,
+            "permissions": ["audit.read"],
+            "type_permissions": { "core.note": "write", "core.task": "read" },
+            "extension_permissions": {},
+            "edge_permissions": {},
+            "metadata_permissions": {},
+            "profile_permissions": {},
+        })
+    }
+
+    #[test]
+    fn a_key_is_named_and_then_says_what_it_holds() {
+        assert_eq!(
+            key_text(&key()),
+            "key_1  Reader  tier library  no expiry\n  source reader-source\n  claims shared-a, shared-b\n  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  core.note  Read and edit\n  core.task  Read only\n  Powers: Read the activity log"
+        );
+    }
+
+    #[test]
+    fn a_key_says_what_it_claims_when_it_claims_nothing_and_when_it_was_never_used() {
+        let mut key = key();
+        key["sources"] = json!([]);
+        key["last_used_at"] = json!(null);
+        let text = key_text(&key);
+        assert!(
+            text.contains("\n  claims nothing besides its own source\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\n  created 2026-10-01T09:00:00.000Z  never used\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_key_an_app_made_and_an_enforcement_override_are_named() {
+        let mut key = key();
+        key["oauth_client_id"] = json!("client_9");
+        key["enforcement_override"] = json!({ "unknown_properties": "strip" });
+        let text = key_text(&key);
+        assert!(text.contains("\n  made by the app client_9\n"), "{text}");
+        assert!(
+            text.contains("\n  enforcement override {\"unknown_properties\":\"strip\"}\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_key_text_escapes_a_claimed_source_that_would_forge_a_line() {
+        let mut key = key();
+        key["sources"] = json!(["a\n  core.note  Read and edit"]);
+        let text = key_text(&key);
+        let forged = text
+            .lines()
+            .filter(|line| line.starts_with("  core.note  Read and edit"))
+            .count();
+        assert_eq!(forged, 1, "{text}");
+    }
+
+    #[test]
+    fn a_listing_gives_each_key_its_own_access() {
+        let mut second = key();
+        second["id"] = json!("key_2");
+        second["expires_at"] = json!("2030-01-01T00:00:00Z");
+        second["permissions"] = json!([]);
+        second["type_permissions"] = json!({});
+        let text = listing(&json!({ "data": [key(), second], "next_cursor": null }));
+        assert!(text.contains("key_1  Reader  tier library  no expiry\n  source reader-source"));
+        assert!(text.ends_with(
+            "  created 2026-10-01T09:00:00.000Z  last used 2026-10-19T12:30:00.000Z\n  No access"
+        ));
+        assert_eq!(
+            listing(&json!({ "data": [], "next_cursor": null })),
+            "(none)"
+        );
+    }
+
+    #[test]
+    fn a_minted_key_keeps_its_plaintext_line_first() {
+        let mut minted = key();
+        minted["key"] = json!("marfa_k1_secret");
+        let printed = minted_text(&minted);
+        assert!(printed.starts_with("marfa_k1_secret\nkey key_1 (Reader);"));
+        assert!(printed.ends_with("\n  Powers: Read the activity log"));
+    }
 }

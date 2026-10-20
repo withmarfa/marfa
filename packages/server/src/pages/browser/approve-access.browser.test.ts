@@ -629,6 +629,249 @@ describe("Approve access in a browser, its lines", () => {
   );
 });
 
+describe("Approve access in a browser, choosing types in place of all data", () => {
+  inWorld();
+
+  const ALL = "*:read *:write";
+  const typeRows = (page: Page) => page.locator("[data-type-row]");
+  const visibleTypeRows = (page: Page) =>
+    page.locator("[data-type-row]:not([hidden])");
+
+  inBrowser(
+    "shows the types only while they are chosen, with the line saying what they give",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Types App", ALL);
+        await openChoices(b.page);
+        const line = b.page
+          .locator("details.disclosure-row", {
+            has: b.page.locator("summary .rt", { hasText: "Your data" }),
+          })
+          .locator("summary [data-summary]");
+        expect(await line.textContent()).toBe("Read and edit all your data");
+        await b.page
+          .locator("[data-choose-types]")
+          .waitFor({ state: "hidden" });
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page
+          .locator("[data-choose-types]")
+          .waitFor({ state: "visible" });
+        // Every type starts at the level asked, so the line counts them.
+        expect(await line.textContent()).toMatch(
+          /^Read and edit (\d+) of your \1 types$/,
+        );
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        expect(await line.textContent()).toBe("No access to your data");
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read only" });
+        expect(await line.textContent()).toBe("Read notes");
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Read only" });
+        await b.page
+          .locator("[data-choose-types]")
+          .waitFor({ state: "hidden" });
+        expect(await line.textContent()).toBe("Read all your data");
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "counts only the types in the line, with links asked or not, as types are lowered",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const line = (page: Page) =>
+          page
+            .locator("details.disclosure-row", {
+              has: page.locator("summary .rt", { hasText: "Your data" }),
+            })
+            .locator("summary [data-summary]");
+        // With links asked: the count is of types, and links are named beside it.
+        await openConsent(b, "Links Count App", `${ALL} edge.*:write`);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        const total = await typeRows(b.page).count();
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total)} of your ${String(total)} types and links between items`,
+        );
+        // Two types lowered: the count follows, the links stay.
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        for (const name of ["Note", "Task"])
+          await b.page
+            .getByRole("combobox", { name })
+            .selectOption({ label: "Read only" });
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total - 2)} of your ${String(total)} types and links between items; read notes and tasks`,
+        );
+        // Without links asked, the same list counts the same types.
+        await openConsent(b, "No Links Count App", ALL);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total)} of your ${String(total)} types`,
+        );
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "narrows a long list by search, shows the rest on request, and sets every type at once",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await openConsent(b, "Long List App", ALL);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        const total = await typeRows(b.page).count();
+        expect(total).toBeGreaterThan(8);
+        expect(await visibleTypeRows(b.page).count()).toBe(5);
+        await b.page
+          .getByRole("button", { name: `Show all ${String(total)} types` })
+          .click();
+        expect(await visibleTypeRows(b.page).count()).toBe(total);
+        await b.page
+          .getByRole("button", { name: /^Show all/ })
+          .waitFor({ state: "hidden" });
+
+        const search = b.page.getByRole("searchbox", { name: "Search types" });
+        await search.fill("note");
+        const names = await visibleTypeRows(b.page)
+          .locator(".rt")
+          .allTextContents();
+        expect(names.length).toBeGreaterThan(0);
+        expect(names.every((n) => /note/i.test(n))).toBe(true);
+        // Enter in the search field is not the form's first button, which cancels.
+        await search.press("Enter");
+        expect(b.page.url()).toContain("/auth/authorize");
+        expect(b.callbacks.length).toBe(0);
+        await search.fill("zzzz");
+        expect(await visibleTypeRows(b.page).count()).toBe(0);
+        await b.page
+          .getByText("No type matches.")
+          .waitFor({ state: "visible" });
+        await search.fill("");
+        expect(await visibleTypeRows(b.page).count()).toBe(total);
+
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "Read only" });
+        const selects = b.page.locator("[data-type-row] select");
+        const values: string[] = [];
+        for (let i = 0; i < (await selects.count()); i++)
+          values.push(await selects.nth(i).inputValue());
+        expect(values.length).toBe(total);
+        expect(values.every((value) => value.endsWith(":read"))).toBe(true);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "approves the types chosen and no more, and the app gets exactly those",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const { app, proof } = await openConsent(b, "Approving Types App", ALL);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page
+          .getByRole("combobox", { name: "Set every type" })
+          .selectOption({ label: "No access" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Task" })
+          .selectOption({ label: "Read and edit" });
+        const callback = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(await scopesOf(app, callback, proof)).toEqual([
+          "core.task:read",
+          "core.task:write",
+        ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser("denies when types are chosen and none is turned on", async () => {
+    const b = await openSignedIn();
+    try {
+      await openConsent(b, "Nothing App", ALL);
+      await openChoices(b.page);
+      await b.page
+        .getByRole("combobox", { name: "All your data" })
+        .selectOption({ label: "Choose types" });
+      await b.page
+        .getByRole("combobox", { name: "Set every type" })
+        .selectOption({ label: "No access" });
+      await b.page
+        .getByText("If everything is off, approving denies the request.")
+        .waitFor({ state: "visible" });
+      const callback = await arrival(b, () =>
+        b.page.getByRole("button", { name: "Approve" }).click(),
+      );
+      expect(new URL(callback).searchParams.get("error")).toBe("access_denied");
+    } finally {
+      await b.context.close();
+    }
+  });
+
+  inBrowser(
+    "works with scripting off: every type shows, and approving posts all data and ignores them",
+    async () => {
+      const b = await openSignedIn({ js: false });
+      try {
+        const { app, proof } = await openConsent(b, "No Script Types App", ALL);
+        await b.page
+          .locator("details.disclosure-row")
+          .first()
+          .evaluate((el: BrowserElement) => {
+            el.open = true;
+          });
+        expect(await typeRows(b.page).count()).toBeGreaterThan(8);
+        await b.page
+          .getByText("These count only if you choose types above.")
+          .waitFor();
+        // The controls that need the script are there and are not shown.
+        const setEvery = b.page.locator('select[aria-label="Set every type"]');
+        expect(await setEvery.count()).toBe(1);
+        expect(await setEvery.isVisible()).toBe(false);
+        const callback = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(await scopesOf(app, callback, proof)).toEqual([
+          "*:read",
+          "*:write",
+        ]);
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+});
+
 interface DeviceAsk {
   app: Registered;
   userCode: string;

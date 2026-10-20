@@ -1,6 +1,7 @@
 use clap::Args;
 use serde_json::json;
 
+use crate::access;
 use crate::auth::{self, DeviceCode, Discovery};
 use crate::cleartext;
 use crate::credentials::{self, Kept};
@@ -95,10 +96,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         .verification_uri_complete
         .clone()
         .unwrap_or_else(|| code.verification_uri.clone());
-    let sentence = format!(
-        "Open {page} and enter the code {}\nWaiting for the approval...",
-        code.user_code
-    );
+    let sentence = approval_sentence(&page, &code.user_code);
     if args.print_token && !out.json {
         // The token set is the one document on stdout.
         eprintln!("{sentence}");
@@ -126,7 +124,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
     match auth::with_credential_lock(&origin, || credentials::keep(&origin, &kept)) {
         Ok(()) => out.record(
             &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
-            || format!("signed in to {origin}; the token is in the keychain"),
+            || signed_in_text(&origin, token.scope.as_deref()),
         ),
         // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
@@ -137,6 +135,35 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         }
         Err(error) => Err(error),
     }
+}
+
+/// The line that ends a sign-in, and under it what the app was given, in the
+/// words the pages use.
+fn signed_in_text(origin: &str, scope: Option<&str>) -> String {
+    let line = format!("signed in to {origin}; the token is in the keychain");
+    match scope {
+        Some(scope) => access::indented(&line, &access::lines_for_scope(scope)),
+        None => line,
+    }
+}
+
+/// What the person is told to do. The code is written as the pages write it,
+/// in two groups of four, so what they read here is what they see there. The
+/// address keeps the code as the server issued it, which the page accepts in
+/// either form.
+fn approval_sentence(page: &str, user_code: &str) -> String {
+    let code: String = user_code
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_uppercase())
+        .take(8)
+        .collect();
+    let shown = if code.len() > 4 {
+        format!("{}-{}", &code[..4], &code[4..])
+    } else {
+        code
+    };
+    format!("Open {page} and enter the code {shown}\nWaiting for the approval...")
 }
 
 fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(), CliError> {
@@ -253,6 +280,33 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&sent[1].body).unwrap();
         assert_eq!(body["client_name"], "Marfa app on the studio laptop");
         assert!(sent[2].body.contains("client_id=fresh"), "{}", sent[2].body);
+    }
+
+    #[test]
+    fn the_code_is_told_in_two_groups_of_four_and_the_address_keeps_the_issued_code() {
+        let page = "https://marfa.example/auth/device?user_code=SG35FYDE";
+        assert_eq!(
+            approval_sentence(page, "SG35FYDE"),
+            "Open https://marfa.example/auth/device?user_code=SG35FYDE and enter the code SG35-FYDE\nWaiting for the approval..."
+        );
+        // Typed in lower case or already grouped, it reads the same.
+        assert!(approval_sentence(page, "sg35fyde").contains("the code SG35-FYDE\n"));
+        assert!(approval_sentence(page, "SG35-FYDE").contains("the code SG35-FYDE\n"));
+    }
+
+    #[test]
+    fn a_sign_in_ends_by_saying_what_the_app_was_given() {
+        assert_eq!(
+            signed_in_text(
+                "https://marfa.example",
+                Some("openid offline_access core.note:write keys.mint")
+            ),
+            "signed in to https://marfa.example; the token is in the keychain\n  core.note  Read and edit\n  Powers: Make, see, edit and revoke keys"
+        );
+        assert_eq!(
+            signed_in_text("https://marfa.example", None),
+            "signed in to https://marfa.example; the token is in the keychain"
+        );
     }
 
     #[test]

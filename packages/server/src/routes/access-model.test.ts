@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildAccess, resolveSelection } from "./access-model.js";
+import { buildAccess, CHOOSE_TYPES, resolveSelection } from "./access-model.js";
 import { grantCoversScope, parseScope } from "@withmarfa/shared";
 import type { ParsedScope } from "@withmarfa/shared";
 
@@ -272,6 +272,202 @@ describe("resolveSelection", () => {
         ).toMatchObject({ ok: true, chosen: controls === 0 });
       }
     });
+  });
+});
+
+describe("resolveSelection choosing types instead of all data", () => {
+  const ASKED = ["openid", "*:read", "*:write", "keys.mint"];
+  const OFFERED = ["core.note", "core.task", "core.event", "app.inkwell.draft"];
+  const types = (...values: string[]) => ({ values, offered: OFFERED });
+
+  it("grants the types chosen and not all data", () => {
+    const result = resolveSelection(
+      ASKED,
+      [CHOOSE_TYPES],
+      [],
+      types("core.note:write", "core.task:read"),
+    );
+    expect(result).toMatchObject({ ok: true, chosen: true });
+    expect(result.ok && result.scopes.sort()).toEqual([
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ]);
+    expect(result.ok && result.scopes).not.toContain("*:read");
+    expect(result.ok && result.scopes).not.toContain("*:write");
+  });
+
+  it("leaves a type the person chose a runtime registration", () => {
+    const result = resolveSelection(
+      ASKED,
+      [CHOOSE_TYPES],
+      [],
+      types("app.inkwell.draft:read"),
+    );
+    expect(result.ok && result.scopes).toEqual(["app.inkwell.draft:read"]);
+  });
+
+  it("grants all data and ignores the type controls when types were not chosen", () => {
+    const result = resolveSelection(
+      ASKED,
+      ["*:read"],
+      [],
+      types("core.note:read", "core.task:read"),
+    );
+    expect(result).toEqual({ ok: true, scopes: ["*:read"], chosen: true });
+  });
+
+  it("grants nothing when types were chosen and none was turned on", () => {
+    expect(resolveSelection(ASKED, [CHOOSE_TYPES], [], types())).toEqual({
+      ok: true,
+      scopes: [],
+      chosen: false,
+    });
+    // The witness: with one turned on, the same post grants it.
+    expect(
+      resolveSelection(ASKED, [CHOOSE_TYPES], [], types("core.task:read")),
+    ).toMatchObject({ ok: true, chosen: true });
+  });
+
+  it("refuses a level above the one the request names for all data", () => {
+    expect(
+      resolveSelection(
+        ["*:read"],
+        [CHOOSE_TYPES],
+        [],
+        types("core.note:write"),
+      ),
+    ).toEqual({ ok: false });
+    // The witness: asked to write, the same choice is granted.
+    expect(
+      resolveSelection(
+        ["*:write"],
+        [CHOOSE_TYPES],
+        [],
+        types("core.note:write"),
+      ),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("refuses a type the page did not offer, and grants nothing from the rest", () => {
+    for (const bad of [
+      "system.connection:read",
+      "core.unheard:read",
+      "core.*:read",
+      "keys.mint",
+      "core.note",
+    ])
+      expect(
+        resolveSelection(
+          ASKED,
+          [CHOOSE_TYPES],
+          [],
+          types("core.task:read", bad),
+        ),
+        bad,
+      ).toEqual({ ok: false });
+  });
+
+  it("refuses a type chosen when the request names no all-data scope", () => {
+    expect(
+      resolveSelection(
+        ["core.note:read"],
+        [CHOOSE_TYPES],
+        [],
+        types("core.task:read"),
+      ),
+    ).toEqual({ ok: false });
+    expect(
+      resolveSelection(["core.note:read"], [CHOOSE_TYPES], [], types()),
+    ).toEqual({ ok: false });
+  });
+
+  it("ignores a type control that is out of bounds when types were not chosen", () => {
+    // A page without a script posts every control, and a type deleted since the
+    // page was drawn is one of them: with all data kept it means nothing.
+    for (const stale of ["core.note:write", "core.unheard:read", "keys.mint"])
+      expect(
+        resolveSelection(["*:read"], ["*:read"], [], types(stale)),
+        stale,
+      ).toEqual({ ok: true, scopes: ["*:read"], chosen: true });
+  });
+
+  it("keeps the types an app already holds, whether it asks for all data or chooses types", () => {
+    const held = ["core.note:read"];
+    const chose = resolveSelection(
+      ["*:read"],
+      [CHOOSE_TYPES],
+      held,
+      types("core.task:read"),
+    );
+    expect(chose.ok && chose.scopes.sort()).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+    const nothingNew = resolveSelection(
+      ["*:read"],
+      [CHOOSE_TYPES],
+      held,
+      types(),
+    );
+    // Held access is carried and is not a choice: nothing new denies.
+    expect(nothingNew).toEqual({
+      ok: true,
+      scopes: ["core.note:read"],
+      chosen: false,
+    });
+  });
+
+  it("does not carry a held type beside all data, which already covers it", () => {
+    expect(
+      resolveSelection(["*:read"], ["*:read"], ["core.note:read"], types()),
+    ).toEqual({ ok: true, scopes: ["*:read"], chosen: true });
+  });
+
+  it("does not carry a held read beside a write chosen for the same type", () => {
+    const result = resolveSelection(
+      ["*:write"],
+      [CHOOSE_TYPES],
+      ["core.note:read"],
+      types("core.note:write"),
+    );
+    expect(result.ok && result.scopes).toEqual(["core.note:write"]);
+  });
+
+  it("does not count a held type as a choice made on this screen", () => {
+    expect(
+      resolveSelection(
+        ["*:read"],
+        [CHOOSE_TYPES],
+        ["core.note:read"],
+        types("core.note:read"),
+      ),
+    ).toMatchObject({ ok: true, chosen: false });
+  });
+
+  it("keeps the request's own order, then the chosen types in the order the page lists them", () => {
+    const result = resolveSelection(
+      ["openid", "*:read", "keys.mint"],
+      ["keys.mint", CHOOSE_TYPES, "openid"],
+      [],
+      types("core.task:read", "core.note:read"),
+    );
+    expect(result.ok && result.scopes).toEqual([
+      "openid",
+      "keys.mint",
+      "core.note:read",
+      "core.task:read",
+    ]);
+  });
+
+  it("names no read for a chosen write when the request named no all-data read", () => {
+    const result = resolveSelection(
+      ["*:write"],
+      [CHOOSE_TYPES],
+      [],
+      types("core.note:write"),
+    );
+    expect(result.ok && result.scopes).toEqual(["core.note:write"]);
   });
 });
 
@@ -563,6 +759,97 @@ describe("buildAccess", () => {
       expect(model.summaries.held).toBe(
         "Read and edit tasks; read events. Can also make, see, edit and revoke keys",
       );
+    });
+  });
+
+  describe("choosing types in place of all data", () => {
+    const chooseTypes = [
+      { id: "core.note", label: "Note" },
+      { id: "core.task", label: "Task" },
+      { id: "app.inkwell.draft", label: "Reading summary" },
+    ];
+
+    it("offers the choice beside the levels, and a control for each type at the levels asked", () => {
+      const model = buildAccess({
+        scopes: [scope("*:read"), scope("*:write")],
+        held: undefined,
+        chooseTypes,
+        bundles,
+      });
+      const all = model.data[0];
+      expect(all?.title).toBe("All your data");
+      expect(all?.options).toEqual([
+        { value: "", label: "No access" },
+        { value: "*:read", label: "Read only" },
+        { value: "*:write", label: "Read and edit" },
+        { value: CHOOSE_TYPES, label: "Choose types" },
+      ]);
+      expect(all?.selected).toBe("*:write");
+      expect(
+        all?.choose?.rows.map((r) => [r.title, r.name, r.selected]),
+      ).toEqual([
+        ["Note", "types", "core.note:write"],
+        ["Task", "types", "core.task:write"],
+        ["Reading summary", "types", "app.inkwell.draft:write"],
+      ]);
+      expect(all?.choose?.rows[0]?.options).toEqual([
+        { value: "", label: "No access" },
+        { value: "core.note:read", label: "Read only" },
+        { value: "core.note:write", label: "Read and edit" },
+      ]);
+      // The line still says what the starting choice gives.
+      expect(model.summaries.data).toBe("Read and edit all your data");
+    });
+
+    it("offers no level for a type above the one asked for all data", () => {
+      const model = buildAccess({
+        scopes: [scope("*:read")],
+        held: undefined,
+        chooseTypes,
+        bundles,
+      });
+      for (const row of model.data[0]?.choose?.rows ?? [])
+        expect(row.options.map((o) => o.label)).toEqual([
+          "No access",
+          "Read only",
+        ]);
+    });
+
+    it("offers a type no lower than the app holds, and leaves out a type held in full", () => {
+      const model = buildAccess({
+        scopes: [scope("*:read"), scope("*:write")],
+        held: ["core.note:write", "core.task:read"],
+        chooseTypes,
+        bundles,
+      });
+      const rows = model.data[0]?.choose?.rows ?? [];
+      expect(rows.map((r) => r.title)).toEqual(["Task", "Reading summary"]);
+      expect(rows[0]?.options).toEqual([
+        { value: "", label: "Read only" },
+        { value: "core.task:write", label: "Read and edit" },
+      ]);
+      expect(rows[0]?.description).toBe("Now: Read only");
+    });
+
+    it("offers nothing to choose when the request does not name all data or no type is known", () => {
+      expect(
+        buildAccess({
+          scopes: [scope("core.*:read")],
+          held: undefined,
+          chooseTypes,
+          bundles,
+        }).data.flatMap((r) => r.choose ?? []),
+      ).toEqual([]);
+      const without = buildAccess({
+        scopes: [scope("*:read")],
+        held: undefined,
+        bundles,
+      });
+      expect(without.data[0]?.choose).toBeUndefined();
+      expect(without.data[0]?.options.map((o) => o.value)).toEqual([
+        "",
+        "*:read",
+      ]);
     });
   });
 });

@@ -1,0 +1,68 @@
+{
+  "key": {
+    "permissions": ["keys.mint", "items.purge"],
+    "type_permissions": {
+      "*": "read",
+      "core.note": "none",
+      "core.task": "write"
+    },
+    "edge_permissions": { "*": "write" },
+    "metadata_permissions": { "*": "write" },
+    "profile_permissions": { "*": "read", "name": "write" },
+    "extension_permissions": { "app.cursor": "write" }
+  },
+  "rows": [
+    {
+      "pattern": "*",
+      "page": "All your data",
+      "cli": "All your data",
+      "level": "Read only"
+    },
+    {
+      "pattern": "core.note",
+      "page": "Note",
+      "cli": "core.note",
+      "level": "No access"
+    },
+    {
+      "pattern": "core.task",
+      "page": "Task",
+      "cli": "core.task",
+      "level": "Read and edit"
+    },
+    {
+      "pattern": "edge.*",
+      "page": "Links between items",
+      "cli": "Links between items",
+      "level": "Read and edit"
+    },
+    {
+      "pattern": "metadata",
+      "page": "Definitions on your server",
+      "cli": "Definitions on your server",
+      "level": "Read and edit"
+    },
+    {
+      "pattern": "profile",
+      "page": "Profile",
+      "cli": "Profile",
+      "level": "Read only"
+    },
+    {
+      "pattern": "profile.name",
+      "page": "Name",
+      "cli": "Name",
+      "level": "Read and edit"
+    },
+    {
+      "pattern": "app.cursor",
+      "page": "app.cursor",
+      "cli": "app.cursor",
+      "level": "Read and edit"
+    }
+  ],
+  "powers": [
+    "Make, see, edit and revoke keys",
+    "Delete items in the trash for good"
+  ]
+}

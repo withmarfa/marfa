@@ -600,6 +600,9 @@ button.row:hover .rt {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.more-row .rt {
+  color: var(--fg2);
+}
 .row .rd.danger {
   color: var(--danger);
 }
