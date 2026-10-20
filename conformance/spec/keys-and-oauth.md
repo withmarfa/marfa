@@ -351,7 +351,7 @@ If `PATCH /keys/{id}` names `narrow_only: true` and would give the key a permiss
 
 ### `keys-and-oauth/update-narrow-only-applies`
 
-When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing it does not hold, the server MUST update the key as it would without `narrow_only`.
+When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing it does not hold, no `expires_at` later than its own or `null` when it has one, and no `enforcement_override` other than its own, the server MUST update the key as it would without `narrow_only`.
 
 **Reason:** A denial beside a wildcard counts as held, so an update that carries each held denial forward is a narrowing, and one that drops a denial is not.
 
@@ -359,7 +359,7 @@ When `PATCH /keys/{id}` names `narrow_only: true` and would give the key nothing
 
 ### `keys-and-oauth/update-narrow-only-levers`
 
-If `PATCH /keys/{id}` names `narrow_only: true` and an `enforcement_override` other than the key's own, `null` included, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
+If `PATCH /keys/{id}` names `narrow_only: true` and an `enforcement_override` other than the key's own, including `null` for a key that has one, then the server MUST answer `403 forbidden` and leave the key as it was, whoever the caller is.
 
 **Reason:** Whether levers are looser than the key's own depends on the instance's levers, which a lever left out or `null` falls back to and which can change, so the server refuses any change to them rather than judging its direction. Levers equal to the key's own change nothing and are accepted.
 
