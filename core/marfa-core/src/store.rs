@@ -3024,8 +3024,24 @@ pub struct Answered<'a> {
 }
 
 pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    conn.execute("UPDATE queue SET sent = 1 WHERE id = ?1", [id])?;
+    conn.execute(
+        "UPDATE queue SET sent = 1, last_sent_at = ?2 WHERE id = ?1",
+        params![id, now_iso()],
+    )?;
     Ok(())
+}
+
+/// When the write was last sent, or nothing for one never sent. The times are
+/// fixed-width, so the earlier compares as the smaller.
+pub fn last_sent_at(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT last_sent_at FROM queue WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 /// Only on an answer that proves the attempt was not applied anywhere.
@@ -5289,6 +5305,40 @@ mod tests {
     }
 
     #[test]
+    fn a_write_is_stamped_when_it_is_sent_and_before_that_has_no_time() {
+        let conn = conn();
+        let write = enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UploadBlob,
+                item_id: None,
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: Some("a-blob"),
+                base_version: None,
+                payload: "{}",
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        assert_eq!(last_sent_at(&conn, &write.id).unwrap(), None);
+        assert_eq!(last_sent_at(&conn, "no-such-write").unwrap(), None);
+
+        mark_sent(&conn, &write.id).unwrap();
+        let first = last_sent_at(&conn, &write.id).unwrap().expect("stamped");
+        assert!(first.ends_with('Z') && first.len() == "2026-01-01T00:00:00.000Z".len());
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        mark_sent(&conn, &write.id).unwrap();
+        let again = last_sent_at(&conn, &write.id).unwrap().expect("stamped");
+        assert!(
+            again > first,
+            "a second send left the earlier time standing"
+        );
+    }
+
+    #[test]
     fn a_streak_of_environmental_failures_ends_with_any_other_outcome() {
         let conn = conn();
         let queue = || {
@@ -6249,7 +6299,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "0e44a7c1df8cada2",
+            "7f88fa1490644fb0",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

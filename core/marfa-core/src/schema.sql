@@ -191,6 +191,10 @@ CREATE TABLE IF NOT EXISTS queue (
   -- failure was environmental, `status` null where nothing answered and
   -- `text` null where the body was not text.
   last_failure TEXT,
+  -- When the write was last put on the wire, in the store's own clock. Null
+  -- for a write never sent: a drain tests a stuck write with the write sent
+  -- least recently, a null first.
+  last_sent_at TEXT,
   queued_at TEXT NOT NULL,
   answered_at TEXT
 );

@@ -2703,7 +2703,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Send what the queue holds and record what came back.
 
-One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain. A write that meets one in three drains in a row is tested: the drain sends the next write that does not depend on it and has not met one in three drains. If the server answers that write, the tested write is set aside as failing_alone and the drain carries on, and if not, the pass ends and nothing is set aside. After the server has answered a write in a drain, a write that meets one for the third time is set aside at once.
+One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain. A write that meets one in three drains in a row is tested: the drain sends the write that does not depend on it and was sent least recently, one never sent first. If the server answers that write, the tested write is set aside as failing_alone and the drain carries on, and if not, the pass ends and nothing is set aside. After the server has answered a write in a drain, a write that meets one for the third time is set aside at once.
 
 ```text
 marfa device drain [OPTIONS]

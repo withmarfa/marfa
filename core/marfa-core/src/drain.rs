@@ -161,11 +161,11 @@ struct Standing<'a> {
     landing: &'a HashMap<String, String>,
 }
 
-/// The next write, in queue order from `from`, that can test a suspect: ready,
-/// depending on no write ahead of it that has not been sent, and short of the
-/// threshold itself. A write at the threshold is passed over, and so is every
-/// write that waits on one, so a write that follows or depends on a write
-/// passed over is not sent ahead of it.
+/// The write that tests a suspect: of the writes from `from` on that are ready
+/// and depend on no write ahead of them that has not been sent, the one sent
+/// least recently. A write never sent counts as the least recent, and a tie
+/// goes to the earlier in the queue. Its streak does not decide, so the test
+/// moves through the queue and a stuck write cannot hold it for good.
 fn next_test(
     core: &Core,
     all: &[QueuedWrite],
@@ -174,6 +174,7 @@ fn next_test(
     standing: &Standing,
 ) -> Result<Option<usize>> {
     let mut ahead = standing.waiting.clone();
+    let mut ready: Vec<(Option<String>, usize, QueuedWrite)> = Vec::new();
     for (at, candidate) in all.iter().enumerate().skip(from) {
         if tested.contains(&candidate.id)
             || standing
@@ -186,22 +187,30 @@ fn next_test(
         }
         let current = store::queued_write(&*core.conn()?, &candidate.id)?;
         let candidate = current.as_ref().unwrap_or(candidate);
-        if candidate.environmental_streak < ENVIRONMENTAL_STREAK
-            && matches!(
-                readiness(
-                    candidate,
-                    standing.rows,
-                    standing.answers,
-                    &ahead,
-                    standing.landing,
-                ),
-                Readiness::Ready
-            )
-            && crate::body::rule::lost_body(&*core.conn()?, candidate)?.is_none()
-        {
+        if matches!(
+            readiness(
+                candidate,
+                standing.rows,
+                standing.answers,
+                &ahead,
+                standing.landing,
+            ),
+            Readiness::Ready
+        ) {
+            let sent = store::last_sent_at(&*core.conn()?, &candidate.id)?;
+            ready.push((sent, at, candidate.clone()));
+        }
+        // Chosen or not, a later write on the same subject is not sent ahead
+        // of it.
+        ahead.insert(candidate.id.clone());
+    }
+    // `None` orders before every time, and the sort is stable, so a tie
+    // stays in queue order.
+    ready.sort_by(|a, b| a.0.cmp(&b.0));
+    for (_, at, candidate) in ready {
+        if crate::body::rule::lost_body(&*core.conn()?, &candidate)?.is_none() {
             return Ok(Some(at));
         }
-        ahead.insert(candidate.id.clone());
     }
     Ok(None)
 }
