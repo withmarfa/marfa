@@ -489,3 +489,36 @@ fn a_key_in_hand_does_not_send_the_command_to_the_keychains_server() {
         );
     }
 }
+
+#[test]
+fn signing_out_and_forgetting_use_the_kept_server_though_a_key_is_exported() {
+    // Neither sends the key, so a key exported for other commands does not
+    // stop them finding the server the keychain made current.
+    let url = "http://127.0.0.1:9";
+    let keychain = keychain_holding("exported-logout", url);
+    let output = keychain
+        .marfa()
+        .env("MARFA_API_KEY", "marfa_k1_environment")
+        .args(["--json", "logout"])
+        .output()
+        .unwrap();
+    // The kept credential is a key, which a sign-out declines to touch, and
+    // saying so means it read the kept server.
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        envelope(&output)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(url)
+    );
+    assert!(keychain.holds(url));
+
+    let output = keychain
+        .marfa()
+        .env("MARFA_API_KEY", "marfa_k1_environment")
+        .args(["--json", "keys", "forget"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(!keychain.holds(url));
+}

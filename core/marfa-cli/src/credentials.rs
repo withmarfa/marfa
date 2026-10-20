@@ -168,12 +168,7 @@ pub fn is_off() -> bool {
 /// `MARFA_NO_KEYCHAIN` set to a true word; empty, unset or any other value
 /// leaves the keychain on.
 pub fn off_by_environment() -> bool {
-    std::env::var("MARFA_NO_KEYCHAIN").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
+    crate::environment::flag("MARFA_NO_KEYCHAIN")
 }
 
 /// For what needs the keychain to keep or remove something, and says what to

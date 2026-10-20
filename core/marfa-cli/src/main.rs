@@ -7,6 +7,7 @@ mod credentials;
 mod device;
 #[cfg(test)]
 mod door;
+mod environment;
 mod error;
 mod folders;
 mod interrupt;
@@ -48,9 +49,9 @@ use crate::remote::{Named, Remote};
 )]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
-    /// server a kept credential made current. With a key from --key or
-    /// MARFA_API_KEY, or with the keychain off, there is no such fallback and
-    /// the URL is required.
+    /// server a kept credential made current. A command that sends a key
+    /// from --key or MARFA_API_KEY needs the URL named, and so does any
+    /// command with the keychain off.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
@@ -438,17 +439,20 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         url: cli.url,
         key: cli.key,
     };
-    if cli.socket.is_some()
-        && matches!(
-            cli.command,
-            Command::Keys {
-                command: keys::KeysCommand::Keep | keys::KeysCommand::Forget
-            }
-        )
-    {
-        return Err(CliError::Usage(
-            "keychain commands cannot use --socket".into(),
-        ));
+    if matches!(
+        cli.command,
+        Command::Keys {
+            command: keys::KeysCommand::Keep | keys::KeysCommand::Forget
+        }
+    ) {
+        // Before a server is asked for, so a keychain that is off is the
+        // first thing said.
+        credentials::refuse_if_off()?;
+        if cli.socket.is_some() {
+            return Err(CliError::Usage(
+                "keychain commands cannot use --socket".into(),
+            ));
+        }
     }
     // Lazy: login, logout, device, folders, operations, docs and types scaffold must run
     // without a resolved credential.

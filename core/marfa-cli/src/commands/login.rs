@@ -70,7 +70,6 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
             )));
         }
         Ok(_) => {}
-        Err(CliError::NoKeychain(_)) if args.print_token => {}
         Err(CliError::NoKeychain(reason)) => {
             return Err(CliError::NoKeychain(format!(
                 "{reason}; pass --print-token to receive the token set on stdout instead"

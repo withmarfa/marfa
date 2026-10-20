@@ -27,7 +27,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::NoStoreNamed | CliError::NoStoreAt(_) => {
             "no working copy was named, or none exists where it was named"
         }
-        CliError::NoServerNamed => "no server was named",
+        CliError::NoServerNamed | CliError::NoServerForKey => "no server was named",
         CliError::NoCredential { .. } => "no credential was available for the server",
         CliError::NoKeychain(_) => "the system's credential storage is unavailable",
         CliError::SignedOut { .. } => "the sign-in has ended",

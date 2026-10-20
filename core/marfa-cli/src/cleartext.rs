@@ -24,12 +24,7 @@ pub fn allow() {
 /// `MARFA_ALLOW_HTTP` set to a true word; empty, unset or any other value
 /// leaves the warning on.
 pub fn allowed_by_environment() -> bool {
-    std::env::var("MARFA_ALLOW_HTTP").is_ok_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        )
-    })
+    crate::environment::flag("MARFA_ALLOW_HTTP")
 }
 
 /// `localhost`, `127.0.0.0/8` and `::1`, which never leave the machine.

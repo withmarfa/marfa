@@ -88,3 +88,28 @@ fn a_command_that_needs_a_server_asks_for_one_rather_than_reading_the_keychain()
         "{envelope}"
     );
 }
+
+#[test]
+fn keeping_or_forgetting_a_key_says_the_keychain_is_off_before_asking_for_a_server() {
+    let keychain = Isolated::new("off-first");
+    for command in [&["keys", "keep"][..], &["keys", "forget"]] {
+        for flag in [Some("--no-keychain"), None] {
+            let mut args = vec!["--json"];
+            args.extend(flag);
+            args.extend(command);
+            let env: Vec<_> = flag
+                .is_none()
+                .then_some(("MARFA_NO_KEYCHAIN", "1"))
+                .into_iter()
+                .collect();
+            let (code, envelope) = run(&keychain, &args, &env);
+            assert_eq!(code, 2, "{command:?}: {envelope}");
+            assert_eq!(
+                envelope["error"]["code"], "usage",
+                "{command:?}: {envelope}"
+            );
+            let message = envelope["error"]["message"].as_str().unwrap();
+            assert!(message.contains("the keychain is off"), "{message}");
+        }
+    }
+}
