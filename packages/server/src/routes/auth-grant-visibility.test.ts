@@ -2,11 +2,11 @@
  * A grant lookup only finds a grant a person can see.
  *
  * A `system.connection { kind: "app" }` row carries two lifecycle axes, and
- * both read surfaces that offer a Disconnect button require both: `GET
- * /auth/grants` and the Manage Marfa page built on it list with
+ * every read surface that offers a Disconnect button requires both: `GET
+ * /auth/grants`, `GET /owner/sign-ins` and the Connected apps page list with
  * `state: "active"` and then skip anything whose `properties.status` is not
  * `"active"`. A row failing
- * either axis is listed by neither and cannot be revoked through any
+ * either axis is listed by none of them and cannot be revoked through any
  * interface the product has.
  *
  * `softDeleteState` resolves `revoked` rather than `trashed` for a

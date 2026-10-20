@@ -78,7 +78,7 @@ import type { AuditLogEntry } from "../storage/interface.js";
  * so it runs under `withConsentLock` for the (client, user) pair and the
  * write itself carries the value it expects to find. Both exist for one
  * reason: an act that genuinely does withdraw permission — a narrowing on
- * the consent screen, a revoke from the Manage Marfa page — must never be
+ * the consent screen, a Disconnect on the Connected apps page — must never be
  * undone by a restoration computed before the user performed it. See
  * `auth/consent-lock.ts` for what each of the two fences covers.
  */

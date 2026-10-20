@@ -47,7 +47,7 @@ export const appHref = (id: string): string =>
 
 const APPS_TRAIL = { label: "Connected apps", href: APPS_HREF } as const;
 
-/** What the Kind select offers, the one place the words for the kinds are written. */
+/** What the Kind select offers. */
 export type KindFilter = AppKind | "all";
 
 export const KIND_OPTIONS: readonly { value: KindFilter; label: string }[] = [

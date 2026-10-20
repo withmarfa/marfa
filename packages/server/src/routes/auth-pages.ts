@@ -144,8 +144,8 @@ async function createUserAppGrant(
       // re-consent still reactivates the row, and it comes back at exactly
       // what this approval asked for.
       //
-      // **Both axes, because both read surfaces filter on both.**
-      // `GET /auth/grants` and the Manage Marfa page built on it list with
+      // **Both axes, because every read surface filters on both.**
+      // `GET /auth/grants`, `GET /owner/sign-ins` and the Connected apps page list with
       // `state: "active"` and then skip a row whose `properties.status` is
       // not "active", so a row failing either axis is beyond the Disconnect
       // button while the token step below still mints against it.
