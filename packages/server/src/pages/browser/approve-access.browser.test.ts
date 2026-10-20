@@ -686,6 +686,51 @@ describe("Approve access in a browser, choosing types in place of all data", () 
   );
 
   inBrowser(
+    "counts only the types in the line, with links asked or not, as types are lowered",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        const line = (page: Page) =>
+          page
+            .locator("details.disclosure-row", {
+              has: page.locator("summary .rt", { hasText: "Your data" }),
+            })
+            .locator("summary [data-summary]");
+        // With links asked: the count is of types, and links are named beside it.
+        await openConsent(b, "Links Count App", `${ALL} edge.*:write`);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        const total = await typeRows(b.page).count();
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total)} of your ${String(total)} types and links between items`,
+        );
+        // Two types lowered: the count follows, the links stay.
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        for (const name of ["Note", "Task"])
+          await b.page
+            .getByRole("combobox", { name })
+            .selectOption({ label: "Read only" });
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total - 2)} of your ${String(total)} types and links between items; read notes and tasks`,
+        );
+        // Without links asked, the same list counts the same types.
+        await openConsent(b, "No Links Count App", ALL);
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        expect(await line(b.page).textContent()).toBe(
+          `Read and edit ${String(total)} of your ${String(total)} types`,
+        );
+      } finally {
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "narrows a long list by search, shows the rest on request, and sets every type at once",
     async () => {
       const b = await openSignedIn();

@@ -54,6 +54,7 @@ function picksIn(group: HTMLElement): LevelPick[] {
       noun: select.dataset.noun ?? "",
       held,
       level: levelOfValue(select.value, held),
+      type: select.closest("[data-choose-types]") !== null,
     };
   });
 }

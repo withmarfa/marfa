@@ -55,14 +55,23 @@ const NAMED = 4;
 const NAMED_OF_MANY = 3;
 
 /**
- * `total` is how many types a person is choosing among, where they are
- * choosing types: all but a few of them is "21 of your 21 types", which
- * says more than a list of names.
+ * The words for the things one level gives. `total` is how many types a
+ * person is choosing among, where they are choosing types: all but a few of
+ * them is "21 of your 21 types", which says more than a list of names. Only
+ * the type controls are counted against it; a control that is not a type,
+ * such as links between items, is named beside the count.
  */
-function namesOf(nouns: readonly string[], total?: number): string {
+function namesOf(picks: readonly LevelPick[], total?: number): string {
+  const nouns = picks.map((pick) => pick.noun);
   if (nouns.length <= NAMED) return listWords(nouns);
-  if (total !== undefined && nouns.length >= total - NAMED)
-    return `${String(nouns.length)} of your ${String(total)} types`;
+  if (total !== undefined) {
+    const types = picks.filter((pick) => pick.type).length;
+    if (types > NAMED && types >= total - NAMED)
+      return listWords([
+        `${String(types)} of your ${String(total)} types`,
+        ...picks.filter((pick) => !pick.type).map((pick) => pick.noun),
+      ]);
+  }
   return `${String(nouns.length)} kinds of data, including ${listWords(nouns.slice(0, NAMED_OF_MANY))}`;
 }
 
@@ -73,6 +82,8 @@ export interface LevelPick {
   level: Level;
   /** The level the app already holds. */
   held: Level;
+  /** The control is one of the types chosen in place of all data. */
+  type?: boolean;
 }
 
 /**
@@ -85,20 +96,8 @@ function levelWords(picks: readonly LevelPick[], total?: number): string[] {
   const edit = gives.filter((pick) => pick.level === "write");
   const read = gives.filter((pick) => pick.level === "read");
   const words: string[] = [];
-  if (edit.length > 0)
-    words.push(
-      `read and edit ${namesOf(
-        edit.map((pick) => pick.noun),
-        total,
-      )}`,
-    );
-  if (read.length > 0)
-    words.push(
-      `read ${namesOf(
-        read.map((pick) => pick.noun),
-        total,
-      )}`,
-    );
+  if (edit.length > 0) words.push(`read and edit ${namesOf(edit, total)}`);
+  if (read.length > 0) words.push(`read ${namesOf(read, total)}`);
   return words;
 }
 

@@ -128,3 +128,51 @@ describe("heldSummary", () => {
     );
   });
 });
+
+describe("dataSummary while types are chosen", () => {
+  const type = (noun: string, level: Level): LevelPick => ({
+    noun,
+    level,
+    held: "none",
+    type: true,
+  });
+  const types = (count: number, level: Level = "write") =>
+    Array.from({ length: count }, (_, i) => type(`kind${String(i)}s`, level));
+  const links: LevelPick = {
+    noun: "links between items",
+    level: "write",
+    held: "none",
+  };
+  const EMPTY = "No access to your data";
+
+  it("counts the types alone, and names a row that is not a type beside the count", () => {
+    expect(dataSummary(types(21), EMPTY, 21)).toBe(
+      "Read and edit 21 of your 21 types",
+    );
+    expect(dataSummary([...types(21), links], EMPTY, 21)).toBe(
+      "Read and edit 21 of your 21 types and links between items",
+    );
+  });
+
+  it("keeps the count right as types are lowered", () => {
+    const lowered = [
+      ...types(17),
+      type("alphas", "read"),
+      type("betas", "read"),
+      type("gammas", "none"),
+      type("deltas", "none"),
+    ];
+    expect(dataSummary([...lowered, links], EMPTY, 21)).toBe(
+      "Read and edit 17 of your 21 types and links between items; read alphas and betas",
+    );
+    expect(dataSummary(lowered, EMPTY, 21)).toBe(
+      "Read and edit 17 of your 21 types; read alphas and betas",
+    );
+  });
+
+  it("names a few types and leaves the links as they were when the count says little", () => {
+    expect(dataSummary([...types(6), links], EMPTY, 21)).toBe(
+      "Read and edit 7 kinds of data, including kind0s, kind1s, and kind2s",
+    );
+  });
+});
