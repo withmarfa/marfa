@@ -22,6 +22,7 @@ import type { TestContext } from "../../test-utils.js";
 import { parsePageSize } from "../navigation.js";
 import { MomentFixture, renderFixturePage } from "../test-fixture.js";
 import { renderDocument } from "../render.js";
+import { headerGeometry } from "./header-geometry.js";
 
 const launched = await launchTestBrowser();
 if (launched instanceof Error && process.env.CI) throw launched;
@@ -823,6 +824,27 @@ describe("at 375 pixels", () => {
         expect(await overflow(page)).toBeLessThanOrEqual(0);
       } finally {
         await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "keeps a page header's action beside its title, at the trailing edge, however long the title",
+    async () => {
+      for (const width of [375, 320]) {
+        const { page, context } = await open({ width });
+        try {
+          await page.goto(`${origin}/fixture`);
+          const g = await headerGeometry(page, ".actions .btn");
+          const label = `${String(width)}px`;
+          expect(g.action.top, label).toBeGreaterThanOrEqual(g.title.top - 0.5);
+          expect(g.action.top, label).toBeLessThan(g.title.bottom);
+          expect(g.action.right, label).toBeCloseTo(g.head.right, 0);
+          expect(g.title.right, label).toBeLessThanOrEqual(g.action.left + 0.5);
+          expect(await overflow(page), label).toBeLessThanOrEqual(0);
+        } finally {
+          await context.close();
+        }
       }
     },
   );

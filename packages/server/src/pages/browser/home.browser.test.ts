@@ -17,6 +17,7 @@ import { createTestContext } from "../../test-utils.js";
 import type { TestContext } from "../../test-utils.js";
 import { HOME_GROUPS, createPageRegistry } from "../registry.js";
 import { HOSTILE, LONG_UNBROKEN } from "../test-fixture.js";
+import { headerGeometry } from "./header-geometry.js";
 
 const launched = await launchTestBrowser();
 if (launched instanceof Error && process.env.CI) throw launched;
@@ -385,6 +386,107 @@ describe("Home", () => {
         expect(await violations()).toEqual([]);
       } finally {
         await rename("Marfa");
+        await context.close();
+      }
+    },
+  );
+
+  for (const scheme of ["light", "dark"] as const) {
+    for (const width of [1280, 375, 320]) {
+      inBrowser(
+        `keeps Sign out at the trailing edge, level with the title, in ${scheme} at ${String(width)}px`,
+        async () => {
+          const { page, context } = await open({ scheme, width });
+          try {
+            await rename("Marfa");
+            await page.goto(origin);
+            const signOut = page.getByRole("button", { name: "Sign out" });
+            await signOut.waitFor();
+            const g = await headerGeometry(page, "[data-sign-out]");
+            // Level with the title: its top is inside the title's line box.
+            expect(g.action.top).toBeGreaterThanOrEqual(g.title.top - 0.5);
+            expect(g.action.top).toBeLessThan(g.title.bottom);
+            // Trailing edge of the content, inside the 16 px gutter.
+            expect(g.action.right).toBeCloseTo(g.head.right, 0);
+            expect(g.action.left).toBeGreaterThan(g.title.right - 0.5);
+            // The address stays under the title.
+            expect(g.lede.top).toBeGreaterThanOrEqual(g.title.bottom - 0.5);
+            if (width < 640) {
+              expect(g.head.left).toBeCloseTo(16, 0);
+              expect(g.head.right).toBeCloseTo(width - 16, 0);
+            }
+            expect(await overflow(page)).toBeLessThanOrEqual(0);
+          } finally {
+            await context.close();
+          }
+        },
+      );
+    }
+  }
+
+  inBrowser(
+    "lets a long name shrink inside its column while Sign out keeps its size, at 320 and 375px",
+    async () => {
+      const { page, context } = await open({ width: 375 });
+      try {
+        await rename("Marfa");
+        await page.goto(origin);
+        await page.getByRole("button", { name: "Sign out" }).waitFor();
+        const short = (await headerGeometry(page, "[data-sign-out]")).action;
+        for (const width of [375, 320]) {
+          await page.setViewportSize({ width, height: 900 });
+          for (const name of ["W".repeat(60), LONG_UNBROKEN]) {
+            await rename(name);
+            await page.goto(origin);
+            await page.getByRole("button", { name: "Sign out" }).waitFor();
+            const g = await headerGeometry(page, "[data-sign-out]");
+            const label = `${String(width)}px ${name.slice(0, 12)}`;
+            expect(await overflow(page), label).toBeLessThanOrEqual(0);
+            expect(g.action.width, label).toBeCloseTo(short.width, 0);
+            expect(g.action.height, label).toBeCloseTo(short.height, 0);
+            expect(g.action.right, label).toBeCloseTo(g.head.right, 0);
+            expect(g.action.top, label).toBeGreaterThanOrEqual(
+              g.title.top - 0.5,
+            );
+            expect(g.action.top, label).toBeLessThan(g.title.bottom);
+            expect(g.title.right, label).toBeLessThanOrEqual(
+              g.action.left + 0.5,
+            );
+            expect(g.lede.right, label).toBeLessThanOrEqual(
+              g.action.left + 0.5,
+            );
+            expect(g.head.left, label).toBeCloseTo(16, 0);
+          }
+        }
+      } finally {
+        await rename("Marfa");
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "tabs from the title area to Sign out and then to the search",
+    async () => {
+      const { page, context } = await open({ width: 375 });
+      try {
+        await rename("Marfa");
+        await page.goto(origin);
+        await page.getByRole("button", { name: "Sign out" }).waitFor();
+        const active = () =>
+          page.evaluate(() => {
+            const el = document.activeElement;
+            if (el?.hasAttribute("data-sign-out")) return "sign-out";
+            return el?.getAttribute("type") ?? el?.id ?? "";
+          });
+        // The title and address hold nothing to focus, so the first stop
+        // after the page's start is Sign out, and the search comes next.
+        await page.locator("#main").focus();
+        await page.keyboard.press("Tab");
+        expect(await active()).toBe("sign-out");
+        await page.keyboard.press("Tab");
+        expect(await active()).toBe("search");
+      } finally {
         await context.close();
       }
     },

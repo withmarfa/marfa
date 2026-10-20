@@ -1213,10 +1213,6 @@ button.row:hover .rt {
     padding-left: max(var(--space-4), env(safe-area-inset-left, 0px));
     padding-right: max(var(--space-4), env(safe-area-inset-right, 0px));
   }
-  .head {
-    flex-direction: column;
-    align-items: stretch;
-  }
   .sec-top {
     flex-wrap: wrap;
   }
