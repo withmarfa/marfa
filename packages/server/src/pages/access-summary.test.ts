@@ -176,3 +176,65 @@ describe("dataSummary while types are chosen", () => {
     );
   });
 });
+
+describe("two things that read alike", () => {
+  const pick = (
+    noun: string,
+    level: Level,
+    alias?: string,
+    type = false,
+  ): LevelPick => ({ noun, level, held: "none", alias, type });
+
+  it("are each named by what they stand for, where their nouns match", () => {
+    expect(
+      dataSummary(
+        [
+          pick("tasks", "write", "core.task"),
+          pick("tasks", "write", "aic.ticket.task"),
+          pick("notes", "write", "core.note"),
+        ],
+        "",
+      ),
+    ).toBe("Read and edit core.task, aic.ticket.task, and notes");
+    expect(
+      dataSummary(
+        [
+          pick("tasks", "write", "core.task"),
+          pick("tasks", "read", "aic.ticket.task"),
+        ],
+        "",
+      ),
+    ).toBe("Read and edit core.task; read aic.ticket.task");
+  });
+
+  it("keep a noun that is its own, and one with no identifier", () => {
+    expect(
+      dataSummary(
+        [
+          pick("tasks", "read", "core.task"),
+          pick("notes", "read", "core.note"),
+        ],
+        "",
+      ),
+    ).toBe("Read tasks and notes");
+    expect(
+      dataSummary(
+        [pick("profiles", "read", "aic.me.profile"), pick("profiles", "read")],
+        "",
+      ),
+    ).toBe("Read aic.me.profile and profiles");
+  });
+
+  it("are named by identifier in what an app holds", () => {
+    expect(
+      heldSummary(
+        [
+          { noun: "tasks", level: "read", alias: "core.task" },
+          { noun: "tasks", level: "write", alias: "aic.ticket.task" },
+        ],
+        [],
+        [],
+      ),
+    ).toBe("Read and edit aic.ticket.task; read core.task");
+  });
+});

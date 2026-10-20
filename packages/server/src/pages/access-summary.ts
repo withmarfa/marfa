@@ -78,6 +78,11 @@ function namesOf(picks: readonly LevelPick[], total?: number): string {
 export interface LevelPick {
   /** What the control is for, lower case and plural: "notes". */
   noun: string;
+  /**
+   * What a control stands for where it is one item type: its identifier, which
+   * names it where another control has the same noun.
+   */
+  alias?: string;
   /** The level the control is set to. */
   level: Level;
   /** The level the app already holds. */
@@ -87,12 +92,33 @@ export interface LevelPick {
 }
 
 /**
+ * The picks, each named by its identifier where another pick has its noun and
+ * the two stand for different things: "tasks and tasks" says nothing. A pick
+ * with no identifier keeps its noun. The server and the browser call this on
+ * the same picks, so the line is the same in both.
+ */
+export function nameApart<T extends { noun: string; alias?: string }>(
+  picks: readonly T[],
+): T[] {
+  const stands = new Map<string, Set<string | undefined>>();
+  for (const pick of picks)
+    stands.set(pick.noun, (stands.get(pick.noun) ?? new Set()).add(pick.alias));
+  return picks.map((pick) =>
+    pick.alias !== undefined && (stands.get(pick.noun)?.size ?? 0) > 1
+      ? { ...pick, noun: pick.alias }
+      : pick,
+  );
+}
+
+/**
  * What a set of level controls gives, as "read and edit notes and drafts;
  * read events". A control that adds nothing to what the app holds is left
  * out, so the line says what this approval gives.
  */
 function levelWords(picks: readonly LevelPick[], total?: number): string[] {
-  const gives = picks.filter((pick) => addsAccess(pick.level, pick.held));
+  const gives = nameApart(picks).filter((pick) =>
+    addsAccess(pick.level, pick.held),
+  );
   const edit = gives.filter((pick) => pick.level === "write");
   const read = gives.filter((pick) => pick.level === "read");
   const words: string[] = [];
@@ -136,6 +162,8 @@ export function powersSummary(on: number, total: number): string {
 
 export interface HeldLevel {
   noun: string;
+  /** See {@link LevelPick.alias}. */
+  alias?: string;
   level: Level;
 }
 

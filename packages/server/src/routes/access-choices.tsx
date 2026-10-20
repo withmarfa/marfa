@@ -33,10 +33,15 @@ function LevelControl(props: {
   search?: string;
 }) {
   const { row } = props;
+  // The label is the select's name, so the line under it, which may be all
+  // that tells two rows of one label apart, is its description.
+  const descriptionId =
+    row.description === undefined ? undefined : `${row.id}-description`;
   return (
     <Row
       title={row.title}
       description={row.description}
+      descriptionId={descriptionId}
       data={
         props.search === undefined
           ? undefined
@@ -47,10 +52,12 @@ function LevelControl(props: {
           id={row.id}
           name={row.name ?? "scopes"}
           label={row.title}
+          describedBy={descriptionId}
           value={row.selected}
           options={row.options}
           data={{
             noun: row.noun,
+            ...(row.type === undefined ? {} : { alias: row.type }),
             held: row.held,
             ...(props.all ? { all: "" } : {}),
           }}

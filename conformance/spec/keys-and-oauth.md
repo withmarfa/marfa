@@ -1433,19 +1433,35 @@ While an app holds scopes for item types and a request names all data, when a pe
 
 ### `keys-and-oauth/approval-same-label`
 
-When the consent screen or the device approval page shows two or more item types under the same label, the server MUST show the identifier of each of those types under its label.
+When the consent screen or the device approval page shows an item type under a label that another row on the page also carries, whether that row is an item type or a row the page names itself, such as Profile or Links between items, the server MUST show the identifier of the type under its label.
 
-**Reason:** An instance can register a type labeled like a shipped one, such as `core.task` and `aic.ticket.task` both labeled "Task". Rows that read alike give the person nothing to choose between.
+**Reason:** An instance can register a type labeled like a shipped one, such as `core.task` and `aic.ticket.task` both labeled "Task", or like one of the page's own rows. Rows that read alike give the person nothing to choose between.
 
-**Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`.
+**Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`, `› gives a type the identifier when a page's own row shares its label, and that row none`.
+
+### `keys-and-oauth/approval-same-label-described`
+
+When the consent screen or the device approval page shows the identifier of an item type under its label, the server MUST name that line as the description of the type's control.
+
+**Reason:** The label is the control's name, so a screen reader reads two such controls alike unless their description tells them apart.
+
+**Tests:** `compliance/approval-screens.test.ts › describes the control of each of them by its identifier, and keeps the label as its name`.
 
 ### `keys-and-oauth/approval-own-label`
 
-When the consent screen or the device approval page shows an item type under a label that no other type on the page shares, the server MUST NOT show the identifier of that type under its label.
+When the consent screen or the device approval page shows an item type under a label that no other row on the page carries, the server MUST NOT show the identifier of that type under its label.
 
 **Reason:** A label that is its own needs no identifier, so the page stays as short as it was.
 
 **Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`, `› shows no identifier where only one type of a label is on the page, though the instance has two`.
+
+### `keys-and-oauth/approval-page-row-no-identifier`
+
+When the consent screen or the device approval page shows a row it names itself, such as Profile or Links between items, the server MUST NOT show an item type's identifier under that row's title, though an item type has the same label.
+
+**Reason:** The title of such a row is the name of what it is, and the identifier is how the types beside it are told apart from it.
+
+**Tests:** `compliance/approval-screens.test.ts › gives a type the identifier when a page's own row shares its label, and that row none`.
 
 ### `keys-and-oauth/access-words`
 

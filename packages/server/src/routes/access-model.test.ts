@@ -954,4 +954,47 @@ describe("types that share a label", () => {
       ["Task", "aic.ticket.task"],
     ]);
   });
+
+  it("gives a type the identifier when a curated row shares its label, and a curated row never one", () => {
+    const words = { typeLabels: { "aic.me.profile": "Profile" } };
+    const model = buildAccess({
+      scopes: [scope("profile:read"), scope("aic.me.profile:read")],
+      held: undefined,
+      ...words,
+      bundles,
+    });
+    expect(model.data.map((r) => [r.title, r.description])).toEqual([
+      ["Profile", "aic.me.profile"],
+    ]);
+    expect(model.profile.map((r) => [r.title, r.description])).toEqual([
+      ["Profile", "Covers what exists today plus anything added later"],
+    ]);
+    const held = describeHeld(["profile:read", "aic.me.profile:read"], words);
+    expect([...held.data, ...held.profile]).toEqual([
+      { title: "Profile", value: "Read only", description: "aic.me.profile" },
+      { title: "Profile", value: "Read only" },
+    ]);
+  });
+
+  it("names the types in a summary line by identifier where their nouns read alike", () => {
+    const model = buildAccess({
+      scopes: [scope("core.task:write"), scope("aic.ticket.task:write")],
+      held: ["core.task:read", "aic.ticket.task:read"],
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles,
+    });
+    expect(model.summaries.data).toBe(
+      "Read and edit core.task and aic.ticket.task",
+    );
+    expect(model.summaries.held).toBe("Read core.task and aic.ticket.task");
+    const fresh = buildAccess({
+      scopes: [scope("core.task:write"), scope("aic.ticket.task:write")],
+      held: undefined,
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles,
+    });
+    expect(fresh.summaries.data).toBe(
+      "Read and edit core.task and aic.ticket.task",
+    );
+  });
 });

@@ -100,3 +100,46 @@ describe("the list of types a person chooses", () => {
     expect(text).not.toMatch(/Note core\.note/);
   });
 });
+
+describe("a row's line, for a person who hears the page", () => {
+  const model = buildAccess({
+    scopes: ["*:read", "*:write"].map((literal) => {
+      const scope = parseScope(literal);
+      if (!scope) throw new Error(literal);
+      return scope;
+    }),
+    held: undefined,
+    chooseTypes: [
+      { id: "core.task", label: "Task" },
+      { id: "aic.ticket.task", label: "Task" },
+      { id: "core.note", label: "Note" },
+    ],
+    bundles: [],
+  });
+  const html = markup(<AccessChoices model={model} />);
+
+  /** What the control's description says: the text of each element `aria-describedby` names. */
+  const described = (name: string, nth: number): string => {
+    const control = readControls(html).filter((c) => c.label === name)[nth];
+    const ids = (control?.describedby ?? "").split(" ").filter(Boolean);
+    return ids
+      .map((id) =>
+        visibleText(
+          new RegExp(`<div[^>]*\\bid="${id}"[^>]*>([\\s\\S]*?)</div>`).exec(
+            html,
+          )?.[1] ?? "",
+        ),
+      )
+      .join(" ");
+  };
+
+  it("is the description of the control, so the identifier is heard, and the name stays the label", () => {
+    expect(described("Task", 0)).toBe("core.task");
+    expect(described("Task", 1)).toBe("aic.ticket.task");
+    // A control with no line has nothing to describe it.
+    expect(described("Note", 0)).toBe("");
+    expect(readControls(html).filter((c) => c.label === "Task")).toHaveLength(
+      2,
+    );
+  });
+});

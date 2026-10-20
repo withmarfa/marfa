@@ -1551,20 +1551,26 @@ describe("what the approval pages say of item types that share a label", () => {
   const booted = bootFor("approval-types-same-label");
   beforeAll(async () => {
     await booted.up();
-    // The shipped `core.task` is labeled "Task" too.
-    const registered = await fetch(`${server.apiUrl}/types`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${server.workingKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        id: "aic.ticket.task",
-        label: "Task",
-        fields: { title: { type: "string" } },
-      }),
-    });
-    expect(registered.status, await registered.clone().text()).toBe(201);
+    // The shipped `core.task` is labeled "Task" too, and the page's own
+    // "Profile" row is titled like the second type.
+    for (const [id, label] of [
+      ["aic.ticket.task", "Task"],
+      ["aic.me.profile", "Profile"],
+    ]) {
+      const registered = await fetch(`${server.apiUrl}/types`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${server.workingKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          id,
+          label,
+          fields: { title: { type: "string" } },
+        }),
+      });
+      expect(registered.status, await registered.clone().text()).toBe(201);
+    }
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -1589,6 +1595,53 @@ describe("what the approval pages say of item types that share a label", () => {
         page,
       ).toEqual(["core.task:write", "aic.ticket.task:write"]);
       expect(linesUnder(html, "Note"), page).toEqual([""]);
+    }
+  });
+
+  it("describes the control of each of them by its identifier, and keeps the label as its name", async () => {
+    for (const [page, html] of await bothPages(ALL)) {
+      const described = readRows(html)
+        .filter((r) => r.control.label === "Task")
+        .map((r) =>
+          (r.control.describedby ?? "")
+            .split(" ")
+            .filter(Boolean)
+            .map((id) =>
+              visibleText(
+                new RegExp(
+                  `<div[^>]*\\bid="${id}"[^>]*>([\\s\\S]*?)</div>`,
+                ).exec(html)?.[1] ?? "",
+              ),
+            )
+            .join(" "),
+        );
+      expect(described, page).toEqual(["core.task", "aic.ticket.task"]);
+    }
+  });
+
+  it("gives a type the identifier when a page's own row shares its label, and that row none", async () => {
+    const asked = "*:read profile:read";
+    const app = await register(ALL);
+    const screens: [string, string][] = [
+      ["the consent screen", (await consentScreen(app, asked)).html],
+      ["the device approval page", (await deviceScreen(app, asked)).html],
+    ];
+    for (const [page, html] of screens) {
+      const profiles = readRows(html).filter(
+        (r) => r.control.label === "Profile",
+      );
+      const byName = (name: string) =>
+        profiles.find((r) => r.control.name === name)?.text ?? "";
+      expect(profiles, page).toHaveLength(2);
+      expect(byName("types"), page).toContain("aic.me.profile");
+      // The page's own row says what it covers, and names no identifier.
+      expect(byName("scopes"), page).not.toContain("aic.me.profile");
+      expect(
+        byName("scopes")
+          .replace(/^.*?Profile/, "")
+          .trim(),
+        page,
+      ).toMatch(/^Your name, email address and avatar/);
     }
   });
 

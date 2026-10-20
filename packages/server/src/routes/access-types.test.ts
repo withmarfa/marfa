@@ -1,6 +1,8 @@
+import { parseScope } from "@withmarfa/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext, type TestContext } from "../test-utils.js";
 import { asksForAllData, resolveChoosableTypes } from "./access-types.js";
+import { resolveWildcardExpansions } from "./auth-consent.js";
 
 let ctx: TestContext | undefined;
 afterEach(async () => {
@@ -57,5 +59,31 @@ describe("asksForAllData", () => {
     expect(
       asksForAllData(["core.*:read", "core.note:read", "content:read"]),
     ).toBe(false);
+  });
+});
+
+describe("the names a wildcard's reach line gives", () => {
+  it("names a type with no label as its own row does", async () => {
+    ctx = await createTestContext({});
+    await ctx.storage.types.create({
+      id: "user.reading_list",
+      version: 1,
+      fields: {},
+    });
+    await ctx.storage.types.create({
+      id: "user.ticket",
+      label: "Ticket",
+      version: 1,
+      fields: {},
+    });
+    const scope = parseScope("user.*:read");
+    if (!scope) throw new Error("unparseable");
+    // The witness: the registry holds the type with no label of its own.
+    expect((await ctx.storage.types.get("user.reading_list"))?.label).toBe(
+      undefined,
+    );
+    expect(
+      (await resolveWildcardExpansions(ctx.storage, [scope]))["user.*"],
+    ).toEqual(["Reading list", "Ticket"]);
   });
 });

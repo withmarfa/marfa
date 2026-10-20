@@ -52,6 +52,7 @@ function picksIn(group: HTMLElement): LevelPick[] {
     const held = asLevel(select.dataset.held);
     return {
       noun: select.dataset.noun ?? "",
+      alias: select.dataset.alias,
       held,
       level: levelOfValue(select.value, held),
       type: select.closest("[data-choose-types]") !== null,

@@ -51,6 +51,8 @@ export interface ControlRead {
   role?: string;
   /** The accessible name given as aria-label. */
   label?: string;
+  /** The ids of the elements that describe it, as aria-describedby gives them. */
+  describedby?: string;
   id?: string;
   checked: boolean;
   disabled: boolean;
@@ -85,6 +87,7 @@ export function readControls(html: string): ControlRead[] {
         value:
           options.find((o) => o.selected)?.value ?? options[0]?.value ?? "",
         label: a["aria-label"],
+        describedby: a["aria-describedby"],
         id: a.id,
         checked: false,
         disabled: "disabled" in a,
@@ -98,6 +101,7 @@ export function readControls(html: string): ControlRead[] {
         value: a.value ?? "",
         role: a.role,
         label: a["aria-label"],
+        describedby: a["aria-describedby"],
         id: a.id,
         checked: "checked" in a,
         disabled: "disabled" in a,
