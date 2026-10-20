@@ -3588,7 +3588,7 @@ mod tests {
         let properties = r#"{
             "title": "caf\u00e9 \ud83d\ude00 \u2028 \n \"quoted\"",
             "nothing": null, "yes": true, "no": false,
-            "small": -7, "beyond": 9007199254740993, "least": -9223372036854775808,
+            "small": -7, "beyond": 1152921504606847000, "least": -1152921504606847000,
             "ratio": 0.1, "whole": 2.0, "tiny": 1e-300,
             "list": [1, [2, [3, {"deep": [null, "x"]}]]], "empty": {}, "none": [],
             "z": 1, "a": 2, "10": 3, "2": 4
@@ -3608,7 +3608,7 @@ mod tests {
             "2": 4, "10": 3,
             "title": "caf\u00e9 \ud83d\ude00 \u2028 \n \"quoted\"",
             "nothing": null, "yes": true, "no": false,
-            "small": -7, "beyond": 9007199254740993, "least": -9223372036854775808,
+            "small": -7, "beyond": 1152921504606847000, "least": -1152921504606847000,
             "ratio": 0.1, "whole": 2, "tiny": 1e-300,
             "list": [1, [2, [3, {"deep": [null, "x"]}]]], "empty": {}, "none": [],
             "z": 1, "a": 2
@@ -3624,9 +3624,12 @@ mod tests {
         };
         assert_eq!(
             member("beyond"),
-            Some(JsonValue::Integer(9_007_199_254_740_993))
+            Some(JsonValue::Integer(1_152_921_504_606_847_000))
         );
-        assert_eq!(member("least"), Some(JsonValue::Integer(i64::MIN)));
+        assert_eq!(
+            member("least"),
+            Some(JsonValue::Integer(-1_152_921_504_606_847_000))
+        );
         assert_eq!(member("ratio"), Some(JsonValue::Number(0.1)));
         assert_eq!(member("whole"), Some(JsonValue::Integer(2)));
         assert_eq!(member("nothing"), Some(JsonValue::Null));
@@ -3640,6 +3643,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(listed[0].properties, wanted);
+        // An integer the server would serve back with other digits is refused.
+        for value in ["9007199254740993", "-9223372036854775808"] {
+            let refused = core.create_item(draft(
+                "app.test.entry",
+                &format!(r#"{{"beyond": {value}}}"#),
+            ));
+            assert!(
+                matches!(refused, Err(MarfaError::Validation { .. })),
+                "{value}: {refused:?}"
+            );
+        }
     }
 
     #[test]
