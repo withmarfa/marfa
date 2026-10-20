@@ -184,7 +184,7 @@ function showPasskeyError(view: View, text: string): void {
 }
 
 interface Body {
-  error?: { message?: unknown };
+  error?: { code?: unknown; message?: unknown };
 }
 
 /** The sign-in page, for a session that ended while a page was open. */
@@ -199,6 +199,13 @@ export async function messageOf(response: Response): Promise<string> {
   const body = (await response.json().catch(() => null)) as Body | null;
   const message = body?.error?.message;
   return typeof message === "string" ? message : "";
+}
+
+/** The error code a refusal carries, or `""`. Reads the body: pass a `clone()` to read it again. */
+export async function codeOf(response: Response): Promise<string> {
+  const body = (await response.json().catch(() => null)) as Body | null;
+  const code = body?.error?.code;
+  return typeof code === "string" ? code : "";
 }
 
 async function post(proof: unknown): Promise<Response> {

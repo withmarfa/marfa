@@ -23,6 +23,7 @@ import { CONFIRM_REFUSALS } from "../recent-sign-in.js";
 import { SETUP_WORDS } from "../setup-words.js";
 import {
   CONFIRM_WORDS,
+  codeOf,
   messageOf,
   sendConfirmed,
   signInAgain,
@@ -31,6 +32,9 @@ import { openDialog } from "./dialog.js";
 import { clearFieldError, showFieldError, type Control } from "./form.js";
 import { hideNotices, showNotice } from "./notice.js";
 import { passkeysSupported, registerPasskey } from "./passkey.js";
+
+/** The code `DELETE /owner/passkeys/{id}` answers with for an ID the owner has no passkey under. */
+const PASSKEY_NOT_FOUND = "passkey_not_found";
 
 const JSON_HEADERS = {
   "content-type": "application/json",
@@ -214,8 +218,13 @@ async function removePasskey(
     opener,
   );
   if (response === null) return { kind: "stay" };
-  // A passkey that is already gone is the state the person asked for.
-  if (response.ok || response.status === 404)
+  if (response.ok) return { kind: "done", message: "Passkey removed" };
+  // A passkey that is already gone is the state the person asked for. Another
+  // 404, such as an owner who cannot be found, is not that.
+  if (
+    response.status === 404 &&
+    (await codeOf(response.clone())) === PASSKEY_NOT_FOUND
+  )
     return { kind: "done", message: "Passkey removed" };
   return refusal(response, null);
 }

@@ -4,7 +4,7 @@
  * older than five minutes, two browsers when the password changes, a browser
  * with no passkey support, the keyboard alone, a phone's width, light and dark.
  */
-import type { Browser, BrowserContext, Page } from "playwright-core";
+import type { Browser, BrowserContext, Page, Route } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SIGN_IN_ADDRESS_LIMIT } from "../../auth/sign-in-throttle.js";
 import {
@@ -703,6 +703,54 @@ async function putPasswordBack(): Promise<void> {
   }
 }
 
+const sqlite = () =>
+  ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+
+/**
+ * A passkey the owner has, made by the database alone: the page only reads its
+ * name and date, so a case that is not about registering need not run a
+ * ceremony.
+ */
+async function seedPasskey(
+  id: string,
+  name: string,
+  createdAt: Date,
+): Promise<void> {
+  await sqlite().__sqliteRun(
+    "INSERT INTO auth_passkey (id, name, public_key, user_id, credential_id, counter, device_type, backed_up, created_at) VALUES (?, ?, 'key', ?, ?, 0, 'singleDevice', 0, ?)",
+    [
+      id,
+      name,
+      (await theOwner()).id,
+      `credential-${id}`,
+      createdAt.getTime() / 1000,
+    ],
+  );
+}
+
+async function dropSeededPasskeys(): Promise<void> {
+  await sqlite().__sqliteRun(
+    "DELETE FROM auth_passkey WHERE credential_id LIKE 'credential-seed-%'",
+    [],
+  );
+}
+
+const storedPasskeys = async () =>
+  (await ctx.auth.listOwnerPasskeys((await theOwner()).id)).map(
+    (passkey) => passkey.name,
+  );
+
+/** Opens the Manage dialog of the passkey with this name. */
+async function manage(page: Page, name: string) {
+  await page
+    .locator(".row", { hasText: name })
+    .getByRole("button", { name: "Manage" })
+    .click();
+  return dialogOf(page, "Manage passkey");
+}
+
 describe("Password and passkeys, the passkeys", () => {
   inBrowser(
     "starts empty, adds a passkey with the suggested name, renames it, and removes the last one",
@@ -823,6 +871,69 @@ describe("Password and passkeys, the passkeys", () => {
         }
       }
       expect(backgrounds.light).not.toBe(backgrounds.dark);
+    },
+  );
+});
+
+describe("Password and passkeys, dates, stale sign-ins and refusals", () => {
+  inBrowser(
+    "says a passkey that is already gone is removed, and shows any other 404 as the refusal it is",
+    async () => {
+      await seedPasskey("seed-gone", "Gone", new Date());
+      await seedPasskey("seed-kept", "Kept", new Date());
+      const { page, context } = await open();
+      try {
+        await page.goto(origin + PASSKEYS);
+
+        // A 404 that is not "no such passkey" is a refusal: the passkey may still be there.
+        const refuseAsOwnerless = async (route: Route) => {
+          if (route.request().method() !== "DELETE") return route.continue();
+          await route.fulfill({
+            status: 404,
+            contentType: "application/json",
+            body: JSON.stringify({
+              error: {
+                code: "owner_not_found",
+                message: "The owner's account is unavailable.",
+              },
+            }),
+          });
+        };
+        await page.route("**/owner/passkeys/*", refuseAsOwnerless);
+        const kept = await manage(page, "Kept");
+        await kept.getByRole("button", { name: "Remove passkey" }).click();
+        const removeKept = dialogOf(page, "Remove Kept?");
+        await removeKept
+          .getByRole("button", { name: "Remove passkey" })
+          .click();
+        await removeKept
+          .getByText("The owner's account is unavailable.")
+          .waitFor();
+        expect(await done(page).isHidden()).toBe(true);
+        expect(await removeKept.isVisible()).toBe(true);
+        expect(await storedPasskeys()).toEqual(["Gone", "Kept"]);
+        await page.unroute("**/owner/passkeys/*", refuseAsOwnerless);
+        await removeKept.getByRole("button", { name: "Cancel" }).click();
+        await kept.getByRole("button", { name: "Cancel" }).click();
+
+        // A passkey gone before the button is pressed: the server answers passkey_not_found.
+        const gone = await manage(page, "Gone");
+        await gone.getByRole("button", { name: "Remove passkey" }).click();
+        const remove = dialogOf(page, "Remove Gone?");
+        await sqlite().__sqliteRun(
+          "DELETE FROM auth_passkey WHERE id = 'seed-gone'",
+          [],
+        );
+        await remove.getByRole("button", { name: "Remove passkey" }).click();
+        await done(page).getByText("Passkey removed").waitFor();
+        await page.getByText("Gone", { exact: true }).waitFor({
+          state: "detached",
+        });
+        expect(await storedPasskeys()).toEqual(["Kept"]);
+      } finally {
+        await context.close();
+        await dropSeededPasskeys();
+      }
     },
   );
 });
