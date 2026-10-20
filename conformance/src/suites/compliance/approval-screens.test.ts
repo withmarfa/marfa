@@ -334,40 +334,46 @@ describe("what the approval pages and the key form say of a permission", () => {
     "webhooks.manage",
   ];
 
-  it("describes each permission in the same words on both pages and on the key form", async () => {
-    const pages = await bothPages(`core.note:read ${TWELVE.join(" ")}`);
-    const manage = await fetch(`${server.apiUrl}/auth/owner/manage`, {
+  const keyForm = async (): Promise<string> => {
+    const res = await fetch(`${server.apiUrl}/auth/owner/keys/new`, {
       headers: { cookie },
     });
-    expect(manage.status).toBe(200);
-    const form = await manage.text();
+    expect(res.status).toBe(200);
+    return res.text();
+  };
+
+  // The first switch of the group is read with the group's heading and the line
+  // under it, which counts what is on and so differs by page.
+  const ownWords = (text: string | undefined): string | undefined =>
+    text?.replace(
+      /^More control over Marfa (?:\d+ things? asked[^.]*? turn it on|\d+ of \d+ turned on) /,
+      "",
+    );
+
+  it("describes each permission in the same words on both pages and on the key form", async () => {
+    const pages = await bothPages(`core.note:read ${TWELVE.join(" ")}`);
+    const form = await keyForm();
     for (const permission of TWELVE) {
-      const entry = new RegExp(
-        `<label><input[^>]*value="${permission}"[^>]*>([\\s\\S]*?)</label>`,
-      ).exec(form);
-      const onForm = visibleText(entry?.[1] ?? "");
-      expect(onForm, `the key form: ${permission}`).not.toBe("");
+      const onForm = ownWords(
+        readRows(form).find((r) => r.control.value === permission)?.text,
+      );
+      expect(onForm, `the key form: ${permission}`).toBeTruthy();
       for (const [page, html] of pages) {
         const row = readRows(html).find((r) => r.control.value === permission);
-        expect(row?.text.endsWith(onForm), `${page}: ${permission}`).toBe(true);
+        expect(ownWords(row?.text), `${page}: ${permission}`).toBe(onForm);
       }
     }
   });
 
   it("marks the permissions that delete for good on the key form, and no other", async () => {
     const marked = ["instance.maintain", "schema.write", "items.purge"];
-    const manage = await fetch(`${server.apiUrl}/auth/owner/manage`, {
-      headers: { cookie },
-    });
-    const form = await manage.text();
+    const form = await keyForm();
     for (const permission of TWELVE) {
-      const entry = new RegExp(
-        `<label><input[^>]*value="${permission}"[^>]*>([\\s\\S]*?)</label>`,
-      ).exec(form);
-      expect(
-        /can't be undone/i.test(visibleText(entry?.[1] ?? "")),
-        permission,
-      ).toBe(marked.includes(permission));
+      const row = readRows(form).find((r) => r.control.value === permission);
+      expect(row, permission).toBeDefined();
+      expect(/can't be undone/i.test(row?.text ?? ""), permission).toBe(
+        marked.includes(permission),
+      );
     }
   });
 });

@@ -204,7 +204,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/restore`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/restore`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 
@@ -237,3 +237,11 @@ While the instance is unclaimed, when a browser asks a console page for HTML, th
 **Reason:** no one can sign in to an instance that has no owner, so the page a person can use is the one that claims it.
 
 **Tests:** `compliance/console-pages.test.ts › is sent to set the instance up, not to a sign-in nobody can use`.
+
+### `authentication/console-keys-no-plaintext`
+
+The server MUST NOT include a key's plaintext in any page under `/auth/owner/keys`.
+
+**Reason:** the plaintext is shown once, from the answer to the mint (`keys-and-oauth/plaintext-once`), so a page the server draws, which a cache, a log or a later visit can read again, must never hold it.
+
+**Tests:** `compliance/console-pages.test.ts › never carry a key's plaintext, even for the key just made`.

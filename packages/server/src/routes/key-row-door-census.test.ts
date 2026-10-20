@@ -59,6 +59,8 @@ const NOT_ROW_ACCESS: Record<string, string> = {
  * on purpose.
  */
 const NOT_A_DOOR: Record<string, string> = {
+  "routes/key-routes.ts › liveKeys › list":
+    "the owner's console reads every key for Home's count and attention and for the API keys pages, behind direct owner authority, which manages every key",
   "routes/keys.ts › refuseOwnSourceClaimedElsewhere › list":
     "asks whether any live key claims a source, and answers with a refusal naming only that source",
   "auth/grant-lifecycle.ts › keysMintedByApp › list":

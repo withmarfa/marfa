@@ -30,6 +30,10 @@ const BROWSER = {
 /** The console pages a browser can open, each served at its own address. */
 const CONSOLE_PAGES = [
   "/auth/owner/manage",
+  "/auth/owner/keys",
+  "/auth/owner/keys/new",
+  "/auth/owner/keys/00000000-0000-4000-8000-000000000000",
+  "/auth/owner/keys/00000000-0000-4000-8000-000000000000/copy",
   "/auth/owner/restore",
   "/auth/owner/profile",
   "/auth/owner/passkeys",
@@ -163,6 +167,41 @@ describe("a console page asked for by a browser that is not signed in", () => {
     expect(next.headers.get("location")).toBe(
       `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/manage")}`,
     );
+  });
+});
+
+describe("the pages for API keys", () => {
+  it("never carry a key's plaintext, even for the key just made", async () => {
+    const cookie = await signedInCookie();
+    const made = await fetch(`${server!.apiUrl}/keys`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, cookie },
+      body: JSON.stringify({
+        label: "Plaintext witness",
+        source: "plaintext-witness",
+        permissions: ["instance.read"],
+      }),
+    });
+    expect(made.status).toBe(201);
+    const { id, key } = (await made.json()) as { id: string; key: string };
+    // Witness: the plaintext exists, in the answer to the mint.
+    expect(key).toMatch(/^marfa_k1_/);
+    for (const path of [
+      "/auth/owner/keys",
+      "/auth/owner/keys/new",
+      `/auth/owner/keys/${id}`,
+      `/auth/owner/keys/${id}/copy`,
+    ]) {
+      const res = await get(path, { ...BROWSER, cookie });
+      expect(res.status, path).toBe(200);
+      const html = await res.text();
+      expect(html, path).not.toContain(key);
+    }
+    // Witness: the key's own page does name the key.
+    const page = await (
+      await get(`/auth/owner/keys/${id}`, { ...BROWSER, cookie })
+    ).text();
+    expect(page).toContain("Plaintext witness");
   });
 });
 

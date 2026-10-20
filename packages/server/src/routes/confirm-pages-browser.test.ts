@@ -1,6 +1,6 @@
 /**
- * The owner's pages that keep a stylesheet of their own (Manage and Restore),
- * and Password and passkeys, asking "Confirm it's you" in a real browser when a change is
+ * The owner's pages that ask for a change (the API keys pages, Manage,
+ * Restore, and Password and passkeys) asking "Confirm it's you" in a real browser when a change is
  * refused for a sign-in older than five minutes, and carrying the change out
  * once after it. Each case sends its change from a session that is six minutes
  * old on the server's clock.
@@ -90,35 +90,52 @@ async function keySources(): Promise<string[]> {
   );
 }
 
-inBrowser("Manage, with a sign-in older than five minutes", () => {
+/** Opens Create key and fills in a key that needs one power, so the button is ready. */
+async function fillCreate(page: Page, name: string): Promise<void> {
+  await page.goto(`${origin}/auth/owner/keys/new`);
+  await page.getByLabel("Name").fill(name);
+  await page.locator("summary", { hasText: "More control over Marfa" }).click();
+  await page.locator('input[value="instance.read"]').check();
+}
+
+const createButton = (page: Page) =>
+  page.getByRole("button", { name: "Create key" });
+
+inBrowser("API keys, with a sign-in older than five minutes", () => {
   it("asks to confirm it's you to create a key, says a wrong password in place, and makes the key once", async () => {
     const { context, page } = await signedIn();
     try {
-      await page.goto(`${origin}/auth/owner/manage`);
-      await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
+      await fillCreate(page, "Confirmed key");
       clock.advanceClock(6 * MINUTE);
-      await page.locator("summary").click();
-      await page.fill("#label", "Confirmed key");
-      await page.fill("#source", "confirmed-key");
-      await page.click("#mint button");
+      let posts = 0;
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.url() === `${origin}/keys`)
+          posts += 1;
+      });
+      await createButton(page).click();
 
       const dialog = dialogOf(page);
       await dialog.waitFor();
       expect(await dialog.innerText()).toContain(
         "Making a key lets something new reach your data. Changes like this need a sign-in from the last 5 minutes.",
       );
-      expect(await keySources()).not.toContain("confirmed-key");
+      expect(await keySources()).not.toContain("Confirmed key");
       await dialog.getByLabel("Or your password").fill("not the password");
       await dialog.getByRole("button", { name: "Continue" }).click();
       await dialog.getByText("That password is wrong. Try again.").waitFor();
-      expect(await keySources()).not.toContain("confirmed-key");
+      expect(await keySources()).not.toContain("Confirmed key");
 
       await dialog.getByLabel("Or your password").fill(owner.password);
       await dialog.getByRole("button", { name: "Continue" }).click();
-      await page.locator("#new-key").filter({ hasText: "marfa_k1_" }).waitFor();
+      await page
+        .locator("#key-secret")
+        .filter({ hasText: "marfa_k1_" })
+        .waitFor();
       expect(
-        (await keySources()).filter((source) => source === "confirmed-key"),
+        (await keySources()).filter((source) => source === "Confirmed key"),
       ).toHaveLength(1);
+      // The refused send and the one after it; the wrong password sent none.
+      expect(posts).toBe(2);
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
       clock.advanceClock(16 * MINUTE);
@@ -129,31 +146,35 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
   it("makes no key when the person cancels, and says nothing went wrong", async () => {
     const { context, page } = await signedIn();
     try {
-      await page.goto(`${origin}/auth/owner/manage`);
-      await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
+      await fillCreate(page, "Cancelled key");
       clock.advanceClock(6 * MINUTE);
-      await page.locator("summary").click();
-      await page.fill("#label", "Cancelled key");
-      await page.fill("#source", "cancelled-key");
-      await page.click("#mint button");
+      let posts = 0;
+      page.on("request", (request) => {
+        if (request.method() === "POST" && request.url() === `${origin}/keys`)
+          posts += 1;
+      });
+      await createButton(page).click();
       await dialogOf(page).waitFor();
       await page.keyboard.press("Escape");
       await dialogOf(page).waitFor({ state: "hidden" });
-      expect(await page.textContent("#status")).toBe("");
-      await expect
-        .poll(() => page.locator("#mint button").isEnabled())
-        .toBe(true);
-      // Focus is back on the button that was pressed, inside the page's own markup.
+      expect(await page.locator("[data-notice=problem]").isVisible()).toBe(
+        false,
+      );
       await expect
         .poll(() =>
           page.evaluate(
-            "document.activeElement === document.querySelector('#mint button')",
+            "document.activeElement === document.querySelector('[data-hook=key-submit]')",
           ),
         )
         .toBe(true);
-      expect(await keySources()).not.toContain("cancelled-key");
+      // Pressing it again asks again.
+      await createButton(page).click();
+      await dialogOf(page).waitFor();
+      await page.keyboard.press("Escape");
+      expect(await keySources()).not.toContain("Cancelled key");
+      // Both presses were refused for the old sign-in; neither was kept.
+      expect(posts).toBe(2);
     } finally {
-      // Past the window a sign-in address is counted over, so the next case starts clear.
       clock.advanceClock(16 * MINUTE);
       await context.close();
     }
@@ -171,26 +192,63 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
         },
       });
       expect(made.status()).toBe(201);
-      page.on("dialog", (alert) => void alert.accept());
-      await page.goto(`${origin}/auth/owner/manage`);
-      await page.locator("#keys li").filter({ hasText: "To revoke" }).waitFor();
+      const { id } = (await made.json()) as { id: string };
+      await page.goto(`${origin}/auth/owner/keys/${id}`);
       clock.advanceClock(6 * MINUTE);
+      let deletes = 0;
+      page.on("request", (request) => {
+        if (
+          request.method() === "DELETE" &&
+          request.url().endsWith(`/keys/${id}`)
+        )
+          deletes += 1;
+      });
+      await page.getByRole("button", { name: "Revoke" }).click();
       await page
-        .locator("#keys li")
-        .filter({ hasText: "To revoke" })
+        .getByRole("dialog", { name: "Revoke To revoke?" })
         .getByRole("button", { name: "Revoke" })
         .click();
       expect(await dialogOf(page).innerText()).toContain(
         "Revoking a key needs a recent sign-in.",
       );
       await confirmWithPassword(page);
-      await page
-        .locator("#keys li")
-        .filter({ hasText: "To revoke" })
-        .waitFor({ state: "detached" });
+      await page.waitForURL(`${origin}/auth/owner/keys`);
+      await page.getByText("Revoked To revoke").waitFor();
       expect(await keySources()).not.toContain("to-revoke");
+      expect(deletes).toBe(2);
     } finally {
-      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
+
+  it("asks to confirm it's you to save a key's changes, and saves them once", async () => {
+    const { context, page } = await signedIn();
+    try {
+      const made = await context.request.post(`${origin}/keys`, {
+        headers: { origin },
+        data: {
+          label: "To narrow",
+          source: "to-narrow",
+          permissions: ["instance.read"],
+        },
+      });
+      const { id } = (await made.json()) as { id: string };
+      await page.goto(`${origin}/auth/owner/keys/${id}`);
+      await page
+        .locator("summary", { hasText: "More control over Marfa" })
+        .click();
+      await page.locator('input[value="instance.read"]').uncheck();
+      clock.advanceClock(6 * MINUTE);
+      await page.getByRole("button", { name: "Save changes" }).click();
+      expect(await dialogOf(page).innerText()).toContain(
+        "Changing a key needs a recent sign-in.",
+      );
+      await confirmWithPassword(page);
+      await page.getByText("Saved").waitFor();
+      const stored = await ctx.storage.keys.get(id);
+      expect(stored?.permissions).toEqual([]);
+    } finally {
       clock.advanceClock(16 * MINUTE);
       await context.close();
     }
@@ -234,16 +292,12 @@ inBrowser(
 );
 
 inBrowser("The confirmation's password field", () => {
-  it("has the show-password button on a page with a stylesheet of its own", async () => {
+  it("has the show-password button on the API keys pages", async () => {
     const { context, page } = await signedIn();
     try {
-      await page.goto(`${origin}/auth/owner/manage`);
-      await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
+      await fillCreate(page, "Toggle key");
       clock.advanceClock(6 * MINUTE);
-      await page.locator("summary").click();
-      await page.fill("#label", "Toggle key");
-      await page.fill("#source", "toggle-key");
-      await page.click("#mint button");
+      await createButton(page).click();
       const dialog = dialogOf(page);
       await dialog.waitFor();
       const field = dialog.getByLabel("Or your password");

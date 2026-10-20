@@ -39,7 +39,7 @@ The command prompts for the password without echoing it. `setup claim --stdin` i
 
 The socket command must run under the server's operating-system account. Linux requires the `acl` package. `--socket` cannot be combined with `--url`, `--key`, `MARFA_API_URL` or `MARFA_API_KEY`, and an unavailable socket never falls back to HTTP or the keychain.
 
-Sign in at `http://localhost:8600/auth/sign-in` and open `/auth/owner/manage` to create a key with the access you need. To create a content key from the machine instead:
+Sign in at `http://localhost:8600/auth/sign-in` and open `/auth/owner/keys` to create a key with the access you need. To create a content key from the machine instead:
 
 ```bash
 marfa --socket "$marfa_socket" keys create --label laptop --source laptop \

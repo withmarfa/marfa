@@ -73,15 +73,19 @@ describe("permission labels", () => {
   });
 });
 
-describe("the key form on the Manage page", () => {
+describe("the Create key page", () => {
   it("shows each permission as the approval pages do, with its note and its mark", async () => {
     ctx = await createTestContext({});
-    const res = await ctx.ownerRequest("/auth/owner/manage");
+    const res = await ctx.ownerRequest("/auth/owner/keys/new");
     expect(res.status).toBe(200);
     const html = await res.text();
     for (const permission of PERMISSIONS) {
+      const id = new RegExp(
+        `<input[^>]*\\bid="([^"]+)"[^>]*\\bvalue="${permission}"`,
+      ).exec(html)?.[1];
+      expect(id, permission).toBeDefined();
       const row = new RegExp(
-        `<label><input[^>]*value="${permission}"[^>]*>([\\s\\S]*?)</label>`,
+        `<label[^>]*for="${id ?? ""}"[^>]*>([\\s\\S]*?)</label>`,
       ).exec(html);
       expect(row, permission).not.toBeNull();
       const text = visibleText(decodeEntities(row?.[1] ?? ""));
