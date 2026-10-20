@@ -456,7 +456,7 @@ A device MUST count in a drain's `answered` each write the drain sent that had a
 
 **Reason:** a write that went out and met no answer is never counted as answered: a report that counted it would read the same whether the server took it or could not be reached, so an app could not tell offline from saved. A write set aside has a verdict the drain reports, and a pass that set one aside has carried on (`queue-and-verdicts/stuck-write-carries-on`), so it is not left undelivered.
 
-**Tests:** `device/classification.test.ts › counts only the writes the server answered, and says why the rest were not delivered`, `› ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › reports a verdict for every write it sent`, `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`.
+**Tests:** `device/classification.test.ts › counts only the writes the server answered, and says why the rest were not delivered`, `› ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › reports a verdict for every write it sent`, `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`.
 
 ### `queue-and-verdicts/count-held`
 
@@ -748,13 +748,13 @@ When a write is blocked, a device MUST count no refusal against it.
 
 **Reason:** a block is not a failure: counted, a write would die waiting for a person.
 
-**Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › blocks the whole queue on a refused credential, and stops the drain`, `› blocks a spent key on the first refusal rather than spending the ceiling`, `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`.
+**Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › blocks the whole queue on a refused credential, and stops the drain`, `› blocks a spent key on the first refusal rather than spending the ceiling`, `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`.
 
 ### `queue-and-verdicts/blocked-passed-over`
 
 While a write is blocked `key_spent`, `ancestor_unavailable`, `conflict_unresolved` or `failing_alone`, a device MUST NOT send it in a drain.
 
-**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test again (`queue-and-verdicts/stuck-write-suspect`).
+**Reason:** each clears only when a caller releases or withdraws the write. The first three are refused the same way however often they are sent. A write blocked `failing_alone` is sent again only when a person has looked at it: taken back by the drain, it would cost every later drain its test and its second send again (`queue-and-verdicts/stuck-write-suspect`).
 
 **Tests:** `device/verdicts.test.ts › blocked: is passed over by a drain and reported with its reason`, `device/classification.test.ts › sends nothing in a later drain for a write blocked conflict_unresolved or key_spent`, `device/stuck-write.test.ts › does not take a write set aside back at the start of a drain`.
 
@@ -830,7 +830,7 @@ When a drain ends at an answer naming no contract, a device MUST say in `unavail
 
 ### `queue-and-verdicts/environmental-ends-pass`
 
-When a write meets an environmental failure, a device MUST send no write after it in that drain, except a write that tests it as a suspect (`queue-and-verdicts/stuck-write-tested`) and the writes after it once it is set aside (`queue-and-verdicts/stuck-write-after-landing`).
+When a write meets an environmental failure, a device MUST send no write after it in that drain, except a write that tests it as a suspect (`queue-and-verdicts/stuck-write-tested`) and the writes after it once it is set aside (`queue-and-verdicts/stuck-write-carries-on`).
 
 **Reason:** gone on to the next write, a drain against a server that cannot be reached would wait out a connection timeout for every write in the queue, and a server that asked for a wait would be asked again at once by every write behind the one it answered.
 
@@ -846,89 +846,105 @@ When a read a drain makes after an answer, or the lookup of a create's natural k
 
 ### `queue-and-verdicts/streak-counted`
 
-When a write meets an environmental failure other than a `429` in a drain, a device MUST add one to the number of drains in a row in which that write met one, its environmental streak.
+When a write meets an environmental failure in a drain, a device MUST add one to the number of drains in a row in which that write met one, its environmental streak, and record the time of the first failure of the run, unless the answer is a `429`, the failure came before the write was answered, or the failure is the answer to a suspect sent again after its test (`queue-and-verdicts/stuck-write-set-aside`).
 
-**Reason:** an environmental failure says nothing of one write, and a write a gateway refuses in particular words looks the same as a server that is down. Only a write that meets one drain after drain, while others are tried, can be told from an outage, and the streak is how long. It counts for a write sent to test a suspect as for any write (`queue-and-verdicts/stuck-write-tested`), so that each stuck write reaches the streak as the test passes through the queue. A `429` asks every request for a wait rather than naming the write, so it adds nothing.
+**Reason:** an environmental failure says nothing of one write, and a write a gateway refuses in particular words looks the same as a server that is down. Only a write that meets one drain after drain, over minutes, while others are tried, can be told from an outage, and the streak and the time its run began are how long. It counts for a write sent to test a suspect as for any write (`queue-and-verdicts/stuck-write-tested`), so that each stuck write reaches the streak as the test passes through the queue. A `429` asks every request for a wait rather than naming the write, so it adds nothing. A failure of the credential's renewal, a full disk or a read of the device's own files came before the write was answered, so it says nothing of the write. The run is timed by the device's own clock, so a clock set back only delays the time the run is long enough.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`, `› sets nothing aside while a server fails every write for a few drains and then recovers`, `› sets nothing aside while the server limits requests, and sends nothing behind the write`, `› sets the write aside only when the write sent to test it was not itself met by a failure`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› sets nothing aside while a server fails every write for a few drains and then recovers`, `› sets nothing aside while the server limits requests, and sends nothing behind the write`, `› shows a 429 as the last answer a write met, without adding to its streak, and a failure after it in its place`, `› sets the write aside only when the write sent to test it was not itself met by a failure`, `› sets nothing aside for a gateway that flaps for two minutes, however many drains it fails`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`.
 
 ### `queue-and-verdicts/streak-cleared`
 
-When a write is answered in a way that is not an environmental failure, or is released, a device MUST clear its environmental streak.
+When a write is answered in a way that is not an environmental failure, or is released, a device MUST clear its environmental streak and the time its run began.
 
 **Reason:** the streak counts drains in a row, so a drain in which the write was answered ends the run.
 
-**Tests:** `device/stuck-write.test.ts › sets nothing aside while a server fails every write for a few drains and then recovers`, `› sends a write set aside again when it is released, under the streak counted afresh`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`.
+**Tests:** `device/stuck-write.test.ts › sets nothing aside while a server fails every write for a few drains and then recovers`, `› sends a write set aside again when it is released, under the streak counted afresh`, `› sets nothing aside when the outage ends between the suspect and the write sent to test it`.
 
 ### `queue-and-verdicts/stuck-write-suspect`
 
-When a drain sends a write, other than to test a suspect, and the write meets an environmental failure other than a `429` that brings its environmental streak to three or more, a device MUST make it a suspect for the rest of that drain.
+When a drain sends a write, other than to test a suspect, and the write meets an environmental failure other than a `429` that brings its environmental streak to three or more, the first failure of the run being five minutes or more before this one, a device MUST make it a suspect for the rest of that drain.
 
-**Reason:** a gateway that refuses one write in the words of an outage would otherwise end every pass at that write for good, and hold back every write behind it. A write that has met the failure in three drains in a row is the one to ask about. A suspect is not yet set aside: only the answer to another write shows that the failure is the suspect's alone (`queue-and-verdicts/stuck-write-set-aside`).
+**Reason:** a gateway that refuses one write in the words of an outage would otherwise end every pass at that write for good, and hold back every write behind it. A write that has met the failure in three drains in a row is the one to ask about, and not before the run has lasted five minutes: a gateway restarting or flapping is over by then, and drains made close together, as an app makes them, can bring a streak to three in seconds. A suspect is not yet set aside: only the answer to another write, and the suspect failing again, shows that the failure is the suspect's alone (`queue-and-verdicts/stuck-write-set-aside`).
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`, `› sets nothing aside while a server fails every write for a few drains and then recovers`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› sets nothing aside while a server fails every write for a few drains and then recovers`, `› sets nothing aside for a gateway that flaps for two minutes, however many drains it fails`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
 
 ### `queue-and-verdicts/stuck-write-tested`
 
-While a drain holds a suspect, a device MUST send, before any other write, the ready write after the suspect that does not depend on the suspect, directly or through another write, and was sent least recently, counting a write never sent as the least recent and taking the earlier in the queue of writes sent at the same time.
+While a drain holds a suspect, a device MUST send, before any other write, the ready write after the suspect that does not depend on the suspect, directly or through another write, and was sent least recently, counting a write never sent as the least recent and, among writes never sent, taking the earlier in the queue.
 
-**Reason:** a write that does not depend on the suspect is one the server's answer can tell apart: if the server takes or refuses it, the server can be reached, and what fails is the suspect alone. A write that waits on the suspect could not be sent without it. One write tests the suspect, so an outage costs a drain the suspect and that write, and no more. The streak does not choose the test: after an outage every queued write can stand at three or more, and a test that skipped them would leave a stuck write at the head with none. The write sent least recently takes its turn, so the test passes through the queue, and a good write behind any number of stuck ones is the test within as many drains as there are writes ahead of it to try.
+**Reason:** a write that does not depend on the suspect is one the server's answer can tell apart: if the server takes or refuses it, the server can be reached. A write that waits on the suspect could not be sent without it. One write tests the suspect, so an outage costs a drain the suspect and that write, and no more. The streak does not choose the test: after an outage every queued write can stand at three or more, and a test that skipped them would leave a stuck write at the head with none. The order is the order of the sends the device has made, kept in the store, and not the time of a send, so a clock moved does not change it. The write sent least recently takes its turn, so the test passes through the queue, and a good write behind any number of stuck ones is the test within as many drains as there are writes ahead of it to try.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`, `› never depends on that write, so the writes waiting on an upload stay waiting`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`, `› sets the first of 4 stuck uploads aside in the 6th drain, when the note behind them lands`, `› takes the note behind one stuck upload, and sets the upload aside, though the note has met the failure three times`, `› takes the note behind four stuck uploads within four drains, and sets them all aside`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› never depends on that write, so the writes waiting on an upload stay waiting`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`, `› sets the first of 4 stuck uploads aside in the 7th drain, when the note behind them lands`, `› takes the note behind one stuck upload, and sets the upload aside, though the note has met the failure three times`, `› takes the note behind four stuck uploads within four drains, and sets the first aside`, `› keeps the test moving through the queue when the clock is set back`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`.
+
+### `queue-and-verdicts/stuck-write-test-unsent`
+
+If the write chosen to test a suspect is not sent, because the device holds no bytes it can open for it, then a device MUST choose the next write by `queue-and-verdicts/stuck-write-tested`.
+
+**Reason:** a write that never reached the server tells nothing of it, and one that is stuck for another reason must not hold the test for good. Once a request to test has been made, the server's answer to it decides, and no second write is sent to test the same suspect: it would make an outage cost a drain more than the suspect and one write.
+
+**Tests:** `device/stuck-write.test.ts › goes on to the next write when the one chosen to test has no bytes to send, and sends one test to the server`.
+
+### `queue-and-verdicts/stuck-write-resent`
+
+When a write sent to test a suspect has an answer that is not an environmental failure, including a refusal, a device MUST send the suspect once more in that drain.
+
+**Reason:** a server that has answered a write that does not depend on the suspect can be reached. The server may also have mended itself since the suspect failed, as when an outage ends between the two sends, and a write set aside on the strength of the earlier failure would be kept from a server that would now take it.
+
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› sets nothing aside when the outage ends between the suspect and the write sent to test it`, `› sets nothing aside for a single failure in a drain where an earlier write was answered`.
 
 ### `queue-and-verdicts/stuck-write-set-aside`
 
-When a write sent to test a suspect has an answer that is not an environmental failure, a device MUST give the suspect the verdict `blocked` with the reason `failing_alone`.
+When a suspect sent again after its test meets an environmental failure other than a `429`, a device MUST give the suspect the verdict `blocked` with the reason `failing_alone`.
 
-**Reason:** the server is reachable and answers a write that does not depend on the suspect, so what fails is the suspect alone. Left queued it would be sent first in every drain and end it.
+**Reason:** the server is reachable and answers a write that does not depend on the suspect, and the suspect meets the failure in the same drain once more, so what fails is the suspect alone. Left queued it would be sent first in every drain and end it. This send adds nothing to the streak, which the first failure of the drain counted. A `429`, or a failure that came before the write was answered, says nothing of the write: the pass ends with the suspect left queued, showing that answer as its last.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone once the server takes the writes behind it, and sends them`, `› sets aside a create the server answers with a 500 it names its contract for`, `› shows a write whose connection dies every time as having had no answer`, `› sets the first of 2 stuck uploads aside in the 4th drain, when the note behind them lands`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› sets aside a create the server answers with a 500 it names its contract for`, `› shows a write whose connection dies every time as having had no answer`, `› sets the first of 2 stuck uploads aside in the 5th drain, when the note behind them lands`, `› sets nothing aside when the server limits requests as the suspect is sent again, and shows that as its last answer`.
+
+### `queue-and-verdicts/stuck-write-resend-answered`
+
+When a suspect sent again after its test has an answer that is not an environmental failure, a device MUST settle the suspect as that answer says, as it would any write, and not as `failing_alone`.
+
+**Reason:** the server took the write or refused it by name, so the write was never failing alone, and the streak is cleared (`queue-and-verdicts/streak-cleared`).
+
+**Tests:** `device/stuck-write.test.ts › sets nothing aside when the outage ends between the suspect and the write sent to test it`, `› sets nothing aside for a single failure in a drain where an earlier write was answered`.
 
 ### `queue-and-verdicts/stuck-write-carries-on`
 
-When a write sent to test a suspect has an answer that is not an environmental failure, a device MUST go on with the drain in queue order from the suspect, sending each ready write the drain has not sent.
+When a suspect is given the verdict `failing_alone`, a device MUST go on with the drain in queue order from the suspect, sending each ready write the drain has not sent.
 
 **Reason:** the server has been shown to take writes, so the writes ahead of the test in the queue that the drain has not sent are sent in the order they were queued, and the drain does not leave them for a later one.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sets the first of 3 stuck uploads aside in the 5th drain, when the note behind them lands`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`.
-
-### `queue-and-verdicts/stuck-write-after-landing`
-
-If a drain makes a suspect after an earlier write in the same drain has had an answer that is not an environmental failure, then a device MUST give the suspect the verdict `blocked` with the reason `failing_alone` at once, send no write to test it, and go on with the drain.
-
-**Reason:** the server answered another write in this drain, so it can be reached and what fails is the suspect alone. A write that the drain reaches after the test has landed, and that has met the failure in three drains in a row, is set aside by this rule, however many writes are stuck.
-
-**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› takes the note behind four stuck uploads within four drains, and sets them all aside`, `› leaves the uploads behind the first queued, two requests a drain, until another note lands, then sets them all aside together`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`, `› sets the first of 3 stuck uploads aside in the 6th drain, when the note behind them lands`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`.
 
 ### `queue-and-verdicts/stuck-write-short-streak`
 
-If a drain sends a write that meets an environmental failure other than a `429` that leaves its environmental streak below three, then a device MUST end the pass and leave the write with no verdict, whether or not another write has had an answer in that drain.
+If a drain sends a write that meets an environmental failure other than a `429` and the write does not become a suspect, because its streak is below three or its run began less than five minutes ago, then a device MUST end the pass and leave the write with no verdict, whether or not another write has had an answer in that drain.
 
-**Reason:** a failure met in fewer than three drains in a row is not shown to be the write's own, and a server that failed one write once cannot be told from one that is stuck. The write stays queued with its streak counted, and is set aside in a later drain (`queue-and-verdicts/stuck-write-suspect`) once it has met the failure in three.
+**Reason:** a failure met in fewer than three drains in a row, or over less than five minutes, is not shown to be the write's own, and a server that failed one write once cannot be told from one that is stuck. The write stays queued with its streak counted, and is set aside in a later drain (`queue-and-verdicts/stuck-write-suspect`) once it has met the failure in three over five minutes.
 
-**Tests:** `device/stuck-write.test.ts › sets the first of 2 stuck uploads aside in the 4th drain, when the note behind them lands`, `› leaves the uploads behind the first queued, two requests a drain, until another note lands, then sets them all aside together`.
+**Tests:** `device/stuck-write.test.ts › sets the first of 2 stuck uploads aside in the 5th drain, when the note behind them lands`, `› sets nothing aside for a gateway that flaps for two minutes, however many drains it fails`, `› sets nothing aside for a single failure in a drain where an earlier write was answered`, `› leaves the uploads behind the first queued, two requests a drain, and sets one more aside for each note that lands behind them`.
 
 ### `queue-and-verdicts/stuck-write-sent-only`
 
-A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it and it met an environmental failure in that drain.
+A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain.
 
 **Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside`, `› sets the first of 6 stuck uploads aside in the 8th drain, when the note behind them lands`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside`, `› sets the first of 6 stuck uploads aside in the 9th drain, when the note behind them lands`.
 
 ### `queue-and-verdicts/stuck-write-test-failed`
 
 If a write sent to test a suspect meets an environmental failure, including a `429`, then a device MUST end the pass and leave the suspect with no verdict.
 
-**Reason:** the failure may be an outage or a gateway failing, which the streak was counted to rule out, and no answer to a write that does not depend on the suspect has shown it is not. The write that tested has its streak counted as any write has (`queue-and-verdicts/streak-counted`), and is not made a suspect.
+**Reason:** the failure may be an outage or a gateway failing, which the streak was counted to rule out, and no answer to a write that does not depend on the suspect has shown it is not. The write that tested has its streak counted as any write has (`queue-and-verdicts/streak-counted`), and is not made a suspect. The suspect keeps the streak and last answer its failure gave it, and a stop of the drain while the test is in flight loses neither.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`, `› keeps the streak of a suspect when the drain is stopped while the write sent to test it is in flight`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
 
 ### `queue-and-verdicts/stuck-write-test-refused`
 
-If the write sent to test a suspect is answered with a refused credential, then a device MUST park the queue as it does for any refused credential, and leave the suspect's environmental streak as it was before the drain.
+If the write sent to test a suspect is answered with a refused credential, then a device MUST park the queue as it does for any refused credential, and leave the suspect's environmental streak as its failure in that drain made it.
 
-**Reason:** a credential refused is a fact about the credential and not about any write, so the suspect is parked with the rest and judged again once it is replaced.
+**Reason:** a credential refused is a fact about the credential and not about any write, so the suspect is parked with the rest and judged again once it is replaced. The refusal adds nothing to the suspect's run, which stands as it was when the suspect failed.
 
 **Tests:** `device/stuck-write.test.ts › parks the queue on a refused credential the test meets, and sets nothing aside`.
 
@@ -938,7 +954,7 @@ If a drain holds a suspect and no write after it is both ready and independent o
 
 **Reason:** nothing can show the failure is the suspect's own. The suspect stays queued with its streak counted, and a write queued later is the test.
 
-**Tests:** `device/stuck-write.test.ts › leaves the write queued, and the pass ending as before, where no other write could go`, `› leaves the uploads behind the first queued, two requests a drain, until another note lands, then sets them all aside together`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`.
+**Tests:** `device/stuck-write.test.ts › leaves the write queued, and the pass ending as before, where no other write could go`, `› leaves the uploads behind the first queued, two requests a drain, and sets one more aside for each note that lands behind them`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`.
 
 ### `queue-and-verdicts/failing-alone-holds-dependants`
 
@@ -958,11 +974,11 @@ When a caller withdraws a write blocked `failing_alone`, a device MUST refuse wi
 
 ### `queue-and-verdicts/queue-shows-last-failure`
 
-When a write has met an environmental failure, and no other outcome since, a device MUST report in the queue the HTTP status of that answer, or no status where there was no answer, with the start of the answer's body when the body is text, at most 200 characters on one line.
+When a write has met an environmental failure, a `429` included, and no other outcome since, a device MUST report in the queue the HTTP status of that answer, or no status where there was no answer, with the start of the answer's body when the body is text, at most 200 characters on one line.
 
-**Reason:** a person finds why a write was set aside, and which gateway refused it, without a log. A body that is not text, or has control characters, is kept as no text, and a long page is cut so a queue stays readable.
+**Reason:** a person finds why a write was set aside, and which gateway refused it, without a log. A body that is not text, or has control characters, is kept as no text, and a long page is cut so a queue stays readable. A `429` is shown though it adds nothing to the streak, so that a write waiting on a limit says so. A failure that came before the write was answered, such as a credential that could not be renewed, is not the write's, and leaves what the queue showed as it was.
 
-**Tests:** `device/stuck-write.test.ts › shows what a write set aside last met, bounded, in the queue`, `› keeps only the start of a long body, and nothing of one made of control characters`, `› shows a write whose connection dies every time as having had no answer`.
+**Tests:** `device/stuck-write.test.ts › shows what a write set aside last met, bounded, in the queue`, `› keeps only the start of a long body, and nothing of one made of control characters`, `› shows a write whose connection dies every time as having had no answer`, `› shows a 429 as the last answer a write met, without adding to its streak, and a failure after it in its place`, `› sets nothing aside while the server limits requests, and sends nothing behind the write`.
 
 ### `queue-and-verdicts/counted-failures`
 
@@ -1204,9 +1220,9 @@ When a caller releases a write, a device MUST clear the refusals counted against
 
 ### `queue-and-verdicts/release-clears-streak`
 
-When a caller releases a write, a device MUST clear its environmental streak and the answer it last met.
+When a caller releases a write, a device MUST clear its environmental streak, the time its run began and the answer it last met.
 
-**Reason:** kept, a released write would be set aside again by its first environmental failure, without the drains in a row that tell a write from an outage.
+**Reason:** kept, a released write would be set aside again by its first environmental failure, without the drains in a row, over minutes, that tell a write from an outage.
 
 **Tests:** `device/stuck-write.test.ts › sends a write set aside again when it is released, under the streak counted afresh`.
 
