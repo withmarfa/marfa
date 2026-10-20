@@ -2017,7 +2017,7 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of
 
 When `GET /auth/device` carries `error=invalid_code` or `error=expired_code`, the server MUST answer a page saying the code isn't right or has ended.
 
-**Reason:** A code nobody issued and a code past its end are told apart only by someone who can look at the code, so the page says one thing for both and does not help a person guess codes.
+**Reason:** A person who meets either needs the same next step, a new code from their device, so the page says one thing for both.
 
 **Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
 
