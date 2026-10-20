@@ -245,7 +245,7 @@ The server MUST carry a key's plaintext `key` only in the answer to the mint tha
 
 When `POST /keys` mints a key, the server MUST send `Cache-Control: no-store` with the `201`.
 
-**Reason:** The plaintext is in that answer and nowhere else, so a cache must not keep it, nor a browser page that sent the mint.
+**Reason:** The plaintext is in that answer and nowhere else, so no cache, shared or in the browser, may keep a copy.
 
 **Tests:** `compliance/key-management.test.ts › the answer to a mint carries the plaintext and forbids a cache keeping it`.
 
@@ -1357,7 +1357,7 @@ Where a request names `instance.maintain`, `schema.write` or `items.purge`, the 
 
 ### `keys-and-oauth/approval-powers-words`
 
-The server MUST describe each of the twelve permissions in the same words on the consent screen, the device approval page and the key form on the Manage page.
+The server MUST describe each of the twelve permissions in the same words on the consent screen, the device approval page and the Create key page.
 
 **Reason:** The same grant reads the same wherever a person decides on it, so a power read once is recognized everywhere.
 
@@ -1365,7 +1365,7 @@ The server MUST describe each of the twelve permissions in the same words on the
 
 ### `keys-and-oauth/manage-powers-marked`
 
-Where the key form on the Manage page offers `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each as unable to be undone.
+Where the Create key page offers `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each as unable to be undone.
 
 **Reason:** `keys-and-oauth/approval-powers-marked` holds for the approval pages, and a key holds the same powers.
 
