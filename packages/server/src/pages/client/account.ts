@@ -458,6 +458,10 @@ export function initAccount(): void {
     },
     true,
   );
+  // Where the server says a passkey cannot work at this address, Add stays
+  // hidden: the notice already says why.
+  if (document.querySelector('[data-notice="unsupported"]:not([hidden])'))
+    return;
   for (const add of document.querySelectorAll<HTMLElement>(
     "[data-account-add]",
   )) {
@@ -465,7 +469,7 @@ export function initAccount(): void {
     add.addEventListener("click", () => {
       const dialog = document.getElementById(add.dataset.accountAdd ?? "");
       if (passkeysSupported() && dialog instanceof HTMLDialogElement) {
-        hideNotices(document);
+        hideNotices(document, ["done", "error"]);
         openDialog(dialog, add);
         return;
       }

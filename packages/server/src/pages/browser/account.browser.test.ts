@@ -936,4 +936,42 @@ describe("Password and passkeys, dates, stale sign-ins and refusals", () => {
       }
     },
   );
+
+  inBrowser(
+    "keeps Add hidden and the address notice shown where the address is an IP address",
+    async () => {
+      const reserved = await reserveOrigin();
+      const ipCtx = await createTestContext(
+        { authBaseUrl: reserved.origin, trustedProxyHeader: "x-real-ip" },
+        owner,
+      );
+      const ipServer = listen(ipCtx.app, reserved.port);
+      const context = await browser.newContext({
+        extraHTTPHeaders: newAddress(),
+      });
+      try {
+        const signedIn = await context.request.post(
+          `${reserved.origin}/auth/sign-in/email`,
+          { headers: { origin: reserved.origin }, data: owner },
+        );
+        expect(signedIn.status()).toBe(200);
+        const page = await context.newPage();
+        await page.goto(reserved.origin + PASSKEYS);
+        const notice = page.getByText("Passkeys can't be added here.");
+        await notice.waitFor();
+        // Witness: the page's script has run, which unhides Add at a good address.
+        await page.getByRole("button", { name: "Change password" }).waitFor();
+        await page.locator('[data-hook="change-password"]').click();
+        await dialogOf(page, "Change password").waitFor();
+        expect(await page.locator('[data-hook="add-passkey"]').isHidden()).toBe(
+          true,
+        );
+        expect(await notice.isVisible()).toBe(true);
+      } finally {
+        await context.close();
+        await ipServer.close();
+        await ipCtx.cleanup();
+      }
+    },
+  );
 });
