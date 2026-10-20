@@ -183,6 +183,14 @@ CREATE TABLE IF NOT EXISTS queue (
   -- A release must reset this to zero: a released row refused again would
   -- break the `CHECK` and abort its transaction rather than go `dead`.
   refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals BETWEEN 0 AND 5),
+  -- The drains in a row in which this write met an environmental failure. Not
+  -- a refusal count: it is never held against the ceiling. Every other answer
+  -- and every release sets it back to zero.
+  environmental_streak INTEGER NOT NULL DEFAULT 0 CHECK (environmental_streak >= 0),
+  -- A JSON `{"status": ..., "text": ...}`: what the write last met when the
+  -- failure was environmental, `status` null where nothing answered and
+  -- `text` null where the body was not text.
+  last_failure TEXT,
   queued_at TEXT NOT NULL,
   answered_at TEXT
 );

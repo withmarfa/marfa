@@ -963,6 +963,7 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
+    FailingAlone,
 }
 
 /// The reason the queue stores under `blocked` for a write held behind
@@ -973,11 +974,12 @@ pub enum BlockedReason {
 pub(crate) const AWAITING_DEPENDENCY: &str = "awaiting_dependency";
 
 impl BlockedReason {
-    pub const ALL: [BlockedReason; 4] = [
+    pub const ALL: [BlockedReason; 5] = [
         BlockedReason::CredentialRefused,
         BlockedReason::KeySpent,
         BlockedReason::AncestorUnavailable,
         BlockedReason::ConflictUnresolved,
+        BlockedReason::FailingAlone,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -986,6 +988,7 @@ impl BlockedReason {
             BlockedReason::KeySpent => "key_spent",
             BlockedReason::AncestorUnavailable => "ancestor_unavailable",
             BlockedReason::ConflictUnresolved => "conflict_unresolved",
+            BlockedReason::FailingAlone => "failing_alone",
         }
     }
 }
@@ -999,7 +1002,7 @@ impl FromStr for BlockedReason {
             .find(|reason| reason.as_str() == text)
             .ok_or_else(|| {
                 CoreError::Invalid(format!(
-                    "{text:?} is not one of the four blocked reasons a caller can release by: {}",
+                    "{text:?} is not one of the five blocked reasons a caller can release by: {}",
                     BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
                 ))
             })
@@ -1009,6 +1012,55 @@ impl FromStr for BlockedReason {
 impl fmt::Display for BlockedReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// What a write met that was no answer to it: the HTTP status, or none where
+/// nothing answered, and the start of the body when it was text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LastFailure {
+    pub status: Option<u16>,
+    pub text: Option<String>,
+}
+
+impl LastFailure {
+    /// The longest text kept, in characters.
+    pub const TEXT_LIMIT: usize = 200;
+
+    /// Keeps the start of a body that is text, with its whitespace collapsed,
+    /// and nothing of one that is not.
+    pub fn of(status: Option<u16>, body: &[u8]) -> LastFailure {
+        // Only the start is read: a cut through the middle of a character at
+        // the end is not a body that is not text.
+        let head = &body[..body.len().min(Self::TEXT_LIMIT * 8)];
+        let text = match std::str::from_utf8(head) {
+            Ok(text) => Some(text),
+            Err(error) if error.error_len().is_none() => {
+                std::str::from_utf8(&head[..error.valid_up_to()]).ok()
+            }
+            Err(_) => None,
+        };
+        let text = text
+            .filter(|text| !text.chars().any(|c| c.is_control() && !c.is_whitespace()))
+            .map(|text| {
+                let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                let mut kept: String = collapsed.chars().take(Self::TEXT_LIMIT).collect();
+                if collapsed.chars().count() > Self::TEXT_LIMIT || head.len() < body.len() {
+                    kept.push_str("...");
+                }
+                kept
+            })
+            .filter(|text| !text.is_empty());
+        LastFailure { status, text }
+    }
+
+    /// One line for a person: `HTTP 413: <start of body>` or `no answer`.
+    pub fn describe(&self) -> String {
+        match (self.status, self.text.as_deref()) {
+            (Some(status), Some(text)) => format!("HTTP {status}: {text}"),
+            (Some(status), None) => format!("HTTP {status}"),
+            (None, _) => "no answer".to_string(),
+        }
     }
 }
 
@@ -1038,6 +1090,11 @@ pub struct QueuedWrite {
     pub reason: Option<String>,
     /// The server's answer, kept whole.
     pub answer: Option<String>,
+    /// The drains in a row in which this write met an environmental failure.
+    pub environmental_streak: i64,
+    /// What the write last met when the failure was environmental. Kept while
+    /// the streak runs, and shown for a write set aside as `failing_alone`.
+    pub last_failure: Option<LastFailure>,
     /// The refusal for a terminal answer or a credential-blocked write.
     pub refusal: Option<Refusal>,
     /// What the write sends, or sent: kept so a refused write's content can
@@ -1080,7 +1137,11 @@ impl QueuedWrite {
     pub fn withdrawable(&self) -> bool {
         matches!(
             self.blocked_reason(),
-            Some(BlockedReason::AncestorUnavailable | BlockedReason::ConflictUnresolved)
+            Some(
+                BlockedReason::AncestorUnavailable
+                    | BlockedReason::ConflictUnresolved
+                    | BlockedReason::FailingAlone
+            )
         )
     }
 
@@ -1462,9 +1523,57 @@ mod tests {
             body: Value::Null,
             conflicted_copy_id: Some("sibling".into()),
             refusals: 0,
+            environmental_streak: 0,
+            last_failure: None,
             queued_at: "2026-01-01T00:00:00Z".into(),
             answered_at: None,
         }
+    }
+
+    #[test]
+    fn a_last_failure_keeps_the_start_of_a_text_body_on_one_line() {
+        let page =
+            b"<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n</html>\r\n";
+        let failure = LastFailure::of(Some(413), page);
+        assert_eq!(failure.status, Some(413));
+        assert_eq!(
+            failure.text.as_deref(),
+            Some("<html> <head><title>413 Request Entity Too Large</title></head> </html>")
+        );
+        assert_eq!(
+            failure.describe(),
+            "HTTP 413: <html> <head><title>413 Request Entity Too Large</title></head> </html>"
+        );
+    }
+
+    #[test]
+    fn a_last_failure_cuts_a_long_body_and_keeps_nothing_of_one_that_is_no_text() {
+        let long = "word ".repeat(4000);
+        let cut = LastFailure::of(Some(502), long.as_bytes()).text.unwrap();
+        assert!(cut.ends_with("..."));
+        assert_eq!(cut.chars().count(), LastFailure::TEXT_LIMIT + 3);
+
+        // A cut through the last character of the part read is not a body
+        // that is not text.
+        let wide = "\u{e9}".repeat(LastFailure::TEXT_LIMIT * 8);
+        assert!(LastFailure::of(Some(502), wide.as_bytes()).text.is_some());
+
+        for body in [&b"\xff\xfe\x00 not text"[..], b"\x00\x01 page", b"  \r\n "] {
+            assert_eq!(LastFailure::of(Some(500), body).text, None, "{body:?}");
+        }
+        // Witness: the same words without the control characters are kept.
+        assert!(LastFailure::of(Some(500), b"page").text.is_some());
+    }
+
+    #[test]
+    fn a_last_failure_with_no_status_reads_as_no_answer() {
+        let failure = LastFailure::of(None, b"");
+        assert_eq!(failure.describe(), "no answer");
+        assert_eq!(
+            LastFailure::of(Some(503), b"").describe(),
+            "HTTP 503",
+            "a status with no body was described as no answer"
+        );
     }
 
     #[test]

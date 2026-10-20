@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
-use crate::model::{BlockedReason, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
+use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
@@ -134,6 +134,108 @@ enum Classified {
     Trashed,
     /// The write ran, and the server kept no answer to repeat.
     Delivered,
+}
+
+/// The drains in a row in which a write meets an environmental failure
+/// before the drain asks whether it fails alone.
+const ENVIRONMENTAL_STREAK: i64 = 3;
+
+/// A write that has met an environmental failure often enough to be tested:
+/// whether the server answers another write that does not depend on it.
+struct Suspect {
+    id: String,
+    key: String,
+    /// The streak the write stands at once this drain counts.
+    streak: i64,
+    failure: LastFailure,
+    unavailable: String,
+    /// The write sent to test it, once one has been.
+    probe: Option<String>,
+    /// Where the write's entry stands in the report's verdicts.
+    verdict_at: usize,
+}
+
+/// Whether the server asked the caller to slow down, which says nothing of
+/// the write that met it.
+fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
+    fn limited(error: &CoreError) -> bool {
+        match error {
+            CoreError::RenewalFailed(cause) => limited(cause),
+            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. } => true,
+            _ => false,
+        }
+    }
+    match answer {
+        Ok(answer) => answer.status == 429,
+        Err(error) => limited(error),
+    }
+}
+
+/// Whether the failure came before the write was answered, from the credential
+/// renewal or the device's own disk, and so says nothing of the write.
+fn not_the_writes(answer: &std::result::Result<Answer, CoreError>) -> bool {
+    matches!(
+        answer,
+        Err(CoreError::RenewalFailed(_) | CoreError::StorageFull(_) | CoreError::Io(_))
+    )
+}
+
+/// What a write met that was no answer to it.
+fn failure_of(answer: &std::result::Result<Answer, CoreError>) -> LastFailure {
+    match answer {
+        Ok(answer) => LastFailure::of(Some(answer.status), answer.body.as_bytes()),
+        Err(CoreError::Unnamed { status, .. }) => LastFailure::of(Some(*status), b""),
+        Err(_) => LastFailure::of(None, b""),
+    }
+}
+
+/// Sets the suspect aside as `failing_alone`: the server answered another
+/// write that does not depend on it, so it is this write that cannot be taken.
+fn set_aside(
+    core: &Core,
+    stuck: &Suspect,
+    report: &mut DrainReport,
+    answers: &mut HashMap<String, Option<Verdict>>,
+) -> Result<()> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    // Released, withdrawn or answered while the test was out: not the same
+    // attempt any more, and the verdict would be about another write.
+    let Some(row) = store::queued_write(&tx, &stuck.id)?
+        .filter(|row| row.verdict.is_none() && row.idempotency_key == stuck.key)
+    else {
+        return Ok(());
+    };
+    store::note_environmental(&tx, &row.id, stuck.streak, &stuck.failure)?;
+    store::record_verdict(
+        &tx,
+        &row.id,
+        &store::Answered {
+            verdict: Verdict::Blocked,
+            reason: Some(BlockedReason::FailingAlone.as_str()),
+            answer: None,
+            conflicted_copy_id: None,
+        },
+    )?;
+    // The later edit read this edit's optimistic fields, which will not reach
+    // the server until a person releases it.
+    move_edits_back(&tx, &row)?;
+    let set_aside = store::queued_write(&tx, &row.id)?.unwrap_or(row);
+    tx.commit()?;
+    answers.insert(set_aside.id.clone(), Some(Verdict::Blocked));
+    report.answered += 1;
+    if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
+        *entry = verdict_of(
+            &set_aside,
+            &Settled::plain(
+                Some(Verdict::Blocked),
+                Some(BlockedReason::FailingAlone.as_str().into()),
+                set_aside.refusals,
+            ),
+            None,
+        );
+    }
+    Ok(())
 }
 
 /// Reads a create's answer again: a key that landed on a held row, an
@@ -846,6 +948,7 @@ fn send_queue(
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
     let mut lookups = Lookups::new();
+    let mut suspect: Option<Suspect> = None;
 
     for row in &all {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -1105,8 +1208,17 @@ fn send_queue(
         if let Ok(answer) = &answer {
             waited(&mut report, answer.retry_after_seconds);
         }
+        // The first write sent after a suspect tests it.
+        let probing = suspect.as_mut().is_some_and(|stuck| {
+            let first = stuck.probe.is_none();
+            if first {
+                stuck.probe = Some(row.id.clone());
+            }
+            first
+        });
 
         let class = refine(row, &payload, &answer, classify(&answer));
+        let environmental = class == Classified::Environmental;
         let taken = match store_fault(row) {
             Some(error) => Err(error),
             None => settle(core, row, &answer, class, shape, pass),
@@ -1145,6 +1257,35 @@ fn send_queue(
                 settled
             }
         };
+        let mut deferred = false;
+        if environmental {
+            if probing {
+                // The test met a failure too, so what fails is not one write:
+                // neither is counted, and the pass ends.
+                if suspect.take().is_some() {
+                    report.undelivered += 1;
+                }
+            } else if suspect.is_none() && !rate_limited(&answer) && !not_the_writes(&answer) {
+                let streak = row.environmental_streak + 1;
+                let failure = failure_of(&answer);
+                if streak >= ENVIRONMENTAL_STREAK {
+                    // The pass goes on to the next write that can go, and
+                    // ends there only if that one fails as well.
+                    deferred = true;
+                    suspect = Some(Suspect {
+                        id: row.id.clone(),
+                        key: row.idempotency_key.clone(),
+                        streak,
+                        failure,
+                        unavailable: settled.unavailable.clone().unwrap_or_default(),
+                        probe: None,
+                        verdict_at: report.verdicts.len(),
+                    });
+                } else {
+                    store::note_environmental(&*core.conn()?, &row.id, streak, &failure)?;
+                }
+            }
+        }
         if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
             report.answered += 1;
         } else if answer.is_err() && settled.unavailable.is_none() {
@@ -1193,6 +1334,12 @@ fn send_queue(
         report
             .verdicts
             .push(verdict_of(answered, &settled, answered.answer.as_deref()));
+        if probing && !environmental && !stop {
+            // The server answered a write that does not wait on the suspect.
+            if let Some(stuck) = suspect.take() {
+                set_aside(core, &stuck, &mut report, &mut answers)?;
+            }
+        }
         if stop {
             let conn = core.conn()?;
             let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
@@ -1201,11 +1348,24 @@ fn send_queue(
             ));
             break;
         }
-        if settled.unavailable.is_some() {
+        if settled.unavailable.is_some() && !deferred {
             if settled.verdict.is_none() {
                 report.undelivered += 1;
             }
             report.unavailable = settled.unavailable;
+        }
+    }
+
+    // No write was left to test it with: the suspect waits as any write does
+    // that met an environmental failure. A refused credential has parked it
+    // instead, and `stopped` counts it.
+    if let Some(stuck) = suspect.take()
+        && report.stopped.is_none()
+    {
+        store::note_environmental(&*core.conn()?, &stuck.id, stuck.streak, &stuck.failure)?;
+        report.undelivered += 1;
+        if report.unavailable.is_none() {
+            report.unavailable = Some(stuck.unavailable);
         }
     }
 

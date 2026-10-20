@@ -841,7 +841,8 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
-     conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload";
+     conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload, \
+     environmental_streak, last_failure";
 
 pub struct NewWrite<'a> {
     pub kind: WriteKind,
@@ -1777,6 +1778,8 @@ fn read_writes(
             blob: row.get(17)?,
             follows: row.get(18)?,
             payload: row.get(19)?,
+            environmental_streak: row.get(20)?,
+            last_failure: row.get(21)?,
         })
     })?;
 
@@ -1807,7 +1810,7 @@ fn read_writes(
                 .parse::<BlockedReason>()
                 .map_err(|_| {
                     CoreError::Store(format!(
-                        "queued write {} is blocked for a reason outside the five: {:?}",
+                        "queued write {} is blocked for a reason outside the five a caller can name: {:?}",
                         raw.id, raw.reason
                     ))
                 })?;
@@ -1820,6 +1823,18 @@ fn read_writes(
         })?;
         let refusal =
             crate::model::Refusal::for_write(verdict, raw.reason.as_deref(), raw.answer.as_deref());
+        let last_failure = raw
+            .last_failure
+            .as_deref()
+            .map(|json| {
+                serde_json::from_str(json).map_err(|error| {
+                    CoreError::Store(format!(
+                        "queued write {} holds a last failure this build cannot read ({error})",
+                        raw.id
+                    ))
+                })
+            })
+            .transpose()?;
         writes.push(QueuedWrite {
             kind: raw.kind.parse()?,
             id: raw.id,
@@ -1836,6 +1851,8 @@ fn read_writes(
             verdict,
             reason: raw.reason,
             answer: raw.answer,
+            environmental_streak: raw.environmental_streak,
+            last_failure,
             refusal,
             body,
             conflicted_copy_id: raw.conflicted_copy_id,
@@ -1868,6 +1885,8 @@ struct RawWrite {
     answered_at: Option<String>,
     follows: Option<String>,
     payload: String,
+    environmental_streak: i64,
+    last_failure: Option<String>,
 }
 
 type TypeRow = (
@@ -3033,7 +3052,9 @@ fn record_verdict_inner(
     let changed = conn.execute(
         "UPDATE queue
             SET verdict = ?2, reason = ?3, answer = ?4,
-                conflicted_copy_id = ?5, answered_at = ?6
+                conflicted_copy_id = ?5, answered_at = ?6,
+                environmental_streak = CASE WHEN ?7 THEN environmental_streak ELSE 0 END,
+                last_failure = CASE WHEN ?7 THEN last_failure ELSE NULL END
           WHERE id = ?1",
         params![
             id,
@@ -3042,6 +3063,8 @@ fn record_verdict_inner(
             answered.answer,
             answered.conflicted_copy_id,
             now_iso(),
+            answered.verdict == Verdict::Blocked
+                && answered.reason == Some(BlockedReason::FailingAlone.as_str()),
         ],
     )?;
     if changed == 0 {
@@ -3074,7 +3097,34 @@ pub fn pending_landings(conn: &Connection) -> Result<HashMap<String, String>, Co
     Ok(landings)
 }
 
+/// Records that the write met an environmental failure in this drain: the
+/// streak it now stands at and what it met. Neither touches the refusals.
+pub fn note_environmental(
+    conn: &Connection,
+    id: &str,
+    streak: i64,
+    failure: &crate::model::LastFailure,
+) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET environmental_streak = ?2, last_failure = ?3 WHERE id = ?1",
+        params![id, streak, serde_json::to_string(failure)?],
+    )?;
+    Ok(())
+}
+
+/// Sets a write's run of environmental failures back to nothing: it was
+/// answered, or released.
+pub fn clear_environmental(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET environmental_streak = 0, last_failure = NULL
+          WHERE id = ?1 AND (environmental_streak <> 0 OR last_failure IS NOT NULL)",
+        [id],
+    )?;
+    Ok(())
+}
+
 pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
+    clear_environmental(conn, id)?;
     conn.execute(
         "UPDATE queue SET refusals = MIN(refusals + 1, ?2) WHERE id = ?1",
         params![id, CEILING],
@@ -3166,7 +3216,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         "UPDATE queue
             SET verdict = NULL, reason = NULL, answer = NULL,
                 conflicted_copy_id = NULL, answered_at = NULL,
-                refusals = 0, spent_keys = ?2, idempotency_key = ?3
+                refusals = 0, environmental_streak = 0, last_failure = NULL,
+                spent_keys = ?2, idempotency_key = ?3
           WHERE id = ?1",
         params![
             id,
@@ -4257,6 +4308,7 @@ mod tests {
 
     use super::testing::*;
     use super::*;
+    use crate::model::LastFailure;
 
     #[test]
     fn a_pinned_rows_purge_is_remembered_until_it_is_let_go() {
@@ -5191,12 +5243,14 @@ mod tests {
             "INSERT INTO queue (
                  id, kind, item_id, target_id, edge_id, namespace, tag, blob,
                  base_version, idempotency_key, payload, depends_on, verdict, reason,
-                 answer, conflicted_copy_id, refusals, queued_at, answered_at
+                 answer, conflicted_copy_id, refusals, environmental_streak,
+                 last_failure, queued_at, answered_at
              ) VALUES (
                  'q-id', 'update_item', 'the-item', 'the-target', 'the-edge',
                  'the-namespace', 'the-tag', 'the-blob', 7, 'the-key', '{}',
                  '[\"first\",\"second\"]', 'blocked', 'key_spent',
-                 '{\"error\":\"as sent\"}', 'the-sibling', 3,
+                 '{\"error\":\"as sent\"}', 'the-sibling', 3, 2,
+                 '{\"status\":413,\"text\":\"too large\"}',
                  '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z'
              )",
             [],
@@ -5222,8 +5276,92 @@ mod tests {
         assert_eq!(write.answer.as_deref(), Some("{\"error\":\"as sent\"}"));
         assert_eq!(write.conflicted_copy_id.as_deref(), Some("the-sibling"));
         assert_eq!(write.refusals, 3);
+        assert_eq!(write.environmental_streak, 2);
+        assert_eq!(
+            write.last_failure,
+            Some(LastFailure {
+                status: Some(413),
+                text: Some("too large".into())
+            })
+        );
         assert_eq!(write.queued_at, "2026-01-01T00:00:00Z");
         assert_eq!(write.answered_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+    }
+
+    #[test]
+    fn a_streak_of_environmental_failures_ends_with_any_other_outcome() {
+        let conn = conn();
+        let queue = || {
+            enqueue(
+                &conn,
+                &NewWrite {
+                    kind: WriteKind::UploadBlob,
+                    item_id: None,
+                    target_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag: None,
+                    blob: Some("a-blob"),
+                    base_version: None,
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let met = LastFailure::of(Some(413), b"too large");
+        let state = |id: &str| {
+            let write = queued_write(&conn, id).unwrap().unwrap();
+            (write.environmental_streak, write.last_failure.is_some())
+        };
+
+        let counted = queue();
+        note_environmental(&conn, &counted.id, 2, &met).unwrap();
+        assert_eq!(state(&counted.id), (2, true));
+        assert_eq!(count_refusal(&conn, &counted.id).unwrap(), 1);
+        assert_eq!(
+            state(&counted.id),
+            (0, false),
+            "a refusal counted left the run of environmental failures standing"
+        );
+
+        let answered = queue();
+        note_environmental(&conn, &answered.id, 2, &met).unwrap();
+        record_verdict(
+            &conn,
+            &answered.id,
+            &Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(state(&answered.id), (0, false));
+
+        // The witness: set aside, the run and the last answer are what the
+        // queue shows, so a verdict does not always clear them.
+        let aside = queue();
+        note_environmental(&conn, &aside.id, 3, &met).unwrap();
+        record_verdict(
+            &conn,
+            &aside.id,
+            &Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(BlockedReason::FailingAlone.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(state(&aside.id), (3, true));
+        assert!(release(&conn, &aside.id).unwrap());
+        assert_eq!(
+            state(&aside.id),
+            (0, false),
+            "a release left the run of the write it took back"
+        );
     }
 
     #[test]
@@ -6111,7 +6249,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "6ea9135aa1f86f85",
+            "0e44a7c1df8cada2",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

@@ -2703,7 +2703,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Send what the queue holds and record what came back.
 
-One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain.
+One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain. A write that meets one in three drains in a row is tested against the next write that does not depend on it, and set aside as failing_alone if that is taken.
 
 ```text
 marfa device drain [OPTIONS]
@@ -2761,15 +2761,15 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device withdraw
 
-Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue, and put the copy back to what the server holds.
+Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone` out of the queue, and put the copy back to what the server holds.
 
-Sent again, such a write is refused the same way under any key. The writes held for it are refused unsent.
+Sent again, a write blocked `ancestor_unavailable` or `conflict_unresolved` is refused the same way under any key. The writes held for the withdrawn write are refused unsent.
 
 ```text
 marfa device withdraw [OPTIONS] <ID>
