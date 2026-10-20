@@ -223,11 +223,11 @@ describe("the whole sequence", () => {
             .waitFor();
           await page.getByRole("link", { name: "Continue" }).click();
           await page.waitForURL(`${origin}/setup/backups`);
-          // The management page after it calls routes this test app does not mount.
           expect(errors).toEqual([]);
           await page.getByRole("link", { name: "Done" }).click();
-          await page.waitForURL(`${origin}/auth/owner/manage`);
-          await page.getByText("Manage Library").first().waitFor();
+          await page.waitForURL(`${origin}/`);
+          // This test app mounts no Home, so the address answers 404 here; the page
+          // itself is read by the Home tests.
 
           expect(await violations()).toEqual([]);
         } finally {

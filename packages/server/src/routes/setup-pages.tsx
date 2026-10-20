@@ -442,7 +442,7 @@ export function renderBackupsPage(nonce: string, state: { bucket: boolean }) {
           backup.
         </p>
         <StepPair back={SETUP_STEP_PATHS.connect}>
-          <Button kind="primary" href="/auth/owner/manage">
+          <Button kind="primary" href="/">
             Done
           </Button>
         </StepPair>
