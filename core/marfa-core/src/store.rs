@@ -3042,20 +3042,26 @@ pub struct Answered<'a> {
     pub conflicted_copy_id: Option<&'a str>,
 }
 
+/// Marks the write sent and numbers the send, one past the highest number any
+/// write holds, in the one statement. The order of sends is a number rather
+/// than a time so a clock set back cannot reorder it.
 pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
     conn.execute(
-        "UPDATE queue SET sent = 1, last_sent_at = ?2 WHERE id = ?1",
-        params![id, now_iso()],
+        "UPDATE queue
+            SET sent = 1,
+                last_sent_seq = (SELECT COALESCE(MAX(last_sent_seq), 0) + 1 FROM queue)
+          WHERE id = ?1",
+        [id],
     )?;
     Ok(())
 }
 
-/// When the write was last sent, or nothing for one never sent. The times are
-/// fixed-width, so the earlier compares as the smaller.
-pub fn last_sent_at(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+/// The number of the write's last send, or nothing for one never sent. The
+/// lower number is the earlier send.
+pub fn last_sent_seq(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT last_sent_at FROM queue WHERE id = ?1",
+            "SELECT last_sent_seq FROM queue WHERE id = ?1",
             [id],
             |row| row.get(0),
         )
@@ -3089,6 +3095,7 @@ fn record_verdict_inner(
             SET verdict = ?2, reason = ?3, answer = ?4,
                 conflicted_copy_id = ?5, answered_at = ?6,
                 environmental_streak = CASE WHEN ?7 THEN environmental_streak ELSE 0 END,
+                environmental_since = CASE WHEN ?7 THEN environmental_since ELSE NULL END,
                 last_failure = CASE WHEN ?7 THEN last_failure ELSE NULL END
           WHERE id = ?1",
         params![
@@ -3132,17 +3139,58 @@ pub fn pending_landings(conn: &Connection) -> Result<HashMap<String, String>, Co
     Ok(landings)
 }
 
-/// Records that the write met an environmental failure in this drain: the
-/// streak it now stands at and what it met. Neither touches the refusals.
-pub fn note_environmental(
+/// A write's run of environmental failures as a failure leaves it.
+pub struct Streak {
+    /// The drains in a row in which the write met one.
+    pub count: i64,
+    /// When the run began, in milliseconds on the store's clock: the first
+    /// failure of the run.
+    pub began_ms: i64,
+}
+
+/// Counts an environmental failure the write met in this drain: one more on
+/// its streak, the start of the streak kept (or set, for the first), and what
+/// it met. None of it touches the refusals.
+pub fn count_environmental(
     conn: &Connection,
     id: &str,
-    streak: i64,
+    failure: &crate::model::LastFailure,
+) -> Result<Streak, CoreError> {
+    conn.execute(
+        "UPDATE queue
+            SET environmental_since = CASE WHEN environmental_streak = 0
+                                           THEN ?3
+                                           ELSE COALESCE(environmental_since, ?3) END,
+                environmental_streak = environmental_streak + 1,
+                last_failure = ?2
+          WHERE id = ?1",
+        params![id, serde_json::to_string(failure)?, now_millis()],
+    )?;
+    conn.query_row(
+        "SELECT environmental_streak, environmental_since FROM queue WHERE id = ?1",
+        [id],
+        |row| {
+            Ok(Streak {
+                count: row.get(0)?,
+                began_ms: row.get(1)?,
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| CoreError::Store(format!("no queued write {id} to count a failure against")))
+}
+
+/// Records what the write met when it was answered and the answer says
+/// nothing of it that counts: the streak, and so the start of it, stand as
+/// they were.
+pub fn note_last_failure(
+    conn: &Connection,
+    id: &str,
     failure: &crate::model::LastFailure,
 ) -> Result<(), CoreError> {
     conn.execute(
-        "UPDATE queue SET environmental_streak = ?2, last_failure = ?3 WHERE id = ?1",
-        params![id, streak, serde_json::to_string(failure)?],
+        "UPDATE queue SET last_failure = ?2 WHERE id = ?1",
+        params![id, serde_json::to_string(failure)?],
     )?;
     Ok(())
 }
@@ -3151,8 +3199,11 @@ pub fn note_environmental(
 /// answered, or released.
 pub fn clear_environmental(conn: &Connection, id: &str) -> Result<(), CoreError> {
     conn.execute(
-        "UPDATE queue SET environmental_streak = 0, last_failure = NULL
-          WHERE id = ?1 AND (environmental_streak <> 0 OR last_failure IS NOT NULL)",
+        "UPDATE queue
+            SET environmental_streak = 0, environmental_since = NULL, last_failure = NULL
+          WHERE id = ?1
+            AND (environmental_streak <> 0 OR environmental_since IS NOT NULL
+                 OR last_failure IS NOT NULL)",
         [id],
     )?;
     Ok(())
@@ -3251,7 +3302,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         "UPDATE queue
             SET verdict = NULL, reason = NULL, answer = NULL,
                 conflicted_copy_id = NULL, answered_at = NULL,
-                refusals = 0, environmental_streak = 0, last_failure = NULL,
+                refusals = 0, environmental_streak = 0, environmental_since = NULL,
+                last_failure = NULL,
                 spent_keys = ?2, idempotency_key = ?3
           WHERE id = ?1",
         params![
@@ -5324,7 +5376,7 @@ mod tests {
     }
 
     #[test]
-    fn a_write_is_stamped_when_it_is_sent_and_before_that_has_no_time() {
+    fn a_send_is_numbered_one_past_the_highest_and_before_that_has_no_number() {
         let conn = conn();
         let write = enqueue(
             &conn,
@@ -5342,18 +5394,36 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(last_sent_at(&conn, &write.id).unwrap(), None);
-        assert_eq!(last_sent_at(&conn, "no-such-write").unwrap(), None);
+        assert_eq!(last_sent_seq(&conn, &write.id).unwrap(), None);
+        assert_eq!(last_sent_seq(&conn, "no-such-write").unwrap(), None);
 
         mark_sent(&conn, &write.id).unwrap();
-        let first = last_sent_at(&conn, &write.id).unwrap().expect("stamped");
-        assert!(first.ends_with('Z') && first.len() == "2026-01-01T00:00:00.000Z".len());
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(last_sent_seq(&conn, &write.id).unwrap(), Some(1));
+        let other = enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UploadBlob,
+                item_id: None,
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: Some("another-blob"),
+                base_version: None,
+                payload: "{}",
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        mark_sent(&conn, &other.id).unwrap();
         mark_sent(&conn, &write.id).unwrap();
-        let again = last_sent_at(&conn, &write.id).unwrap().expect("stamped");
-        assert!(
-            again > first,
-            "a second send left the earlier time standing"
+        assert_eq!(
+            (
+                last_sent_seq(&conn, &other.id).unwrap(),
+                last_sent_seq(&conn, &write.id).unwrap()
+            ),
+            (Some(2), Some(3)),
+            "a send was not numbered after every send before it, across writes"
         );
     }
 
@@ -5383,9 +5453,30 @@ mod tests {
             let write = queued_write(&conn, id).unwrap().unwrap();
             (write.environmental_streak, write.last_failure.is_some())
         };
+        let began = |id: &str| -> Option<i64> {
+            conn.query_row(
+                "SELECT environmental_since FROM queue WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        let fail = |id: &str, times: i64| {
+            for _ in 0..times {
+                count_environmental(&conn, id, &met).unwrap();
+            }
+        };
 
         let counted = queue();
-        note_environmental(&conn, &counted.id, 2, &met).unwrap();
+        assert_eq!(began(&counted.id), None);
+        let first = count_environmental(&conn, &counted.id, &met).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let second = count_environmental(&conn, &counted.id, &met).unwrap();
+        assert_eq!(
+            (first.count, second.count, second.began_ms),
+            (1, 2, first.began_ms),
+            "a second failure moved the start of the run"
+        );
         assert_eq!(state(&counted.id), (2, true));
         assert_eq!(count_refusal(&conn, &counted.id).unwrap(), 1);
         assert_eq!(
@@ -5393,9 +5484,14 @@ mod tests {
             (0, false),
             "a refusal counted left the run of environmental failures standing"
         );
+        assert_eq!(
+            began(&counted.id),
+            None,
+            "a refusal left the start standing"
+        );
 
         let answered = queue();
-        note_environmental(&conn, &answered.id, 2, &met).unwrap();
+        fail(&answered.id, 2);
         record_verdict(
             &conn,
             &answered.id,
@@ -5412,7 +5508,7 @@ mod tests {
         // The witness: set aside, the run and the last answer are what the
         // queue shows, so a verdict does not always clear them.
         let aside = queue();
-        note_environmental(&conn, &aside.id, 3, &met).unwrap();
+        fail(&aside.id, 3);
         record_verdict(
             &conn,
             &aside.id,
@@ -5425,11 +5521,32 @@ mod tests {
         )
         .unwrap();
         assert_eq!(state(&aside.id), (3, true));
+        assert!(began(&aside.id).is_some());
         assert!(release(&conn, &aside.id).unwrap());
         assert_eq!(
-            state(&aside.id),
-            (0, false),
+            (state(&aside.id), began(&aside.id)),
+            ((0, false), None),
             "a release left the run of the write it took back"
+        );
+
+        // An answer that says nothing of the write is recorded and nothing
+        // else moves.
+        let limited = queue();
+        fail(&limited.id, 2);
+        let before = began(&limited.id);
+        note_last_failure(&conn, &limited.id, &LastFailure::of(Some(429), b"slow")).unwrap();
+        assert_eq!(
+            (state(&limited.id), began(&limited.id)),
+            ((2, true), before),
+            "recording the last answer moved the streak or its start"
+        );
+        assert_eq!(
+            queued_write(&conn, &limited.id)
+                .unwrap()
+                .unwrap()
+                .last_failure
+                .map(|failure| failure.status),
+            Some(Some(429))
         );
     }
 
@@ -6318,7 +6435,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "7f88fa1490644fb0",
+            "7732fdd105dbb248",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

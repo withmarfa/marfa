@@ -1092,8 +1092,10 @@ pub struct QueuedWrite {
     pub answer: Option<String>,
     /// The drains in a row in which this write met an environmental failure.
     pub environmental_streak: i64,
-    /// What the write last met when the failure was environmental. Kept while
-    /// the streak runs, and shown for a write set aside as `failing_alone`.
+    /// The last answer the server gave the write that was no answer to it, a
+    /// `429` included, which adds nothing to the streak. A failure that was not
+    /// the write's own leaves it as it was. Kept until the write is answered,
+    /// and shown for a write set aside as `failing_alone`.
     pub last_failure: Option<LastFailure>,
     /// The refusal for a terminal answer or a credential-blocked write.
     pub refusal: Option<Refusal>,

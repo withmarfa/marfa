@@ -188,14 +188,21 @@ CREATE TABLE IF NOT EXISTS queue (
   -- not an environmental failure, and every release, set it back to zero; a
   -- `429` leaves it as it was.
   environmental_streak INTEGER NOT NULL DEFAULT 0 CHECK (environmental_streak >= 0),
-  -- A JSON `{"status": ..., "text": ...}`: what the write last met when the
-  -- failure was environmental, `status` null where nothing answered and
-  -- `text` null where the body was not text.
+  -- When the current streak began, in milliseconds on the store's clock: the
+  -- first failure of the run. Null while the streak is zero. A write is asked
+  -- about only when this is five minutes back or more.
+  environmental_since INTEGER,
+  -- A JSON `{"status": ..., "text": ...}`: the last answer the server gave the
+  -- write that was no answer to it, a `429` included, `status` null where
+  -- nothing answered and `text` null where the body was not text. A failure
+  -- that was not the write's own, such as a credential renewal that failed,
+  -- leaves it as it was.
   last_failure TEXT,
-  -- When the write was last put on the wire, in the store's own clock. Null
-  -- for a write never sent: a drain tests a stuck write with the write sent
-  -- least recently, a null first.
-  last_sent_at TEXT,
+  -- The number of the write's last send: one past the highest number any write
+  -- holds, taken when it is sent. Null for a write never sent. A drain tests a
+  -- stuck write with the write sent least recently, the lowest number, a null
+  -- first. A number rather than a time, so a clock set back reorders nothing.
+  last_sent_seq INTEGER,
   queued_at TEXT NOT NULL,
   answered_at TEXT
 );
