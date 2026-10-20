@@ -1488,7 +1488,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't refresh or make another request. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session or the local command. A browser signed in over five minutes ago can end only itself, without `revoke_keys`.
+         * @description Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the owner's browser session or the local command. A browser over five minutes old can end only itself, without `revoke_keys`.
          */
         delete: operations["endSignIn"];
         options?: never;
