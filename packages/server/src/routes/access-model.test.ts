@@ -984,6 +984,25 @@ describe("types that share a label", () => {
     expect(held.rows).toEqual(held.data);
   });
 
+  it("names the integration data of every namespace in words, and other namespaces as they are", () => {
+    const all = describeHeld([], {}, { extensions: { "*": "write" } });
+    expect(all.data).toEqual([
+      { title: "Integration data", value: "Read and edit" },
+    ]);
+    expect(all.summary).toBe("Read and edit integration data");
+    const mixed = describeHeld(
+      ["core.note:read"],
+      {},
+      { extensions: { "*": "read", "app.cursor": "write" } },
+    );
+    expect(mixed.summary).toBe(
+      "Read and edit app.cursor; read notes and integration data",
+    );
+    expect(
+      describeHeld([], {}, { extensions: { "*": "none" } }).summaries.data,
+    ).toBe("No access to integration data");
+  });
+
   it("tells a held type from a type the request offers when they share a label", () => {
     const model = buildAccess({
       scopes: [scope("aic.ticket.task:read")],

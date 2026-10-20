@@ -22,6 +22,16 @@ export const MANY_TYPES = 8;
 /** How many types a long list shows before "Show all". */
 export const SHOWN_TYPES = 5;
 
+/**
+ * How integration (extension) data on every namespace is named, wherever a
+ * page shows a key holding the `*` namespace: a row's title and, in a line, a
+ * lower-case plural noun. A named namespace is shown as it is.
+ */
+export const ALL_EXTENSIONS = {
+  title: "Integration data",
+  noun: "integration data",
+} as const;
+
 export const LEVEL_RANK: Record<Level, number> = { none: 0, read: 1, write: 2 };
 
 /** Whether `level` is above `held`: a choice that adds access. */

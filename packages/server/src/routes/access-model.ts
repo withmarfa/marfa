@@ -27,6 +27,7 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import {
+  ALL_EXTENSIONS,
   CHOOSE_TYPES,
   dataSummary,
   heldSummary,
@@ -728,13 +729,17 @@ export function describeHeld(
     });
   }
   for (const [namespace, level] of Object.entries(extras.extensions ?? {})) {
-    const row = { title: namespace, value: LEVEL_LABELS[level] };
+    const { title, noun } =
+      namespace === "*"
+        ? ALL_EXTENSIONS
+        : { title: namespace, noun: namespace };
+    const row = { title, value: LEVEL_LABELS[level] };
     rows.set(`extension:${namespace}`, row);
     data.push(row);
-    if (level === "none") noAccess.data.push({ noun: namespace });
+    if (level === "none") noAccess.data.push({ noun });
     else {
-      levels.push({ noun: namespace, level });
-      dataLevels.push({ noun: namespace, level });
+      levels.push({ noun, level });
+      dataLevels.push({ noun, level });
     }
   }
   tellApart([...named, ...alongside]);
