@@ -3,6 +3,7 @@ import { needsRecentSignIn } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { RECENT_SIGN_IN_MS } from "../pages/recent-sign-in.js";
 import type { ConfirmGate } from "../pages/parts/index.js";
+import type { ChoosableType } from "./access-types.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import * as clock from "../clock.js";
 
@@ -30,10 +31,18 @@ export function confirmGateFor(
   appName: string,
   offered: readonly string[],
   held: readonly string[] | undefined,
+  types: readonly ChoosableType[] = [],
 ): ConfirmGate | undefined {
   const left = signInLeft(c);
   if (left === undefined) return undefined;
-  const scopes = offered.filter((scope) => needsRecentSignIn([scope], held));
+  // Types chosen in place of all data post their own scopes, which are
+  // written when the request asks to change all data.
+  const chosen = offered.includes("*:write")
+    ? types.map((type) => `${type.id}:write`)
+    : [];
+  const scopes = [...offered, ...chosen].filter((scope) =>
+    needsRecentSignIn([scope], held),
+  );
   if (scopes.length === 0) return undefined;
   // The dialog posts to this server, which the baseline policy does not allow.
   c.header(

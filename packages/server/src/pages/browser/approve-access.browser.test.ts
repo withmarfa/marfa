@@ -702,6 +702,42 @@ describe("Approve access in a browser, confirming it's you", () => {
   );
 
   inBrowser(
+    "asks to confirm it's you for types chosen in place of all data, then approves them",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        clock.advanceClock(6 * MINUTE);
+        const { app, proof } = await openConsent(
+          b,
+          "Chosen Types App",
+          "*:read *:write",
+        );
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read and edit" });
+        const before = b.callbacks.length;
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.waitFor();
+        expect(b.callbacks.length).toBe(before);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        const sent = await arrival(b, () =>
+          dialog.getByRole("button", { name: "Continue" }).click(),
+        );
+        expect(await scopesOf(app, sent, proof)).toContain("core.note:write");
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "keeps the keyboard inside the confirmation while it is open",
     async () => {
       const b = await openSignedIn();

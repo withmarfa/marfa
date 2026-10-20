@@ -517,6 +517,11 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // owner decides, however old its registration is.
     await deps.storage.oauthProvider?.markClientOffered(clientId);
 
+    const chooseTypes = await chooseTypesFor(
+      deps.storage,
+      clientId,
+      scopeLiterals,
+    );
     const html = renderConsentScreen({
       instanceName: await readInstanceName(deps.storage.settings),
       nonce: c.var.cspNonce,
@@ -528,11 +533,17 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       descriptions,
       wildcardExpansions,
       typeLabels,
-      chooseTypes: await chooseTypesFor(deps.storage, clientId, scopeLiterals),
+      chooseTypes,
       priorScopes,
       signedInAs: session.user.email,
       bundles,
-      confirmGate: confirmGateFor(c, clientName, scopeLiterals, priorScopes),
+      confirmGate: confirmGateFor(
+        c,
+        clientName,
+        scopeLiterals,
+        priorScopes,
+        chooseTypes,
+      ),
     });
 
     // Every consent-page render carries `Cache-Control: no-store`.

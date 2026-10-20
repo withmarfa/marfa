@@ -420,7 +420,9 @@ function gate(view: View, form: HTMLFormElement): void {
       )
         return;
       if (Date.now() - rendered < left - EARLY) return;
-      const chosen = new FormData(form).getAll("scopes");
+      // Types chosen in place of all data post under their own name.
+      const posted = new FormData(form);
+      const chosen = [...posted.getAll("scopes"), ...posted.getAll("types")];
       if (
         !chosen.some((scope) => typeof scope === "string" && needing.has(scope))
       )

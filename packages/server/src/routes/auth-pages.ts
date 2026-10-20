@@ -871,6 +871,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // owner decides, however old its registration is.
     await storage.oauthProvider?.markClientOffered(client.clientId);
 
+    const chooseTypes = await chooseTypesFor(
+      storage,
+      verdict.clientId,
+      scopeList(verdict.scope),
+    );
     setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
@@ -893,17 +898,14 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           parsedScopes,
         ),
-        chooseTypes: await chooseTypesFor(
-          storage,
-          verdict.clientId,
-          scopeList(verdict.scope),
-        ),
+        chooseTypes,
         bundles: getPermissionBundles(),
         confirmGate: confirmGateFor(
           c,
           client.name ?? client.clientId,
           scopeList(verdict.scope),
           priorScopes,
+          chooseTypes,
         ),
       }),
     );
