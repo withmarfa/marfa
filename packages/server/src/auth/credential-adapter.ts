@@ -6,6 +6,7 @@ import { appWriter } from "./version-writer.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
+import * as clock from "../clock.js";
 
 interface CredentialRequest {
   path: string;
@@ -22,6 +23,12 @@ interface CredentialRequest {
    *  the session row changes no credential and so writes no audit row. */
   recordsSessionUse?: boolean;
   verifiedPasswordHash?: string;
+  /**
+   * Set when the sign-in confirms a signed-in owner: the browser session the
+   * new one replaces, and the user both are for. The new session is created
+   * and the old one deleted in one transaction, and only for that user.
+   */
+  confirms?: { sessionId: string; userId: string };
   /** Scopes a device initiation names beyond the client's stored ceiling. The
    *  plugin's exact-membership check reads them as held for this request only;
    *  nothing is written until a signed-in person approves. */
@@ -33,7 +40,7 @@ export const credentialRequest = new AsyncLocalStorage<CredentialRequest>();
 export async function withCredentialRequest<T>(
   input: Pick<
     CredentialRequest,
-    "path" | "clientIp" | "phase" | "email" | "recordsSessionUse"
+    "path" | "clientIp" | "phase" | "email" | "recordsSessionUse" | "confirms"
   >,
   work: () => Promise<T>,
 ): Promise<T> {
@@ -316,6 +323,27 @@ export function withCredentialAudit<
                 )
                   return null;
               }
+              const confirms =
+                operation === "create" && args.model === "session"
+                  ? request?.confirms
+                  : undefined;
+              if (confirms) {
+                // The session being confirmed must still be this owner's and
+                // live, or its replacement would outlive a sign-out.
+                const current = (await adapter.findOne({
+                  model: "session",
+                  where: [
+                    { field: "id", value: confirms.sessionId },
+                    { field: "userId", value: confirms.userId },
+                  ],
+                })) as { expiresAt?: Date } | null;
+                if (
+                  !current?.expiresAt ||
+                  current.expiresAt.getTime() <= clock.nowMs() ||
+                  args.data?.userId !== confirms.userId
+                )
+                  return null;
+              }
               if (operation === "delete")
                 previous = await adapter.findOne(args);
               const matched =
@@ -327,6 +355,14 @@ export function withCredentialAudit<
                     >[])
                   : [];
               const result = await (original as Operation)(args);
+              if (confirms && result !== null)
+                await (adapter.deleteMany as Operation)({
+                  model: "session",
+                  where: [
+                    { field: "id", value: confirms.sessionId },
+                    { field: "userId", value: confirms.userId },
+                  ],
+                });
               if (
                 revoke &&
                 matched.some(
@@ -438,7 +474,13 @@ export function withCredentialAudit<
                 entry.action = "auth.sign_in.success";
                 entry.resource_type = "auth_user";
                 entry.resource_id = request.email;
-                entry.details = { method: "password", email: request.email };
+                entry.details = {
+                  method: "password",
+                  email: request.email,
+                  ...(request.confirms
+                    ? { confirmed_session: request.confirms.sessionId }
+                    : {}),
+                };
               }
               if (
                 args.model === "session" &&
@@ -449,7 +491,12 @@ export function withCredentialAudit<
                 entry.resource_type = "auth_user";
                 entry.resource_id =
                   typeof row?.userId === "string" ? row.userId : undefined;
-                entry.details = { method: "passkey" };
+                entry.details = {
+                  method: "passkey",
+                  ...(request.confirms
+                    ? { confirmed_session: request.confirms.sessionId }
+                    : {}),
+                };
               }
               return entry;
             },

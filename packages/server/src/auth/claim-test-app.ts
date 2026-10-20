@@ -11,6 +11,7 @@ import { createMarfaAuth } from "./instance.js";
 import { ownerRoutes } from "../routes/owner.js";
 import { setupRoutes } from "../routes/setup.js";
 import { authRoutes } from "../routes/auth-pages.js";
+import { confirmRoutes } from "../routes/auth-confirm.js";
 import { authStaticRoutes } from "../routes/auth-static.js";
 import { ownerPages } from "../routes/owner-pages.js";
 import { pageSecurityPolicy } from "../routes/content-security-policy.js";
@@ -45,6 +46,7 @@ export async function createClaimTestApp(
   app.route("/owner", ownerRoutes(storage, auth));
   app.route("/auth/owner", ownerPages(storage, auth));
   app.route("/auth/static", authStaticRoutes());
+  app.route("/auth", confirmRoutes(storage, auth));
   app.route("/auth", authRoutes(storage, auth));
   app.all("/auth/*", (c) => auth.handler(c.req.raw, "127.0.0.1"));
   const { code: setupCode } = await issueSetupCode(storage);

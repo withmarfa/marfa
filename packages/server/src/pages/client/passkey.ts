@@ -3,6 +3,7 @@
  * keeps it in the authenticator; the page only carries the two requests the
  * server's passkey door answers, and shows what came back.
  */
+import { sendConfirmed } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
 import { SETUP_WORDS } from "../setup-words.js";
 
@@ -17,13 +18,24 @@ interface Answer {
   body: { message?: unknown; error?: { message?: unknown } } | null;
 }
 
-async function request(path: string, body?: unknown): Promise<Answer> {
-  const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    credentials: "same-origin",
-    headers: { "content-type": "application/json", accept: "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
+const WHY = "To add a passkey, confirm it's you.";
+
+/** The answer, or `null` when the person cancelled the confirmation. */
+async function request(path: string, body?: unknown): Promise<Answer | null> {
+  const response = await sendConfirmed(
+    () =>
+      fetch(path, {
+        method: body === undefined ? "GET" : "POST",
+        credentials: "same-origin",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }),
+    WHY,
+  );
+  if (response === null) return null;
   return {
     status: response.status,
     body: (await response.json().catch(() => null)) as Answer["body"],
@@ -63,10 +75,7 @@ export function initPasskey(): void {
         const options = await request(
           "/auth/passkey/generate-register-options",
         );
-        if (options.status === 401) {
-          showNotice(root, "reauth");
-          return;
-        }
+        if (options === null) return;
         if (options.status !== 200) {
           showNotice(root, "error", refusalText(options));
           return;
@@ -81,10 +90,7 @@ export function initPasskey(): void {
         const verified = await request("/auth/passkey/verify-registration", {
           response: credential.toJSON(),
         });
-        if (verified.status === 401) {
-          showNotice(root, "reauth");
-          return;
-        }
+        if (verified === null) return;
         if (verified.status !== 200) {
           showNotice(root, "error", refusalText(verified));
           return;

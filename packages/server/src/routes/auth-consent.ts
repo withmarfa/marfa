@@ -128,10 +128,7 @@ import {
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import * as clock from "../clock.js";
-import {
-  answerSignInAgain,
-  signInAgainBeforeConsent,
-} from "./sign-in-again.js";
+import { confirmGateFor } from "./confirm-gate.js";
 
 /**
  * Outcome of the consent-skip critical section: either the request falls
@@ -503,17 +500,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       );
     }
 
-    // Before the screen is shown: approving what it offers would be refused
-    // to a session that signed in too long ago, so the person is sent to
-    // sign in again rather than shown a screen that cannot be completed.
-    const signInAgain = signInAgainBeforeConsent(
-      c,
-      scopeLiterals,
-      priorScopes,
-      `${url.pathname}?${oauthQuery}`,
-    );
-    if (signInAgain) return signInAgain;
-
     // The plain-English line per scope row, from the one source the device
     // approval screen reads too.
     const descriptions = buildScopeDescriptions(parsed);
@@ -546,6 +532,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       priorScopes,
       signedInAs: session.user.email,
       bundles,
+      confirmGate: confirmGateFor(c, clientName, scopeLiterals, priorScopes),
     });
 
     // Every consent-page render carries `Cache-Control: no-store`.
@@ -802,11 +789,10 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
         },
         () => audit,
       );
-    }).catch((error: unknown) =>
-      error instanceof ConsentRefused
-        ? withNoStore(error.response)
-        : answerSignInAgain(c, error, `/auth/authorize?${oauthQuery}`),
-    );
+    }).catch((error: unknown) => {
+      if (error instanceof ConsentRefused) return withNoStore(error.response);
+      throw error;
+    });
   });
 
   return app;

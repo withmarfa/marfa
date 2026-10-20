@@ -15,9 +15,12 @@ import { DEFAULT_INSTANCE_NAME } from "../instance-name.js";
 import {
   Button,
   ButtonPair,
+  ConfirmDialog,
+  gateAttributes,
   MomentCard,
   PageShell,
 } from "../pages/parts/index.js";
+import type { ConfirmGate } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
 import { AccessChoices, offersChoice } from "./access-choices.js";
 import {
@@ -52,6 +55,8 @@ export interface ConsentParams {
   bundles?: PermissionBundle[];
   /** The types a person may choose in place of all data, when the request names it. */
   chooseTypes?: readonly ChoosableType[];
+  /** Set where approving can need a sign-in newer than the person's. */
+  confirmGate?: ConfirmGate;
 }
 
 /** Renders the Approve access screen as an HTML document. */
@@ -102,6 +107,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           action="/auth/authorize/decision"
           data-access
           novalidate
+          {...gateAttributes(params.confirmGate)}
         >
           <input type="hidden" name="client_id" value={params.clientId} />
           <input type="hidden" name="oauth_query" value={params.oauthQuery} />
@@ -112,12 +118,19 @@ export function renderConsentScreen(params: ConsentParams): string {
             <Button type="submit" kind="outline" name="accept" value="false">
               Cancel
             </Button>
-            <Button type="submit" kind="primary" name="accept" value="true">
+            <Button
+              type="submit"
+              kind="primary"
+              name="accept"
+              value="true"
+              data={{ confirm: "" }}
+            >
               Approve
             </Button>
           </ButtonPair>
         </form>
       </MomentCard>
+      {params.confirmGate !== undefined && <ConfirmDialog />}
     </PageShell>,
   );
 }

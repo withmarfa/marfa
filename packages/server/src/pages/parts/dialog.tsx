@@ -1,6 +1,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
+import { dataAttributes } from "./data.js";
 
 export interface DialogProps {
   /** The id a button names in `opens`. */
@@ -9,6 +10,8 @@ export interface DialogProps {
   description?: Child;
   /** The buttons, in a row under the body. */
   actions: Child;
+  /** Read by the browser module that drives the dialog, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
   children?: Child;
 }
 
@@ -28,6 +31,7 @@ export function Dialog(props: DialogProps) {
       aria-describedby={
         props.description !== undefined ? descriptionId : undefined
       }
+      {...dataAttributes(props.data)}
     >
       <div class="card">
         <div>

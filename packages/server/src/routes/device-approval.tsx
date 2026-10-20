@@ -17,9 +17,12 @@ import {
   Button,
   ButtonPair,
   CodeCells,
+  ConfirmDialog,
+  gateAttributes,
   MomentCard,
   PageShell,
 } from "../pages/parts/index.js";
+import type { ConfirmGate } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
 import { AccessChoices, offersChoice } from "./access-choices.js";
 import {
@@ -51,6 +54,8 @@ export interface DeviceConsentParams {
   /** The email address of the person approving. */
   signedInAs?: string;
   bundles?: PermissionBundle[];
+  /** Set where approving can need a sign-in newer than the person's. */
+  confirmGate?: ConfirmGate;
 }
 
 /** Renders the Connect a device approval screen as an HTML document. */
@@ -92,6 +97,7 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
           action="/auth/device/consent"
           data-access
           novalidate
+          {...gateAttributes(params.confirmGate)}
         >
           <input type="hidden" name="user_code" value={params.userCode} />
           <AccessChoices model={model} />
@@ -106,12 +112,14 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
               kind="primary"
               name="decision"
               value="approve"
+              data={{ confirm: "" }}
             >
               Approve
             </Button>
           </ButtonPair>
         </form>
       </MomentCard>
+      {params.confirmGate !== undefined && <ConfirmDialog />}
     </PageShell>,
   );
 }

@@ -17,6 +17,7 @@ import { renderDocument } from "../pages/render.js";
 import {
   Button,
   CommandBlock,
+  ConfirmDialog,
   Disclosure,
   MomentCard,
   Notice,
@@ -25,7 +26,6 @@ import {
   TextField,
 } from "../pages/parts/index.js";
 import { SETUP_STEP_COUNT, SETUP_WORDS } from "../pages/setup-words.js";
-import { signInAgainPath } from "./sign-in-again.js";
 
 const steps = (current: number) => ({ current, total: SETUP_STEP_COUNT });
 
@@ -303,22 +303,6 @@ export function renderPasskeyPage(nonce: string) {
             localhost for development).
           </Notice>
         </div>
-        <div data-notice="reauth" hidden>
-          <Notice
-            tone="info"
-            title="Confirm it's you"
-            action={
-              <Button
-                kind="quiet"
-                href={signInAgainPath(SETUP_STEP_PATHS.passkey)}
-              >
-                Sign in again
-              </Button>
-            }
-          >
-            To add a passkey, sign in again first.
-          </Notice>
-        </div>
         <div class="stack" data-passkey-added hidden>
           <Notice tone="info" title="Passkey added">
             You can sign in with it from now on.
@@ -341,6 +325,7 @@ export function renderPasskeyPage(nonce: string) {
             Add passkey
           </Button>
         </div>
+        <ConfirmDialog />
       </div>
     </Step>,
   );

@@ -71,8 +71,9 @@ inBrowser("trusted management pages", () => {
       ).toEqual([0, 0]);
       await page.goto(`${origin}/auth/owner/restore`);
       expect(await page.locator("#archive").count()).toBe(1);
-      await page.getByRole("link", { name: "Sign in again" }).click();
-      expect(await page.locator('input[type="password"]').count()).toBe(1);
+      expect(
+        await page.getByRole("link", { name: "Sign in again" }).count(),
+      ).toBe(0);
       expect(errors).toEqual([]);
     } finally {
       await context.close();

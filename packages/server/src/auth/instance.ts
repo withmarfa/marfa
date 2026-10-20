@@ -285,6 +285,20 @@ export interface OwnerPasskey {
   createdAt: Date;
 }
 
+/** What proves a signed-in owner is still at the browser. */
+export type ConfirmProof =
+  | { kind: "password"; password: string }
+  | { kind: "passkey"; response: unknown };
+
+/** How a confirmation ended. Only `ok` replaced the session. */
+export type ConfirmOutcome =
+  | { ok: true; cookies: string[] }
+  | {
+      ok: false;
+      reason: "wrong_password" | "passkey_refused" | "session_ended";
+    }
+  | { ok: false; reason: "too_many_attempts"; retryAfterSeconds: number };
+
 export interface MarfaAuth {
   listOwnerPasskeys: (userId: string) => Promise<OwnerPasskey[]>;
   renameOwnerPasskey: (
@@ -341,6 +355,22 @@ export interface MarfaAuth {
     sessionId: string,
     clientIp: string | null,
   ) => Promise<boolean>;
+  /**
+   * Replace the signed-in owner's browser session with a new one, created
+   * now, when `proof` shows the owner is there. The new session is created
+   * and the old one deleted in one transaction, so a refused confirmation
+   * leaves the old session as it was. A password counts against the same
+   * windows as any password sign-in, and a passkey must belong to
+   * `current.userId`. Takes the account from `current`, never from the
+   * request.
+   */
+  confirmSession: (input: {
+    /** The confirming request's headers: its cookies and `User-Agent`. */
+    headers: Headers;
+    clientAddress: string | null;
+    current: { userId: string; sessionId: string; email: string };
+    proof: ConfirmProof;
+  }) => Promise<ConfirmOutcome>;
   /** A `Set-Cookie` value that removes the session cookie from a browser. */
   clearedSessionCookie: () => Promise<string>;
   /**
@@ -1168,178 +1198,242 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const clearedSessionCookie = async (): Promise<string> =>
     sessionCookie(await credentialContext(), "", 0);
 
-  const facade: MarfaAuth = {
-    handler: async (request: Request, clientAddress: string | null) => {
-      // Set on the request's own headers rather than on a copy: copying a
-      // request the server received starts reading its body, which is
-      // otherwise read only if Better Auth gets as far as reading it.
-      request.headers.delete(CLIENT_ADDRESS_HEADER);
-      if (clientAddress !== null) {
-        request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
-      }
-      const path = new URL(request.url).pathname.replace(/^\/auth/, "");
-      if (path.startsWith("/passkey/")) {
-        if (!PASSKEY_OWNER_PATHS.has(path) && !PASSKEY_SIGN_IN_PATHS.has(path))
-          throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
-        requireSecureOwnerTransport(facade);
-        if (
-          request.method !== "GET" ||
-          request.headers.get("sec-fetch-site") !== "same-origin" ||
-          request.headers.has("origin")
-        )
-          requireOwnerOrigin(facade, request.headers);
-        if (request.headers.has("authorization"))
-          throw new MarfaError(
-            ErrorCode.FORBIDDEN,
-            "Use your owner browser for passkeys.",
-          );
-        if (!options.storage)
-          throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
-        const storage = options.storage;
-        const ownerOperation = PASSKEY_OWNER_PATHS.has(path);
-        const validate = async () => {
-          if (ownerOperation)
-            await requireOwnerSession(storage, facade, request.headers, {
-              recent: true,
-            });
-        };
-        await validate();
-        // Challenge consumption is the first write. The credential lookup,
-        // local cryptographic check, counter and session then share its writer.
-        return withRequestAuthority(validate, () =>
-          withCredentialRequest(
-            {
-              path,
-              clientIp: clientAddress,
-              ...(PASSKEY_VERIFY_PATHS.has(path)
-                ? {
-                    phase: new CredentialPersistencePhase(
-                      storage,
-                      "auth.passkey.verified",
-                    ),
-                  }
-                : {}),
-            },
-            () => instance.handler(request),
-          ),
-        );
-      }
-      if (path.startsWith("/sign-in/") || path.startsWith("/sign-up/"))
-        requireSecureOwnerTransport(facade);
-      if (
-        path === "/change-password" &&
-        request.method === "POST" &&
-        options.storage
-      ) {
-        requireOwnerOrigin(facade, request.headers);
-        const body = (await request.json().catch(() => null)) as {
-          currentPassword?: unknown;
-          newPassword?: unknown;
-        } | null;
-        if (
-          typeof body?.currentPassword !== "string" ||
-          typeof body.newPassword !== "string"
-        )
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            "Current and new passwords are required.",
-          );
-        await changeOwnerPassword(options.storage, facade, request.headers, {
-          currentPassword: body.currentPassword,
-          password: body.newPassword,
-          clientAddress,
-        });
-        const current = await facade.getSession(request.headers, {
-          readOnly: true,
-        });
-        return Response.json(
-          { token: null, user: current?.user ?? null },
-          { headers: { "cache-control": "no-store" } },
-        );
-      }
-      const browserSessionPaths = new Set([
-        "/get-session",
-        "/sign-out",
-        "/revoke-sessions",
-        "/revoke-other-sessions",
-        "/oauth2/authorize",
-        "/oauth2/consent",
-        "/oauth2/end-session",
-        "/device/approve",
-        "/device/deny",
-      ]);
-      if (browserSessionPaths.has(path) && request.headers.has("authorization"))
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          "This operation requires an owner browser session.",
-        );
-      if (
-        options.storage &&
-        ["/revoke-sessions", "/revoke-other-sessions"].includes(path)
-      ) {
-        await requireOwnerSession(options.storage, facade, request.headers, {
-          recent: true,
-        });
-        rememberRecentAuthentication();
-      }
-      const phase =
-        ["/oauth2/token", "/oauth2/revoke"].includes(path) && options.storage
-          ? new CredentialPersistencePhase(
-              options.storage,
-              path === "/oauth2/revoke"
-                ? "auth.credentials.revoked"
-                : "auth.token.issued",
-            )
-          : undefined;
-      let body: Record<string, unknown> | undefined;
-      if (request.method === "POST" && path === "/sign-in/email") {
-        try {
-          const copy = request.clone();
-          body = request.headers
-            .get("content-type")
-            ?.includes("application/json")
-            ? ((await copy.json()) as Record<string, unknown>)
-            : Object.fromEntries(new URLSearchParams(await copy.text()));
-        } catch {
-          /* The provider owns malformed-body responses. */
-        }
-      }
-      return withCredentialRequest(
+  const confirmSession: MarfaAuth["confirmSession"] = async (input) => {
+    const { current, proof } = input;
+    const confirms = { sessionId: current.sessionId, userId: current.userId };
+    const origin = new URL(options.baseURL);
+    const headers = new Headers({
+      "content-type": "application/json",
+      origin: origin.origin,
+    });
+    const agent = input.headers.get("user-agent");
+    if (agent) headers.set("user-agent", agent);
+    let request: Request;
+    if (proof.kind === "password") {
+      request = new Request(new URL("/auth/sign-in/email", origin), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          email: current.email,
+          password: proof.password,
+        }),
+      });
+    } else {
+      // The passkey's challenge travels in a cookie the browser holds.
+      const cookie = input.headers.get("cookie");
+      if (cookie) headers.set("cookie", cookie);
+      request = new Request(
+        new URL("/auth/passkey/verify-authentication", origin),
         {
-          path,
-          clientIp: clientAddress,
-          phase,
-          email: typeof body?.email === "string" ? body.email : undefined,
-        },
-        async () => {
-          const response = await instance.handler(request);
-          if (
-            path === "/sign-in/email" &&
-            !credentialRequest.getStore()?.failure &&
-            !response.ok &&
-            response.status < 500 &&
-            options.storage
-          ) {
-            await runAuditedTransaction(options.storage, () => undefined, {
-              action: "auth.sign_in.failed",
-              resource_type: "auth_user",
-              client_ip: clientAddress,
-              resource_id:
-                typeof body?.email === "string" ? body.email : undefined,
-              details: {
-                email: typeof body?.email === "string" ? body.email : undefined,
-                method: "password",
-                reason:
-                  response.status === 429
-                    ? "too_many_attempts"
-                    : "invalid_credentials",
-              },
-            });
-          }
-          return response;
+          method: "POST",
+          headers,
+          body: JSON.stringify({ response: proof.response }),
         },
       );
-    },
+    }
+    const response = await serve(request, input.clientAddress, confirms);
+    if (response.ok)
+      return { ok: true, cookies: response.headers.getSetCookie() };
+    if (response.status === 429) {
+      const wait = Number(response.headers.get("retry-after"));
+      return {
+        ok: false,
+        reason: "too_many_attempts",
+        retryAfterSeconds: Number.isFinite(wait) && wait > 0 ? wait : 60,
+      };
+    }
+    const still = await facade.getSession(input.headers, { readOnly: true });
+    if (still?.session.id !== current.sessionId)
+      return { ok: false, reason: "session_ended" };
+    return {
+      ok: false,
+      reason: proof.kind === "password" ? "wrong_password" : "passkey_refused",
+    };
+  };
+
+  /**
+   * Serve a request through Better Auth. `confirms` is set only by
+   * `confirmSession`: the sign-in then replaces that browser session.
+   */
+  const serve = async (
+    request: Request,
+    clientAddress: string | null,
+    confirms?: { sessionId: string; userId: string },
+  ): Promise<Response> => {
+    // Set on the request's own headers rather than on a copy: copying a
+    // request the server received starts reading its body, which is
+    // otherwise read only if Better Auth gets as far as reading it.
+    request.headers.delete(CLIENT_ADDRESS_HEADER);
+    if (clientAddress !== null) {
+      request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
+    }
+    const path = new URL(request.url).pathname.replace(/^\/auth/, "");
+    if (path.startsWith("/passkey/")) {
+      if (!PASSKEY_OWNER_PATHS.has(path) && !PASSKEY_SIGN_IN_PATHS.has(path))
+        throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
+      requireSecureOwnerTransport(facade);
+      if (
+        request.method !== "GET" ||
+        request.headers.get("sec-fetch-site") !== "same-origin" ||
+        request.headers.has("origin")
+      )
+        requireOwnerOrigin(facade, request.headers);
+      if (request.headers.has("authorization"))
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "Use your owner browser for passkeys.",
+        );
+      if (!options.storage)
+        throw new MarfaError(ErrorCode.NOT_FOUND, "Not found");
+      const storage = options.storage;
+      const ownerOperation = PASSKEY_OWNER_PATHS.has(path);
+      const validate = async () => {
+        if (ownerOperation)
+          await requireOwnerSession(storage, facade, request.headers, {
+            recent: true,
+          });
+      };
+      await validate();
+      // Challenge consumption is the first write. The credential lookup,
+      // local cryptographic check, counter and session then share its writer.
+      return withRequestAuthority(validate, () =>
+        withCredentialRequest(
+          {
+            path,
+            clientIp: clientAddress,
+            confirms,
+            ...(PASSKEY_VERIFY_PATHS.has(path)
+              ? {
+                  phase: new CredentialPersistencePhase(
+                    storage,
+                    "auth.passkey.verified",
+                  ),
+                }
+              : {}),
+          },
+          () => instance.handler(request),
+        ),
+      );
+    }
+    if (path.startsWith("/sign-in/") || path.startsWith("/sign-up/"))
+      requireSecureOwnerTransport(facade);
+    if (
+      path === "/change-password" &&
+      request.method === "POST" &&
+      options.storage
+    ) {
+      requireOwnerOrigin(facade, request.headers);
+      const body = (await request.json().catch(() => null)) as {
+        currentPassword?: unknown;
+        newPassword?: unknown;
+      } | null;
+      if (
+        typeof body?.currentPassword !== "string" ||
+        typeof body.newPassword !== "string"
+      )
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "Current and new passwords are required.",
+        );
+      await changeOwnerPassword(options.storage, facade, request.headers, {
+        currentPassword: body.currentPassword,
+        password: body.newPassword,
+        clientAddress,
+      });
+      const current = await facade.getSession(request.headers, {
+        readOnly: true,
+      });
+      return Response.json(
+        { token: null, user: current?.user ?? null },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+    const browserSessionPaths = new Set([
+      "/get-session",
+      "/sign-out",
+      "/revoke-sessions",
+      "/revoke-other-sessions",
+      "/oauth2/authorize",
+      "/oauth2/consent",
+      "/oauth2/end-session",
+      "/device/approve",
+      "/device/deny",
+    ]);
+    if (browserSessionPaths.has(path) && request.headers.has("authorization"))
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "This operation requires an owner browser session.",
+      );
+    if (
+      options.storage &&
+      ["/revoke-sessions", "/revoke-other-sessions"].includes(path)
+    ) {
+      await requireOwnerSession(options.storage, facade, request.headers, {
+        recent: true,
+      });
+      rememberRecentAuthentication();
+    }
+    const phase =
+      ["/oauth2/token", "/oauth2/revoke"].includes(path) && options.storage
+        ? new CredentialPersistencePhase(
+            options.storage,
+            path === "/oauth2/revoke"
+              ? "auth.credentials.revoked"
+              : "auth.token.issued",
+          )
+        : undefined;
+    let body: Record<string, unknown> | undefined;
+    if (request.method === "POST" && path === "/sign-in/email") {
+      try {
+        const copy = request.clone();
+        body = request.headers.get("content-type")?.includes("application/json")
+          ? ((await copy.json()) as Record<string, unknown>)
+          : Object.fromEntries(new URLSearchParams(await copy.text()));
+      } catch {
+        /* The provider owns malformed-body responses. */
+      }
+    }
+    return withCredentialRequest(
+      {
+        path,
+        clientIp: clientAddress,
+        phase,
+        email: typeof body?.email === "string" ? body.email : undefined,
+        confirms,
+      },
+      async () => {
+        const response = await instance.handler(request);
+        if (
+          path === "/sign-in/email" &&
+          !credentialRequest.getStore()?.failure &&
+          !response.ok &&
+          response.status < 500 &&
+          options.storage
+        ) {
+          await runAuditedTransaction(options.storage, () => undefined, {
+            action: "auth.sign_in.failed",
+            resource_type: "auth_user",
+            client_ip: clientAddress,
+            resource_id:
+              typeof body?.email === "string" ? body.email : undefined,
+            details: {
+              email: typeof body?.email === "string" ? body.email : undefined,
+              method: "password",
+              reason:
+                response.status === 429
+                  ? "too_many_attempts"
+                  : "invalid_credentials",
+            },
+          });
+        }
+        return response;
+      },
+    );
+  };
+
+  const facade: MarfaAuth = {
+    handler: (request: Request, clientAddress: string | null) =>
+      serve(request, clientAddress),
     api: instance.api,
     registration: oauthProvider?.endpoints.registerOAuthClient,
     getSession: (headers: Headers, lookup = {}) =>
@@ -1379,6 +1473,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     listBrowserSessions,
     endBrowserSession,
     clearedSessionCookie,
+    confirmSession,
     createEmailAccount,
     preparePassword,
     preparePasswordChange,

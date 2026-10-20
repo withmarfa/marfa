@@ -70,9 +70,13 @@ export function buildPasskeyPlugin(
               model: "passkey",
               where: [{ field: "credentialID", value: clientData.id }],
             });
+            // A confirmation is for the signed-in owner alone, so a passkey
+            // of any other user is refused whoever it belongs to.
+            const confirming = credentialRequest.getStore()?.confirms?.userId;
             return (
               !!credential &&
-              (await storage.owner?.find())?.id === credential.userId
+              (await storage.owner?.find())?.id === credential.userId &&
+              (confirming === undefined || confirming === credential.userId)
             );
           }),
         );

@@ -46,6 +46,11 @@ There is no client framework and no client-side rendering.
 - **Codes:** `CodeCells` shows a code for a person to compare with the one on
   their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
+- **Confirming it's you:** `ConfirmDialog` is the dialog a page opens when a
+  change is refused for a sign-in older than five minutes. A page puts it once
+  at the end of its body. A page with a stylesheet of its own embeds
+  `ConfirmDialogHost`, which holds the dialog in a shadow root that loads this
+  system's stylesheet, so neither stylesheet reaches the other.
 - **Lists:** `ListToolbar`, `Tabs` and `Pager`.
 - **Navigation:** `Breadcrumb` (with the page picker) and `CommandSearch`.
 
@@ -149,7 +154,13 @@ does nothing without it. `access.ts` finds an approval form (`data-access`),
 keeps the line under each of its rows (`data-access-group`) true as controls
 change, and hides "If everything is off, approving denies the request." while
 something is on. It calls the functions in `access-summary.ts`, which the
-server calls for the same lines, so the two cannot disagree. `client/index.ts` starts them all. They use the DOM
+server calls for the same lines, so the two cannot disagree. `client/confirm.ts` drives the dialog: `sendConfirmed` sends a change, and
+when the answer is the refusal for an old sign-in it asks the person to
+confirm, posts the proof to `/auth/confirm`, and sends the change once more.
+A page's own script reaches it as `window.marfaConfirm.send`. An approval page
+posts a plain form, so its form names how long the sign-in has left and which
+of its scopes need a recent one (`gateAttributes`), and its approve button
+opens the dialog first when the person chose one of those too late. `client/index.ts` starts them all. They use the DOM
 only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
 password toggle, the shortcut hint) hidden, and the script shows it, so a

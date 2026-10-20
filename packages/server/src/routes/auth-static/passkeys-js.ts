@@ -9,12 +9,14 @@ export const PASSKEYS_JS = `(() => {
     status.textContent = 'Passkeys need a supported browser and a secure HTTPS address (or localhost for development).';
     if (add) add.disabled = true;
   }
-  async function request(path, body, method = body === undefined ? 'GET' : 'POST') {
-    const response = await fetch(path.startsWith('/') ? path : '/auth/passkey/' + path, {
+  async function request(path, body, method = body === undefined ? 'GET' : 'POST', why) {
+    const send = () => fetch(path.startsWith('/') ? path : '/auth/passkey/' + path, {
       method, credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) })
     });
+    const response = await (why ? window.marfaConfirm.send(send, why) : send());
+    if (response === null) throw Object.assign(new Error('Nothing was changed.'), { cancelled: true });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error?.message || data.message || 'The passkey request could not be completed. Try again.');
     return data;
@@ -23,7 +25,7 @@ export const PASSKEYS_JS = `(() => {
     button.disabled = true; status.textContent = '';
     try { await work(); }
     catch (error) {
-      status.textContent = error.name === 'NotAllowedError' || error.name === 'AbortError'
+      status.textContent = error.cancelled ? '' : error.name === 'NotAllowedError' || error.name === 'AbortError'
         ? 'The passkey request was cancelled or timed out. You can try again.'
         : error.message || 'The passkey request could not be completed. Try again.';
     } finally { button.disabled = false; }
@@ -36,7 +38,7 @@ export const PASSKEYS_JS = `(() => {
       const label = document.createElement('span'); label.textContent = row.name || 'Passkey';
       const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove';
       remove.addEventListener('click', () => run(remove, async () => {
-        await request('/owner/passkeys/' + encodeURIComponent(row.id), undefined, 'DELETE'); await refresh(); status.textContent = 'Passkey removed.';
+        await request('/owner/passkeys/' + encodeURIComponent(row.id), undefined, 'DELETE', 'Removing a passkey needs a recent sign-in.'); await refresh(); status.textContent = 'Passkey removed.';
       }));
       item.append(label, ' ', remove); list.append(item);
     }
@@ -44,7 +46,7 @@ export const PASSKEYS_JS = `(() => {
   }
   if (add) add.addEventListener('click', () => run(add, async () => {
     const name = document.querySelector('[name="passkey-name"]').value.trim();
-    const options = await request('generate-register-options');
+    const options = await request('generate-register-options', undefined, 'GET', 'Adding a passkey needs a recent sign-in.');
     const credential = await navigator.credentials.create({ publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(options) });
     if (!credential) throw new Error('No passkey was created. Try again.');
     await request('verify-registration', { response: credential.toJSON(), name });
