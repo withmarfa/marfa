@@ -1095,8 +1095,8 @@ describe("the ceiling, and releasing what it stopped", () => {
     }
 
     // The sixth comes from no one answer either: a create a gateway refuses
-    // three drains running, set aside once the create sent to test it
-    // is taken.
+    // in three drains running, the first five minutes ago, set aside once the
+    // create sent to test it is taken and it fails again.
     const failing = await hydratedHarness("class-reasons-failing-alone", {
       rows: held(),
     });
@@ -1121,12 +1121,14 @@ describe("the ceiling, and releasing what it stopped", () => {
       };
       scriptWrites(failing.server, {
         create: [
-          gateway,
-          gateway,
-          gateway,
           (request) => {
-            const sent = JSON.parse(request.body) as { id: string };
-            return answers.created(wireItem({ id: sent.id, properties: {} }));
+            const sent = JSON.parse(request.body) as {
+              id: string;
+              properties?: { title?: string };
+            };
+            return sent.properties?.title === "stuck"
+              ? gateway
+              : answers.created(wireItem({ id: sent.id, properties: {} }));
           },
         ],
         read: [
@@ -1139,12 +1141,16 @@ describe("the ceiling, and releasing what it stopped", () => {
       for (let drain = 0; drain < 3; drain += 1) {
         expect((await failing.device.drain()).ok).toBe(true);
       }
+      // The store's clock six minutes on, by the debug build's fault.
+      process.env.MARFA_TEST_FAULT = "clock-offset=360000";
+      expect((await failing.device.drain()).ok).toBe(true);
       const row = (await queueOf(failing)).find(
         (row) => stuck.ok && row.id === stuck.value.id,
       );
       expect(row?.reason).not.toBeNull();
       if (row?.reason != null) reached.add(row.reason);
     } finally {
+      delete process.env.MARFA_TEST_FAULT;
       await failing.stop();
     }
 
