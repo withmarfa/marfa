@@ -71,10 +71,7 @@ const PROVIDER_DEADLINE_MS = 2000;
 const TONES: readonly unknown[] = ["warn", "danger"];
 
 /** Runs `provider` and gives up on it at the deadline. Its timer never outlives it. */
-async function withinDeadline<T>(
-  provider: (() => Promise<T> | T) | undefined,
-): Promise<T | undefined> {
-  if (!provider) return undefined;
+async function withinDeadline<T>(provider: () => Promise<T> | T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -131,17 +128,17 @@ export function createConsolePages(registry: PageRegistry): ConsolePages {
             withinDeadline(async () =>
               checkedValue(await provider.value?.(reads)),
             ),
-            withinDeadline(async () => {
-              const items = await provider.attention?.(reads);
+            withinDeadline(async (): Promise<readonly AttentionItem[]> => {
+              const items: unknown = await provider.attention?.(reads);
               if (items === undefined) return [];
               if (!Array.isArray(items))
                 throw new Error("attention must be a list");
-              return items;
+              return items as AttentionItem[];
             }),
           ]);
-          let failed = false;
+          let failures = 0;
           const fail = (error: unknown): void => {
-            failed = true;
+            failures += 1;
             log("warn", "console: a page could not be read for Home", {
               page: id,
               error: errorMessage(error),
@@ -152,7 +149,7 @@ export function createConsolePages(registry: PageRegistry): ConsolePages {
           } else fail(value.reason);
           const items: AttentionItem[] = [];
           if (attention.status === "fulfilled") {
-            for (const item of attention.value ?? []) {
+            for (const item of attention.value) {
               try {
                 items.push(checkedItem(item));
               } catch (error) {
@@ -160,7 +157,7 @@ export function createConsolePages(registry: PageRegistry): ConsolePages {
               }
             }
           } else fail(attention.reason);
-          if (failed)
+          if (failures > 0)
             items.push({
               title: `Couldn't check ${page.title}`,
               href: page.href,
