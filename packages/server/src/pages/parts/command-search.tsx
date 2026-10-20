@@ -44,9 +44,11 @@ function Options(props: { options: readonly Option[] }) {
 
 /**
  * The search over pages and settings, a modal dialog a script opens with
- * Command-K (Control-K off Apple platforms) from any page. Every result is
+ * Command-K (Control-K off Apple platforms) from any page. The pages are
  * written here and the script only filters them, so nothing is searched on the
- * server and nothing links to a page that is not built.
+ * server and nothing links to a page that is not built. The settings are too
+ * many to send with every page: when the settings page is built, the script
+ * reads them from its `.json` answer the first time the dialog opens.
  */
 export function CommandSearch(props: CommandSearchProps) {
   const groups = props.registry.groups();
@@ -69,17 +71,7 @@ export function CommandSearch(props: CommandSearchProps) {
       })),
     ),
   ];
-  const settings: Option[] = groups.flatMap((group) =>
-    group.pages.flatMap((page) =>
-      page.settings.map((setting) => ({
-        id: `cs-setting-${page.id}-${setting.id}`,
-        title: setting.title,
-        href: setting.href,
-        meta: page.title,
-        haystack: `${setting.title} ${setting.description ?? ""} ${setting.id} ${setting.group}`,
-      })),
-    ),
-  );
+  const settingsPage = props.registry.page("settings");
   const suggested: Option[] = [
     { ...home, id: "cs-suggested-home" },
     ...props.registry.suggested().map((page) => ({
@@ -97,6 +89,9 @@ export function CommandSearch(props: CommandSearchProps) {
       id="command-search"
       aria-label="Go to a page or setting"
       data-command-search
+      data-settings-source={
+        settingsPage === undefined ? undefined : `${settingsPage.href}.json`
+      }
     >
       <div class="palette-card">
         <input
@@ -142,8 +137,8 @@ export function CommandSearch(props: CommandSearchProps) {
             <div class="pal-label" id="cs-label-settings">
               Settings
             </div>
-            <Options options={settings} />
           </div>
+          <div class="pal-none" data-search-status hidden></div>
           <div class="pal-none" data-search-none hidden>
             Nothing matches.
           </div>

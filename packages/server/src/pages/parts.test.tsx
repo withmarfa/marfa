@@ -1122,12 +1122,11 @@ describe("CommandSearch", () => {
     ]);
   });
 
-  it("holds each setting, naming the page it is on, with its text escaped", () => {
+  it("holds no setting, and names where the script reads them from", () => {
     const out = render();
-    expect(out).toContain('id="cs-setting-settings-trash_days"');
-    expect(out).toContain('data-title="Keep items in the trash"');
-    expect(out).toContain(">All settings</span></a>");
-    expect(out).not.toContain("<script>window");
+    expect(out).not.toContain("cs-setting-");
+    expect(out).not.toContain("Keep items in the trash");
+    expect(out).toContain('data-settings-source="/fixture/settings.json"');
   });
 
   it("starts with the suggested pages and every other result hidden", () => {

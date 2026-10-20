@@ -12,6 +12,7 @@ import { readInstanceName } from "../instance-name.js";
 import { refuseUndeclaredKeysOf } from "../middleware/undeclared-query-keys.js";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
 import { matchesQuery } from "../pages/navigation.js";
+import { firstSentence, groupSlug } from "../pages/settings-links.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import type { Storage } from "../storage/interface.js";
 import { settingWords, type SettingReading } from "../settings-reading.js";
@@ -20,9 +21,7 @@ import { CONSOLE_PAGES } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import {
   SETTINGS_HREF,
-  firstSentence,
   groupHref,
-  groupSlug,
   renderSettingsGroupPage,
   renderSettingsIndexPage,
   renderSettingsMissingPage,

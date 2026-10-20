@@ -15,6 +15,7 @@ import {
   SearchField,
 } from "../pages/parts/index.js";
 import type { RegistryItem } from "../pages/registry.js";
+import { firstSentence, groupSlug } from "../pages/settings-links.js";
 import { renderDocument } from "../pages/render.js";
 import type { SettingGroup } from "../config.js";
 import type { SettingEntry } from "./settings-routes.js";
@@ -22,13 +23,6 @@ import type { SettingEntry } from "./settings-routes.js";
 export const SETTINGS_HREF = "/auth/owner/settings";
 
 const TRAIL = { label: "All settings", href: SETTINGS_HREF } as const;
-
-/** The path segment a group is served at: "Sign-in and access" is `sign-in-and-access`. */
-export const groupSlug = (group: string): string =>
-  group
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
 
 /** The address of one group's page, and of one setting on it. */
 export const groupHref = (group: string, setting?: string): string =>
@@ -38,13 +32,6 @@ export const groupHref = (group: string, setting?: string): string =>
 export function valueWords(entry: SettingEntry): string {
   if (entry.secret) return entry.set ? "Set" : "Not set";
   return entry.value ?? "Not set";
-}
-
-/** The first sentence of a description, which says what the setting does, without its code marks. */
-export function firstSentence(description: string): string {
-  const end = description.search(/[.!?](\s|$)/);
-  const sentence = end === -1 ? description : description.slice(0, end + 1);
-  return sentence.replaceAll("`", "");
 }
 
 interface PageBase {

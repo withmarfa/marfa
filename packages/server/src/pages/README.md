@@ -63,6 +63,9 @@ There is no client framework and no client-side rendering.
 - **Navigation:** `Breadcrumb` (with the page picker) and `CommandSearch`.
   `SearchField` with `shortcutHint` also shows a button that opens the search,
   hidden until the script knows the shortcut for the platform.
+  `CommandSearch` writes the pages and loads the settings from the settings
+  page's `.json` answer when it first opens, so a page's `settings` in the
+  registry reach Home search only.
 - **Console page:** `ConsolePage` is the layout every console page uses: the
   document, `Breadcrumb`, `CommandSearch`, `ConsoleColumn` and `ConfirmDialog`.
 
