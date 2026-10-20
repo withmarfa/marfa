@@ -52,6 +52,12 @@ describe("the access a key holds, as the terminal prints it", () => {
     expect(lines).toContain(
       "Powers: Make, see, edit and revoke keys; Delete items in the trash for good",
     );
+    // What the key claims and when it was made stay in the readable output.
+    expect(outcome.stdout).toMatch(/^ {2}source /m);
+    expect(outcome.stdout).toMatch(/^ {2}claims /m);
+    expect(outcome.stdout).toMatch(
+      /^ {2}created \S+ {2}(never used|last used )/m,
+    );
     // The raw maps are for a script, which asks for them with --json.
     expect(outcome.stdout).not.toMatch(/type_permissions|"write"/);
     const json = await c.cli

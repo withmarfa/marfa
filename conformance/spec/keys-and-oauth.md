@@ -1177,11 +1177,11 @@ When an authorization request names a scope the instance cannot grant beside sco
 
 ### `keys-and-oauth/authorize-narrowed-types`
 
-When a person approves on the consent screen scopes that the request did not name but an all-data scope the request named covers, the server MUST send the browser to the redirect URI with a code for exactly those scopes.
+When a person approves on the consent screen types chosen under an all-data scope the request named, the server MUST NOT let the token the code is exchanged for reach an item type the person left off.
 
-**Reason:** A type under `*:read` is a narrowing of what was asked, not an addition to it, so it is granted though the request never wrote it. A scope that no named all-data scope covers, such as a write beside `*:read` or a permission, is refused by `keys-and-oauth/approval-types-beyond`, so this grants nothing a request that kept `*:read` would not have granted.
+**Reason:** A type under `*:read` is a narrowing of what was asked, not an addition to it, so it is granted though the request never wrote it, and the all-data scope that covers it is not granted beside it. A scope that no named all-data scope covers, such as a write beside `*:read` or a permission, is refused by `keys-and-oauth/approval-types-beyond`, so this grants nothing a request that kept `*:read` would not have granted.
 
-**Tests:** `compliance/approval-screens.test.ts › issues a token for exactly the types chosen, and not all data, on the consent screen`.
+**Tests:** `compliance/approval-screens.test.ts › does not let a token for the types chosen reach a type left off`.
 
 ### `keys-and-oauth/authorize-narrowed-refresh`
 
@@ -1391,11 +1391,11 @@ If an approval posted from the consent screen or the device approval page names 
 
 ### `keys-and-oauth/approval-all-data-types`
 
-Where a request names the all-data scope `*:read` or `*:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for all data, and one control for each registered item type that is not a `system` type.
+Where a request names the all-data scope `*:read` or `*:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for all data, and one control for each item type registered on the instance except the types under the `system` and `marfa` roots and the types the app already holds in full.
 
-**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. A `system` type holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it.
+**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with no list of scopes is offered only the types the server was started with, because the provider can issue it no others; every app a client registers for itself has a list.
 
-**Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`.
+**Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`, `› keeps the types an app holds when it asks again for all data, and shows them as held`.
 
 ### `keys-and-oauth/approval-types-levels`
 
@@ -1413,7 +1413,7 @@ When a person approves on the consent screen or the device approval page with ty
 
 When a person approves on the consent screen or the device approval page with all data chosen and not types, the server MUST issue a token for the all-data scope and no scope from the type controls.
 
-**Reason:** A page without a script posts every control, so the controls for types that were not chosen are posted too and mean nothing.
+**Reason:** A page without a script posts every control, so the controls for types that were not chosen are posted too and mean nothing, even one that names a type deleted since the page was drawn.
 
 **Tests:** `compliance/approval-screens.test.ts › issues a token for all data and none of the type controls when types were not chosen`.
 
@@ -1437,7 +1437,7 @@ While an app holds scopes for item types and a request names all data, when a pe
 
 The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".
 
-**Reason:** Access reads the same wherever a person meets it: on these pages, on a key's page, on an app's page and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md` and one description of access in the server builds every page that shows it.
+**Reason:** Access reads the same wherever a person meets it: on these pages, on a key's page, on an app's page and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
 
 **Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`, `› describes each permission in the same words on both pages and on the key form`.
 

@@ -145,9 +145,9 @@ export async function sentTo(
 
 /**
  * The person's decision on the consent screen `consent` is the address of,
- * posting the scopes they chose. Answers where the server sends them.
+ * posting the scopes they chose, answered as the server answered it.
  */
-export async function decide(
+export function decideResponse(
   server: FreshServer,
   origin: string,
   cookie: string,
@@ -155,8 +155,8 @@ export async function decide(
   accept: boolean,
   scopes: readonly string[],
   types: readonly string[] = [],
-): Promise<URL | undefined> {
-  const decision = await fetch(`${server.apiUrl}/auth/authorize/decision`, {
+): Promise<Response> {
+  return fetch(`${server.apiUrl}/auth/authorize/decision`, {
     method: "POST",
     redirect: "manual",
     headers: {
@@ -171,7 +171,33 @@ export async function decide(
       ...types.map((t): [string, string] => ["types", t]),
     ]),
   });
-  return sentTo(server, decision);
+}
+
+/**
+ * The person's decision on the consent screen `consent` is the address of,
+ * posting the scopes they chose. Answers where the server sends them.
+ */
+export async function decide(
+  server: FreshServer,
+  origin: string,
+  cookie: string,
+  consent: URL,
+  accept: boolean,
+  scopes: readonly string[],
+  types: readonly string[] = [],
+): Promise<URL | undefined> {
+  return sentTo(
+    server,
+    await decideResponse(
+      server,
+      origin,
+      cookie,
+      consent,
+      accept,
+      scopes,
+      types,
+    ),
+  );
 }
 
 /** One request to the token operation, answered status and body. */

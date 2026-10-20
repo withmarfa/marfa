@@ -16,6 +16,7 @@ import {
   authorizeQuery,
   CALLBACK,
   decide,
+  decideResponse,
   issuerOrigin,
   pkce,
   registerApp,
@@ -1276,10 +1277,24 @@ describe("what the approval pages offer an app that asks for all data, and what 
     );
     const issued = await redeem(app, sent, proof);
     expect(sorted(issued.body.scope)).toEqual(["*:read"]);
+    // A type deleted since the page was drawn is posted with the rest and means nothing.
+    const stale = await browserToken(
+      await register(ALL),
+      ALL,
+      ["*:read"],
+      ["core.unheard:read", "core.note:write"],
+    );
+    expect(stale.sent?.searchParams.get("code")).toBeTruthy();
     const screen = await deviceScreen(await register(ALL), ALL);
     expect(
-      (await decideDevice(screen, "approve", ["*:write"], ["core.note:read"]))
-        .status,
+      (
+        await decideDevice(
+          screen,
+          "approve",
+          ["*:write"],
+          ["core.note:read", "core.unheard:read"],
+        )
+      ).status,
     ).toBe(200);
   });
 });
@@ -1311,13 +1326,26 @@ describe("what the approval pages refuse an app that asks for all data, and deny
       "core.*:read",
       "keys.mint",
     ]) {
-      const { sent } = await browserToken(
-        await register(asked),
-        asked,
+      const app = await register(asked);
+      const landed = await sentTo(
+        server,
+        await authorize(
+          server,
+          authorizeQuery(app.clientId, asked, pkce()),
+          cookie,
+        ),
+      );
+      const refused = await decideResponse(
+        server,
+        origin,
+        cookie,
+        landed!,
+        true,
         [CHOOSE],
         ["core.task:read", bad],
       );
-      expect(sent, bad).toBeUndefined();
+      expect(refused.status, bad).toBe(400);
+      expect(refused.headers.get("location"), bad).toBeNull();
     }
     // The witness: the same post without the stray type is granted.
     const { sent } = await browserToken(
@@ -1378,6 +1406,24 @@ describe("what the approval pages keep when an app holds types and asks again fo
     ]);
     // The token the narrowed request was exchanged for works.
     expect(await itemsStatus(server, issued.body.access_token ?? "")).toBe(200);
+  });
+
+  it("does not let a token for the types chosen reach a type left off", async () => {
+    const app = await register(ALL);
+    const { sent, proof } = await browserToken(
+      app,
+      ALL,
+      [CHOOSE],
+      ["core.task:read"],
+    );
+    const issued = await redeem(app, sent, proof);
+    const read = (type: string) =>
+      fetch(`${server.apiUrl}/items?type=${type}&limit=1`, {
+        headers: { authorization: `Bearer ${issued.body.access_token ?? ""}` },
+      });
+    expect((await read("core.task")).status).toBe(200);
+    // The witness is the line above: the same token reads the type it was given.
+    expect((await read("core.note")).status).toBe(403);
   });
 
   it("keeps the types an app holds when it asks again for all data, and shows them as held", async () => {
