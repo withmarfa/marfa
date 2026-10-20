@@ -2,8 +2,8 @@
  * The owner's own account pages: Profile, and Password and passkeys.
  *
  * A change is a form in a dialog, marked `data-account-form` with what it
- * does. The browser checks the value with the same words the server checks it
- * by (`account-input.ts`), sends it to the door that already makes the change,
+ * does. The browser checks the value by the rules the server holds it to
+ * (`account-input.ts`), sends it to the door that already makes the change,
  * and says what came back under the field it belongs to. A change that needs a
  * recent sign-in goes through `sendConfirmed`, which asks the person to
  * confirm it's them and sends the change once more.
