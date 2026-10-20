@@ -2822,6 +2822,112 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["oldest"]);
   });
 
+  describe("a row entering the slice draws an edge whose write of its own waits", () => {
+    const link = {
+      id: "link",
+      source_id: "entering",
+      target_id: "elsewhere",
+      edge_type: "parent-of",
+      properties: { weight: 1 },
+    };
+    const entering = wireItem({
+      id: "entering",
+      tier: "library",
+      version: 2,
+    });
+    const script = (server: Harness["server"]) => {
+      scriptHydration(server, {
+        head: "10",
+        rows: { "core.note": [] },
+        edges: { "parent-of": [link] },
+      });
+      server.copyAnswer(
+        "GET",
+        "/events",
+        copyReplay("11", [copyItemEvent("11", "item.updated", entering)]),
+      );
+      server.copyAnswer(
+        "GET",
+        "/items/entering",
+        answers.updated({
+          ...entering,
+          edges: {
+            "parent-of": {
+              data: [
+                wireEdge({
+                  ...link,
+                  properties: { weight: 1, note: "changed elsewhere" },
+                  version: 2,
+                }),
+              ],
+              next_cursor: null,
+            },
+          },
+        }),
+      );
+    };
+    const held = async () => {
+      const edges = await harness!.device.edgesFrom("entering");
+      expect(edges.ok, JSON.stringify(edges)).toBe(true);
+      return edges.ok ? edges.value : [];
+    };
+
+    it("lays its own waiting edit of the edge over the edge the row brings", async () => {
+      harness = await startHarness("entering-edge-waiting-edit");
+      const { server, device } = harness;
+      script(server);
+      const hydrated = await device.hydrate(["core.note"], "library", {
+        edgeTypes: ["parent-of"],
+      });
+      expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+      const queued = await device.updateEdge("link", {
+        properties: { weight: 2 },
+        version: 1,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      expect((await device.get("entering")).ok).toBe(true);
+      const edge = (await held()).find((row) => row.id === "link");
+      // The witness: the edge the row brought was applied.
+      expect(
+        edge?.properties.note,
+        "the edge the entering row brought was not applied at all, so nothing here is about laying an edit over it",
+      ).toBe("changed elsewhere");
+      expect(
+        edge?.properties.weight,
+        "the edge the entering row brought erased an edit the device has not had answered",
+      ).toBe(2);
+    });
+
+    it("keeps an edge it deleted, with the delete waiting, out of the edges the row brings", async () => {
+      harness = await startHarness("entering-edge-waiting-delete");
+      const { server, device } = harness;
+      script(server);
+      const hydrated = await device.hydrate(["core.note"], "library", {
+        edgeTypes: ["parent-of"],
+      });
+      expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+      // The witness: the copy held the edge before the delete.
+      expect((await held()).map((row) => row.id)).toEqual(["link"]);
+      const queued = await device.deleteEdge("link");
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      expect((await held()).map((row) => row.id)).toEqual([]);
+
+      const caught = await device.catchUp();
+      expect(caught.ok, JSON.stringify(caught)).toBe(true);
+      expect(
+        (await device.get("entering")).ok,
+        "the row did not enter the copy, so nothing here is about the edges it brings",
+      ).toBe(true);
+      expect(
+        (await held()).map((row) => row.id),
+        "an edge this device deleted, with the delete not yet answered, came back with the row that entered the slice",
+      ).toEqual([]);
+    });
+  });
+
   it("keeps a pinned row outside the slice current", async () => {
     harness = await startHarness("pinned-outside");
     const { server, device } = harness;

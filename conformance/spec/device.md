@@ -744,7 +744,7 @@ When an event moves an edge whose type is not held whole to a source the copy do
 
 While a write of its own to an edge still waits, a device MUST show that write over the server's change to the edge.
 
-**Tests:** `device/catch-up.test.ts › keeps an edge whose source moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's target over the server's change to the edge`, `› applies an edge event beneath an edge edit it has not had answered`.
+**Tests:** `device/catch-up.test.ts › keeps an edge whose source moved outside the slice while a move of its own waits`, `› lays its own waiting move of an edge's target over the server's change to the edge`, `› applies an edge event beneath an edge edit it has not had answered`, `› lays its own waiting edit of the edge over the edge the row brings`, `› keeps an edge it deleted, with the delete waiting, out of the edges the row brings`.
 
 ### `device/catch-up-entering-tags`
 
