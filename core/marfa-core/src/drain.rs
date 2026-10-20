@@ -132,11 +132,13 @@ enum Classified {
         source: String,
     },
     Trashed,
+    /// The write ran, and the server kept no answer to repeat.
+    Delivered,
 }
 
 /// Reads a create's answer again: a key that landed on a held row, an
-/// unclaimed source and a trashed row cannot be told from the status and
-/// code alone.
+/// unclaimed source, a trashed row and a lost answer to a create naming no
+/// id cannot be told from the status and code alone.
 fn refine(
     row: &QueuedWrite,
     payload: &str,
@@ -207,6 +209,11 @@ fn refine(
                 _ => class,
             }
         }
+        // A create naming no id lands on whatever row its key resolves, so
+        // no read by id finds the row it wrote.
+        Classified::Delivered if !sent.get("id").is_some_and(serde_json::Value::is_string) => {
+            Classified::Contract
+        }
         _ => class,
     }
 }
@@ -241,6 +248,9 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
             Classified::Block(BlockedReason::CredentialRefused)
         }
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
+        (422, "idempotency_result_not_retained") if first_succeeded(answer) => {
+            Classified::Delivered
+        }
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
         // The server has not finished answering this key, and nothing clears
@@ -252,6 +262,15 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // An unexpected informational answer may clear on the next attempt.
         _ => Classified::Counted,
     }
+}
+
+/// The server keeps the status of a first answer it could not keep whole
+/// (`errors/idem-not-retained-status`).
+fn first_succeeded(answer: &Answer) -> bool {
+    serde_json::from_str::<serde_json::Value>(&answer.body)
+        .ok()
+        .and_then(|body| body.pointer("/error/details/original_status")?.as_u64())
+        .is_some_and(|status| (200..300).contains(&status))
 }
 
 /// Only some doors answer with an item: tags, metadata and extensions answer
@@ -2108,6 +2127,7 @@ fn settle(
             finish_counted(core, row, refusals, envelope)
         }
         Classified::Landed { id, code } => land(core, row, answer, shape, &id, code, pass),
+        Classified::Delivered => settle_delivered(core, row, shape, pass),
         Classified::Trashed => {
             let mut response = answer.clone();
             if let Ok(answer) = &mut response {
@@ -2180,6 +2200,64 @@ fn settle(
             })
         }
     }
+}
+
+/// Settles a write whose first answer succeeded and was too large for the
+/// server to keep, with the row or edge as a read by id finds it now in place
+/// of that answer. Like any repeat, it answers the subject as it stands
+/// (`queue-and-verdicts/not-retained-accepted`). Where the read finds
+/// nothing, the write settles with no answer to take a version from.
+fn settle_delivered(
+    core: &Core,
+    row: &QueuedWrite,
+    shape: Shape,
+    pass: &mut ViewChange,
+) -> Result<Settled> {
+    let subject = match shape {
+        Shape::Item => row.item_id.as_deref().map(|id| ("items", id)),
+        Shape::Edge => row.edge_id.as_deref().map(|id| ("edges", id)),
+        Shape::Plain | Shape::Blob => None,
+    };
+    let read = match subject {
+        None => None,
+        // The server would refuse the read; sent again, the write is
+        // answered the same way once the copy is built again.
+        Some(_) if pass.changed() => return Ok(Settled::plain(None, None, row.refusals)),
+        Some((collection, id)) => {
+            let context = read_view::Context::capture(&*core.conn()?)?;
+            match context.http(core.http()?).read_whole(&[collection, id]) {
+                Ok(found) => found,
+                Err(CoreError::Forbidden { .. }) => None,
+                Err(error) if names_no_row(&error) => None,
+                Err(error) if error.is_environmental() => {
+                    telemetry::degraded!(&error);
+                    return Ok(Settled {
+                        retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
+                        unavailable: unavailable_by(&error).or_else(|| Some(error.to_string())),
+                        ..Settled::plain(None, None, row.refusals)
+                    });
+                }
+                Err(error) => return Err(context.failed(core, error)?),
+            }
+        }
+    };
+    let (body, shape) = match read {
+        Some(mut found) => {
+            found["acknowledged"] = serde_json::Value::Bool(true);
+            (found, shape)
+        }
+        None if shape == Shape::Blob => (serde_json::json!({ "hash": row.blob }), shape),
+        None => (serde_json::json!({}), Shape::Plain),
+    };
+    let answer = Answer {
+        status: 200,
+        code: String::new(),
+        body: body.to_string(),
+        retry_after_seconds: None,
+        replayed: true,
+        contract_named: true,
+    };
+    settle_success(core, row, &answer, shape, pass, true)
 }
 
 /// A natural-key receipt settles independently of the current read authority.
@@ -2885,6 +2963,67 @@ mod tests {
                 holds(&conn, &edit.id, &at).unwrap(),
                 expected,
                 "an edit that read {read} and carries {sent}, against an answer holding {row}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_first_answer_not_retained_settles_by_the_status_it_carried() {
+        let not_retained = |details: serde_json::Value| {
+            Ok(Answer {
+                status: 422,
+                code: "idempotency_result_not_retained".into(),
+                body: json!({
+                    "error": {
+                        "code": "idempotency_result_not_retained",
+                        "message": "too large to keep",
+                        "details": details,
+                    }
+                })
+                .to_string(),
+                retry_after_seconds: None,
+                replayed: false,
+                contract_named: true,
+            })
+        };
+        let succeeded = not_retained(json!({ "original_status": 201 }));
+        assert_eq!(classify(&succeeded), Classified::Delivered);
+        for details in [
+            json!({ "original_status": 404 }),
+            json!({ "original_status": "200" }),
+            json!({}),
+        ] {
+            assert_eq!(
+                classify(&not_retained(details.clone())),
+                Classified::Contract,
+                "{details}"
+            );
+        }
+
+        let conn = store::open_in_memory().unwrap();
+        for (payload, expected) in [
+            (
+                json!({ "id": "mine", "type": "core.note" }),
+                Classified::Delivered,
+            ),
+            (
+                json!({ "type": "core.note", "source": "app", "source_id": "k" }),
+                Classified::Contract,
+            ),
+        ] {
+            let body = payload.to_string();
+            let create = store::enqueue(
+                &conn,
+                &store::NewWrite {
+                    payload: &body,
+                    ..write(WriteKind::CreateItem, "mine", None, None, &[])
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                refine(&create, &body, &succeeded, classify(&succeeded)),
+                expected,
+                "{payload}"
             );
         }
     }
