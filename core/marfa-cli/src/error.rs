@@ -59,8 +59,10 @@ pub enum CliError {
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
     #[error(
-        "no credential for {origin}: set MARFA_API_KEY, keep a key with `marfa keys keep`, sign in with `marfa login`, or pass --key"
+        "a key from --key or MARFA_API_KEY needs its server named: pass --url or set MARFA_API_URL"
     )]
+    NoServerForKey,
+    #[error("no credential for {origin}: {}", crate::credentials::advice())]
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
     NoKeychain(String),
@@ -288,7 +290,7 @@ own_codes! {
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
     CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
-    CliError::NoServerNamed => "no_server",
+    CliError::NoServerNamed | CliError::NoServerForKey => "no_server",
     CliError::NoCredential { .. } => "no_credential",
     CliError::NoKeychain(_) => "no_keychain",
     CliError::SignedOut { .. } => "signed_out",
@@ -403,7 +405,8 @@ impl CliError {
             CliError::Usage(_)
             | CliError::NoStoreNamed
             | CliError::NoStoreAt(_)
-            | CliError::NoServerNamed => Exit::Usage,
+            | CliError::NoServerNamed
+            | CliError::NoServerForKey => Exit::Usage,
             CliError::NoCredential { .. }
             | CliError::SignedOut { .. }
             | CliError::CredentialEnded => Exit::Credential,
@@ -776,6 +779,7 @@ mod tests {
             CliError::NoStoreNamed,
             CliError::NoStoreAt(std::path::PathBuf::new()),
             CliError::NoServerNamed,
+            CliError::NoServerForKey,
             CliError::NoCredential {
                 origin: String::new(),
             },
@@ -925,6 +929,7 @@ mod tests {
             Exit::Usage
         );
         assert_eq!(CliError::NoServerNamed.exit(), Exit::Usage);
+        assert_eq!(CliError::NoServerForKey.exit(), Exit::Usage);
         assert_eq!(
             CliError::NoCredential {
                 origin: String::new()

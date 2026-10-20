@@ -7,6 +7,7 @@ mod credentials;
 mod device;
 #[cfg(test)]
 mod door;
+mod environment;
 mod error;
 mod folders;
 mod interrupt;
@@ -48,16 +49,26 @@ use crate::remote::{Named, Remote};
 )]
 struct Cli {
     /// The server's base URL. Falls back to MARFA_API_URL, then to the
-    /// server a kept credential made current.
+    /// server a kept credential made current. A command that sends a key
+    /// from --key or MARFA_API_KEY needs the URL named, and so does any
+    /// command with the keychain off.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
     /// A key or a token for that server. Prefer MARFA_API_KEY or the
     /// keychain: a command line is readable by other users of the machine and
     /// stays in shell history. Falls back to MARFA_API_KEY, then to the
-    /// keychain: the file MARFA_KEYCHAIN names, where it names one.
+    /// keychain: the file MARFA_KEYCHAIN names, where it names one, unless
+    /// the keychain is off.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
+
+    /// Treat the keychain as absent: read nothing from it and write nothing
+    /// to it, so the server and the key must come from --url, --key,
+    /// MARFA_API_URL or MARFA_API_KEY. A command that needs to keep something
+    /// refuses. MARFA_NO_KEYCHAIN=1 does the same.
+    #[arg(long, global = true, help_heading = "Server")]
+    no_keychain: bool,
 
     /// Send a credential over plain http to a host that is not this machine
     /// without the warning, for a network that is private. MARFA_ALLOW_HTTP=1
@@ -376,6 +387,9 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
     if cli.allow_http || cleartext::allowed_by_environment() {
         cleartext::allow();
     }
+    if cli.no_keychain || credentials::off_by_environment() {
+        credentials::turn_off();
+    }
     let out = Printer { json: cli.json };
     if cli.socket.is_some()
         && ["MARFA_API_URL", "MARFA_API_KEY"]
@@ -425,17 +439,20 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         url: cli.url,
         key: cli.key,
     };
-    if cli.socket.is_some()
-        && matches!(
-            cli.command,
-            Command::Keys {
-                command: keys::KeysCommand::Keep | keys::KeysCommand::Forget
-            }
-        )
-    {
-        return Err(CliError::Usage(
-            "keychain commands cannot use --socket".into(),
-        ));
+    if matches!(
+        cli.command,
+        Command::Keys {
+            command: keys::KeysCommand::Keep | keys::KeysCommand::Forget
+        }
+    ) {
+        // Before a server is asked for, so a keychain that is off is the
+        // first thing said.
+        credentials::refuse_if_off()?;
+        if cli.socket.is_some() {
+            return Err(CliError::Usage(
+                "keychain commands cannot use --socket".into(),
+            ));
+        }
     }
     // Lazy: login, logout, device, folders, operations, docs and types scaffold must run
     // without a resolved credential.

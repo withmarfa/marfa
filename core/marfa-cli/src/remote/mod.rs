@@ -127,7 +127,9 @@ impl Named {
         let Some(origin) = origin else {
             return self.session();
         };
-        match Remote::url_named(self) {
+        // A key in hand with no server named is refused here, not looked up:
+        // one key cannot serve every folder's server.
+        match Remote::url_for_call(self) {
             Ok(url) if marfa_core::http::origin_of(&url)? == origin => return self.session(),
             Ok(_) | Err(CliError::NoServerNamed) => {}
             Err(error) => return Err(error),
@@ -153,6 +155,9 @@ impl Named {
         })
     }
 
+    /// The session, or none where no server is named and no key is in hand,
+    /// for a command that can run on held bytes alone. A key in hand with no
+    /// server is refused, so it is never dropped without a word.
     pub fn session_if_named(&self) -> Result<Option<Session>, CliError> {
         match self.session() {
             Ok(session) => Ok(Some(session)),
@@ -269,20 +274,7 @@ impl Remote {
     }
 
     fn resolve_with_renewal(named: &Named, renew_stale: bool) -> Result<Remote, CliError> {
-        let url = match named
-            .url
-            .clone()
-            .or_else(|| non_empty(std::env::var("MARFA_API_URL").ok()))
-        {
-            Some(url) => url,
-            // A keychain that cannot be asked means no server was named, whose
-            // message says how to name one.
-            None => match credentials::current() {
-                Ok(Some(origin)) => origin,
-                Ok(None) | Err(CliError::NoKeychain(_)) => return Err(CliError::NoServerNamed),
-                Err(error) => return Err(error),
-            },
-        };
+        let url = Self::url_for_call(named)?;
         let origin = marfa_core::http::origin_of(&url)?;
         let mut kept = None;
         let (key, credential) = match named.key.clone() {
@@ -348,18 +340,41 @@ impl Remote {
         self.local
     }
 
+    /// For a command that sends no key: `--url`, then `MARFA_API_URL`, then
+    /// the server a kept credential made current. A keychain that is off has
+    /// none to find, so the command is told to name a server.
     pub fn url_named(named: &Named) -> Result<String, CliError> {
-        match named
-            .url
-            .clone()
-            .or_else(|| non_empty(std::env::var("MARFA_API_URL").ok()))
-        {
-            Some(url) => Ok(url),
-            None => match credentials::current() {
-                Ok(Some(origin)) => Ok(origin),
-                Ok(None) | Err(CliError::NoKeychain(_)) => Err(CliError::NoServerNamed),
-                Err(error) => Err(error),
-            },
+        Self::url_named_with(named, non_empty(std::env::var("MARFA_API_URL").ok()), false)
+    }
+
+    /// For a command that sends the key it resolves: as `url_named`, except
+    /// that a key from `--key` or `MARFA_API_KEY` belongs to the server named
+    /// with it, so it is never sent to one found in the keychain.
+    pub fn url_for_call(named: &Named) -> Result<String, CliError> {
+        Self::url_named_with(
+            named,
+            non_empty(std::env::var("MARFA_API_URL").ok()),
+            non_empty(std::env::var("MARFA_API_KEY").ok()).is_some(),
+        )
+    }
+
+    fn url_named_with(
+        named: &Named,
+        environment_url: Option<String>,
+        environment_key: bool,
+    ) -> Result<String, CliError> {
+        if let Some(url) = named.url.clone().or(environment_url) {
+            return Ok(url);
+        }
+        if named.key.is_some() || environment_key {
+            return Err(CliError::NoServerForKey);
+        }
+        match credentials::current() {
+            Ok(Some(origin)) => Ok(origin),
+            // A keychain that cannot be asked means no server was named,
+            // whose message says how to name one.
+            Ok(None) | Err(CliError::NoKeychain(_)) => Err(CliError::NoServerNamed),
+            Err(error) => Err(error),
         }
     }
 
@@ -1721,5 +1736,116 @@ mod tests {
         assert_eq!(received.len(), 1);
         assert_eq!(received[0].path(), "/");
         assert_eq!(received[0].header("authorization"), None);
+    }
+
+    #[test]
+    fn the_server_comes_from_the_command_line_the_environment_or_the_keychain_in_that_order() {
+        let origin = format!("https://current.invalid:{}", std::process::id());
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(
+            &origin,
+            &Kept::Key {
+                key: "marfa_k1_kept".into(),
+            },
+        )
+        .unwrap();
+        let named = |url: Option<&str>, key: Option<&str>| Named {
+            url: url.map(str::to_string),
+            key: key.map(str::to_string),
+        };
+        let from = |named: &Named, environment: Option<&str>, key: bool| {
+            Remote::url_named_with(named, environment.map(str::to_string), key)
+        };
+
+        assert_eq!(
+            from(
+                &named(Some("https://flag.invalid"), None),
+                Some("https://environment.invalid"),
+                false
+            )
+            .unwrap(),
+            "https://flag.invalid"
+        );
+        assert_eq!(
+            from(
+                &named(None, None),
+                Some("https://environment.invalid"),
+                true
+            )
+            .unwrap(),
+            "https://environment.invalid"
+        );
+        // The witness: with nothing named and no key in hand, the keychain's
+        // current server is the one.
+        assert_eq!(from(&named(None, None), None, false).unwrap(), origin);
+
+        // A key in hand is not sent to a server the keychain found.
+        for (named, key) in [
+            (named(None, Some("marfa_k1_flag")), false),
+            (named(None, None), true),
+        ] {
+            assert!(
+                matches!(from(&named, None, key), Err(CliError::NoServerForKey)),
+                "{named:?}"
+            );
+        }
+
+        // The refusal says what to do about the key, and keeps the code a
+        // missing server has.
+        let refusal = CliError::NoServerForKey;
+        assert!(refusal.to_string().contains("--key or MARFA_API_KEY"));
+        assert!(refusal.to_string().contains("--url"));
+
+        // A keychain that is off has no server to find, and is not asked.
+        credentials::turn_off();
+        assert!(matches!(
+            from(&named(None, None), None, false),
+            Err(CliError::NoServerNamed)
+        ));
+        assert!(matches!(
+            Remote::resolve(&named(None, None)),
+            Err(CliError::NoServerNamed)
+        ));
+    }
+
+    #[test]
+    fn a_key_in_hand_is_refused_where_a_command_would_run_without_a_server() {
+        let origin = "https://sessions.invalid:8443".to_string();
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(
+            &origin,
+            &Kept::Key {
+                key: "marfa_k1_kept".into(),
+            },
+        )
+        .unwrap();
+        let named = |key: Option<&str>| Named {
+            url: None,
+            key: key.map(str::to_string),
+        };
+
+        // The witnesses: with no key in hand, the same calls find the kept
+        // server and its key, and a keychain that is off leaves the command
+        // to run on what it holds.
+        assert!(named(None).session().is_ok());
+        assert!(named(None).session_for(Some(&origin)).is_ok());
+        assert!(named(None).session_if_named().unwrap().is_some());
+
+        let keyed = named(Some("marfa_k1_flag"));
+        assert!(matches!(
+            keyed.session_if_named(),
+            Err(CliError::NoServerForKey)
+        ));
+        assert!(matches!(
+            keyed.session_for(Some(&origin)),
+            Err(CliError::NoServerForKey)
+        ));
+
+        credentials::turn_off();
+        assert!(named(None).session_if_named().unwrap().is_none());
+        assert!(matches!(
+            keyed.session_if_named(),
+            Err(CliError::NoServerForKey)
+        ));
     }
 }

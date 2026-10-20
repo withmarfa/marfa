@@ -23,7 +23,9 @@ pub struct LoginArgs {
     /// Print the page to open rather than opening it.
     #[arg(long)]
     pub no_browser: bool,
-    /// Print the token set instead of keeping it in the keychain.
+    /// Print the token set instead of keeping it in the keychain, which this
+    /// leaves unread and unchanged. The server must come from --url or
+    /// MARFA_API_URL.
     #[arg(long)]
     pub print_token: bool,
     /// The client id an earlier sign-in registered, where no keychain
@@ -39,6 +41,16 @@ pub struct LoginArgs {
 }
 
 pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
+    // The token set goes to stdout and nothing is kept, so the keychain has
+    // no part in a sign-in that prints it: not for the server, the client id
+    // or the credential it would replace.
+    if args.print_token {
+        credentials::turn_off();
+    } else if credentials::is_off() {
+        return Err(credentials::refusal(
+            "pass --print-token to receive the token set on stdout instead",
+        ));
+    }
     let url = Remote::url_named(named)?;
     cleartext::guard(&url);
     let remote = Remote::public_at(&url)?;
@@ -58,7 +70,6 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
             )));
         }
         Ok(_) => {}
-        Err(CliError::NoKeychain(_)) if args.print_token => {}
         Err(CliError::NoKeychain(reason)) => {
             return Err(CliError::NoKeychain(format!(
                 "{reason}; pass --print-token to receive the token set on stdout instead"
@@ -186,9 +197,11 @@ fn register_and_ask(
     name: Option<&str>,
 ) -> Result<(String, DeviceCode), CliError> {
     let client_id = auth::register(discovery, name)?;
-    match credentials::keep_client_id(origin, &client_id) {
-        Ok(()) | Err(CliError::NoKeychain(_)) => {}
-        Err(error) => return Err(error),
+    if !credentials::is_off() {
+        match credentials::keep_client_id(origin, &client_id) {
+            Ok(()) | Err(CliError::NoKeychain(_)) => {}
+            Err(error) => return Err(error),
+        }
     }
     let code = auth::device_code(discovery, &client_id, scope)?;
     Ok((client_id, code))
@@ -405,5 +418,97 @@ mod tests {
             "{outcome:?}"
         );
         assert_eq!(door.received().len(), 1);
+    }
+
+    fn full_sign_in(origin: &str) -> Vec<Answer> {
+        vec![
+            Answer::json("200 OK", &discovery(origin)),
+            Answer::json("201 Created", r#"{"client_id":"fresh"}"#),
+            Answer::json("200 OK", &device_code(origin)),
+            Answer::json(
+                "200 OK",
+                r#"{"access_token":"marfa_at_1","refresh_token":"marfa_rt_1","expires_in":3600,"token_type":"Bearer","scope":"*:read"}"#,
+            ),
+        ]
+    }
+
+    #[test]
+    fn printing_the_token_set_never_reaches_the_keychain() {
+        let door = Door::open_at(full_sign_in);
+        let origin = crate::remote::Remote::public_at(&door.url)
+            .unwrap()
+            .origin()
+            .to_string();
+        let _keychain = credentials::hold(&origin);
+        // A key kept for the server would stop a sign-in that kept its token,
+        // and a registration kept for it would be used in place of a new one.
+        credentials::keep(
+            &origin,
+            &Kept::Key {
+                key: "marfa_k1_kept".into(),
+            },
+        )
+        .unwrap();
+        let named = Named {
+            url: Some(door.url.clone()),
+            key: None,
+        };
+        let given = LoginArgs {
+            client_id: None,
+            ..args(true)
+        };
+        run(given, &named, &Printer { json: true }).unwrap();
+        // Every call to the keychain fails this test while it is off, so the
+        // sign-in reaching its end is the proof; this checks what was left,
+        // with the registration kept by the test below as its witness.
+        let sent = door.received();
+        assert_eq!(sent[1].path(), "/auth/oauth2/register");
+        credentials::turn_on();
+        assert!(matches!(
+            credentials::read(&origin).unwrap(),
+            Some(Kept::Key { .. })
+        ));
+        assert_eq!(credentials::client_id(&origin).unwrap(), None);
+    }
+
+    #[test]
+    fn a_sign_in_that_keeps_its_token_keeps_the_registration_too() {
+        let door = Door::open_at(full_sign_in);
+        let origin = crate::remote::Remote::public_at(&door.url)
+            .unwrap()
+            .origin()
+            .to_string();
+        let _keychain = credentials::hold(&origin);
+        let named = Named {
+            url: Some(door.url.clone()),
+            key: None,
+        };
+        let given = LoginArgs {
+            client_id: None,
+            ..args(false)
+        };
+        run(given, &named, &Printer { json: true }).unwrap();
+        door.received();
+        assert_eq!(
+            credentials::client_id(&origin).unwrap().as_deref(),
+            Some("fresh")
+        );
+        assert!(credentials::read(&origin).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_sign_in_that_would_be_kept_is_refused_while_the_keychain_is_off() {
+        credentials::turn_off();
+        let door = Door::open(Vec::new());
+        let named = Named {
+            url: Some(door.url.clone()),
+            key: None,
+        };
+        let outcome = run(args(false), &named, &Printer { json: true });
+        assert!(
+            matches!(&outcome, Err(CliError::Usage(message)) if message.contains("--print-token")),
+            "{outcome:?}"
+        );
+        assert!(door.received().is_empty(), "the server was asked");
     }
 }
