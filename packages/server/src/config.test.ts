@@ -6,6 +6,7 @@ import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CONNECTOR_HOLD_MS,
   MAX_RETENTION_MS,
+  SETTING_GROUPS,
   SETTING_NAMES,
   SettingsError,
   defaultTessdataDir,
@@ -791,6 +792,57 @@ describe("the settings as data", () => {
     for (const setting of secrets) {
       expect(setting.default, setting.name).toBeUndefined();
     }
+  });
+
+  it("flags as a secret every setting whose name suggests a credential", () => {
+    const credential = /(^|_)(SECRET|KEY|TOKEN|PASSWORD|PASSWD)(_|$)/;
+    const unflagged = described
+      .filter((s) => credential.test(s.name) && !s.secret)
+      .map((s) => s.name);
+    expect(unflagged).toEqual([]);
+    expect(
+      described.filter((s) => credential.test(s.name)).length,
+    ).toBeGreaterThan(3);
+  });
+
+  it("places every setting in one of the console's groups", () => {
+    for (const { name, group, label } of described) {
+      expect(SETTING_GROUPS, name).toContain(group);
+      expect(label, name).not.toBe("");
+    }
+  });
+
+  it("reads a secret's state and never its value", () => {
+    const sentinel = "sentinel-credential-value-0123456789";
+    const config = loadConfig({
+      MARFA_POSTHOG_PROJECT_TOKEN: sentinel,
+      OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.test",
+      MARFA_POSTHOG_HOST: "https://posthog.example.test",
+      S3_ACCESS_KEY_ID: sentinel,
+      S3_BUCKET: "witness-bucket",
+    });
+    const readings = config.settingReadings ?? [];
+    const named = (name: string) => readings.find((r) => r.name === name);
+    // The witness: a setting that is not a secret shows its value.
+    expect(named("S3_BUCKET")).toMatchObject({
+      set: true,
+      value: "witness-bucket",
+    });
+    expect(named("MARFA_POSTHOG_PROJECT_TOKEN")).toMatchObject({
+      secret: true,
+      set: true,
+    });
+    expect(named("S3_ACCESS_KEY_ID")).toMatchObject({
+      secret: true,
+      set: true,
+    });
+    expect(named("MARFA_AUTH_SECRET")).toMatchObject({
+      secret: true,
+      set: false,
+    });
+    expect(JSON.stringify(readings)).not.toContain(sentinel);
+    for (const reading of readings.filter((r) => r.secret))
+      expect(reading, reading.name).not.toHaveProperty("value");
   });
 
   it("explains in words a default that derives from something else", () => {
