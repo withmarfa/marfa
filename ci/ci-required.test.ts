@@ -1044,13 +1044,15 @@ describe("CodeQL", () => {
   const skips = (path: string) =>
     ignored.some((pattern) => filterMatches(pattern, path));
 
-  it("analyzes once a week, and a push to main or a pull request unless it changes only documentation or agent instructions", () => {
+  it("analyzes once a week, and a push to main or a pull request unless it changes only documentation, agent instructions, the README's images or the deploy folder", () => {
     const documentation = [
       "**/*.md",
       "LICENSE",
       ".claude/**",
       ".codex/**",
       ".github/ISSUE_TEMPLATE/**",
+      "assets/**",
+      "deploy/**",
     ];
     expect(on.push).toEqual({
       branches: ["main"],
@@ -1067,6 +1069,21 @@ describe("CodeQL", () => {
 
   it("analyzes a draft only once it is marked ready for review", () => {
     expect(jobs.analyze?.if).toBe("${{ !github.event.pull_request.draft }}");
+  });
+
+  it("skips the README's images and the deploy folder, which hold nothing it analyzes", () => {
+    // A JavaScript, TypeScript or Rust file added to either folder fails the
+    // test below that no skipped file is in a language it analyzes.
+    const files = tracked().filter(
+      (path) => path.startsWith("assets/") || path.startsWith("deploy/"),
+    );
+    // The witness: both folders hold tracked files, so the filter has
+    // something to skip.
+    expect(files).toContain("deploy/Dockerfile");
+    expect(files.some((path) => path.startsWith("assets/"))).toBe(true);
+    for (const path of files) {
+      expect(skips(path), path).toBe(true);
+    }
   });
 
   it("skips what the classifier also reads as documentation, and no code in a language it analyzes", () => {
@@ -1095,7 +1112,6 @@ describe("CodeQL", () => {
       ".agents/skills/release/helper.ts",
       ".githooks/check.mjs",
       "packages/server/src/runtime.ts",
-      "deploy/healthcheck.js",
       "core/marfa-core/src/lib.rs",
       "core/Cargo.toml",
       "openapi.json",

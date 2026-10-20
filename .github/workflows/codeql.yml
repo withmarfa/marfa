@@ -1,8 +1,11 @@
 name: CodeQL
 
 # A pull request or a push to `main` that changes only documentation, the
-# license, agent settings or issue templates starts no run. Code in the other
-# agent folders, which ESLint also reads, is analyzed. CodeQL is
+# license, agent settings, issue templates, the README's images or the deploy
+# folder starts no run. CodeQL reads GitHub Actions workflows, JavaScript,
+# TypeScript and Rust, and the deploy folder holds a Dockerfile, a shell
+# script and a Litestream configuration, none of which it analyzes. Code in the
+# other agent folders, which ESLint also reads, is analyzed. CodeQL is
 # not a required check, so a run that never starts leaves no check pending.
 # A draft pull request is analyzed once it is marked ready for review, and on
 # every push after that. The weekly run analyzes the whole tree.
@@ -15,6 +18,8 @@ on:
       - ".claude/**"
       - ".codex/**"
       - ".github/ISSUE_TEMPLATE/**"
+      - "assets/**"
+      - "deploy/**"
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -24,13 +29,17 @@ on:
       - ".claude/**"
       - ".codex/**"
       - ".github/ISSUE_TEMPLATE/**"
+      - "assets/**"
+      - "deploy/**"
   schedule:
     - cron: "41 4 * * 1"
 
 # Even with cancellation disabled, a shared group replaces older pending
-# runs; non-PR runs need their own groups.
+# runs; non-PR runs need their own groups. A pull request's draft and ready
+# runs have separate groups: a push to a draft and marking it ready start two
+# runs at once, and in one group the later-queued run cancels the other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.event.pull_request.draft && 'draft' || 'ready') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
