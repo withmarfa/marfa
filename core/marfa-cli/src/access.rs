@@ -358,4 +358,58 @@ mod tests {
             ["metadata.widgets  Read only"]
         );
     }
+
+    #[test]
+    fn the_mixed_key_the_pages_are_held_to_reads_the_same_here() {
+        // The key and the words the server's page says for it are in one file,
+        // which `access-view.test.tsx` holds the pages to.
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../../ci/fixtures/access-mixed-key.json"))
+                .expect("the fixture is JSON");
+        let squeeze = |line: &str| {
+            let mut out = String::new();
+            let mut gap = 0;
+            for c in line.chars() {
+                if c == ' ' {
+                    gap += 1;
+                } else {
+                    out.push_str(if gap > 0 { " " } else { "" });
+                    gap = 0;
+                    out.push(c);
+                }
+            }
+            out
+        };
+        let lines = lines_for_key(&fixture["key"]);
+        let mut got: Vec<String> = lines
+            .iter()
+            .filter(|line| !line.starts_with("Powers: "))
+            .map(|line| squeeze(line))
+            .collect();
+        let mut want: Vec<String> = fixture["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| {
+                format!(
+                    "{} {}",
+                    row["cli"].as_str().unwrap(),
+                    row["level"].as_str().unwrap()
+                )
+            })
+            .collect();
+        got.sort();
+        want.sort();
+        assert_eq!(got, want);
+        let powers: Vec<&str> = fixture["powers"]
+            .as_array()
+            .expect("powers")
+            .iter()
+            .map(|p| p.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            lines.last().map(String::as_str),
+            Some(format!("Powers: {}", powers.join("; ")).as_str())
+        );
+    }
 }
