@@ -63,6 +63,18 @@ async function confirmWithPassword(page: Page): Promise<void> {
   await dialog.waitFor({ state: "hidden" });
 }
 
+/**
+ * Makes the signed-in session six minutes old without moving the clock, which
+ * would also end the registration challenge a prompt is still holding.
+ */
+async function ageSession(): Promise<void> {
+  await (
+    ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    }
+  ).__sqliteRun("UPDATE auth_session SET created_at = created_at - 360", []);
+}
+
 async function keySources(): Promise<string[]> {
   const listed = await ctx.ownerRequest("/keys");
   return ((await listed.json()) as { data: { source: string }[] }).data.map(
@@ -400,15 +412,28 @@ inBrowser(
       });
     }
 
-    /** Lets the first registration reach the server only after the five minutes have run out. */
-    async function staleOnFirstVerify(page: Page): Promise<() => number> {
+    /**
+     * Lets the first registration reach the server only after the five minutes
+     * have run out, and counts the requests the page makes for it.
+     */
+    async function staleOnFirstVerify(
+      page: Page,
+    ): Promise<{ verifies: () => number; options: () => number }> {
       let verifies = 0;
+      let options = 0;
       await page.route("**/auth/passkey/verify-registration", async (route) => {
         verifies += 1;
-        if (verifies === 1) clock.advanceClock(6 * MINUTE);
+        if (verifies === 1) await ageSession();
         await route.continue();
       });
-      return () => verifies;
+      await page.route(
+        "**/auth/passkey/generate-register-options",
+        async (route) => {
+          options += 1;
+          await route.continue();
+        },
+      );
+      return { verifies: () => verifies, options: () => options };
     }
 
     const countPasskeys = async (): Promise<number> =>
@@ -424,7 +449,7 @@ inBrowser(
         await withAuthenticator(context, page);
         await page.goto(`${origin}/auth/owner/passkeys`);
         const before = await countPasskeys();
-        const verifies = await staleOnFirstVerify(page);
+        const requests = await staleOnFirstVerify(page);
         await page.fill('[name="passkey-name"]', "Stale during prompt");
         await page.click("#add-passkey");
         expect(await dialogOf(page).innerText()).toContain(
@@ -432,7 +457,10 @@ inBrowser(
         );
         await confirmWithPassword(page);
         await page.getByText("Passkey added.", { exact: true }).waitFor();
-        expect(verifies()).toBe(2);
+        // The password leaves the first challenge good: the credential already
+        // made is sent again, and no second one is made.
+        expect(requests.options()).toBe(1);
+        expect(requests.verifies()).toBe(2);
         expect(await countPasskeys()).toBe(before + 1);
       } finally {
         clock.advanceClock(16 * MINUTE);
@@ -481,7 +509,7 @@ inBrowser(
           async (route) => {
             verifies += 1;
             if (verifies === 1) {
-              clock.advanceClock(6 * MINUTE);
+              await ageSession();
               await answering(first, true);
               await answering(second, false);
             }

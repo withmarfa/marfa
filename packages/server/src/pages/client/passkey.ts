@@ -3,7 +3,7 @@
  * keeps it in the authenticator; the page only carries the two requests the
  * server's passkey door answers, and shows what came back.
  */
-import { sendConfirmed } from "./confirm.js";
+import { sendConfirmed, type Proof } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
 import { SETUP_WORDS } from "../setup-words.js";
 
@@ -30,7 +30,9 @@ function fetchJson(path: string, body?: unknown): Promise<Response> {
 }
 
 /** The answer to a change sent through the dialog, or `null` when the person cancelled it. */
-async function answer(send: () => Promise<Response>): Promise<Answer | null> {
+async function answer(
+  send: (confirmedWith?: Proof) => Promise<Response>,
+): Promise<Answer | null> {
   const response = await sendConfirmed(send, WHY);
   if (response === null) return null;
   return {
@@ -99,17 +101,16 @@ export function initPasskey(): void {
           return;
         }
         let credential = made;
-        let confirmed = false;
         // A confirmation answered with a passkey replaces the challenge this
-        // registration was made for, so it starts again from its options.
-        const verified = await answer(async () => {
-          if (confirmed) {
+        // registration was made for, so it starts again from its options. One
+        // answered with the password leaves the credential good to send.
+        const verified = await answer(async (confirmedWith) => {
+          if (confirmedWith === "passkey") {
             const next = await createCredential(parse);
             if (!(next instanceof PublicKeyCredential))
               throw new Error("The passkey could not be made again");
             credential = next;
           }
-          confirmed = true;
           return fetchJson(VERIFY, { response: credential.toJSON() });
         });
         if (verified === null) return;

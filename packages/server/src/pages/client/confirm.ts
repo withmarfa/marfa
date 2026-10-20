@@ -46,7 +46,15 @@ const WORDS = {
   network: SETUP_WORDS.network,
 } as const;
 
-export type Send = () => Promise<Response>;
+/** What answered the question: the password, or a passkey, which replaces the page's WebAuthn challenge. */
+export type Proof = "password" | "passkey";
+
+/**
+ * The change to send. When it is sent again after a confirmation, it is told
+ * what answered, so a change that holds a WebAuthn challenge can start again
+ * where the answer replaced it.
+ */
+export type Send = (confirmedWith?: Proof) => Promise<Response>;
 
 /**
  * How long a page's sign-in has left, for a change too large to send and have
@@ -85,8 +93,8 @@ interface View {
   next: HTMLButtonElement | null;
   busy: boolean;
   opener: Element | null;
-  settle: ((confirmed: boolean) => void) | null;
-  pending: Promise<boolean> | null;
+  settle: ((answer: Proof | false) => void) | null;
+  pending: Promise<Proof | false> | null;
 }
 
 function locate(): View | null {
@@ -157,11 +165,11 @@ function setBusy(view: View, busy: boolean): void {
   }
 }
 
-function finish(view: View, confirmed: boolean): void {
+function finish(view: View, answer: Proof | false): void {
   const settle = view.settle;
   view.settle = null;
   if (view.dialog.open) view.dialog.close();
-  settle?.(confirmed);
+  settle?.(answer);
 }
 
 function hidePasskeyError(view: View): void {
@@ -244,7 +252,7 @@ async function submitPassword(view: View): Promise<void> {
     setBusy(view, false);
   }
   if (answer.kind === "taken") {
-    finish(view, true);
+    finish(view, "password");
     return;
   }
   if (answer.kind === "ended") {
@@ -282,7 +290,7 @@ async function submitPasskey(view: View): Promise<void> {
     }
     const response = await post({ passkey: credential.toJSON() });
     if (response.ok) {
-      finish(view, true);
+      finish(view, "passkey");
       return;
     }
     const message = await messageOf(response);
@@ -316,7 +324,7 @@ function ask(
   view: View,
   why: string,
   opener: Element | null,
-): Promise<boolean> {
+): Promise<Proof | false> {
   if (view.pending) return view.pending;
   view.opener = opener;
   if (view.why) view.why.textContent = why;
@@ -330,7 +338,7 @@ function ask(
   clearFieldError(view.password);
   hidePasskeyError(view);
   setBusy(view, false);
-  const pending = new Promise<boolean>((resolve) => {
+  const pending = new Promise<Proof | false>((resolve) => {
     view.settle = resolve;
   }).finally(() => {
     view.pending = null;
@@ -476,8 +484,9 @@ export async function sendConfirmed(
   if (!(await refusedForOldSignIn(first))) return first;
   const view = dialogView();
   if (!view) return first;
-  if (!(await ask(view, why, opener))) return null;
-  return send();
+  const proof = await ask(view, why, opener);
+  if (proof === false) return null;
+  return send(proof);
 }
 
 // Set as the script loads, so a page's own script that follows it can use it

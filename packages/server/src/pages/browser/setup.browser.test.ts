@@ -850,7 +850,7 @@ describe("the passkey step with a sign-in older than five minutes", () => {
   );
 
   inBrowser(
-    "starts the passkey again after a confirmation when the five minutes run out during the prompt",
+    "sends the passkey again after a password when the five minutes run out during the prompt",
     async () => {
       await withInstance(async ({ origin, ctx }) => {
         const { context, page } = await open();
@@ -864,11 +864,29 @@ describe("the passkey step with a sign-in older than five minutes", () => {
           await claim(page);
           await page.waitForURL(`${origin}/setup/passkey`);
           let verifies = 0;
+          let options = 0;
+          await page.route(
+            "**/auth/passkey/generate-register-options",
+            async (route) => {
+              options += 1;
+              await route.continue();
+            },
+          );
           await page.route(
             "**/auth/passkey/verify-registration",
             async (route) => {
               verifies += 1;
-              if (verifies === 1) clock.advanceClock(6 * 60_000);
+              // The session ages without the clock moving, which would also
+              // end the challenge the prompt is holding.
+              if (verifies === 1)
+                await (
+                  ctx.storage as unknown as {
+                    __sqliteRun: (s: string, p: unknown[]) => Promise<unknown>;
+                  }
+                ).__sqliteRun(
+                  "UPDATE auth_session SET created_at = created_at - 360",
+                  [],
+                );
               await route.continue();
             },
           );
@@ -878,6 +896,9 @@ describe("the passkey step with a sign-in older than five minutes", () => {
           await dialog.getByLabel("Or your password").fill(OWNER.password);
           await dialog.getByRole("button", { name: "Continue" }).click();
           await page.getByText("Passkey added", { exact: true }).waitFor();
+          // The password leaves the first challenge good, so the credential
+          // already made is sent again and no second one is made.
+          expect(options).toBe(1);
           expect(verifies).toBe(2);
           const { ownerId } = await getClaimStatus(ctx.storage);
           expect((await ctx.auth.listOwnerPasskeys(ownerId ?? "")).length).toBe(

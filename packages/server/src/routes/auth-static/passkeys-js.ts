@@ -56,12 +56,11 @@ export const PASSKEYS_JS = `(() => {
       return made;
     };
     let credential = await create(why);
-    let confirmed = false;
     // A confirmation, answered with a passkey, replaces the challenge this
-    // registration was made for, so the registration starts again from its options.
-    await answer(async () => {
-      if (confirmed) credential = await create();
-      confirmed = true;
+    // registration was made for, so the registration starts again from its
+    // options. One answered with the password leaves the credential good to send.
+    await answer(async (confirmedWith) => {
+      if (confirmedWith === 'passkey') credential = await create();
       return fetch('/auth/passkey/verify-registration', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
