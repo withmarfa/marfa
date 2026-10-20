@@ -1,6 +1,5 @@
 /** Inline auth assets use content hashes in page URLs so a deployment changes
  *  the browser cache identity whenever the asset bytes change. */
-import { PASSKEYS_JS } from "./auth-static/passkeys-js.js";
 import { Hono } from "hono";
 import { createHash } from "node:crypto";
 import { AUTH_CSS } from "./auth-static/auth-css.js";
@@ -29,10 +28,6 @@ const ASSETS = {
     PAGE_ASSETS["pages.js"].contentType,
   ),
   "auth.css": CSS,
-  "passkeys.js": makeAsset(
-    PASSKEYS_JS,
-    "application/javascript; charset=utf-8",
-  ),
 };
 
 export function authAssetUrl(name: keyof typeof ASSETS): string {

@@ -36,7 +36,7 @@ export function managementPages(storage: Storage) {
         title: `Manage ${instanceName}`,
         wide: true,
         bodyHtml: `<h1>Manage ${escapeHtml(instanceName)}</h1>
-<p><a href="/auth/owner/password">Change password</a> | <a href="/auth/owner/passkeys">Passkeys</a> | <a href="/auth/owner/restore">Restore an archive</a></p>
+<p><a href="/auth/owner/passkeys">Password and passkeys</a> | <a href="/auth/owner/restore">Restore an archive</a></p>
 <p id="status" role="status"></p>
 <h2>Server</h2><pre id="health">Loading…</pre>
 <h2>Maintenance</h2><p>Maintenance can permanently delete data that is eligible for removal.</p><ul id="jobs"></ul>

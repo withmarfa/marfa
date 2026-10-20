@@ -32,7 +32,8 @@ import {
   renameSignIn,
   type SignIn,
 } from "../auth/sign-ins.js";
-import { SIGN_IN_NAME_MAX, UNPRINTABLE } from "../auth/sign-in-names.js";
+import { UNPRINTABLE } from "../auth/hidden-characters.js";
+import { SIGN_IN_NAME_MAX } from "../auth/sign-in-names.js";
 const failure = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
   description: string,

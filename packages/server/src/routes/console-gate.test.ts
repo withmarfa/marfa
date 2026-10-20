@@ -33,7 +33,7 @@ describe("a console page, asked for by a browser that is not signed in", () => {
         "/auth/owner/manage?tab=keys&x=%20y",
       ],
       ["/auth/owner/passkeys", "/auth/owner/passkeys"],
-      ["/auth/owner/password", "/auth/owner/password"],
+      ["/auth/owner/profile", "/auth/owner/profile"],
     ] as const) {
       const res = await asBrowser(path);
       expect(res.status, path).toBe(302);
@@ -41,6 +41,20 @@ describe("a console page, asked for by a browser that is not signed in", () => {
         `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
       );
       expect(res.headers.get("cache-control"), path).toContain("no-store");
+    }
+  });
+
+  it("serves the owner's own pages to a signed-in owner, each under its heading", async () => {
+    for (const [path, heading] of [
+      ["/auth/owner/profile", "Profile"],
+      ["/auth/owner/passkeys", "Password and passkeys"],
+    ] as const) {
+      const res = await asBrowser(path, ctx.owner.cookie);
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get("content-type"), path).toContain("text/html");
+      expect(await res.text(), path).toMatch(
+        new RegExp(`<h1 class="title">${heading}</h1>`),
+      );
     }
   });
 

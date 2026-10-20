@@ -44,6 +44,7 @@ export type {
   SectionProps,
 } from "./layout.js";
 export { ListToolbar, Pager, Tabs } from "./list.js";
+export { LocalDate } from "./local-date.js";
 export type { ListToolbarProps, PagerProps, TabsProps } from "./list.js";
 export {
   ClosingAction,

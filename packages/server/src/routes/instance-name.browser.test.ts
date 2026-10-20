@@ -57,14 +57,10 @@ it("shows changed names on later browser requests without creating HTML from the
     expect(await page.title()).toBe(`Manage ${name}`);
     expect(await page.locator("img").count()).toBe(0);
     await page.goto(`${origin}/auth/owner/passkeys`);
-    expect(
-      await page.locator('a[href="/auth/owner/manage"]').textContent(),
-    ).toBe(`Manage ${name}`);
-    expect(
-      await page
-        .locator('script[src*="/auth/static/passkeys.js"]')
-        .getAttribute("src"),
-    ).toMatch(/^\/auth\/static\/passkeys\.js\?v=[a-f0-9]{40}$/);
+    await page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("link", { name })
+      .waitFor();
     expect(await page.locator("img").count()).toBe(0);
     expect(errors).toEqual([]);
   } finally {

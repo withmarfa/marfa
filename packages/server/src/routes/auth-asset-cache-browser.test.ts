@@ -8,7 +8,7 @@ if (launched instanceof Error && process.env.CI) throw launched;
 const inBrowser = launched instanceof Error ? it.skip : it;
 
 inBrowser(
-  "fetches the new passkey script after an upgrade with a fresh old script in browser cache",
+  "fetches the new page script after an upgrade with a fresh old script in browser cache",
   async () => {
     if (launched instanceof Error) throw launched;
     const browser = launched;
@@ -20,21 +20,13 @@ inBrowser(
     };
     const ctx = await createTestContext({ authBaseUrl: origin }, owner);
     const context = await browser.newContext();
-    let legacy = true,
-      oldRequests = 0,
-      newRequests = 0;
+    let legacy = true;
     const scriptRequests: string[] = [];
-    const oldScript =
-      "fetch('/auth/passkey/list-user-passkeys').then(() => { document.getElementById('passkey-status').textContent = 'Old client loaded'; });";
+    const oldScript = "document.documentElement.dataset.oldScript = '1';";
     const original = ctx.app.fetch.bind(ctx.app);
     ctx.app.fetch = async (...args: Parameters<typeof original>) => {
       const url = new URL(args[0].url);
-      if (url.pathname === "/auth/passkey/list-user-passkeys") {
-        oldRequests++;
-        if (legacy) return Response.json([]);
-      }
-      if (url.pathname === "/owner/passkeys") newRequests++;
-      if (url.pathname === "/auth/static/passkeys.js") {
+      if (url.pathname === "/auth/static/pages.js") {
         scriptRequests.push(url.pathname + url.search);
         if (legacy)
           return new Response(oldScript, {
@@ -49,8 +41,8 @@ inBrowser(
       if (legacy && url.pathname === "/auth/owner/passkeys")
         return new Response(
           (await response.text()).replace(
-            /\/auth\/static\/passkeys\.js\?[^"\s]+/g,
-            "/auth/static/passkeys.js",
+            /\/auth\/static\/pages\.js\?[^"\s]+/g,
+            "/auth/static/pages.js",
           ),
           response,
         );
@@ -67,21 +59,21 @@ inBrowser(
         ).status(),
       ).toBe(200);
       const page = await context.newPage();
+      const add = page.locator('[data-hook="add-passkey"]');
       await page.goto(origin + "/auth/owner/passkeys");
-      await page.getByText("Old client loaded", { exact: true }).waitFor();
-      expect(oldRequests).toBe(1);
-      expect(scriptRequests).toEqual(["/auth/static/passkeys.js"]);
+      await page.waitForFunction(
+        "document.documentElement.dataset.oldScript === '1'",
+      );
+      expect(scriptRequests).toEqual(["/auth/static/pages.js"]);
+      expect(await add.isVisible()).toBe(false);
       legacy = false;
       await page.goto(origin + "/health");
       await page.goto(origin + "/auth/owner/passkeys");
-      await page.waitForLoadState("networkidle");
-      expect(newRequests).toBe(1);
-      expect(oldRequests).toBe(1);
+      await add.waitFor();
       expect(scriptRequests).toHaveLength(2);
       expect(scriptRequests[1]).toMatch(
-        /^\/auth\/static\/passkeys\.js\?v=[a-f0-9]{40}$/,
+        /^\/auth\/static\/pages\.js\?v=[a-f0-9]{40}$/,
       );
-      await page.getByText("No passkeys yet.", { exact: true }).waitFor();
     } finally {
       await context.close();
       await browser.close();

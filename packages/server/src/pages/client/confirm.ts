@@ -37,7 +37,7 @@ const EARLY = 30_000;
 const CONFIRM = "/auth/confirm";
 const OPTIONS = "/auth/passkey/generate-authenticate-options";
 
-const WORDS = {
+export const CONFIRM_WORDS = {
   enterPassword: "Enter your password.",
   wrongPassword: "That password is wrong. Try again.",
   cancelled:
@@ -184,21 +184,28 @@ function showPasskeyError(view: View, text: string): void {
 }
 
 interface Body {
-  error?: { message?: unknown };
+  error?: { code?: unknown; message?: unknown };
 }
 
-/** The sign-in page, for a session that ended while the dialog was open. */
-function signInAgain(): void {
+/** The sign-in page, for a session that ended while a page was open. */
+export function signInAgain(): void {
   location.assign(
     `/auth/sign-in?return_to=${encodeURIComponent(location.pathname + location.search)}`,
   );
 }
 
-/** The message a refusal carries, or `""`. */
-async function messageOf(response: Response): Promise<string> {
+/** The message a refusal carries, or `""`. Reads the body: pass a `clone()` to read it again. */
+export async function messageOf(response: Response): Promise<string> {
   const body = (await response.json().catch(() => null)) as Body | null;
   const message = body?.error?.message;
   return typeof message === "string" ? message : "";
+}
+
+/** The error code a refusal carries, or `""`. Reads the body: pass a `clone()` to read it again. */
+export async function codeOf(response: Response): Promise<string> {
+  const body = (await response.json().catch(() => null)) as Body | null;
+  const code = body?.error?.code;
+  return typeof code === "string" ? code : "";
 }
 
 async function post(proof: unknown): Promise<Response> {
@@ -220,9 +227,9 @@ async function sendPassword(password: string): Promise<PasswordAnswer> {
   if (response.status === 401 && message === CONFIRM_REFUSALS.noSession)
     return { kind: "ended" };
   if (response.status === 401)
-    return { kind: "problem", text: WORDS.wrongPassword };
+    return { kind: "problem", text: CONFIRM_WORDS.wrongPassword };
   if (response.status !== 429)
-    return { kind: "problem", text: WORDS.somethingWrong };
+    return { kind: "problem", text: CONFIRM_WORDS.somethingWrong };
   const wait = parseWaitSeconds(response.headers.get("retry-after"));
   return {
     kind: "problem",
@@ -237,7 +244,7 @@ async function submitPassword(view: View): Promise<void> {
   if (view.busy) return;
   const password = view.password.value;
   if (password === "") {
-    showFieldError(view.password, WORDS.enterPassword);
+    showFieldError(view.password, CONFIRM_WORDS.enterPassword);
     view.password.focus();
     return;
   }
@@ -247,7 +254,7 @@ async function submitPassword(view: View): Promise<void> {
   try {
     answer = await sendPassword(password);
   } catch {
-    answer = { kind: "problem", text: WORDS.network };
+    answer = { kind: "problem", text: CONFIRM_WORDS.network };
   } finally {
     setBusy(view, false);
   }
@@ -275,7 +282,7 @@ async function submitPasskey(view: View): Promise<void> {
       headers: { accept: "application/json" },
     });
     if (!asked.ok) {
-      showPasskeyError(view, WORDS.somethingWrong);
+      showPasskeyError(view, CONFIRM_WORDS.somethingWrong);
       return;
     }
     const options =
@@ -302,17 +309,17 @@ async function submitPasskey(view: View): Promise<void> {
       view,
       response.status === 401 && message !== ""
         ? message
-        : WORDS.somethingWrong,
+        : CONFIRM_WORDS.somethingWrong,
     );
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     showPasskeyError(
       view,
       name === "NotAllowedError" || name === "AbortError"
-        ? WORDS.cancelled
+        ? CONFIRM_WORDS.cancelled
         : error instanceof TypeError
-          ? WORDS.network
-          : WORDS.somethingWrong,
+          ? CONFIRM_WORDS.network
+          : CONFIRM_WORDS.somethingWrong,
     );
   } finally {
     setBusy(view, false);

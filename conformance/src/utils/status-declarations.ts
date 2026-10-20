@@ -173,12 +173,10 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /auth/static/auth.css": [200],
   "GET /auth/static/pages.css": [200],
   "GET /auth/static/pages.js": [200],
-  "GET /auth/static/passkeys.js": [200],
   "GET /auth/owner/manage": [200, 302, 401],
   "GET /auth/owner/restore": [200, 302, 401],
-  "GET /auth/owner/password": [200, 302, 401, 403],
+  "GET /auth/owner/profile": [200, 302, 401, 403],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
-  "POST /auth/owner/password": [200, 400, 401, 403],
 };
 
 /**

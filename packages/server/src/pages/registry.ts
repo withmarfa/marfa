@@ -290,7 +290,7 @@ export const HOME_GROUPS: readonly GroupDefinition[] = [
       {
         id: "profile",
         title: "Profile",
-        description: "Your name, email and picture",
+        description: "Your name and email",
       },
       {
         id: "password",

@@ -18,7 +18,12 @@ export function showNotice(
   return wrap;
 }
 
-export function hideNotices(root: ParentNode): void {
+/**
+ * Hide the notices under `root`: all of them, or only those named in `slots`,
+ * so that one the server drew for the page stays.
+ */
+export function hideNotices(root: ParentNode, slots?: readonly string[]): void {
   for (const wrap of root.querySelectorAll<HTMLElement>("[data-notice]"))
-    wrap.hidden = true;
+    if (slots === undefined || slots.includes(wrap.dataset.notice ?? ""))
+      wrap.hidden = true;
 }

@@ -93,7 +93,6 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /setup/name": "a same-origin form post, not a JSON body",
   "POST /setup/claim":
     "JSON is closed: refused here by the handler (tested below); a form submission is read by field name and is not a JSON body",
-  "POST /auth/owner/password": "a same-origin form post, not a JSON body",
   "POST /inbound/{token}":
     "a sender's delivery, whatever bytes it sent, recorded as it arrived",
   "POST /auth/sign-in": "a form post, not a JSON body",

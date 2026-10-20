@@ -1,7 +1,8 @@
 /**
- * Adding a passkey in the setup sequence. The browser makes the credential and
- * keeps it in the authenticator; the page only carries the two requests the
- * server's passkey door answers, and shows what came back.
+ * Adding a passkey. The browser makes the credential and keeps it in the
+ * authenticator; the page only carries the two requests the server's passkey
+ * door answers, and shows what came back. The setup sequence and the console's
+ * Password and passkeys page both add one through {@link registerPasskey}.
  */
 import { sendConfirmed, type Proof } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
@@ -71,19 +72,87 @@ function refusalText(answer: Answer): string {
     : SETUP_WORDS.somethingWrong;
 }
 
+/** What came of an attempt to add a passkey. */
+export type PasskeyResult =
+  /** The server holds the passkey. */
+  | { kind: "added" }
+  /** The person cancelled the "Confirm it's you" dialog, so nothing was sent again. */
+  | { kind: "cancelled" }
+  /** The server refused, and `message` is what it said. */
+  | { kind: "refused"; message: string }
+  /** The browser could not make the passkey, or the server could not be reached. */
+  | { kind: "failed"; message: string };
+
+/** Whether this browser can make a passkey at this address. */
+export function passkeysSupported(): boolean {
+  const statics = (globalThis as { PublicKeyCredential?: CreationStatics })
+    .PublicKeyCredential;
+  return window.isSecureContext && !!statics?.parseCreationOptionsFromJSON;
+}
+
+/**
+ * Add a passkey: the server's options, the browser's credential, and the
+ * server's check of it. A change that needs a recent sign-in opens the
+ * "Confirm it's you" dialog. `name` is what the owner calls the passkey.
+ */
+export async function registerPasskey(name?: string): Promise<PasskeyResult> {
+  const statics = (globalThis as { PublicKeyCredential?: CreationStatics })
+    .PublicKeyCredential;
+  if (!window.isSecureContext || !statics?.parseCreationOptionsFromJSON)
+    return { kind: "failed", message: SETUP_WORDS.somethingWrong };
+  const parse = statics.parseCreationOptionsFromJSON.bind(statics);
+  try {
+    const made = await createCredential(parse);
+    if (made === null) return { kind: "cancelled" };
+    if (!(made instanceof PublicKeyCredential))
+      return { kind: "refused", message: refusalText(made) };
+    let credential = made;
+    // A confirmation answered with a passkey replaces the challenge this
+    // registration was made for, so it starts again from its options. One
+    // answered with the password leaves the credential good to send.
+    const verified = await answer(async (confirmedWith) => {
+      if (confirmedWith === "passkey") {
+        const next = await createCredential(parse);
+        if (!(next instanceof PublicKeyCredential))
+          throw new Error("The passkey could not be made again");
+        credential = next;
+      }
+      return fetchJson(VERIFY, {
+        response: credential.toJSON(),
+        ...(name === undefined ? {} : { name }),
+      });
+    });
+    if (verified === null) return { kind: "cancelled" };
+    if (verified.status !== 200)
+      return { kind: "refused", message: refusalText(verified) };
+    return { kind: "added" };
+  } catch (error) {
+    const name = error instanceof DOMException ? error.name : "";
+    return {
+      kind: "failed",
+      message:
+        name === "NotAllowedError" || name === "AbortError"
+          ? "The passkey request was cancelled or timed out. You can try again."
+          : name === "SecurityError"
+            ? "Passkeys work only at the address Marfa is set up on, and not at an IP address. Open Marfa at that address and try again."
+            : error instanceof TypeError
+              ? SETUP_WORDS.network
+              : SETUP_WORDS.somethingWrong,
+    };
+  }
+}
+
+/** Adding a passkey in the setup sequence. */
 export function initPasskey(): void {
   const root = document.querySelector<HTMLElement>("[data-passkey]");
   const add = root?.querySelector<HTMLButtonElement>(
     '[data-hook="passkey-add"]',
   );
   if (!root || !add) return;
-  const statics = (globalThis as { PublicKeyCredential?: CreationStatics })
-    .PublicKeyCredential;
-  if (!window.isSecureContext || !statics?.parseCreationOptionsFromJSON) {
+  if (!passkeysSupported()) {
     showNotice(root, "unsupported");
     return;
   }
-  const parse = statics.parseCreationOptionsFromJSON.bind(statics);
   add.hidden = false;
   add.addEventListener("click", () => {
     void (async () => {
@@ -94,28 +163,10 @@ export function initPasskey(): void {
       const waiting = add.dataset.loadingLabel;
       if (waiting && add.lastChild) add.lastChild.textContent = waiting;
       try {
-        const made = await createCredential(parse);
-        if (made === null) return;
-        if (!(made instanceof PublicKeyCredential)) {
-          showNotice(root, "error", refusalText(made));
-          return;
-        }
-        let credential = made;
-        // A confirmation answered with a passkey replaces the challenge this
-        // registration was made for, so it starts again from its options. One
-        // answered with the password leaves the credential good to send.
-        const verified = await answer(async (confirmedWith) => {
-          if (confirmedWith === "passkey") {
-            const next = await createCredential(parse);
-            if (!(next instanceof PublicKeyCredential))
-              throw new Error("The passkey could not be made again");
-            credential = next;
-          }
-          return fetchJson(VERIFY, { response: credential.toJSON() });
-        });
-        if (verified === null) return;
-        if (verified.status !== 200) {
-          showNotice(root, "error", refusalText(verified));
+        const result = await registerPasskey();
+        if (result.kind === "cancelled") return;
+        if (result.kind !== "added") {
+          showNotice(root, "error", result.message);
           return;
         }
         root
@@ -126,19 +177,6 @@ export function initPasskey(): void {
           added.hidden = false;
           added.querySelector<HTMLElement>("a")?.focus();
         }
-      } catch (error) {
-        const cancelled =
-          error instanceof DOMException &&
-          (error.name === "NotAllowedError" || error.name === "AbortError");
-        showNotice(
-          root,
-          "error",
-          cancelled
-            ? "The passkey request was cancelled or timed out. You can try again."
-            : error instanceof TypeError
-              ? SETUP_WORDS.network
-              : SETUP_WORDS.somethingWrong,
-        );
       } finally {
         add.disabled = false;
         add.classList.remove("is-loading");

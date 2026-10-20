@@ -143,11 +143,9 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/owner/restore":
     "restore form authenticated by direct owner session",
   "GET /auth/owner/passkeys":
-    "passkey management authenticated by the owner session cookie",
-  "GET /auth/owner/password":
-    "owner password form authenticated by the owner session cookie",
-  "POST /auth/owner/password":
-    "owner password change authenticated by session, current password and origin",
+    "the Password and passkeys page, authenticated by the owner session cookie",
+  "GET /auth/owner/profile":
+    "the Profile page, authenticated by the owner session cookie",
 
   "GET /":
     "names the instance, its build, its contract version and the surfaces it serves",
@@ -179,7 +177,6 @@ const OPEN_DOORS: Record<string, string> = {
   "GET /auth/static/auth.css": "the stylesheet those pages load",
   "GET /auth/static/pages.css": "the stylesheet those pages load",
   "GET /auth/static/pages.js": "a script those pages load",
-  "GET /auth/static/passkeys.js": "a script those pages load",
   "GET /auth/*":
     "the Better Auth catch-all — sign-in, session and the OAuth protocol endpoints, each gating itself; every other path answers 404",
   "POST /auth/*": "the same catch-all",

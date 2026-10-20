@@ -380,6 +380,14 @@ describe("signing in", () => {
   });
 });
 
+/** Opens the Add dialog on Password and passkeys, names the passkey and sends it. */
+async function addPasskeyNamed(page: Page, name: string): Promise<void> {
+  await page.locator('[data-hook="add-passkey"]').click();
+  const dialog = page.getByRole("dialog", { name: "Add a passkey" });
+  await dialog.getByLabel("Name").fill(name);
+  await dialog.getByRole("button", { name: "Add passkey" }).click();
+}
+
 describe("the lock", () => {
   inBrowser(
     "says how long to wait, keeps the passkey open, and lifts when the wait is over",
@@ -393,8 +401,7 @@ describe("the lock", () => {
         );
         await signInWith(page, OWNER.password);
         await page.waitForURL(/\/auth\/owner\/passkeys$/);
-        await page.fill('[name="passkey-name"]', "Locked-out passkey");
-        await page.click("#add-passkey");
+        await addPasskeyNamed(page, "Locked-out passkey");
         await page.getByText("Locked-out passkey", { exact: true }).waitFor();
         await context.clearCookies();
 
@@ -478,8 +485,7 @@ describe("a passkey", () => {
     // Named afresh each time: the list keeps the passkeys of earlier tests,
     // so a shared name would be seen before this one was added.
     const name = `Test passkey ${String(nextPasskey++)}`;
-    await opened.page.fill('[name="passkey-name"]', name);
-    await opened.page.click("#add-passkey");
+    await addPasskeyNamed(opened.page, name);
     await opened.page.getByText(name, { exact: true }).waitFor();
     await opened.context.clearCookies();
     return opened;

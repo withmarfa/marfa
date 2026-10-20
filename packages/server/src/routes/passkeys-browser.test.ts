@@ -50,14 +50,19 @@ inBrowser("passkey pages with a virtual authenticator", () => {
       if (message.text().includes("Content Security Policy"))
         csp.push(message.text());
     });
+    const addPasskey = async (name: string): Promise<void> => {
+      await page.locator('[data-hook="add-passkey"]').click();
+      const dialog = page.getByRole("dialog", { name: "Add a passkey" });
+      await dialog.getByLabel("Name").fill(name);
+      await dialog.getByRole("button", { name: "Add passkey" }).click();
+    };
     try {
       await page.goto(origin + "/auth/sign-in?return_to=/auth/owner/passkeys");
       await page.fill('[name="email"]', owner.email);
       await page.fill('[name="password"]', owner.password);
       await page.click('button[type="submit"]');
       await page.waitForURL(/\/auth\/owner\/passkeys$/);
-      await page.fill('[name="passkey-name"]', "Browser passkey");
-      await page.click("#add-passkey");
+      await addPasskey("Browser passkey");
       await page.getByText("Browser passkey", { exact: true }).waitFor();
       const firstCredentials = await cdp.send("WebAuthn.getCredentials", {
         authenticatorId,
@@ -81,8 +86,7 @@ inBrowser("passkey pages with a virtual authenticator", () => {
           },
         },
       );
-      await page.fill('[name="passkey-name"]', "Other browser passkey");
-      await page.click("#add-passkey");
+      await addPasskey("Other browser passkey");
       await page.getByText("Other browser passkey", { exact: true }).waitFor();
       const allCredentials = await cdp.send("WebAuthn.getCredentials", {
         authenticatorId: otherAuthenticatorId,
@@ -131,11 +135,19 @@ inBrowser("passkey pages with a virtual authenticator", () => {
       await page.goto(origin + "/auth/owner/passkeys");
       await page.getByText("Browser passkey", { exact: true }).waitFor();
       await page
-        .locator("li")
+        .locator(".row")
         .filter({ has: page.getByText("Browser passkey", { exact: true }) })
-        .getByRole("button", { name: "Remove" })
+        .getByRole("button", { name: "Manage" })
         .click();
-      await page.getByText("Passkey removed.", { exact: true }).waitFor();
+      await page
+        .getByRole("dialog", { name: "Manage passkey" })
+        .getByRole("button", { name: "Remove passkey" })
+        .click();
+      await page
+        .getByRole("dialog", { name: "Remove Browser passkey?" })
+        .getByRole("button", { name: "Remove passkey" })
+        .click();
+      await page.getByText("Passkey removed", { exact: true }).waitFor();
       await page.getByText("Other browser passkey", { exact: true }).waitFor();
       await context.clearCookies();
       const authenticate = async (credentialId: string) => {

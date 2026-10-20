@@ -8,7 +8,8 @@ import { dataAttributes } from "./data.js";
 interface RowCommon {
   id?: string;
   title: string;
-  description?: string;
+  /** A line under the title: plain text, or markup such as a {@link LocalDate}. */
+  description?: string | Child;
   /** The id of the description line, for a control that names it as its description. */
   descriptionId?: string;
   descriptionTone?: "danger";
@@ -77,6 +78,7 @@ export function Row(props: RowProps) {
       id={props.descriptionId}
       class={props.descriptionTone ? `rd ${props.descriptionTone}` : "rd"}
       title={
+        typeof props.description === "string" &&
         props.description.length > LONG_DESCRIPTION
           ? props.description
           : undefined
