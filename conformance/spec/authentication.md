@@ -109,3 +109,87 @@ When the server renames or removes a passkey, the server MUST check ownership an
 When the private local process requests `GET /_control/owner/passkeys/add-url`, the server MUST return the configured-origin sign-in URL with `prompt=login` and `return_to=/auth/owner/passkeys` without issuing credentials or setup proof.
 
 **Tests:** `compliance/passkeys.test.ts › renames safely through owner and private local authority`.
+
+## Confirming a stale sign-in
+
+A change that needs a sign-in from the last five minutes is refused to an older browser session, and the page asks the owner to confirm it's them in a dialog and then sends the change once more. `POST /auth/confirm` is the one door that answers the dialog. It takes the owner's password or a passkey assertion and nothing else, because the account is the signed-in session's owner. It renews recency by replacing the session: the new session is created now, so a session is recent exactly when it was created in the last five minutes.
+
+### `authentication/recent-refusal`
+
+If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`.
+
+**Reason:** A page recognises this refusal to open the dialog, so every door that needs a recent sign-in refuses in the same words.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`.
+
+### `authentication/confirm-replaces`
+
+When a signed-in owner's browser session sends `POST /auth/confirm` with the owner's password or with a passkey assertion of the owner, the server MUST answer `200` and set a browser session created at the moment of the confirmation.
+
+**Reason:** Recency is the age of the session, so renewing it is making a new one. There is no second timestamp to disagree with the first.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› dates the new session from the confirmation, so it goes stale five minutes after it`, `› replaces a stale session when the owner's passkey signs`.
+
+### `authentication/confirm-ends-old`
+
+When the server sets the session a confirmation made, the server MUST end the session that sent the confirmation in the same step.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`.
+
+### `authentication/confirm-wrong-password`
+
+If the password sent to `POST /auth/confirm` is wrong, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › answers a wrong password 401 and leaves the session as it was`.
+
+### `authentication/confirm-lanes`
+
+When a request to `POST /auth/confirm` carries a password, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
+
+**Reason:** The dialog would otherwise be a way round the lockout.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`.
+
+### `authentication/confirm-locked`
+
+If the attempt windows `authentication/confirm-lanes` names are spent, then the server MUST answer `429 rate_limited` with the `Retry-After` a password sign-in would be given, without judging the password.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`.
+
+### `authentication/confirm-refused-keeps`
+
+If the server refuses a confirmation, then the server MUST leave the session that sent it live, unchanged, and set no cookie.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › answers a wrong password 401 and leaves the session as it was`, `› counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`, `› refuses a passkey that is not registered to the signed-in owner, and leaves the session as it was`.
+
+### `authentication/confirm-names-no-account`
+
+If the body of `POST /auth/confirm` names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` and set no session.
+
+**Reason:** The account is the signed-in session's owner. A body cannot name another.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › refuses a body that names an email, both proofs, or neither`.
+
+### `authentication/confirm-passkey-owner`
+
+If a passkey assertion sent to `POST /auth/confirm` is not for a passkey registered to the signed-in session's user, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey that is not registered to the signed-in owner, and leaves the session as it was`.
+
+### `authentication/confirm-needs-session`
+
+If a request to `POST /auth/confirm` carries no live owner browser session, or carries a bearer key, then the server MUST answer `401 unauthorized` and set no session.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › is refused with no cookie, with an ended session, and with a key`.
+
+### `authentication/confirm-origin`
+
+If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` and set no session.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
+
+### `authentication/passkey-register-recent`
+
+If a browser session created more than five minutes ago asks for passkey registration options or submits a registration, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey registration from a stale session`.
