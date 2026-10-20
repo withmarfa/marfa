@@ -817,6 +817,19 @@ const httpUrl: Parser<string> = {
   },
 };
 
+/** The instance's public address, which anyone may read: no user info and no query string. */
+const publicUrl: Parser<string> = {
+  rule: { kind: "url" },
+  parse: (value) => {
+    httpUrl.parse(value);
+    const url = new URL(value);
+    if (url.username !== "" || url.password !== "" || url.search !== "") {
+      throw new Error("must have no user name, password or query string");
+    }
+    return value;
+  },
+};
+
 const text: Parser<string> = {
   rule: { kind: "text" },
   parse: (value) => value,
@@ -1005,13 +1018,8 @@ const optionalText = (description: string, defaultNote?: string) =>
     description,
     defaultNote === undefined ? {} : { defaultNote },
   );
-const optionalUrl = (description: string, defaultNote?: string) =>
-  setting<string | undefined>(
-    httpUrl,
-    () => undefined,
-    description,
-    defaultNote === undefined ? {} : { defaultNote },
-  );
+const optionalUrl = (description: string, options?: SettingOptions) =>
+  setting<string | undefined>(httpUrl, () => undefined, description, options);
 const blankText = (description: string, options?: SettingOptions) =>
   setting(text, () => "", description, options);
 const blankUrl = (description: string, options?: SettingOptions) =>
@@ -1167,6 +1175,7 @@ const settingsShape = {
     { group: "File storage", label: "Object store address" },
     blankUrl(
       "The endpoint of the object store. When blank, the store's provider chooses it.",
+      { secret: true },
     ),
   ),
   S3_ACCESS_KEY_ID: grouped(
@@ -1370,9 +1379,11 @@ const settingsShape = {
   ),
   MARFA_AUTH_BASE_URL: grouped(
     { group: "Address and network", label: "Public address" },
-    optionalUrl(
-      "The public URL for OAuth, cookies, and links. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.",
-      "None. Required in production.",
+    setting<string | undefined>(
+      publicUrl,
+      () => undefined,
+      "The public URL for OAuth, cookies, and links. It has no user name, password or query string. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.",
+      { defaultNote: "None. Required in production." },
     ),
   ),
   CORS_ORIGINS: grouped(
@@ -1830,18 +1841,21 @@ const settingsShape = {
     { group: "Alerts and monitoring", label: "Telemetry address" },
     optionalUrl(
       "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
+      { secret: true },
     ),
   ),
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: grouped(
     { group: "Alerts and monitoring", label: "Trace address" },
     optionalUrl(
       "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+      { secret: true },
     ),
   ),
   OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: grouped(
     { group: "Alerts and monitoring", label: "Log address" },
     optionalUrl(
       "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+      { secret: true },
     ),
   ),
   OTEL_EXPORTER_OTLP_HEADERS: grouped(
@@ -1875,6 +1889,7 @@ const settingsShape = {
     { group: "Alerts and monitoring", label: "PostHog address" },
     optionalUrl(
       "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_PROJECT_TOKEN` set too.",
+      { secret: true },
     ),
   ),
   MARFA_POSTHOG_PROJECT_TOKEN: grouped(

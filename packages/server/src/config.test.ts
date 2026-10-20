@@ -805,6 +805,28 @@ describe("the settings as data", () => {
     ).toBeGreaterThan(3);
   });
 
+  it("flags every address as a secret, unless it cannot hold credentials", () => {
+    // MARFA_AUTH_BASE_URL is the instance's public address, and its parser refuses user info and a query string.
+    const readable = ["MARFA_AUTH_BASE_URL"];
+    const urls = described.filter((s) => s.rule.kind === "url");
+    expect(urls.length).toBeGreaterThan(5);
+    expect(urls.filter((s) => !s.secret && !readable.includes(s.name))).toEqual(
+      [],
+    );
+    for (const value of [
+      "https://user:pass@marfa.example.test",
+      "https://marfa.example.test/?token=abc",
+    ]) {
+      expect(refusal({ MARFA_AUTH_BASE_URL: value }), value).toContain(
+        "MARFA_AUTH_BASE_URL must have no user name, password or query string",
+      );
+    }
+    expect(
+      loadConfig({ MARFA_AUTH_BASE_URL: "https://marfa.example.test/base" })
+        .authBaseUrl,
+    ).toBe("https://marfa.example.test/base");
+  });
+
   it("places every setting in one of the console's groups", () => {
     for (const { name, group, label } of described) {
       expect(SETTING_GROUPS, name).toContain(group);

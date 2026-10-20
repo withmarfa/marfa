@@ -11,7 +11,7 @@ let ctx: TestContext;
 beforeAll(async () => {
   const config = loadConfig({
     MARFA_POSTHOG_PROJECT_TOKEN: SECRET,
-    OTEL_EXPORTER_OTLP_ENDPOINT: "https://collector.example.test",
+    OTEL_EXPORTER_OTLP_ENDPOINT: `https://collector:${SECRET}@collector.example.test`,
     MARFA_POSTHOG_HOST: "https://posthog.example.test",
     S3_ACCESS_KEY_ID: SECRET,
     S3_BUCKET: "witness-bucket",
