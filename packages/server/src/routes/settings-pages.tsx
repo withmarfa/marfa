@@ -40,10 +40,11 @@ export function valueWords(entry: SettingEntry): string {
   return entry.value ?? "Not set";
 }
 
-/** The first sentence of a description, which says what the setting does. */
+/** The first sentence of a description, which says what the setting does, without its code marks. */
 export function firstSentence(description: string): string {
   const end = description.search(/[.!?](\s|$)/);
-  return end === -1 ? description : description.slice(0, end + 1);
+  const sentence = end === -1 ? description : description.slice(0, end + 1);
+  return sentence.replaceAll("`", "");
 }
 
 interface PageBase {

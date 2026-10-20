@@ -28,7 +28,7 @@ import type { AuditEntry } from "../storage/interface.js";
 export const ACTIVITY_HREF = "/auth/owner/activity";
 
 export const KIND_LABELS: Record<AuditKind, string> = {
-  access: "Sign-ins and access",
+  access: "Access",
   data: "Your data",
   settings: "Settings",
   housekeeping: "Housekeeping",
