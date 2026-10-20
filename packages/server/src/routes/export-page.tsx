@@ -48,7 +48,6 @@ export function ExportPage(props: ExportPageParams) {
         />
         <form class="stack-24" method="get" action="/export" data-export-form>
           <input type="hidden" name="format" value="archive" />
-          <input type="hidden" name="files" value="false" disabled />
           <Section
             id="export"
             title="Export"
@@ -97,7 +96,7 @@ export function ExportPage(props: ExportPageParams) {
           <Section
             id="restore"
             title="Restore"
-            description="Adds what isn't here and never replaces anything. All of it is added, or none of it."
+            description="Adds what isn't here and never replaces anything."
           >
             <RowGroup>
               <Row
@@ -129,6 +128,11 @@ export function ExportPage(props: ExportPageParams) {
           </div>
           <div data-notice="restore-problem" hidden>
             <Notice tone="error" title="Nothing was restored">
+              <span data-notice-text></span>
+            </Notice>
+          </div>
+          <div data-notice="restore-unknown" hidden>
+            <Notice tone="error" title="Restore didn't finish">
               <span data-notice-text></span>
             </Notice>
           </div>

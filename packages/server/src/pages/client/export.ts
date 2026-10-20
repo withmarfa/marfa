@@ -19,13 +19,11 @@ import { busy, hook } from "./page-state.js";
 const NO_FILE = "No file chosen";
 
 function initExportForm(form: HTMLFormElement): void {
-  const noFiles = form.querySelector<HTMLInputElement>('input[name="files"]');
   const files = form.querySelector<HTMLInputElement>("#export-files");
-  const type = form.querySelector<HTMLSelectElement>('select[name="type"]');
-  if (!noFiles || !files || !type) return;
-  form.addEventListener("submit", () => {
-    noFiles.disabled = files.checked;
-    type.disabled = type.value === "";
+  if (!files) return;
+  form.addEventListener("formdata", (event) => {
+    if (event.formData.get("type") === "") event.formData.delete("type");
+    if (!files.checked) event.formData.set("files", "false");
   });
 }
 
@@ -33,7 +31,8 @@ const isCounts = (body: unknown): body is RestoreCounts =>
   typeof body === "object" &&
   body !== null &&
   "imported" in body &&
-  "blobs_missing" in body;
+  "blobs_missing" in body &&
+  "edges_skipped" in body;
 
 async function restore(
   root: HTMLElement,
@@ -82,7 +81,11 @@ async function restore(
       isCounts(body) ? restoreSummary(body) : "The archive was added.",
     );
   } catch {
-    showNotice(root, "restore-problem", SETUP_WORDS.network);
+    showNotice(
+      root,
+      "restore-unknown",
+      "Marfa didn't answer, so it isn't known whether the restore finished. Check your items before trying again.",
+    );
   } finally {
     busy(button, false);
     if (!leaving) button.removeAttribute("aria-disabled");

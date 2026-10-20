@@ -8,6 +8,7 @@ export interface RestoreCounts {
   imported: number;
   duplicates: number;
   edges_imported: number;
+  edges_skipped: number;
   blobs_imported: number;
   blobs_missing: readonly string[];
   types_registered: number;
@@ -24,6 +25,9 @@ export function restoreSummary(result: RestoreCounts): string {
   return [
     `${count(result.imported, "item")} added, ${String(result.duplicates)} already here.`,
     `${count(result.edges_imported, "link")}, ${count(result.blobs_imported, "file")} and ${count(types, "type")} added.`,
+    ...(result.edges_skipped === 0
+      ? []
+      : [`${count(result.edges_skipped, "link")} skipped.`]),
     ...(lacking === 0
       ? []
       : [

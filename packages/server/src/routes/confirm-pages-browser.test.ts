@@ -444,6 +444,8 @@ inBrowser("Export, from its form", () => {
       const off = await exportRequest();
       expect(off.get("files")).toBe("false");
       expect(off.has("type")).toBe(false);
+      // Witness: the select is not left disabled after an Everything export.
+      expect(await page.locator("#export-type").isEnabled()).toBe(true);
     } finally {
       await context.close();
     }

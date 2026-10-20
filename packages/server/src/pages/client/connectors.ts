@@ -4,11 +4,10 @@
  * The server draws the page and writes every word into the markup. This
  * module sends the change through the public doors
  * (`DELETE /connectors/{id}/state` and `DELETE /connectors/{id}`) and shows
- * what came back. A change that needs a recent sign-in goes through
- * `sendConfirmed`.
+ * what came back. Neither needs a recent sign-in.
  */
 import { SETUP_WORDS } from "../setup-words.js";
-import { sendConfirmed, signInAgain } from "./confirm.js";
+import { signInAgain } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
 import { busy, hook, keepFlash, refusalText, showFlash } from "./page-state.js";
 
@@ -23,6 +22,8 @@ interface Change {
   /** Where the person goes once it is done; the page again if none. */
   then: string | null;
   said: (name: string) => string;
+  /** What a 404 means; none when a connector that is gone is what was asked for. */
+  gone: string | null;
 }
 
 const CHANGES: readonly Change[] = [
@@ -32,6 +33,7 @@ const CHANGES: readonly Change[] = [
     path: "/state",
     then: null,
     said: (name) => `Cleared the saved state for ${name}`,
+    gone: "This connector isn't here. It may have been removed.",
   },
   {
     dialog: "connector-remove-dialog",
@@ -39,6 +41,7 @@ const CHANGES: readonly Change[] = [
     path: "",
     then: CONNECTORS_HREF,
     said: (name) => `Removed ${name}`,
+    gone: null,
   },
 ];
 
@@ -58,17 +61,18 @@ async function send(change: Change): Promise<void> {
   busy(button, true);
   let leaving = false;
   try {
-    const response = await sendConfirmed(
-      () =>
-        fetch(`/connectors/${encodeURIComponent(id)}${change.path}`, {
-          method: "DELETE",
-          credentials: "same-origin",
-          headers: { accept: "application/json" },
-        }),
-      dialog.dataset.confirmWhy ?? "Confirm it's you.",
-      button,
+    const response = await fetch(
+      `/connectors/${encodeURIComponent(id)}${change.path}`,
+      {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: { accept: "application/json" },
+      },
     );
-    if (response === null) return;
+    if (response.status === 404 && change.gone !== null) {
+      showNotice(dialog, slot, change.gone);
+      return;
+    }
     // A connector that is already gone is the state the person asked for.
     if (response.ok || response.status === 404) {
       keepFlash(FLASH, change.said(name));

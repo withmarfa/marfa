@@ -236,7 +236,7 @@ export function ConnectorPage(props: ConnectorPageParams) {
       />
       <DangerRow
         title="Remove connector"
-        description="Removes it and its runs from Marfa, not the program itself. Can't be undone."
+        description="Removes it, its runs, its webhook endpoints and their stored deliveries from Marfa, not the program itself. Can't be undone."
         action={
           <Button kind="danger-quiet" opens="connector-remove-dialog">
             Remove
@@ -251,17 +251,15 @@ export function ConnectorPage(props: ConnectorPageParams) {
         action="Clear"
         loading="Clearing..."
         hook="connector-clear"
-        why="Clearing a connector's saved state needs a recent sign-in."
       />
       <ConnectorDialog
         id="connector-remove-dialog"
         connector={props}
         title={`Remove the ${props.name} connector?`}
-        description="The program keeps running until you stop it where it runs, and its key works until you revoke it. This can't be undone."
+        description="This also deletes its webhook endpoints and their stored deliveries. The program keeps running until you stop it where it runs, and its key works until you revoke it. This can't be undone."
         action="Remove"
         loading="Removing..."
         hook="connector-remove"
-        why="Removing a connector needs a recent sign-in."
       />
     </ConsolePage>
   );
@@ -275,7 +273,6 @@ function ConnectorDialog(props: {
   action: string;
   loading: string;
   hook: string;
-  why: string;
 }) {
   return (
     <Dialog
@@ -285,7 +282,6 @@ function ConnectorDialog(props: {
       data={{
         "connector-id": props.connector.id,
         "connector-name": props.connector.name,
-        "confirm-why": props.why,
       }}
       actions={
         <>

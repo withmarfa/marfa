@@ -5,6 +5,7 @@ const none = {
   imported: 0,
   duplicates: 0,
   edges_imported: 0,
+  edges_skipped: 0,
   blobs_imported: 0,
   blobs_missing: [],
   types_registered: 0,
@@ -24,6 +25,13 @@ describe("restoreSummary", () => {
         edge_types_registered: 1,
       }),
     ).toBe("3 items added, 1 already here. 1 link, 2 files and 2 types added.");
+  });
+
+  it("says how many links were skipped, and only then", () => {
+    expect(restoreSummary(none)).not.toContain("skipped");
+    expect(restoreSummary({ ...none, edges_skipped: 2 })).toContain(
+      "2 links skipped.",
+    );
   });
 
   it("says so, and only then, when a file is in neither the export nor the instance", () => {
