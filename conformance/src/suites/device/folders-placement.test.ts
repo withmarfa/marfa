@@ -623,6 +623,50 @@ describe("where a file sits", () => {
     ).toEqual([["empty.txt", id]]);
   });
 
+  it("takes back a file item at a document name by placement and bytes when it is added again over it", async () => {
+    const item = "01a00000-0000-7000-8000-0000000016f4";
+    const bytes = Buffer.from("plain text a server holds as a file\n");
+    const placed = await placedHarness(
+      "placement-added-again-document-name",
+      [
+        {
+          id: item,
+          title: "notes.md",
+          type: "core.file",
+          properties: {
+            title: "notes.md",
+            blob_ref: hashOf(bytes),
+            mime_type: "text/markdown",
+          },
+          path: "notes.md",
+        },
+      ],
+      { search: { types: ["core.file", "core.note"] } },
+    );
+    harness = placed.harness;
+    acceptUploads(harness.server);
+    scriptBlob(harness.server, bytes);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(bytes);
+
+    expect((await harness.folder.remove()).ok).toBe(true);
+    expect((await harness.folder.add(harness.settings.id)).ok).toBe(true);
+    // The witness: a new file beside it is created.
+    writeFileSync(join(harness.dir, "new.bin"), Buffer.from([7, 7, 6]));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTitles(harness),
+      "a folder added again over a file item at a document name made a second item of it",
+    ).toEqual(["new.bin"]);
+    expect(sentUpdates(harness)).toEqual([]);
+    expect(
+      readdirSync(harness.dir)
+        .filter((name) => !name.startsWith("."))
+        .sort(),
+    ).toEqual(["new.bin", "notes.md"]);
+  });
+
   it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
     const [photo, paper, words] = [
       "01a00000-0000-7000-8000-0000000016f1",
@@ -6483,6 +6527,246 @@ describe("a file that is not a document", () => {
         `${label}: the note was sent`,
       ).toEqual([]);
       expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(edited);
+    }
+  });
+
+  /** A server holding one file item, `title`, with these bytes, and the
+   *  folder that pulled it. */
+  async function pulledFileItem(
+    label: string,
+    id: string,
+    title: string,
+    bytes: Buffer,
+    options: {
+      type?: string;
+      mime?: string;
+      settings?: FolderSettings;
+    } = {},
+  ): Promise<FolderHarness> {
+    const made = await folderHarness(label, {
+      settings: options.settings ?? settings,
+      rows: {
+        [options.type ?? "core.file"]: [
+          {
+            item: {
+              id,
+              type: options.type ?? "core.file",
+              properties: {
+                title,
+                blob_ref: hashOf(bytes),
+                mime_type: options.mime ?? "application/octet-stream",
+              },
+            },
+          },
+        ],
+      },
+    });
+    harness = made;
+    scriptBlob(made.server, bytes);
+    scriptFolderWrites(made);
+    acceptUploads(made.server);
+    expect((await made.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(made.dir, title))).toEqual(bytes);
+    return made;
+  }
+
+  const unreadableAsText: Array<[string, Buffer, string]> = [
+    [
+      "bytes that are not UTF-8",
+      Buffer.from("caf\xe9\n", "latin1"),
+      "encoding",
+    ],
+    [
+      "frontmatter that does not parse",
+      Buffer.from("---\ntitle: [x\n---\n"),
+      "unreadable",
+    ],
+  ];
+
+  it.each(unreadableAsText)(
+    "does not hold a file item renamed to a document name, whatever its bytes are (%s)",
+    async (label, edited, flag) => {
+      const id = "01a00000-0000-7000-8000-0000000000f9";
+      const made = await pulledFileItem(
+        "folder-file-renamed-status",
+        id,
+        "archive.bin",
+        Buffer.from("bytes a server holds as a file\n"),
+      );
+      renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
+      writeFileSync(join(made.dir, "notes.md"), edited);
+      // The witness: a new document with the same bytes is held.
+      writeFileSync(join(made.dir, "Witness.md"), edited);
+
+      const standing = async (path: string) => {
+        const status = await made.folder.status();
+        expect(status.ok, JSON.stringify(status)).toBe(true);
+        const file = status.ok
+          ? status.value.files.find((one) => one.path === path)
+          : undefined;
+        expect(file, `${label}: ${path} has no status`).toBeDefined();
+        return file;
+      };
+      const witness = await standing("Witness.md");
+      expect([witness?.status, witness?.flag], label).toEqual(["held", flag]);
+      const before = await standing("notes.md");
+      expect(
+        [before?.status === "held", before?.flag],
+        `${label}: the status holds a file item the scan takes as its bytes`,
+      ).toEqual([false, undefined]);
+
+      const pushed = await made.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged.map((file) => file.path),
+        label,
+      ).toEqual(["Witness.md"]);
+      expect(
+        sentUpdates(made)
+          .filter((sent) => sent.id === id)
+          .map(
+            (sent) =>
+              (sent.body.properties as Record<string, unknown>).blob_ref,
+          ),
+        label,
+      ).toContain(hashOf(edited));
+      const after = await standing("notes.md");
+      expect(
+        [after?.status === "held", after?.flag, after?.item_id],
+        label,
+      ).toEqual([false, undefined, id]);
+    },
+  );
+
+  it("waits for a file item emptied at a document name, and still sends the rest", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fa";
+    const original = Buffer.from("bytes a server holds as a file\n");
+    const made = await pulledFileItem(
+      "folder-file-emptied",
+      id,
+      "archive.bin",
+      original,
+    );
+    renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
+    expect((await made.folder.push()).ok).toBe(true);
+
+    // An editor empties the file before it writes. The witness: a new file in
+    // the same scan is sent.
+    const sent = sentUpdates(made).length;
+    writeFileSync(join(made.dir, "notes.md"), Buffer.alloc(0));
+    writeFileSync(join(made.dir, "witness.bin"), Buffer.from([7, 7, 5]));
+    const emptied = await made.folder.push();
+    expect(
+      emptied.ok,
+      `an emptied file item failed the scan: ${JSON.stringify(emptied)}`,
+    ).toBe(true);
+    if (!emptied.ok) return;
+    expect(emptied.value.scan.flagged).toEqual([]);
+    expect(sentTitles(made)).toContain("witness.bin");
+    expect(
+      sentUpdates(made)
+        .slice(sent)
+        .filter((one) => one.id === id),
+      "an empty file was sent as the item's bytes",
+    ).toEqual([]);
+    expect(
+      made.server.requests.filter(
+        (request) => request.pathname === "/blobs" && request.raw.length === 0,
+      ),
+    ).toEqual([]);
+
+    // Written whole, it goes up as the item's new bytes.
+    const edited = Buffer.from("written whole\n");
+    writeFileSync(join(made.dir, "notes.md"), edited);
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(
+      sentUpdates(made)
+        .filter((one) => one.id === id)
+        .map(
+          (one) => (one.body.properties as Record<string, unknown>).blob_ref,
+        ),
+    ).toContain(hashOf(edited));
+  });
+
+  it("follows no embed in a file item's bytes at a document name", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fb";
+    const made = await pulledFileItem(
+      "folder-file-embeds",
+      id,
+      "archive.png",
+      Buffer.from("![[x.pdf]]\n"),
+      {
+        type: "core.file.image",
+        mime: "image/png",
+        settings: { search: { types: ["core.note", "core.file.image"] } },
+      },
+    );
+    // The search holds notes and images, so a PDF goes only where a note
+    // embeds it.
+    writeFileSync(join(made.dir, "x.pdf"), photo);
+    writeFileSync(
+      join(made.dir, "y.pdf"),
+      Buffer.concat([photo, Buffer.from([2])]),
+    );
+    put(made, "Witness.md", "---\ntitle: Witness\n---\n![[y.pdf]]\n");
+    renameSync(join(made.dir, "archive.png"), join(made.dir, "notes.md"));
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const titles = sentTitles(made);
+    expect(titles, "a note's embed was not sent").toContain("y.pdf");
+    expect(
+      titles,
+      "an embed in a file item's bytes was followed",
+    ).not.toContain("x.pdf");
+  });
+
+  it("sends a file item at a document name only once it stops changing", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fc";
+    const made = await pulledFileItem(
+      "folder-file-settling",
+      id,
+      "capture.bin",
+      Buffer.from("initial file bytes"),
+    );
+    const moving = join(made.dir, "notes.md");
+    renameSync(join(made.dir, "capture.bin"), moving);
+    const writing = setInterval(
+      () => appendFileSync(moving, Buffer.from("more")),
+      30,
+    );
+    appendFileSync(moving, Buffer.from("first edit"));
+    const watching = made.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("still changing"),
+        { timeout: 30000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+      expect(
+        sentUpdates(made).filter((one) => one.id === id),
+        "a file item at a document name was read while it changed",
+      ).toEqual([]);
+      clearInterval(writing);
+      const settled = readFileSync(moving);
+      scriptBlob(made.server, settled);
+      await vi.waitFor(
+        () =>
+          expect(sentUpdates(made)).toContainEqual(
+            expect.objectContaining({
+              id,
+              body: expect.objectContaining({
+                properties: expect.objectContaining({
+                  blob_ref: hashOf(settled),
+                }),
+              }),
+            }),
+          ),
+        { timeout: 30000, interval: 100 },
+      );
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
     }
   });
 });
