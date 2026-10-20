@@ -1,4 +1,5 @@
 import { withoutWriteWait } from "../storage/sqlite/connection.js";
+import { DEVICE_CODE_LIFETIME } from "./device-code-lifetime.js";
 import type { DBAdapter } from "better-auth";
 import { withRequestAuthority } from "./request-authority.js";
 import {
@@ -614,10 +615,10 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
             // mints and claims the codes, approves or denies them, and hands
             // the exchange to the provider's shared issuance at
             // `/oauth2/token`. Marfa keeps the human half in front of it —
-            // the verification page, the consent screen with its toggles,
+            // the verification page, the consent screen with its controls,
             // the grant projection and the audit row — in `routes/auth-pages`.
             oauthDeviceAuthorization({
-              expiresIn: "10m",
+              expiresIn: DEVICE_CODE_LIFETIME,
               interval: "5s",
               // Resolved against the auth base URL, which carries the `/auth`
               // base path; the plugin's default `/device` would land beside

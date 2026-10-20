@@ -145,7 +145,7 @@ export async function sentTo(
 
 /**
  * The person's decision on the consent screen `consent` is the address of,
- * posting the scopes they left ticked. Answers where the server sends them.
+ * posting the scopes they chose. Answers where the server sends them.
  */
 export async function decide(
   server: FreshServer,

@@ -1206,3 +1206,115 @@ button.row:hover .rt {
     flex-basis: 100%;
   }
 }
+
+/* A row that opens in place, and the rows beneath it */
+.disclosure-row > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.disclosure-row > summary::-webkit-details-marker {
+  display: none;
+}
+.disclosure-row > summary:hover .rt {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line);
+}
+.disclosure-row > summary .chev .icon {
+  transition: transform 120ms ease;
+}
+.disclosure-row[open] > summary .chev .icon {
+  transform: rotate(90deg);
+}
+.disclosure-row > summary:focus-visible {
+  outline: var(--focus-width) solid var(--focus-line);
+  outline-offset: calc(-1 * var(--focus-width));
+  border-radius: var(--radius-small);
+}
+.group > .disclosure-row:first-child > summary {
+  border-top: 0;
+}
+.sub {
+  border-top: 1px solid var(--divider);
+  padding-left: var(--space-4);
+}
+.sub > .row:first-child {
+  border-top: 0;
+}
+.sub .row {
+  min-height: var(--row-height);
+}
+.sub-note {
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--divider);
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  color: var(--fg2);
+  text-wrap: pretty;
+}
+
+/* A short mark after a title */
+.badge {
+  display: inline-block;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  font-weight: var(--weight-medium);
+  vertical-align: 1px;
+}
+.badge.new {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* The app that is asking, beside Marfa's mark */
+.mark-arrow {
+  color: var(--icon);
+  display: grid;
+}
+
+/* The code a device shows, one cell for each character, for the person to compare */
+.code-cells {
+  display: flex;
+  gap: var(--space-1);
+  justify-content: center;
+  align-items: center;
+}
+.code-cells span {
+  width: 32px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: var(--card-title-size);
+  font-weight: var(--weight-medium);
+  background: var(--control);
+}
+.code-cells i {
+  width: var(--space-2);
+  height: 1px;
+  background: var(--fg2);
+}
+.caption {
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  color: var(--fg2);
+  text-align: center;
+}
+.stack-8 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.small {
+  font-size: var(--small-size);
+  line-height: var(--small-line);
+  text-wrap: pretty;
+}
+.strong {
+  font-weight: var(--weight-medium);
+}

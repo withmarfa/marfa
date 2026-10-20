@@ -4,6 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { offeredValues } from "../../utils/approval-form.js";
 import {
   authorize,
   authorizeQuery,
@@ -67,10 +68,7 @@ describe("authorization with consent", () => {
     const page = await fetch(consent, { headers: { cookie } });
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
-    const html = await page.text();
-    const offered = [
-      ...html.matchAll(/name="scopes"[^>]*value="([^"]+)"/g),
-    ].map((m) => m[1]);
+    const offered = offeredValues(await page.text(), "scopes");
     expect(new Set(offered)).toEqual(new Set([NOTES, BOOKMARKS]));
   });
 
@@ -97,7 +95,7 @@ describe("authorization with consent", () => {
     expect(sent?.searchParams.get("code")).toBeNull();
   });
 
-  it("issues a token for only the scopes the person left ticked", async () => {
+  it("issues a token for only the scopes the person chose", async () => {
     const app = await registerApp(server, `${NOTES} ${BOOKMARKS}`);
     const proof = pkce();
     const consent = await consentScreen(

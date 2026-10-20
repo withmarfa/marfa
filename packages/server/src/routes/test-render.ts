@@ -12,8 +12,8 @@ import { renderConsentScreen as consent } from "./consent.js";
 import {
   renderDeviceConsentScreen as deviceConsent,
   renderDeviceDecisionPage as deviceDecision,
-  renderDevicePage as device,
-} from "./device-pages.js";
+} from "./device-approval.js";
+import { renderDevicePage as device } from "./device-pages.js";
 import { renderForgotPasswordPage as forgot } from "./forgot-password-page.js";
 import { renderHttpErrorPage as httpError } from "./http-error-page.js";
 import { renderSignInPage as signIn } from "./sign-in-page.js";

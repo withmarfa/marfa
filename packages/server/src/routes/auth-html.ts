@@ -46,33 +46,3 @@ export function confirmIcon(kind: "mail" | "check" | "alert"): string {
         : `<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>`;
   return `<div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg></div>`;
 }
-
-/**
- * The boxed caution shown beside an app whose name nobody vetted: one that
- * registered itself, so the name is whatever it said. One function for every
- * page that names an app a person is about to approve, so the warning cannot
- * be on one door and missing from another. The markup carries no interpolated
- * values, so it needs no escaping.
- */
-export function unverifiedAppCallout(): string {
-  return `<div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>`;
-}
-
-/**
- * The line naming the web addresses an approval lets reach the server, from
- * `webOriginsOf`, or nothing for an app with none. One function for every
- * page that approves an app, so the owner confirms the same addresses
- * whichever page the flow put them on.
- */
-export function pageOriginLine(origins: readonly string[]): string {
-  if (origins.length === 0) return "";
-  const named = origins.map((origin) => `<b>${escapeHtml(origin)}</b>`);
-  const last = named.pop() ?? "";
-  const list =
-    named.length === 0
-      ? `the web page at ${last}`
-      : named.length === 1
-        ? `web pages at ${named.join("")} and ${last}`
-        : `web pages at ${named.join(", ")}, and ${last}`;
-  return `<p class="sub">Allowing access also lets ${list} reach your server from a browser.</p>`;
-}

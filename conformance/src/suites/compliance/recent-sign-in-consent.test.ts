@@ -18,6 +18,7 @@ import {
   token,
   type App,
 } from "../../utils/signed-in.js";
+import { readControls } from "../../utils/approval-form.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -299,7 +300,7 @@ describe("approving a device", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left unticked", async () => {
+  it("approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off", async () => {
     const { stale } = await staleAndFresh();
     const device = await deviceCode(
       "core.note:read edge.parent-of:read metadata:read profile.name:read openid keys.manage core.note:write",
@@ -428,12 +429,17 @@ describe("the device screen", () => {
       // request, and the stale session is shown a request that only reads.
       const shown = await deviceScreen(device, fresh);
       expect(shown.status, scope).toBe(200);
-      expect(await shown.text()).toContain(device.userCode);
+      // The page shows the code as cells, one picture named by the code with its dash.
+      expect(await shown.text()).toContain(
+        `aria-label="${device.userCode.slice(0, 4)}-${device.userCode.slice(4)}"`,
+      );
     }
     const reading = await deviceCode("core.note:read openid");
     const shown = await deviceScreen(reading, stale);
     expect(shown.status).toBe(200);
-    expect(await shown.text()).toContain(reading.userCode);
+    expect(await shown.text()).toContain(
+      `aria-label="${reading.userCode.slice(0, 4)}-${reading.userCode.slice(4)}"`,
+    );
   });
 
   it("lands the person back on the screen after they sign in again, where they approve", async () => {
@@ -446,7 +452,9 @@ describe("the device screen", () => {
     // The sign-in page asks for the password although a session exists.
     const page = await ownerGet(location, stale);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('type="password"');
+    expect(
+      readControls(await page.text()).some((c) => c.type === "password"),
+    ).toBe(true);
     const returnTo = new URL(location, server.apiUrl).searchParams.get(
       "return_to",
     )!;
@@ -538,7 +546,7 @@ describe("approving an app", () => {
     }
   });
 
-  it("approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left unticked", async () => {
+  it("approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off", async () => {
     const { stale } = await staleAndFresh();
     const reads = [
       "core.note:read",
@@ -685,7 +693,9 @@ describe("the authorization screen", () => {
     const location = screen.headers.get("location")!;
     const page = await ownerGet(location, stale);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain('type="password"');
+    expect(
+      readControls(await page.text()).some((c) => c.type === "password"),
+    ).toBe(true);
     const returnTo = new URL(location, server.apiUrl).searchParams.get(
       "return_to",
     )!;

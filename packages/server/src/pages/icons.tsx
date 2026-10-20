@@ -9,6 +9,7 @@ import type { Child } from "hono/jsx";
 const GLYPHS = {
   chevron: <path d="M6 4l4 4-4 4" />,
   back: <path d="M10 4l-4 4 4 4" />,
+  arrow: <path d="M3 8h10M9 4l4 4-4 4" />,
   down: <path d="M4 6l4 4 4-4" />,
   search: (
     <>

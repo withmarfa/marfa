@@ -17,6 +17,11 @@ export interface PageShellProps {
    * the script nor tells a reader it needs one.
    */
   needsScript?: boolean;
+  /**
+   * With `needsScript={false}`: the page works in full without the script,
+   * which only improves it. The script loads and the notice stays out.
+   */
+  enhancedByScript?: boolean;
   children?: Child;
 }
 
@@ -35,6 +40,7 @@ export function PageShell(props: PageShellProps) {
       "PageShell needs the nonce the response's content security policy names",
     );
   const needsScript = props.needsScript ?? true;
+  const loadsScript = needsScript || props.enhancedByScript === true;
   return (
     <html lang="en">
       <head>
@@ -63,7 +69,7 @@ export function PageShell(props: PageShellProps) {
           </noscript>
         )}
         {props.children}
-        {needsScript && (
+        {loadsScript && (
           <script src={pageAssetUrl("pages.js")} nonce={props.nonce} defer />
         )}
       </body>

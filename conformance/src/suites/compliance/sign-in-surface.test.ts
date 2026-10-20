@@ -434,6 +434,25 @@ describe("the pages a person reads at sign-in", () => {
     expect(none).not.toMatch(/\d+ minutes?/);
   });
 
+  it("says a code that is wrong or has ended in one way, and how long codes last", async () => {
+    for (const error of ["invalid_code", "expired_code"]) {
+      const text = visibleText(
+        await (
+          await fetch(`${server!.apiUrl}/auth/device?error=${error}`)
+        ).text(),
+      );
+      expect(text, error).toContain(
+        "That code isn't right or has ended. Check your device for a new one.",
+      );
+    }
+    // The witness: with no error the page says how long a code lasts.
+    const plain = visibleText(
+      await (await fetch(`${server!.apiUrl}/auth/device`)).text(),
+    );
+    expect(plain).toContain("Codes end after 10 minutes.");
+    expect(plain).not.toContain("isn't right");
+  });
+
   it("names the app an authorization sent the person for, and no app for a link edited after signing", async () => {
     const signInUrl = await startAuthorization("Conformance Notes");
     expect(signInUrl.pathname).toBe("/auth/sign-in");

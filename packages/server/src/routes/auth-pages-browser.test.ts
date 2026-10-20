@@ -120,7 +120,7 @@ async function newPage(): Promise<Page> {
 }
 
 inBrowser("the consent page, in a browser", () => {
-  it("still works after Back from Deny", async () => {
+  it("still works after Back from Cancel", async () => {
     const page = await newPage();
     try {
       await page.goto(await authorizeUrl("Back Test App"));
@@ -147,7 +147,7 @@ inBrowser("the consent page, in a browser", () => {
       expect(await allow.isDisabled()).toBe(false);
       const deny = page.locator('button[name="accept"][value="false"]');
       expect(await deny.isDisabled()).toBe(false);
-      expect(await deny.textContent()).toBe("Deny");
+      expect(await deny.textContent()).toBe("Cancel");
 
       await allow.click();
       await page.waitForURL(/\/callback\?.*code=/);
@@ -273,13 +273,11 @@ inBrowser("the device approval page, in a browser", () => {
       await page.waitForURL(/\/auth\/sign-in\?/);
       await signIn(page);
       await page.waitForURL(/\/auth\/device\/consent\?/);
-      expect(await page.textContent(".callout")).toContain(
-        "Marfa hasn't verified this app",
-      );
+      await page.getByText("Marfa can't confirm who made this app.").waitFor();
 
-      // Deny, then Back: the page works again, as the consent page does.
-      await page.click('button:has-text("Deny")');
-      await page.waitForSelector("text=You denied the request");
+      // Cancel, then Back: the page works again, as the consent page does.
+      await page.click('button:has-text("Cancel")');
+      await page.waitForSelector("text=You didn't approve access");
       await page.goBack({ waitUntil: "commit" });
       await page.waitForURL(/\/auth\/device\/consent\?/, {
         waitUntil: "commit",
@@ -353,23 +351,59 @@ inBrowser("the policy, in a browser", () => {
   it("runs the pages' own scripts and applies their own styles", async () => {
     const page = await newPage();
     try {
-      // The device entry page's inline script turns one input into cells.
+      // The device code page's script writes the code as it is typed.
       await page.goto(`${origin}/auth/device`);
-      await page.waitForSelector("[data-otp] input");
-      expect(await page.locator("[data-otp] input").count()).toBe(8);
+      await page.getByLabel("Code").fill("abcd efgh9");
+      expect(await page.getByLabel("Code").inputValue()).toBe("ABCD-EFGH");
 
-      // The consent page's inline script makes a group's switch drive its
-      // members.
+      // The consent page loads the shared script under its nonce, and the
+      // policy runs it: the line under a row follows the control, which the
+      // server's own line would not.
       await page.goto(await authorizeUrl("Policy App"));
       await signIn(page);
       await page.waitForURL(/\/auth\/authorize\?/);
-      const master = page
-        .locator('.grp > summary input[type="checkbox"]')
-        .first();
-      const members = page.locator('.gsub input[type="checkbox"]');
-      expect(await members.first().isChecked()).toBe(true);
-      await master.uncheck();
-      expect(await members.first().isChecked()).toBe(false);
+      expect(await page.locator("script").count()).toBe(1);
+      await page.locator("summary", { hasText: "Your data" }).click();
+      const level = page.getByRole("combobox").first();
+      await level.selectOption({ label: "No access" });
+      expect(await level.inputValue()).toBe("");
+      await page.getByText("No access to your data").waitFor();
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  it("keeps the cursor where it was when the device code is rewritten, and deletes across the dash", async () => {
+    const page = await newPage();
+    try {
+      await page.goto(`${origin}/auth/device`);
+      const code = page.getByLabel("Code");
+      await code.pressSequentially("abcdefgh");
+      expect(await code.inputValue()).toBe("ABCD-EFGH");
+
+      // A correction in the middle: the cursor stays after what was typed.
+      await code.press("Home");
+      for (let i = 0; i < 2; i++) await code.press("ArrowRight");
+      await code.pressSequentially("zq");
+      expect(await code.inputValue()).toBe("ABZQ-CDEF");
+
+      // Backspace with the cursor just after the dash deletes the character
+      // before the dash, where the dash alone would only be written back.
+      await code.fill("");
+      await code.pressSequentially("abcdefgh");
+      await code.press("Home");
+      for (let i = 0; i < 5; i++) await code.press("ArrowRight");
+      await code.press("Backspace");
+      expect(await code.inputValue()).toBe("ABCE-FGH");
+      // And the cursor is where the deletion was.
+      await code.pressSequentially("d");
+      expect(await code.inputValue()).toBe("ABCD-EFGH");
+
+      // Delete with the cursor just before the dash deletes the character after it.
+      await code.press("Home");
+      for (let i = 0; i < 4; i++) await code.press("ArrowRight");
+      await code.press("Delete");
+      expect(await code.inputValue()).toBe("ABCD-FGH");
     } finally {
       await page.context().close();
     }

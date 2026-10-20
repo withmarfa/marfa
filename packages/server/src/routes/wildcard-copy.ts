@@ -29,8 +29,8 @@ const EDGE_PREFIX = "edge.";
  * registered yet**, under the same prohibition the curated map is held to
  * and for the same reason: both screens compose that line from
  * `isOpenEnded`, so a clause written here would be stated twice on the
- * authorize screen, where a description resolved through `labelFor` becomes
- * the toggle label directly above it.
+ * approval screens, where a description resolved through `describe` in
+ * `access-model.ts` becomes the row's title directly above it.
  */
 export function deriveWildcardDescription(
   typePattern: string,

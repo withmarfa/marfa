@@ -1,853 +1,354 @@
-import { authAssetUrl } from "./auth-static.js";
-import { describe, it, expect, afterEach } from "vitest";
-import type { ParsedScope } from "@withmarfa/shared";
-import { parseScope } from "@withmarfa/shared";
+import { describe, it, expect } from "vitest";
+import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
-  renderConsentScreen,
-  renderDeviceConsentScreen,
-} from "./test-render.js";
-import {
-  SCOPE_LABELS,
-  SCOPE_SHORT,
-  scopeShort,
-  humanizeType,
-} from "./consent.js";
-import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
-import {
-  DEFAULT_PERMISSION_BUNDLES,
-  loadConfig,
-  setActivePermissionBundles,
-} from "../config.js";
-import {
-  PERMISSION_LABELS,
-  PERMISSION_SHORT,
-  permissionLabel,
-} from "./permission-labels.js";
-import {
-  PERMISSIONS,
-  EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
-  grantCoversScope,
+  PERMISSIONS,
+  parseScope,
   scopesToMetadataPermissions,
-  seedPlatformTypes,
-  shippedPlatformTypes,
   subtreeWildcardRoot,
-  TYPE_REGISTRY,
 } from "@withmarfa/shared";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import { pageAssetUrl } from "../pages/assets.js";
 import {
-  buildScopeDescriptions,
-  CONSENT_SCOPE_DESCRIPTIONS,
-} from "./auth-consent.js";
-import { deriveWildcardDescription } from "./wildcard-copy.js";
+  decodeEntities,
+  defaultSubmission,
+  readControls,
+  visibleText,
+} from "../test-html.js";
+import { buildScopeDescriptions } from "./auth-consent.js";
+import { PERMISSION_LABELS } from "./permission-labels.js";
 import {
   OPEN_ENDED_EXPANSION_TAIL,
   OPEN_ENDED_LINE,
 } from "./scope-openness.js";
-import { buildAllowedScopes } from "../auth/oauth-provider.js";
-
-afterEach(() => {
-  // `TYPE_REGISTRY` is a module-level binding every suite in this process
-  // shares, and one case below seeds a retired platform row into it.
-  seedPlatformTypes(shippedPlatformTypes());
-});
+import { SCOPE_LABELS } from "./scope-copy.js";
+import { renderConsentScreen } from "./test-render.js";
 
 /**
- * Shape-asserting smoke for `renderConsentScreen`. Covers:
- *
- * - Layout / contract: shared stylesheet link, no inline `<style>`, the form
- *   posts to `/auth/authorize/decision` with the signed `oauth_query`
- *   round-tripped verbatim, per-type checkboxes named `scopes` carrying the
- *   concrete literal as `value`, Allow/Deny buttons with `name="accept"`.
- *
- * - Soft-tile grouping: requested scopes group by capability (Read / Write /
- *   Your profile) into collapsed `<details class="grp">` tiles with a master
- *   toggle and per-type member toggles; the cascade script ships.
- *
- * - Re-consent diff: New / Already allowed / No longer needed sections.
- *
- * - Unverified app: one boxed callout, no inline badge.
- *
- * - Error banner + XSS escaping.
+ * The Approve access screen, read the way a person and a form read it: by
+ * text, roles and field names, never by class names or tag shapes.
  */
 
-const SCOPES: ParsedScope[] = [
-  { kind: "type", typePattern: "core.note", operation: "read" },
-  { kind: "type", typePattern: "core.note", operation: "write" },
-  { kind: "type", typePattern: "core.task", operation: "read" },
-];
-
-const SIGNED_OAUTH_QUERY =
-  "response_type=code&client_id=client-abc&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&scope=core.note%3Aread&state=abc&code_challenge=def&code_challenge_method=S256&exp=1778957000&sig=somesignaturehash";
-
-const PARAMS = {
-  clientName: "Test CLI",
-  scopes: SCOPES,
-  clientId: "client-abc",
-  oauthQuery: SIGNED_OAUTH_QUERY,
-  descriptions: {
-    "core.note": "Text content you created.",
-    "core.task": "Tasks and todos.",
-  },
+const scope = (literal: string): ParsedScope => {
+  const parsed = parseScope(literal);
+  if (!parsed) throw new Error(`unparseable: ${literal}`);
+  return parsed;
 };
 
-describe("consent copy names only types that exist", () => {
-  it("has no label or description for a concrete type the registry does not hold", () => {
-    // Coverage runs from type to copy; this runs the other way, so a
-    // sentence left behind for a removed type fails rather than waiting for
-    // a scope nobody can request.
-    const concrete = (key: string) =>
-      /^(core|system)\.[^*]+$/.test(key) && !key.endsWith(".*");
-    const keys = [
-      ...Object.keys(SCOPE_LABELS),
-      ...Object.keys(CONSENT_SCOPE_DESCRIPTIONS),
-    ].filter(concrete);
-    // Witness: both maps name concrete types, so the filter reached rows.
-    expect(keys).toContain("core.note");
-    expect(keys).toContain("system.connection");
-    for (const key of keys) {
-      expect(TYPE_REGISTRY.has(key), `${key} names no shipped type`).toBe(true);
-    }
-  });
-});
+const SIGNED_QUERY =
+  "response_type=code&client_id=client-abc&redirect_uri=http%3A%2F%2Flocalhost%2Fcallback&scope=core.note%3Aread&state=abc&code_challenge=def&code_challenge_method=S256&exp=1778957000&sig=somesignaturehash";
 
-describe("renderConsentScreen — layout + form contract", () => {
-  it("links to the shared stylesheet and carries no inline <style> block", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain(
-      `<link rel="stylesheet" href="${authAssetUrl("auth.css")}" nonce="test-nonce">`,
+const render = (
+  literals: string[],
+  extra: Partial<Parameters<typeof renderConsentScreen>[0]> = {},
+): string =>
+  renderConsentScreen({
+    clientName: "Test CLI",
+    clientId: "client-abc",
+    oauthQuery: SIGNED_QUERY,
+    scopes: literals.map(scope),
+    ...extra,
+  });
+
+const selects = (html: string) =>
+  readControls(html).filter((c) => c.tag === "select");
+const switches = (html: string) =>
+  readControls(html).filter((c) => c.role === "switch");
+
+describe("renderConsentScreen: the page", () => {
+  it("uses the shared page system, with no inline style or handler and only the page script, which it does not need", () => {
+    const html = render(["core.note:read"]);
+    expect(html).toContain(`href="${pageAssetUrl("pages.css")}"`);
+    expect(html).not.toContain("<style");
+    expect(html).not.toMatch(/\sstyle=|\son[a-z]+=/);
+    // The one script is the shared file, named by the page's nonce. Nothing
+    // is written into the page.
+    const scripts = html.match(/<script\b[^>]*>/g) ?? [];
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).toContain(`src="${pageAssetUrl("pages.js")}"`);
+    expect(scripts[0]).toContain('nonce="test-nonce"');
+    // It only keeps the summary lines true, so the page does not say it needs it.
+    expect(visibleText(html)).not.toContain("needs JavaScript");
+  });
+
+  it("names the app, the instance and who is signed in", () => {
+    const text = visibleText(
+      render(["core.note:read"], {
+        instanceName: "Home",
+        signedInAs: "owner@example.test",
+      }),
     );
-    expect(html).not.toContain("<style>");
+    expect(text).toContain("Test CLI wants access to Home");
+    expect(text).toContain("Signed in as owner@example.test");
   });
 
-  it("escapes the client name in the body", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      clientName: "<script>alert(1)</script>",
+  it("escapes a hostile app name", () => {
+    const html = render(["core.note:read"], {
+      clientName: "<script>x</script>",
     });
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
+    expect(html).not.toContain("<script>x</script>");
+    expect(visibleText(html)).toContain("<script>x</script> wants access");
   });
 
-  it("threads each concrete scope literal into a checkbox value", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('value="core.note:read"');
-    expect(html).toContain('value="core.note:write"');
-    expect(html).toContain('value="core.task:read"');
-  });
-
-  it("POSTs to the Marfa decision handler with oauth_query + client_id hidden", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain(
-      '<form method="POST" action="/auth/authorize/decision"',
-    );
-    expect(html).toContain('name="client_id" value="client-abc"');
-    expect(html).toContain('name="oauth_query"');
-    expect(html).toContain("response_type=code");
-    expect(html).toContain("sig=somesignaturehash");
-    // PKCE / state / redirect_uri are inside oauth_query, not separate fields.
-    expect(html).not.toContain('name="code"');
-    expect(html).not.toContain('name="redirect_uri"');
-    expect(html).not.toContain('name="code_challenge"');
-    expect(html).not.toContain('name="state"');
-    expect(html).not.toContain('name="response_type"');
-  });
-
-  it("renders Allow + Deny buttons with accept=true|false (plugin contract)", () => {
-    const html = renderConsentScreen(PARAMS);
+  it("posts the signed request back unchanged to the decision handler, with Cancel before Approve", () => {
+    const html = render(["core.note:read"]);
     expect(html).toMatch(
-      /<button[^>]*name="accept"[^>]*value="true"[^>]*>Allow access<\/button>/,
+      /<form[^>]*method="post"[^>]*action="\/auth\/authorize\/decision"/,
     );
-    expect(html).toMatch(
-      /<button[^>]*name="accept"[^>]*value="false"[^>]*>Deny<\/button>/,
+    const controls = readControls(html);
+    expect(controls.find((c) => c.name === "oauth_query")?.value).toBe(
+      SIGNED_QUERY,
     );
-    // Stacked: primary "Allow access" before the ghost "Deny".
-    expect(html).toContain("btn--ghost");
-    expect(html.indexOf("Allow access")).toBeLessThan(html.indexOf(">Deny<"));
-  });
-
-  it("uses the standard card width (consent is a dialog, not a management page)", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('class="card"');
-    expect(html).not.toContain("card--wide");
-  });
-
-  it("renders a .title heading and a .sub subtitle that promise no settings page", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('<h1 class="title">Allow access</h1>');
-    expect(html).toContain('<p class="sub">');
-    expect(html).toContain("<b>Test CLI</b>");
-    // The server serves no settings page, and nothing else on this page names
-    // where access is changed, so the page says nothing about it. The line it
-    // would have said is the witness that the check below can fail.
-    expect(html).toContain("wants to access Marfa.");
-    expect(html).not.toMatch(/settings|anytime/i);
-  });
-});
-
-describe("renderConsentScreen — soft-tile groups", () => {
-  it("groups scopes into collapsed soft-tile groups by capability", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('class="t-soft"');
-    expect(html).toContain('<details class="grp">');
-    // Collapsed by default — no open attribute on any group.
-    expect(html).not.toMatch(/<details class="grp"[^>]*\sopen/);
-    expect(html).toContain("Read your content");
-    expect(html).toContain("Write your content");
-  });
-
-  it("derives group labels from the configured bundles, not a renderer copy", () => {
-    // The screen and the discovery document must describe the same
-    // bundles, so the renderer reads the same operator-overridable
-    // config instead of carrying its own taxonomy.
-    setActivePermissionBundles(
-      loadConfig({
-        MARFA_PERMISSION_BUNDLES: JSON.stringify([
-          {
-            id: "read",
-            label: "Peruse your things",
-            description: "Custom operator copy.",
-            scopes: ["core.note:read", "core.task:read"],
-            default_on: true,
-          },
-        ]),
-      }).permissionBundles ?? null,
+    expect(controls.find((c) => c.name === "client_id")?.value).toBe(
+      "client-abc",
     );
-    try {
-      const html = renderConsentScreen(PARAMS);
-      expect(html).toContain("Peruse your things");
-      expect(html).not.toContain("Read your content");
-      // core.note:write is outside every configured bundle — it still
-      // renders, in the fallback write bucket.
-      expect(html).toContain('value="core.note:write"');
-      expect(html).toContain("Other write access");
-    } finally {
-      setActivePermissionBundles(null);
-    }
-  });
-
-  it("every default-bundle scope resolves to a human toggle label", () => {
-    // The bundles derive from the registry now, so requiring a CURATED
-    // label per scope would just recreate the hand list the derivation
-    // deleted. What must hold instead: every derived scope resolves to
-    // some human label through the same chain the renderer uses —
-    // curated map first, humanized type name as the floor. The curated
-    // map stays as better copy for the shipped set; this pins that the
-    // chain never leaves a scope unlabeled.
-    for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
-      for (const literal of bundle.scopes) {
-        const parsed = parseScope(literal);
-        expect(parsed, `unparseable bundle scope: ${literal}`).not.toBeNull();
-        if (!parsed) continue;
-        // The permission arm has to be here or the guard stops guarding:
-        // without it a permission resolves through `humanizeType` to a
-        // truthy "Webhooks" and the case passes while green-lighting the
-        // exact collision `PERMISSION_LABELS` exists to prevent.
-        const label =
-          parsed.kind === "oidc"
-            ? OIDC_LABELS[
-                (parsed.oidcScope ??
-                  parsed.typePattern) as keyof typeof OIDC_LABELS
-              ]
-            : parsed.kind === "permission"
-              ? permissionLabel(parsed.typePattern)
-              : (SCOPE_LABELS[parsed.typePattern] ??
-                humanizeType(parsed.typePattern));
-        expect(label, `no label resolves for ${literal}`).toBeTruthy();
-      }
-    }
-  });
-
-  it("lists a wildcard's matched types beneath its toggle, checkbox unchanged", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        ...SCOPES,
-        { kind: "type", typePattern: "user.*", operation: "read" },
-      ],
-      wildcardExpansions: { "user.*": ["Recipes", "Training log"] },
-    });
-    // Informative line names what the pattern matches today and says the
-    // grant covers later types too; the submitted value stays the wildcard.
-    expect(html).toContain("Today this covers Recipes, Training log");
-    expect(html).toContain("plus any you add later");
-    expect(html).toContain('value="user.*:read"');
-    expect(html).not.toContain('value="user.recipes:read"');
-  });
-
-  it("renders per-type toggles with human labels, not raw scope strings", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('class="subrow"');
-    // The name, then what the grant permits. `PARAMS` asks for both halves
-    // of `core.note`, and a row that named the type alone rendered the same
-    // word twice; `consent-operation.test.ts` holds that apart.
-    expect(html).toContain("<span>Notes (read only)</span>");
-    expect(html).toContain("<span>Notes (read and write)</span>");
-    expect(html).toContain("<span>Tasks (read only)</span>");
-    expect(html).toContain('class="sw"');
-  });
-
-  it("each per-type toggle is a real checkbox submitter, checked by default", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toMatch(
-      /<input type="checkbox" name="scopes" value="core\.note:read" checked>/,
-    );
-  });
-
-  it("omits a group with no scopes (no empty Write tile when only reads)", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ kind: "type", typePattern: "core.note", operation: "read" }],
-    });
-    expect(html).toContain("Read your content");
-    expect(html).not.toContain("Write your content");
-  });
-
-  it("renders a Your profile group; openid rides along as a hidden member", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        {
-          kind: "oidc",
-          typePattern: "openid",
-          operation: "none",
-          oidcScope: "openid",
-        },
-        {
-          kind: "oidc",
-          typePattern: "profile",
-          operation: "none",
-          oidcScope: "profile",
-        },
-        {
-          kind: "oidc",
-          typePattern: "email",
-          operation: "none",
-          oidcScope: "email",
-        },
-      ],
-    });
-    expect(html).toContain("Your profile");
-    // "Your name and picture", not "Your name". Changed deliberately: the
-    // `profile` scope returns `name` AND `picture`, so this label
-    // understated what was being granted. A different map overstated it as
-    // a username and a bio, on a path nothing rendered. Both are one entry
-    // now, matching what `customUserInfoClaims` actually returns.
-    expect(html).toContain("<span>Your name and picture</span>");
-    expect(html).toContain("<span>Your email address</span>");
-    // openid is submitted but not shown as a row.
-    expect(html).toMatch(
-      /<input type="checkbox" name="scopes" value="openid" checked hidden>/,
-    );
-    expect(html).not.toContain("<span>Confirm your identity</span>");
-  });
-
-  it("summarizes the four-scope profile group naming name, email and profile once each", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        {
-          kind: "oidc",
-          typePattern: "openid",
-          operation: "none",
-          oidcScope: "openid",
-        },
-        {
-          kind: "oidc",
-          typePattern: "profile",
-          operation: "none",
-          oidcScope: "profile",
-        },
-        {
-          kind: "oidc",
-          typePattern: "email",
-          operation: "none",
-          oidcScope: "email",
-        },
-        // The profile category's read, whose pattern is the same bare word
-        // as the OIDC literal above. Asked by pattern alone, the OIDC short
-        // form answered "your name" for it, so the summary said "your name"
-        // twice and never named the profile.
-        { kind: "profile", typePattern: "profile", operation: "read" },
-      ],
-    });
-    // The sentence is capitalized at its first word, so compare lowercase.
-    const desc = (
-      /<span class="gdesc">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
-    ).toLowerCase();
-    expect(desc).toContain("your name");
-    expect(desc).toContain("your email address");
-    expect(desc).toContain("your profile");
-    expect(desc.match(/your name/g)?.length).toBe(1);
-    // The row keeps the toggle label and says what it permits.
-    expect(html).toContain("Profile (read only)");
-  });
-
-  it("does not describe the profile category's read as the OIDC literal", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ kind: "profile", typePattern: "profile", operation: "read" }],
-    });
-    const desc = (
-      /<span class="gdesc">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
-    ).toLowerCase();
-    expect(desc).toContain("your profile");
-    expect(desc).not.toContain("your name");
-  });
-
-  it("ships the master-toggle cascade enhancement script", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toMatch(
-      /<script nonce="test-nonce">[\s\S]*querySelectorAll\('\.grp'\)[\s\S]*<\/script>/,
-    );
-    expect(html).toContain("indeterminate");
-  });
-});
-
-describe("renderConsentScreen — re-consent diff", () => {
-  it("renders New / Already allowed / No longer needed sections", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read", "core.task:write"],
-    });
-    expect(html).toContain(">New<");
-    expect(html).toContain(">Already allowed<");
-    expect(html).toContain(">No longer needed<");
-    // Re-consent reads as a continuation. "wants to change what it can
-    // access" was accurate and misleading at once: the usual cause is Marfa's
-    // own registry gaining a type since the last grant, so framing it as the
-    // app changing its mind invites a refusal the situation does not warrant.
-    expect(html).toContain("One more thing");
-    expect(html).toContain("You have used");
-    expect(html).toContain("asking for a little more");
-    expect(html).not.toContain("wants to change what it can access");
-  });
-
-  it("says the app is asking to confirm what it already has when nothing is new", () => {
-    // A narrowing, or a fresh decision the provider asked for on a grant
-    // that already covers the request: no New rows, so "a little more" would
-    // be a claim the screen contradicts two lines down.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: [
-        "core.note:read",
-        "core.note:write",
-        "core.task:read",
-        "core.task:write",
-      ],
-    });
-    expect(html).toContain("One more thing");
-    expect(html).toContain("asking you to confirm what it already has");
-    expect(html).not.toContain("asking for a little more");
-    expect(html).not.toContain(">New<");
-    expect(html).toContain(">No longer needed<");
-  });
-
-  it("places newly-requested scopes under New and shared scopes under Already allowed", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read"],
-    });
-    // New: core.note:write + core.task:read; Already allowed: core.note:read.
-    expect(html).toMatch(/>New<[\s\S]*?value="core\.note:write"/);
-    expect(html).toMatch(/>New<[\s\S]*?value="core\.task:read"/);
-    expect(html).toMatch(/>Already allowed<[\s\S]*?value="core\.note:read"/);
-  });
-
-  it("puts the profile read under New, ticked, for a grant that holds the old three-scope bundle", () => {
-    // The bundle gained `profile:read`; an app holding the earlier grant
-    // meets the re-consent screen rather than a silent widening, and the
-    // new row arrives ticked because its bundle is on by default.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        {
-          kind: "oidc",
-          typePattern: "openid",
-          operation: "none",
-          oidcScope: "openid",
-        },
-        {
-          kind: "oidc",
-          typePattern: "profile",
-          operation: "none",
-          oidcScope: "profile",
-        },
-        {
-          kind: "oidc",
-          typePattern: "email",
-          operation: "none",
-          oidcScope: "email",
-        },
-        { kind: "profile", typePattern: "profile", operation: "read" },
-      ],
-      priorScopes: ["openid", "profile", "email"],
-    });
-    expect(html).toContain("One more thing");
-    expect(html).toMatch(/>New<[\s\S]*?value="profile:read"/);
-    const row = /<input[^>]*value="profile:read"[^>]*>/.exec(html)?.[0] ?? "";
-    expect(row).toContain("checked");
-    expect(html).not.toMatch(/>No longer needed</);
-  });
-
-  it("names a dropped profile read as the profile, not as the OIDC literal, under No longer needed", () => {
-    // `profile` is both the OIDC literal and the category's pattern, and the
-    // removed list resolved copy by pattern alone, so a dropped
-    // `profile:read` would have read as "Your name and picture".
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        {
-          kind: "oidc",
-          typePattern: "openid",
-          operation: "none",
-          oidcScope: "openid",
-        },
-        {
-          kind: "oidc",
-          typePattern: "profile",
-          operation: "none",
-          oidcScope: "profile",
-        },
-        {
-          kind: "oidc",
-          typePattern: "email",
-          operation: "none",
-          oidcScope: "email",
-        },
-      ],
-      priorScopes: ["openid", "profile", "email", "profile:read"],
-    });
-    const removed = html.slice(html.indexOf(">No longer needed<"));
-    expect(removed.length).toBeGreaterThan(0);
-    const firstBlock = removed.slice(0, removed.indexOf("</", 200) + 400);
-    expect(firstBlock).toContain("Profile (read only)");
-    expect(firstBlock).not.toContain("Your name");
-  });
-
-  it("collapses the standing grant to one line, counting it", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read"],
-    });
-    // Collapsed rather than merged into "New". Merging is the other way to
-    // buy the height and it erases new-versus-kept, which is the distinction
-    // the diff exists to draw.
-    expect(html).toContain('<details class="ksec">');
-    expect(html).toContain(">Already allowed<");
-    expect(html).toContain(">1 permission, unchanged<");
-    // Counted on distinct literals, and singular where it is one. A count
-    // that says "1 permissions" is the kind of thing a person notices on the
-    // screen where they are deciding whether to trust the software.
-    const many = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read", "core.note:write"],
-    });
-    expect(many).toContain(">2 permissions, unchanged<");
-  });
-
-  it("keeps the standing grant's rows ticked inside the closed section", () => {
-    // **The property the collapse must not break.** A closed `details` still
-    // submits its controls, so an untouched Continue carries the standing
-    // grant exactly as it did when the section was a full stack of tiles.
-    // Remove or disable these rows to save the height and the same Continue
-    // becomes a narrowing, which the decision route treats as a promise that
-    // the removed access stops working and acts on by revoking the client's
-    // live tokens — the user having been shown nothing.
-    //
-    // Asserted on the markup rather than through a browser because that is
-    // where the mistake would be made: nothing here renders, so a `hidden`
-    // attribute or a dropped row would pass every other case in this file.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read"],
-    });
-    const section = html.slice(html.indexOf('<details class="ksec">'));
-    const row =
-      /<input type="checkbox" name="scopes" value="core\.note:read"([^>]*)>/.exec(
-        section,
-      );
-    expect(row, "the kept row is inside the collapsed section").not.toBeNull();
-    expect(row?.[1] ?? "").toContain("checked");
-    expect(row?.[1] ?? "").not.toContain("disabled");
-    // And the section itself is shut: an `open` attribute would buy no height.
-    expect(section.startsWith('<details class="ksec">')).toBe(true);
-  });
-
-  it("lists no-longer-needed scopes by label, with no toggle", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read", "core.task:write"],
-    });
-    // Removed: core.task:write → "Tasks (read and write)", as quiet text
-    // not a checkbox. The operation is on this line for the reason it is on
-    // every other: dropping the write half of a grant while keeping the read
-    // half is an ordinary narrowing, and the type alone cannot say which
-    // half went.
-    expect(html).toContain(">No longer needed<");
-    expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Tasks \(read and write\)</,
-    );
-  });
-
-  /**
-   * The one place an OIDC literal still reached `humanizeType`.
-   *
-   * "No longer needed" resolved its labels through the permission map,
-   * then `SCOPE_LABELS`, then the last-dotted-segment fallback — never
-   * through the OIDC copy. So a client that dropped `profile` rendered
-   * "Profile" here while the granted row above it said "Your name and
-   * picture", and dropping `offline_access` rendered "Offline access". The
-   * raw-literal class this whole change exists to remove, surviving in the
-   * same file.
-   */
-  it("resolves a dropped OIDC literal to its label, not its dotted segment", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ kind: "type", typePattern: "core.note", operation: "read" }],
-      priorScopes: ["core.note:read", "profile"],
-    });
-    expect(html).toContain(">No longer needed<");
-    expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta rmeta--list">Your name and picture</,
-    );
-    expect(html).not.toContain(">Profile<");
-  });
-
-  it("omits a diff section when its set is empty", () => {
-    // Identical prev + next → only "Already allowed" renders.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      priorScopes: ["core.note:read", "core.note:write", "core.task:read"],
-    });
-    expect(html).toContain(">Already allowed<");
-    expect(html).not.toContain(">New<");
-    expect(html).not.toContain(">No longer needed<");
-  });
-});
-
-describe("renderConsentScreen — unverified app", () => {
-  it("renders one boxed callout (no inline badge) for every app", () => {
-    const html = renderConsentScreen(PARAMS);
-    expect(html).toContain('class="callout"');
-    expect(html).toContain("Marfa hasn't verified this app");
-    expect(html).not.toContain("unverified-badge");
-  });
-
-  it("still escapes a hostile client name beside the callout", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      clientName: "<script>alert(1)</script>",
-    });
-    expect(html).not.toContain("<script>alert(1)</script>");
-    expect(html).toContain("&lt;script&gt;");
-    expect(html).toContain('class="callout"');
-  });
-});
-
-describe("renderConsentScreen — error banner", () => {
-  it("omits the alert div when errorMessage is undefined", () => {
-    expect(renderConsentScreen(PARAMS)).not.toContain("banner--error");
-  });
-
-  it("renders an alert banner when errorMessage is set", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      errorMessage: "Tick at least one permission, or click Deny.",
-    });
-    expect(html).toContain('class="banner banner--error"');
-    expect(html).toContain('role="alert"');
-    expect(html).toContain("Tick at least one permission, or click Deny.");
-  });
-
-  it("escapes HTML in errorMessage (XSS guard)", () => {
-    const html = renderConsentScreen({
-      ...PARAMS,
-      errorMessage: "<img src=x onerror=alert(1)>",
-    });
-    expect(html).not.toContain("<img src=x");
-    expect(html).toContain("&lt;img");
-  });
-});
-
-/**
- * A group's summary describes what is in that group.
- *
- * The groups are collapsed by default, so that sentence is what most people
- * read and act on. A fixed per-bundle description would give a request for
- * three scopes and a request for every type the same copy, "Your notes,
- * tasks, bookmarks, files, media, and more," naming things the app never
- * asked for.
- *
- * The failure is symmetric, which is why it matters: a cautious person
- * refuses an app that wanted very little, and a trusting one learns the copy
- * does not track the request, which makes the screen worthless as a signal
- * for the app that really does want everything.
- */
-describe("group summaries describe the request", () => {
-  const scope = (
-    typePattern: string,
-    operation: "read" | "write",
-  ): ParsedScope => ({ kind: "type", typePattern, operation });
-
-  const summariesOf = (html: string): string[] =>
-    [...html.matchAll(/<span class="gdesc">([^<]*)<\/span>/g)].map(
-      (m) => m[1] ?? "",
-    );
-
-  const render = (scopes: ParsedScope[]) =>
-    renderConsentScreen({
-      clientName: "Test App",
-      clientId: "test-app",
-      oauthQuery: "sig=x",
-      scopes,
-    });
-
-  // The summary and the toggle list must describe the same request. The
-  // summary stopped at the curated label map while the list below fell
-  // through to a humanized type name, so an uncurated scope was rendered in
-  // one and silently absent from the other, and absent from the "and N more"
-  // count that is meant to catch exactly that.
-  it("counts a scope with no curated label, as the list below does", () => {
-    const html = render([
-      scope("core.note", "read"),
-      scope("acme.widget", "read"),
+    expect(
+      controls
+        .filter((c) => c.name === "accept")
+        .map((c) => [c.value, c.label]),
+    ).toEqual([
+      ["false", "Cancel"],
+      ["true", "Approve"],
     ]);
-    const joined = summariesOf(html).join(" ");
-    expect(joined).toContain("Notes");
-    expect(joined).toContain("Widget");
   });
 
-  it("names only what a narrow request asked for", () => {
-    const html = render([
-      scope("core.note", "read"),
-      scope("core.task", "read"),
-    ]);
-    const summaries = summariesOf(html);
-    expect(summaries.length).toBeGreaterThan(0);
-    const joined = summaries.join(" ");
-    expect(joined).toContain("Notes");
-    expect(joined).toContain("Tasks");
-    // The exact things a fixed per-bundle description would name and this
-    // request does not ask for.
-    expect(joined).not.toContain("Bookmarks");
-    expect(joined).not.toContain("Files");
-  });
-
-  it("cannot render a narrow and a wide request identically", () => {
-    const narrow = summariesOf(render([scope("core.note", "read")])).join(" ");
-    const wide = summariesOf(
-      render([
-        scope("core.note", "read"),
-        scope("core.task", "read"),
-        scope("core.bookmark", "read"),
-        scope("core.file", "read"),
-        scope("core.media", "read"),
-      ]),
-    ).join(" ");
-    expect(narrow).not.toBe(wide);
-  });
-
-  it("keeps an open ending only where the grant really is open", () => {
-    // A wildcard genuinely extends to types that do not exist yet, so
-    // saying so is honest here and was not honest on a concrete request.
-    const concrete = summariesOf(render([scope("core.note", "read")])).join(
-      " ",
+  it("says that approving with everything off denies the request, where there is something to turn off", () => {
+    expect(visibleText(render(["core.note:read"]))).toContain(
+      "If everything is off, approving denies the request.",
     );
-    expect(concrete).not.toContain("anything else");
+    // Nothing to turn off: asking only to know who the person is.
+    expect(visibleText(render(["openid"]))).not.toContain(
+      "If everything is off",
+    );
+  });
 
-    const wildcard = summariesOf(render([scope("user.*", "read")])).join(" ");
-    expect(wildcard).toContain("anything else");
+  it("cautions under the card, in small print, that the app is unverified and can be ended", () => {
+    const html = render(["core.note:read"]);
+    const text = visibleText(html);
+    expect(text).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
+    expect(text).toContain(
+      "You can end its access at any time in Connected apps.",
+    );
+    // After the form, outside the card, and not a notice box.
+    expect(html.indexOf("can&#39;t confirm")).toBeGreaterThan(
+      html.indexOf("</form>"),
+    );
+    expect(html).not.toContain('role="status"');
+  });
 
-    // And the open-ended shape that carries no wildcard character. This
-    // heading is the one that needed the clause most and was the only one
-    // never to get it, because the summary decided open-endedness by looking
-    // for a `*` while the row beside it asked the grammar. Two derivations
-    // of one property is the defect this file keeps finding, so the case is
-    // written against the shape they disagreed about rather than against the
-    // shape they already agreed on.
-    const metadata = parseScope("metadata:read");
-    if (!metadata) throw new Error("unparseable");
-    const bare = summariesOf(render([metadata])).join(" ");
-    expect(bare).toContain("anything else");
+  it("names the origin of each web page the approval allows", () => {
+    const text = visibleText(
+      render(["core.note:read"], {
+        webOrigins: ["https://one.example", "https://two.example"],
+      }),
+    );
+    expect(text).toContain(
+      "Approving also lets one.example and two.example reach Marfa from your browser.",
+    );
+    // A secure address is understood; any other scheme is shown.
+    expect(
+      visibleText(
+        render(["core.note:read"], { webOrigins: ["http://localhost:3000"] }),
+      ),
+    ).toContain(
+      "Approving also lets http://localhost:3000 reach Marfa from your browser.",
+    );
+    expect(
+      visibleText(render(["core.note:read"], { webOrigins: [] })),
+    ).not.toContain("from your browser");
+  });
+
+  it("puts the origins above the buttons, with each in bold", () => {
+    const html = render(["core.note:read"], {
+      webOrigins: ["https://one.example"],
+    });
+    expect(html).toContain('<strong class="strong">one.example</strong>');
+    expect(html.indexOf("one.example")).toBeLessThan(html.indexOf("Cancel"));
   });
 });
 
-// ---------------------------------------------------------------------------
-// Open-ended grants
-//
-// A wildcard reaches types nobody has registered yet, and the bare `metadata`
-// root reaches sub-resources nobody has written yet. That property is the
-// whole difference between such a grant and the list of things it covers
-// today, and it is the part a person needs in order to weigh it.
-//
-// Pinned as a rule rather than as the strings that broke, because the strings
-// were a symptom. `labelFor` resolves a curated label ahead of the
-// description, so a curated label is the only thing either screen says about
-// its grant. Two labels named less than their scope that way, and asserting
-// those two would pass again the moment a third arrived.
-// ---------------------------------------------------------------------------
+describe("renderConsentScreen: one control for each thing asked for", () => {
+  it("offers a type asked at both levels as one control with three choices, never two boxes", () => {
+    const html = render(["core.note:read", "core.note:write"]);
+    const found = selects(html);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.label).toBe("Note");
+    expect(found[0]?.options.map((o) => [o.label, o.value])).toEqual([
+      ["No access", ""],
+      ["Read only", "core.note:read"],
+      ["Read and edit", "core.note:write"],
+    ]);
+    expect(
+      readControls(html).filter((c) => c.type === "checkbox"),
+    ).toHaveLength(0);
+  });
 
-describe("a grant that reaches things not yet created says so", () => {
-  /** The same two shapes {@link isOpenEnded} asks about, derived here the
-   *  same way rather than imported, so the test fails if the renderer's
-   *  answer stops matching the grammar's. */
-  const openEnded = (scope: ParsedScope): boolean => {
-    if (scope.kind === "oidc" || scope.kind === "permission") return false;
-    if (scope.typePattern === GLOBAL_TYPE_WILDCARD) return true;
-    if (subtreeWildcardRoot(scope.typePattern) !== null) return true;
+  it("says that editing includes adding and deleting items, where a level to edit is offered", () => {
+    const line = "Edit includes adding and deleting items.";
+    expect(
+      visibleText(render(["core.note:read", "core.note:write"])),
+    ).toContain(line);
+    // Where nothing can be edited the line has nothing to explain.
+    expect(visibleText(render(["core.note:read"]))).not.toContain(line);
+    // Editing a definition registers and changes types: it deletes no item.
+    expect(visibleText(render(["metadata.types:write"]))).not.toContain(line);
+  });
+
+  it("offers no level above the one asked for", () => {
+    const found = selects(render(["core.note:read", "core.task:read"]));
+    for (const select of found)
+      expect(select.options.map((o) => o.label)).toEqual([
+        "No access",
+        "Read only",
+      ]);
+  });
+
+  it("starts every type at the highest level asked for", () => {
+    expect(
+      defaultSubmission(
+        render(["core.note:read", "core.note:write", "core.task:read"]),
+        "scopes",
+      ),
+    ).toEqual(["core.note:write", "core.task:read"]);
+  });
+
+  it("offers links, metadata and profile only when asked for", () => {
+    const narrow = render(["core.note:read"]);
+    const text = visibleText(narrow);
+    expect(text).not.toContain("Your profile");
+    expect(text).not.toContain("Which items");
+    expect(selects(narrow)).toHaveLength(1);
+
+    const requested = [
+      "edge.parent-of:write",
+      "edge.parent-of:read",
+      "metadata.types:read",
+      "profile:read",
+    ];
+    const wide = visibleText(
+      render(requested, {
+        descriptions: buildScopeDescriptions(requested.map(scope)),
+      }),
+    );
+    expect(wide).toContain("Which items sit inside others");
+    expect(wide).toContain("Custom data types");
+    expect(wide).toContain("Your profile");
+  });
+
+  it("carries the mechanisms unseen and offers the profile claims as switches", () => {
+    const html = render([
+      "openid",
+      "offline_access",
+      "profile",
+      "email",
+      "core.note:read",
+    ]);
+    const text = visibleText(html);
+    expect(text).toContain("Your name and picture");
+    expect(text).toContain("Your email address");
+    expect(text).not.toContain("openid");
+    expect(text).not.toContain("offline_access");
+    const controls = readControls(html);
+    expect(
+      controls
+        .filter((c) => c.type === "hidden" && c.name === "scopes")
+        .map((c) => c.value),
+    ).toEqual(["openid", "offline_access"]);
+    expect(switches(html).map((c) => c.value)).toEqual(["profile", "email"]);
+  });
+
+  it("shows no scope literal to a person", () => {
+    const text = visibleText(
+      render(["core.note:read", "core.note:write", "webhooks.manage"]),
+    );
+    expect(text).not.toMatch(/core\.note|webhooks\.manage|:read|:write/);
+  });
+
+  it("renders a type the registry no longer holds with a plain name and a working control", () => {
+    const html = render(["user.gone_type:read"]);
+    const found = selects(html);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.label).toBe("Gone type");
+    expect(found[0]?.options.map((o) => o.value)).toEqual([
+      "",
+      "user.gone_type:read",
+    ]);
+  });
+});
+
+describe("renderConsentScreen: powers", () => {
+  it("starts every power off, grouped, each a switch with its own words", () => {
+    const html = render([...PERMISSIONS]);
+    const found = switches(html);
+    expect(found.map((c) => c.value).sort()).toEqual([...PERMISSIONS].sort());
+    expect(found.every((c) => !c.checked)).toBe(true);
+    const text = visibleText(html);
+    // All of them are in one row to open, not under a heading each.
+    expect(text).toContain("More control over Marfa");
+    expect(text).toContain("12 things asked, each off until you turn it on");
+    for (const heading of [
+      "Keys and apps",
+      "Running Marfa",
+      "Connections and records",
+    ])
+      expect(text).not.toContain(heading);
+    for (const permission of PERMISSIONS)
+      expect(text).toContain(PERMISSION_LABELS[permission]);
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+  });
+
+  it("marks the powers that delete data for good, and only those", () => {
+    const html = render([...PERMISSIONS]);
+    const marked = [...html.matchAll(/class="rd danger"[^>]*>([^<]*)</g)].map(
+      (m) => decodeEntities(m[1] ?? ""),
+    );
+    expect(marked).toHaveLength(3);
+    for (const note of marked) expect(note).toContain("Can't be undone");
+    const text = visibleText(html);
+    expect(text).toContain("Delete items in the trash for good");
+    expect(text).toContain(
+      "Some jobs permanently delete data that is due to go.",
+    );
+  });
+
+  it("starts a power off even when a default-on bundle claims it", () => {
+    const html = render(["keys.mint"], {
+      bundles: [
+        {
+          id: "all",
+          label: "All",
+          description: "",
+          scopes: ["keys.mint"],
+          default_on: true,
+        },
+      ],
+    });
+    expect(switches(html)[0]?.checked).toBe(false);
+  });
+});
+
+describe("renderConsentScreen: a grant that reaches things not yet created", () => {
+  const openEnded = (parsed: ParsedScope): boolean => {
+    if (parsed.kind === "oidc" || parsed.kind === "permission") return false;
+    if (parsed.typePattern === GLOBAL_TYPE_WILDCARD) return true;
+    if (subtreeWildcardRoot(parsed.typePattern) !== null) return true;
     return (
-      scopesToMetadataPermissions([`${scope.typePattern}:${scope.operation}`])[
-        "*"
-      ] !== undefined
+      scopesToMetadataPermissions([
+        `${parsed.typePattern}:${parsed.operation}`,
+      ])["*"] !== undefined
     );
   };
 
-  /**
-   * The words a reader takes as "and whatever comes next".
-   *
-   * **The list lives here and nowhere else.** Both renderers derive open
-   * endedness from the grammar and hold no vocabulary at all, which is the
-   * whole point of the shape they were given: a case whose subject is a
-   * predicate the code under test also holds cannot disagree with it, and
-   * the row case below structurally could not. It counted the word "later"
-   * while `statesOpenEndedness` suppressed the line on the word "later", so
-   * the row supplied exactly one occurrence either way, the label's when the
-   * line was suppressed and the line's when it was not. Both failure
-   * directions passed for the whole time it was watching them.
-   *
-   * **What it catches.** A second statement of futurity anywhere on a row,
-   * in whichever of these words it is phrased, and a futurity word in any
-   * curated string, where the renderers no longer read for meaning and so
-   * would simply say the thing twice.
-   *
-   * **What it cannot catch.** Futurity phrased entirely outside the list.
-   * "Covering whatever the app decides to invent" means the same thing and
-   * matches nothing here, and no word list closes that gap, because the ways
-   * English says "and more to come" are unbounded. The gap is narrowed
-   * rather than closed, and the direction it is narrowed in is what matters:
-   * the failure that can no longer happen is silence, because nothing in the
-   * copy can stop a renderer stating the property. What is left is a row
-   * saying it twice, a defect a reader can see, rather than a grant whose
-   * size a reader is never told.
-   *
-   * **It reads vocabulary rather than meaning, so it has false positives,
-   * and they are wanted.** A description noting that removed items stay
-   * recoverable "later" is caught here even though the row it produces is
-   * correct. These words are reserved for the composed clause, so copy
-   * borrowing one is copy somebody should look at before it ships.
-   */
-  const FUTURITY_VOCABULARY =
+  /** The words a reader takes as "and whatever comes next". They are
+   *  reserved for the sentence the screen composes, so copy that borrows one
+   *  is copy to look at before it ships. */
+  const FUTURITY =
     /\b(?:later|future|yet|upcoming|forthcoming|henceforth|subsequently)\b|\badd(?:s|ed|ing)?\b|\bfrom now on\b|\bgoing forward\b|\bnew (?:ones|types|kinds|members)\b/i;
-
-  /** The sentences the renderers compose, which are the only statements of
-   *  the property either screen is allowed to make. */
   const COMPOSED = [OPEN_ENDED_LINE, OPEN_ENDED_EXPANSION_TAIL];
 
-  /** Strip every composed sentence out of `text`, returning how many came
-   *  out and what was left behind. */
-  const withoutComposed = (
-    text: string,
-  ): { stated: number; residue: string } => {
+  const strip = (text: string): { stated: number; residue: string } => {
     let residue = text;
     let stated = 0;
     for (const sentence of COMPOSED) {
@@ -858,846 +359,198 @@ describe("a grant that reaches things not yet created says so", () => {
     return { stated, residue };
   };
 
-  /** `text` states the property exactly once, and the statement is the
-   *  renderer's rather than something the copy happened to say. */
-  const statesFuturityOnce = (text: string, what: string): void => {
-    const { stated, residue } = withoutComposed(text);
-    expect(
-      stated,
-      `${what} composes its open ending ${String(stated)} times, not once`,
-    ).toBe(1);
-    expect(
-      residue,
-      `${what} states its open ending a second time, in copy`,
-    ).not.toMatch(FUTURITY_VOCABULARY);
-  };
-
-  /** `text` says nothing of the kind, by either route. */
-  const statesNoFuturity = (text: string, what: string): void => {
-    const { stated, residue } = withoutComposed(text);
-    expect(
-      stated,
-      `${what} carries a composed open-ended sentence on a closed grant`,
-    ).toBe(0);
-    expect(residue, `${what} reads as an open-ended grant`).not.toMatch(
-      FUTURITY_VOCABULARY,
-    );
-  };
-
-  /** Every open-ended literal the server will accept, from the allowlist
-   *  rather than from a list kept here: a new open-ended pattern joins this
-   *  case by being requestable, which is the point at which it can reach a
-   *  person. */
-  const openEndedLiterals = (): string[] =>
+  const openLiterals = (): string[] =>
     buildAllowedScopes().filter((literal) => {
       const parsed = parseScope(literal);
       return parsed !== null && openEnded(parsed);
     });
 
-  const render = (literal: string): string => {
-    const parsed = parseScope(literal);
-    if (!parsed) throw new Error(`unparseable: ${literal}`);
-    return renderConsentScreen({
-      clientName: "Test App",
-      clientId: "test-app",
-      oauthQuery: "sig=x",
-      scopes: [parsed],
-      descriptions: buildScopeDescriptions([parsed]),
-    });
-  };
-
-  /** One toggle row, by the literal its checkbox carries. Scoped to the row
-   *  because the group heading above it has an open ending of its own, and a
-   *  whole-document match would read that one and call the row covered. */
-  const rowFor = (html: string, literal: string): string => {
-    for (const row of html.match(
-      /<div class="subrow">[\s\S]*?<\/label><\/div>/g,
-    ) ?? []) {
-      if (row.includes(`value="${literal}"`)) return row;
-    }
-    return "";
+  /** The row's own text: its title and the line under it. */
+  const rowText = (html: string, literal: string): string => {
+    const control = readControls(html).find(
+      (c) => c.tag === "select" && c.options.some((o) => o.value === literal),
+    );
+    const id = control?.id ?? "";
+    const row = new RegExp(
+      `<div class="row[^"]*">(?:(?!<div class="row)[\\s\\S])*?id="${id}"`,
+    ).exec(html)?.[0];
+    return visibleText(row ?? "");
   };
 
   it("finds open-ended literals in the allowlist at all", () => {
-    // A derivation that silently returns nothing makes the case below
-    // vacuous, and it would: every assertion in it is inside the loop.
-    const literals = openEndedLiterals();
+    const literals = openLiterals();
     expect(literals.length).toBeGreaterThan(3);
-    // The two shapes, named so a derivation that quietly stops recognizing
-    // one of them fails here rather than passing over it.
     expect(literals).toContain("user.*:read");
     expect(literals).toContain("metadata:read");
   });
 
-  it("states it on the row, for every open-ended scope offered", () => {
-    for (const literal of openEndedLiterals()) {
-      const row = rowFor(render(literal), literal);
-      expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
-      // Once, and once said by the renderer rather than once said by
-      // anybody. What this replaces counted the word "later" on the row,
-      // which is the word the suppression it was watching also turned on,
-      // so the row carried exactly one occurrence whether the line fired or
-      // not: the label's when it was suppressed, the line's when it was
-      // not. The count came out at one in both failure directions and in the
-      // correct case alike, which left the only reachable failure a label
-      // holding the word twice.
-      statesFuturityOnce(row, literal);
+  it("says so once on the row, in the screen's words and not the copy's", () => {
+    for (const literal of openLiterals()) {
+      const parsed = scope(literal);
+      const html = render([literal], {
+        descriptions: buildScopeDescriptions([parsed]),
+      });
+      const text = rowText(html, literal);
+      expect(text, `no row for ${literal}`).not.toBe("");
+      const { stated, residue } = strip(text);
+      expect(
+        stated,
+        `${literal} states its open ending ${String(stated)} times`,
+      ).toBe(1);
+      expect(residue, `${literal} states it again in copy`).not.toMatch(
+        FUTURITY,
+      );
     }
   });
 
-  it("says nothing of the kind on a concrete scope", () => {
-    // The discriminator. Without it the case above passes on a renderer that
-    // puts the line under every row, which would say a grant on one type
-    // grows, and would also mean the case above never observed anything.
-    const row = rowFor(render("core.note:read"), "core.note:read");
-    expect(row).toContain("Notes");
-    statesNoFuturity(row, "core.note:read");
-  });
-
-  it("does not repeat itself where the row already lists what it matches", () => {
-    // Two things can have said it by the time the row's second line is
-    // built: an expansion line, which ends "plus any you add later", and the
-    // label, which for a pattern outside the curated map is the description
-    // and carries the clause the device screen needs. This case pinned one
-    // pattern with an expansion, which is the half that was already right,
-    // and the half that broke was the label: `core.*` doubled the sentence
-    // the commit that added this was written in, and `app.*` doubled it one
-    // commit later. So it runs over every open-ended pattern, and the
-    // no-expansion arm is the case above.
-    //
-    // The expansion map is keyed by type pattern and supplied for every
-    // pattern here, including ones the resolver does not enumerate today.
-    // The row's contract is not conditioned on which roots that resolver
-    // fills, and narrowing the fixture to today's two would put this case
-    // back where it started: pinning the arrangement that happens to work.
-    const literals = openEndedLiterals();
-    expect(literals.length).toBeGreaterThan(3);
-    for (const literal of literals) {
-      const parsed = parseScope(literal);
-      if (!parsed) throw new Error(`unparseable: ${literal}`);
-      const html = renderConsentScreen({
-        clientName: "Test App",
-        clientId: "test-app",
-        oauthQuery: "sig=x",
-        scopes: [parsed],
+  it("names the types a pattern matches today, and still says it once", () => {
+    for (const literal of openLiterals()) {
+      const parsed = scope(literal);
+      const html = render([literal], {
         descriptions: buildScopeDescriptions([parsed]),
         wildcardExpansions: {
           [parsed.typePattern]: ["Recipes", "Training log"],
         },
       });
-      const row = rowFor(html, literal);
-      expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
-      expect(
-        row,
-        `${literal} stopped naming the members it can name`,
-      ).toContain("Today this covers Recipes, Training log");
-      statesFuturityOnce(row, `${literal} with an expansion`);
+      const text = rowText(html, literal);
+      expect(text).toContain("Today this covers Recipes, Training log");
+      expect(strip(text).stated).toBe(1);
     }
   });
 
-  /**
-   * One row from the device screen. Rendered a scope at a time so the row is
-   * the only one: the markup carries the literal on the checkbox now, but
-   * this helper reads the line rather than the input, and keying a lookup on
-   * the copy is what it was written to avoid.
-   */
-  const deviceRow = (literal: string): string => {
-    const parsed = parseScope(literal);
-    if (!parsed) throw new Error(`unparseable: ${literal}`);
-    const html = renderDeviceConsentScreen({
-      clientName: "Test App",
-      scopes: [parsed],
-      userCode: "ABCD-EFGH",
-      descriptions: buildScopeDescriptions([parsed]),
+  it("says nothing of the kind on a concrete scope", () => {
+    const html = render(["core.note:read"], {
+      descriptions: buildScopeDescriptions([scope("core.note:read")]),
     });
-    const rows =
-      html.match(/<div class="subrow">[\s\S]*?<\/label><\/div>/g) ?? [];
-    expect(
-      rows,
-      `device screen rendered ${String(rows.length)} rows for ${literal}, not one`,
-    ).toHaveLength(1);
-    return rows[0] ?? "";
-  };
-
-  it("states it once on the screen that has no rows", () => {
-    // The same rule on the other surface, asserted against what that screen
-    // renders rather than against the map behind it.
-    //
-    // What this replaces asserted that every open-ended *description*
-    // contained the word "later", and it held the wrong thing twice over. It
-    // held a map rather than a screen, and it held a word rather than a
-    // statement: "Ones you remove later stay recoverable." satisfied it
-    // while saying nothing whatever about how far the grant reaches. The
-    // clause is composed now, from the same `isOpenEnded` both screens ask,
-    // so what is worth holding is that it arrives, exactly once, on the
-    // surface a person actually reads.
-    //
-    // The global wildcard runs in this loop like everything else: the device
-    // screen composes its own line, so "Everything on your server."
-    // needs no exemption for being unfalsifiable.
-    const literals = openEndedLiterals();
-    // Every assertion is inside the loop, and the pattern that carried the
-    // defect is named, so a derivation that quietly stops finding it fails
-    // here rather than emptying the case.
-    expect(literals.length).toBeGreaterThan(3);
-    expect(literals).toContain("app.*:read");
-    expect(literals).toContain("*:read");
-    for (const literal of literals) {
-      statesFuturityOnce(deviceRow(literal), `${literal} on the device screen`);
-    }
+    const text = rowText(html, "core.note:read");
+    expect(text).toContain("Note");
+    const { stated, residue } = strip(text);
+    expect(stated).toBe(0);
+    expect(residue).not.toMatch(FUTURITY);
   });
 
-  it("leaves a concrete grant's device row saying nothing of the kind", () => {
-    // The discriminator for the case above, the same one the toggle row
-    // gets. Without it that case passes on a screen appending the clause to
-    // every row, which tells somebody granting one type that the grant
-    // grows, and would also mean the case above never observed anything.
-    statesNoFuturity(
-      deviceRow("core.note:read"),
-      "core.note:read on the device screen",
+  it("keeps futurity out of every curated name", () => {
+    for (const [pattern, name] of Object.entries(SCOPE_LABELS))
+      expect(name, pattern).not.toMatch(FUTURITY);
+  });
+
+  it("says what the content category leaves out beside its name, and how far it reaches", () => {
+    const html = render(["content:read", "content:write"], {
+      descriptions: buildScopeDescriptions([scope("content:write")]),
+    });
+    const text = rowText(html, "content:read");
+    expect(text).toContain("Your content");
+    expect(text).toContain(
+      "Everything you save, and nothing about your account.",
+    );
+    expect(strip(text).stated).toBe(1);
+  });
+
+  it("offers the whole of the data as one row", () => {
+    const html = render(["*:read", "*:write"], {
+      descriptions: buildScopeDescriptions([scope("*:write")]),
+    });
+    const found = selects(html);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.label).toBe("All your data");
+    expect(found[0]?.options.map((o) => o.label)).toEqual([
+      "No access",
+      "Read only",
+      "Read and edit",
+    ]);
+  });
+});
+
+describe("renderConsentScreen: asking again", () => {
+  const BASE = ["core.note:read", "core.note:write", "core.task:read"];
+
+  it("says what is new, and keeps what the app holds in a closed section", () => {
+    const html = render(BASE, { priorScopes: ["core.note:read"] });
+    const text = visibleText(html);
+    expect(text).toContain("Test CLI wants more access");
+    expect(text).toContain("It already has access to some of your data");
+    expect(text).toContain("Already allowed");
+    expect(html).toMatch(/<details(?![^>]*\sopen)/);
+    expect(text).toContain("Already allowed Read notes Note Read only");
+    expect(text).toContain(
+      "Approving never lowers this. To end its access, use Connected apps.",
     );
   });
 
-  it("keeps futurity out of every curated string", () => {
-    // The rule that makes composing safe, and the one place a word list is
-    // the right instrument rather than the wrong one. Neither renderer reads
-    // these strings for meaning any more, so a futurity clause written into
-    // one is not suppressed, not reconciled and not noticed. It is simply
-    // said twice, once by the copy and once by the sentence composed beneath
-    // it.
-    //
-    // Both maps, because `labelFor` falls through to a description wherever
-    // nothing curated names the pattern. That fall-through is how a sentence
-    // written for the device screen became an authorize-screen toggle label
-    // in the first place, and it is still there: what has changed is that
-    // the sentence it hands over no longer states anything the row is about
-    // to state as well.
-    const entries: [string, string][] = [
-      ...Object.entries(SCOPE_LABELS).map(
-        ([k, v]) => [`SCOPE_LABELS[${k}]`, v] as [string, string],
-      ),
-      ...Object.entries(CONSENT_SCOPE_DESCRIPTIONS).map(
-        ([k, v]) => [`CONSENT_SCOPE_DESCRIPTIONS[${k}]`, v] as [string, string],
-      ),
-    ];
-    expect(entries.length).toBeGreaterThan(20);
-    for (const [where, copy] of entries) {
-      expect(
-        copy,
-        `${where} states an open ending the renderers compose for it`,
-      ).not.toMatch(FUTURITY_VOCABULARY);
-    }
+  it("greets an app that holds only openid as a first request", () => {
+    const html = render(BASE, { priorScopes: ["openid", "offline_access"] });
+    const text = visibleText(html);
+    expect(text).toContain("Test CLI wants access to Marfa");
+    expect(text).not.toContain("wants more access");
+    expect(text).not.toContain("already has access");
+    expect(text).not.toContain("Already allowed");
+    expect(text).not.toContain("New");
+    expect(text).toContain("Authorize Test CLI");
   });
 
-  it("composes sentences a reader would take as futurity", () => {
-    // The floor under `statesFuturityOnce`, which strips these before it
-    // looks for a second statement. A constant rewritten into something that
-    // no longer says anything of the kind would leave every case above
-    // green and observing nothing.
-    expect(COMPOSED.length).toBeGreaterThan(1);
-    for (const sentence of COMPOSED) {
-      expect(sentence, sentence).toMatch(FUTURITY_VOCABULARY);
-    }
+  it("marks what is new, and what the row holds now", () => {
+    const text = visibleText(render(BASE, { priorScopes: ["core.note:read"] }));
+    expect(text).toContain("Now: Read only");
+    // What the app is newly asked for is marked on the row that holds it.
+    expect(text).toContain("Your data New");
   });
 
-  it("leaves a concrete scope's description saying nothing of the kind", () => {
-    // The discriminator for the case above, which is otherwise satisfied by
-    // a map whose every line ends "and any added later", copy that would
-    // tell somebody granting one type that the grant grows. Two of these are
-    // the parents of open-ended neighbors, so they are the lines a blanket
-    // rewrite would take with it.
-    const out = buildScopeDescriptions(
-      ["core.note:read", "core.entity:read", "metadata.types:write"].map(
-        (literal) => {
-          const parsed = parseScope(literal);
-          if (!parsed) throw new Error(`unparseable: ${literal}`);
-          return parsed;
-        },
-      ),
+  it("marks the powers newly asked for, on the row and on each power", () => {
+    const text = visibleText(
+      render(["core.note:read", "keys.mint", "webhooks.manage"], {
+        priorScopes: ["core.note:read"],
+      }),
     );
-    expect(Object.keys(out)).toHaveLength(3);
-    for (const [pattern, copy] of Object.entries(out)) {
-      statesNoFuturity(copy, pattern);
-    }
+    expect(text).toContain("More control over Marfa New");
+    expect(text.split("New").length - 1).toBe(3);
   });
 
-  it("keeps every curated label out of the summary's punctuation", () => {
-    // `summarize` joins these into a sentence, so a label carrying its own
-    // comma arrives there as two items. This is also why the open-endedness
-    // above is on the row and not in the label: saying it needs an "and",
-    // and an "and" breaks the same list a comma does.
-    //
-    // The conjunction is asserted here where `PERMISSION_SHORT` deliberately
-    // leaves it alone, and the difference is what the two maps hold. A
-    // permission's short form is a verb phrase, where "connect and
-    // disconnect services" is one item and reads correctly in a list. Every
-    // entry here is the name of a thing, and a name joined by a conjunction
-    // is two names: "Notes, People and places and Files" is what this one
-    // rendered. The separators are the ones a joined sentence breaks on, not
-    // the one that broke first. Two were guarded because two were what
-    // `summarize` literally writes, and that is the wrong question: the
-    // reader is parsing a list, so anything that reads as an item boundary
-    // splits the label whether or not this file produced it. "Files &
-    // folders" passed, and would have rendered as "Bookmarks, Files & folders
-    // and Organizations", which is the exact sentence this case exists to
-    // stop. Lowercased, so a capitalized "And" is caught too.
-    //
-    // **The rule is conditional, and the condition is the whole of what
-    // `SCOPE_SHORT` is for.** A label reaches the summary only where no short
-    // form answers for its pattern, so a pattern WITH one is free to carry a
-    // conjunction on its row and summarize as its short form. That is the
-    // same split `PERMISSION_SHORT` makes.
-    const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
-    for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
-      if (scopeShort(pattern) !== undefined) continue;
-      for (const separator of SEPARATORS) {
-        expect(
-          label.toLowerCase(),
-          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list. Give it a SCOPE_SHORT entry if the label genuinely needs it`,
-        ).not.toContain(separator);
-      }
-    }
-  });
-
-  it("holds every short form to what a list item may be", () => {
-    // The other half of the exemption above, and it has to exist or the
-    // exemption is a hole: a pattern gets to skip the separator check by
-    // having a short form, so the short form is what actually reaches the
-    // joined sentence and is what the rule was always about.
-    //
-    // Lower case too, which the labels are not. A label sits alone above a
-    // switch and is capitalized; joined mid-sentence that capital lands in
-    // the middle of a clause, which is the defect `OIDC_SHORT` was built for
-    // and read as "Your name and Your email address".
-    const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
-    expect(Object.keys(SCOPE_SHORT).length).toBeGreaterThan(0);
-    for (const [pattern, short] of Object.entries(SCOPE_SHORT)) {
-      for (const separator of SEPARATORS) {
-        expect(short, `${pattern}'s short form`).not.toContain(separator);
-      }
-      expect(short[0], `${pattern}'s short form starts lowercase`).toBe(
-        short[0]?.toLowerCase(),
-      );
-      // An entry that names no scope is a name nothing resolves, and the
-      // label it was exempting is then reaching the summary unchecked.
-      expect(
-        SCOPE_LABELS[pattern],
-        `${pattern} has a short form and no toggle label`,
-      ).toBeDefined();
-    }
-  });
-
-  /**
-   * A crude singular form, applied to both sides so the comparison is
-   * consistent rather than linguistically correct. "Individuals" and "an
-   * individual" have to meet somewhere, and a real stemmer is more machinery
-   * than a label check earns. It maps "series" to "sery", which is wrong and
-   * harmless: both sides go through it.
-   */
-  const singular = (word: string): string => {
-    const w = word.toLowerCase().replace(/[^a-z0-9]/g, "");
-    if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
-    if (w.length > 4 && /(?:s|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2);
-    if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss"))
-      return w.slice(0, -1);
-    return w;
-  };
-
-  /** Function words, which name nothing and would match on any label
-   *  unlucky enough to contain one. */
-  const NOT_A_NAME = new Set([
-    "the",
-    "and",
-    "for",
-    "its",
-    "this",
-    "that",
-    "any",
-    "all",
-    "one",
-    "some",
-    "your",
-    "you",
-    "from",
-    "with",
-    "other",
-    "own",
-    "can",
-    "never",
-    "part",
-  ]);
-
-  /**
-   * The stoplist is applied before `singular`, not after, and the order is
-   * the whole of what it does. `singular("this")` is "thi", which is in no
-   * stoplist, so the one entry above that `singular` rewrites was the one
-   * entry that escaped it. It is the only one of the nineteen: the rule only
-   * fires on a word longer than three characters ending in a lone "s".
-   */
-  const normalizeWords = (text: string): string[] =>
-    text
-      .split(/[^A-Za-z0-9]+/)
-      .filter(Boolean)
-      .filter((w) => !NOT_A_NAME.has(w.toLowerCase()))
-      .map(singular)
-      .filter((w) => w.length > 2);
-
-  const containsSequence = (haystack: string[], needle: string[]): boolean => {
-    if (needle.length === 0) return false;
-    return haystack.some((_, i) =>
-      needle.every((word, j) => haystack[i + j] === word),
-    );
-  };
-
-  it("drops every function word, including the one singular rewrites", () => {
-    // The stoplist runs before `singular`, and this is what the order costs
-    // when it is the other way round. `singular("this")` is "thi", which is
-    // in no stoplist, so "this" was the one entry of the nineteen that
-    // survived being stopped. It is the only one the rule can reach: nothing
-    // else here is longer than three characters and ends in a lone "s".
-    //
-    // Not reachable from today's copy, and it fails loudly rather than
-    // quietly when it is, since a stray "thi" can only add a needle or a
-    // haystack word. Held anyway, because the cost of the wrong order is a
-    // silent hole in a stoplist and the whole point of the stoplist is that
-    // nobody looks at it again.
-    for (const word of NOT_A_NAME) {
-      expect(normalizeWords(word), word).toEqual([]);
-    }
-    expect(normalizeWords("Notes about this and that")).toEqual([
-      "note",
-      "about",
+  it("never offers a level below what the app holds", () => {
+    const html = render(BASE, { priorScopes: ["core.note:read"] });
+    const note = selects(html).find((c) => c.label === "Note");
+    expect(note?.options.map((o) => o.label)).toEqual([
+      "Read only",
+      "Read and edit",
     ]);
   });
 
-  /**
-   * The mechanical forms of a child type's name, as normalized word
-   * sequences.
-   *
-   * Four sources, each a place the product itself says what that child is:
-   * its curated toggle label, the humanized form of its type id, the
-   * registry's label, and the content words of the two sentences written
-   * about it. The registry's description is cut at its first sentence,
-   * because the convention there is one defining sentence followed by
-   * inheritance boilerplate, and "Inherits all core.file fields." names
-   * nothing.
-   *
-   * Words matching a segment of the parent's own type id are dropped. A
-   * child's copy routinely contains its parent's name, and "Audio files"
-   * under `core.file` is ordinary qualification rather than the parent
-   * claiming the child. The filter reads the parent's **type id**, never its
-   * label, or a bad label would be the thing that excused itself.
-   */
-  const namesOf = (child: string, parent: string): string[][] => {
-    const ownSegments = new Set(parent.split(".").map(singular));
-    const registry = TYPE_REGISTRY.get(child);
-    const firstSentence = (registry?.description ?? "").split(/(?<=\.)\s/)[0];
-    const phrases = [
-      SCOPE_LABELS[child],
-      humanizeType(child),
-      registry?.label,
-    ].filter((p): p is string => p !== undefined);
-    const words = [
-      ...normalizeWords(CONSENT_SCOPE_DESCRIPTIONS[child] ?? ""),
-      ...normalizeWords(firstSentence ?? ""),
-    ].filter((w) => !ownSegments.has(w));
-    return [
-      ...phrases.map(normalizeWords).filter((p) => p.length > 0),
-      ...words.map((w) => [w]),
-    ];
-  };
-
-  /**
-   * The two maps a scope's copy reaches a person through, and the reason the
-   * rule below runs over both rather than over the toggles alone.
-   *
-   * A label wins on both screens, so it is the whole of what a screen says
-   * about a grant, and a description is what a row says wherever no label
-   * names its pattern. A wrong sentence does more damage in the description,
-   * because nothing beside it qualifies what it says.
-   *
-   * `verb` is the word the failure message needs to read correctly about
-   * whichever map it caught.
-   */
-  const COPY_SURFACES = [
-    { name: "SCOPE_LABELS", verb: "labeled", copy: SCOPE_LABELS },
-    {
-      name: "CONSENT_SCOPE_DESCRIPTIONS",
-      verb: "described as",
-      copy: CONSENT_SCOPE_DESCRIPTIONS,
+  it.each([
+    [
+      "a type's write asked while its read is held",
+      ["core.note:write"],
+      ["core.note:read"],
+      "Note",
+    ],
+    [
+      "a type's write asked beside a wildcard read the app holds",
+      ["core.*:read", "core.note:write"],
+      ["core.*:read"],
+      "Note",
+    ],
+    [
+      "the profile's write asked while its read is held",
+      ["profile:write"],
+      ["profile:read"],
+      "Profile",
+    ],
+  ])(
+    "lets a person keep what the app holds, and decline the write: %s",
+    (_case, asked, held, label) => {
+      const html = render(asked, { priorScopes: held });
+      const select = selects(html).find((c) => c.label === label);
+      expect(select?.options.map((o) => [o.value, o.label])).toEqual([
+        ["", "Read only"],
+        [asked.find((l) => l.endsWith(":write")), "Read and edit"],
+      ]);
+      // The write stays what is asked, and keeping what is held posts nothing.
+      expect(select?.value).toBe(asked.find((l) => l.endsWith(":write")));
+      expect(select?.options.some((o) => o.label === "No access")).toBe(false);
     },
-  ] as const;
+  );
 
-  for (const surface of COPY_SURFACES) {
-    it(`never names a type its own scope does not reach, in ${surface.name}`, () => {
-      // The other half of the rule the labels run on, and the half a curated
-      // string cannot be trusted with. A pattern's descendants are separately
-      // requestable and carry rows of their own, while a bare grant on the
-      // parent is exact: `grantCoversScope` answers false for every child. So
-      // a parent naming one of them puts a type on the row that ticking it
-      // does not grant. `core.entity` was "People and places" above
-      // "Contacts" and "Places", neither of which it reaches.
-      //
-      // Asked of `grantCoversScope` rather than of a list, so the assertion
-      // relaxes on its own if coverage ever changes, and scoped to the
-      // ancestor naming a descendant rather than the reverse. The reverse is
-      // ordinary qualification: "Audio files" sits under `Files` and does not
-      // claim to be it.
-      //
-      // **What this can see, and what it cannot.** It compared the parent's
-      // label against the child's label verbatim, which is a much narrower
-      // question than the one it is asking: "Photos" over `core.file` names
-      // `core.file.image` and passed, "Individuals" over `core.entity` names
-      // `core.entity.person` and passed, and the real defect it did catch,
-      // "People and places", was caught on the "Places" half alone, because
-      // "Places" happened to be a child's label letter for letter. The
-      // "People" half, which named `core.entity.person`, was never seen.
-      // `namesOf` now gathers every mechanical form of a child's name, and
-      // that is still all it can do: the forms are the words the product
-      // itself uses for that child, plural-folded and matched as whole words.
-      //
-      // **It reads words, never polarity.** A sentence saying a grant does
-      // *not* reach a book still holds the word "book" and is caught here.
-      // That is deliberate rather than a limitation worked around: a copy
-      // decision phrased as a list of exclusions puts those names on the row
-      // of a grant that does not reach them, which is the failure the case
-      // exists for, and separating the two readings would mean parsing
-      // negation scope. Say what a grant does reach.
-      //
-      // **A synonym nobody wrote down is invisible to it and always will
-      // be.** "Pictures" over `core.file` is a real violation this returns
-      // green on, because no copy anywhere in the repository calls an image a
-      // picture. The set of words meaning the same thing as a type is
-      // unbounded, so this narrows the gap rather than closing it, and copy
-      // that reads as if it covers a child still wants a human to look at it.
-      // Do not read a pass here as the question having been answered.
-      const entries = Object.entries(surface.copy);
-      const pairs: { parent: string; child: string }[] = [];
-      for (const [parent] of entries) {
-        for (const [child] of entries) {
-          if (!child.startsWith(`${parent}.`)) continue;
-          if (grantCoversScope([`${parent}:read`], `${child}:read`)) continue;
-          pairs.push({ parent, child });
-        }
-      }
-      // A derivation that finds no pairs asserts nothing, and every assertion
-      // below is inside the loop. The named pair is the one that had the
-      // defect, so a rename that moves it out of the map fails here rather
-      // than quietly emptying the case.
-      expect(pairs.length).toBeGreaterThan(3);
-      expect(pairs).toContainEqual({
-        parent: "core.entity",
-        child: "core.entity.place",
-      });
-
-      for (const { parent, child } of pairs) {
-        const parentWords = normalizeWords(surface.copy[parent] ?? "");
-        const names = namesOf(child, parent);
-        // Every assertion below is two loops deep, so a child that yields no
-        // forms at all is checked against nothing and passes.
-        //
-        // The route to that is narrower than it looks, and naming the wrong
-        // one would put the floor's justification on a mechanism that cannot
-        // occur. The own-segment filter is not it: it applies only to the
-        // description-derived `words`, while `phrases` is unfiltered, so a
-        // child described entirely in its parent's words still yields its
-        // curated label, its humanized id and its registry label. What is
-        // reachable is a child whose last id segment normalizes away, which
-        // is any segment of two characters or fewer or one that is a
-        // function word, leaving `humanizeType` contributing nothing, with
-        // neither a curated nor a registry label behind it to take its
-        // place.
-        expect(
-          names.length,
-          `no mechanical form of ${child}'s name, so nothing is checked for it`,
-        ).toBeGreaterThan(0);
-        for (const name of names) {
-          expect(
-            containsSequence(parentWords, name),
-            `${parent} is ${surface.verb} "${surface.copy[parent] ?? ""}", which names ${child} as "${name.join(" ")}": a type this grant does not reach`,
-          ).toBe(false);
-        }
-      }
-    });
-  }
-
-  it("says one thing about an entity grant, on both screens", () => {
-    // A label wins over a description on both screens, so the two strings
-    // are what the two screens say about one grant and they have to agree. `core.entity` was labeled
-    // "Organizations" and described as "Organizations and other entities.",
-    // which is the branch's own defect surviving at reduced size: the
-    // description reached past the label without saying how far, and the
-    // narrower of the two answers was the one above the toggles. Both
-    // literals are in the default bundle, so the row is on every consent
-    // screen that renders at all.
-    //
-    // Pinned as the pair rather than derived, because what was decided here
-    // is a copy question rather than a property. The registry lists a brand
-    // among the things this type holds and no conjunction-free word covers a
-    // brand as well as a school, while a conjunction is what the summary's
-    // list-join forbids; so the label stops at "Organizations", the
-    // description stops in the same place, and the residue is stated at
-    // `SCOPE_LABELS` instead of being papered over. Moving either string
-    // means making that argument again.
-    expect(SCOPE_LABELS["core.entity"]).toBe("Organizations");
-    expect(CONSENT_SCOPE_DESCRIPTIONS["core.entity"]).toBe(
-      "Companies, teams, schools, and other organizations.",
-    );
-
-    // The general form of this runs over both maps in the case above,
-    // unqualified. What stays pinned here is this pair, which is a copy
-    // decision rather than a property and so cannot be derived.
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The label maps, which exist for one reason.
-//
-// `humanizeType` takes the last dotted segment, so an unnamed
-// `webhooks.manage` renders as "Webhooks", which reads as a kind of content
-// rather than the power to point a new webhook anywhere.
-// ---------------------------------------------------------------------------
-
-describe("permission labels", () => {
-  it("names every permission in both shapes", () => {
-    // The docstrings claim a test pins this. It is this one.
-    expect(PERMISSIONS.length).toBeGreaterThan(0);
-    for (const literal of PERMISSIONS) {
-      expect(
-        PERMISSION_LABELS[literal],
-        `no toggle label: ${literal}`,
-      ).toBeTruthy();
-      expect(
-        PERMISSION_SHORT[literal],
-        `no short label: ${literal}`,
-      ).toBeTruthy();
-    }
-  });
-
-  it("never collides with the humanized fallback it replaces", () => {
-    for (const literal of PERMISSIONS) {
-      expect(permissionLabel(literal)).not.toBe(humanizeType(literal));
-    }
-  });
-
-  it("keeps the inline forms comma-free, since they are joined into a list", () => {
-    // A label carrying its own comma turns one item into two when the
-    // consent screen lists several in a sentence.
-    for (const literal of PERMISSIONS) {
-      expect(PERMISSION_SHORT[literal]).not.toContain(",");
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// `default_on`
-//
-// These cases are written against the form's own submission rather than
-// against attribute strings, because what matters is not that a `checked` is
-// absent but that an untouched form grants nothing from the bundle.
-// ---------------------------------------------------------------------------
-
-/** The scope literals an untouched form submits: every `name="scopes"` input
- *  the renderer marked checked, hidden mechanisms included. */
-function defaultSubmission(html: string): string[] {
-  const out: string[] = [];
-  for (const tag of html.match(/<input[^>]*name="scopes"[^>]*>/g) ?? []) {
-    if (!/\schecked(\s|>)/.test(tag)) continue;
-    const value = /value="([^"]*)"/.exec(tag)?.[1];
-    if (value !== undefined) out.push(value);
-  }
-  return out.sort();
-}
-
-/** The scope literals offered inside one named group, whatever their state:
- *  what the user submits if they tick that group and touch nothing else. */
-function offeredIn(html: string, label: string): string[] {
-  const out: string[] = [];
-  for (const block of html.match(/<details class="grp">[\s\S]*?<\/details>/g) ??
-    []) {
-    if (!block.includes(`<span class="glabel">${label}</span>`)) continue;
-    const body = /<div class="gsub">([\s\S]*)<\/div>/.exec(block)?.[1] ?? "";
-    for (const tag of body.match(/<input[^>]*name="scopes"[^>]*>/g) ?? []) {
-      const value = /value="([^"]*)"/.exec(tag)?.[1];
-      if (value !== undefined) out.push(value);
-    }
-  }
-  return out.sort();
-}
-
-/** Whether a named group's master toggle starts ticked. */
-function masterChecked(html: string, label: string): boolean | undefined {
-  for (const block of html.match(/<details class="grp">[\s\S]*?<\/details>/g) ??
-    []) {
-    if (!block.includes(`<span class="glabel">${label}</span>`)) continue;
-    const summary = /<summary>([\s\S]*?)<\/summary>/.exec(block)?.[1] ?? "";
-    const master = /<input[^>]*type="checkbox"[^>]*>/.exec(summary)?.[0] ?? "";
-    return /\schecked(\s|>)/.test(master);
-  }
-  return undefined;
-}
-
-describe("renderConsentScreen — default_on", () => {
-  const ON_BUNDLE = {
-    id: "read",
-    label: "Read your content",
-    description: "",
-    scopes: ["core.note:read", "core.task:read"],
-    default_on: true,
-  };
-  const OFF_BUNDLE = {
-    id: "manage",
-    label: "Manage your server",
-    description: "",
-    scopes: ["core.note:write"],
-    default_on: false,
-  };
-  const REQUESTED: ParsedScope[] = [
-    { kind: "type", typePattern: "core.note", operation: "read" },
-    { kind: "type", typePattern: "core.task", operation: "read" },
-    { kind: "type", typePattern: "core.note", operation: "write" },
-  ];
-  const render = (): string =>
-    renderConsentScreen({
-      ...PARAMS,
-      scopes: REQUESTED,
-      bundles: [ON_BUNDLE, OFF_BUNDLE],
-    });
-
-  it("renders an off-by-default bundle unticked, rows and master alike", () => {
-    const html = render();
-    expect(masterChecked(html, "Manage your server")).toBe(false);
-    expect(html).toContain('value="core.note:write"');
-    // Stated as the whole submission rather than as a `not.toContain`, which
-    // passes on an empty match and so would survive a renderer that emitted
-    // no checkboxes at all.
-    expect(defaultSubmission(html)).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
-  });
-
-  it("keeps an already-granted off-by-default scope ticked on re-consent", () => {
-    // `default_on` is the initial-offer default. A scope the user granted
-    // last time is being shown, not offered, so the flag does not apply.
-    //
-    // Rendering it unticked is worse than cosmetic: the tile is collapsed
-    // and sits below "New", so nobody sees the choice, and the decision
-    // route reads the resulting submission as a narrowing. A narrowing is
-    // treated as a promise that the removed access stops working, so it
-    // revokes the client's live tokens, so an untouched Continue would cut
-    // off a working client.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: REQUESTED,
-      bundles: [ON_BUNDLE, OFF_BUNDLE],
-      priorScopes: ["core.note:read", "core.note:write"],
-    });
-    expect(defaultSubmission(html)).toEqual([
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ]);
-  });
-
-  it("still offers a newly-requested off-by-default scope unticked", () => {
-    // The discriminating half of the case above: forcing every diff section
-    // ticked would pass it and defeat the feature on re-consent.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: REQUESTED,
-      bundles: [ON_BUNDLE, OFF_BUNDLE],
+  it("starts on the held level when the level asked for starts off", () => {
+    const html = render(["core.note:write"], {
       priorScopes: ["core.note:read"],
-    });
-    expect(defaultSubmission(html)).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
-  });
-
-  it("grants nothing from it when the user leaves it alone", () => {
-    // The whole property, stated as the form states it: an untouched submit
-    // carries the on-by-default bundle's scopes and none of the off one's.
-    expect(defaultSubmission(render())).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
-  });
-
-  it("grants exactly its scopes when the user ticks it", () => {
-    // Ticking a group submits the literals its rows carry, so the property
-    // the renderer owns is that those rows are exactly the bundle's scopes:
-    // no neighbor's literal rides along, and none of its own is missing.
-    expect(offeredIn(render(), "Manage your server")).toEqual([
-      "core.note:write",
-    ]);
-    expect(offeredIn(render(), "Read your content")).toEqual([
-      "core.note:read",
-      "core.task:read",
-    ]);
-  });
-
-  it("leaves an on-by-default bundle ticked", () => {
-    // The discriminating half: a renderer that unticked everything would
-    // pass all three cases above.
-    const html = render();
-    expect(masterChecked(html, "Read your content")).toBe(true);
-  });
-
-  it("keeps the hidden mechanisms on whatever a bundle says", () => {
-    // `openid` and `offline_access` are submitted by hidden fields a person
-    // cannot see, so they cannot be said to have declined one. A bundle that
-    // means to withhold a mechanism stops requesting it.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        {
-          kind: "oidc",
-          typePattern: "openid",
-          operation: "none",
-          oidcScope: "openid",
-        },
-      ],
-      bundles: [
-        {
-          id: "profile",
-          label: "Your profile",
-          description: "",
-          scopes: ["openid"],
-          default_on: false,
-        },
-      ],
-    });
-    expect(defaultSubmission(html)).toEqual(["openid"]);
-  });
-
-  it("ticks a scope no bundle claims", () => {
-    // `default_on` is a property of a bundle. A scope an app named that no
-    // bundle describes lands in a fallback bucket, where there is no
-    // declaration to honor and unticking would be a policy this screen
-    // invented.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        { kind: "type", typePattern: "core.bookmark", operation: "read" },
-      ],
-      bundles: [OFF_BUNDLE],
-    });
-    expect(defaultSubmission(html)).toEqual(["core.bookmark:read"]);
-  });
-});
-
-describe("renderConsentScreen — a scope in two bundles", () => {
-  it("ticks it when any on-by-default bundle offers it", () => {
-    // The two readers of a bundle overlap have to agree. This renderer used
-    // first-bundle-wins and `scopesOfferedOffByDefaultOnly` uses
-    // any-on-by-default-wins, so with the off bundle listed first the same
-    // configuration rendered the scope unticked here while the device flow
-    // treated it as on-by-default and granted it on one approval. The
-    // stricter surface was the one with the toggle, which is backwards.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ kind: "type", typePattern: "core.note", operation: "write" }],
       bundles: [
         {
           id: "manage",
@@ -1706,6 +559,110 @@ describe("renderConsentScreen — a scope in two bundles", () => {
           scopes: ["core.note:write"],
           default_on: false,
         },
+      ],
+    });
+    expect(selects(html)[0]?.value).toBe("");
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+  });
+
+  it("shows what the app holds in full with no control, and does not post it", () => {
+    const html = render(BASE, {
+      priorScopes: ["core.note:read", "core.note:write"],
+    });
+    expect(selects(html).map((c) => c.label)).toEqual(["Task"]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
+  });
+
+  it("recognizes that a wildcard held covers a type asked for", () => {
+    const html = render(["core.note:read", "core.task:read"], {
+      priorScopes: ["core.*:read"],
+    });
+    expect(selects(html)).toHaveLength(0);
+    expect(visibleText(html)).toContain("wants to confirm its access");
+  });
+
+  it("confirms what the app already has when nothing is new", () => {
+    const html = render(BASE, {
+      priorScopes: ["core.note:write", "core.task:read"],
+    });
+    const text = visibleText(html);
+    expect(text).toContain("wants to confirm its access");
+    expect(text).toContain("It already has all of this");
+    expect(selects(html)).toHaveLength(0);
+    expect(switches(html)).toHaveLength(0);
+    // Nothing is posted: the server adds what the app still holds.
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+  });
+
+  it("says approving never lowers what the app holds, and where to end its access", () => {
+    const text = visibleText(render(BASE, { priorScopes: ["core.note:read"] }));
+    expect(text).toContain("Approving never lowers this.");
+    expect(text).toContain("To end its access, use Connected apps.");
+    expect(text).not.toContain("To lower it");
+  });
+
+  it("keeps a power the app holds on, without offering it again", () => {
+    const html = render(["keys.mint", "webhooks.manage"], {
+      priorScopes: ["keys.mint"],
+    });
+    expect(switches(html).map((c) => c.value)).toEqual(["webhooks.manage"]);
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+    expect(visibleText(html)).toContain("Make, see, edit and revoke keys On");
+  });
+});
+
+describe("renderConsentScreen: what starts on", () => {
+  const ON: PermissionBundle = {
+    id: "read",
+    label: "Read your content",
+    description: "",
+    scopes: ["core.note:read", "core.task:read"],
+    default_on: true,
+  };
+  const OFF: PermissionBundle = {
+    id: "manage",
+    label: "Manage your server",
+    description: "",
+    scopes: ["core.note:write"],
+    default_on: false,
+  };
+  const REQUESTED = ["core.note:read", "core.task:read", "core.note:write"];
+
+  it("leaves a level an off-by-default bundle offers off until it is chosen", () => {
+    const html = render(REQUESTED, { bundles: [ON, OFF] });
+    expect(defaultSubmission(html, "scopes")).toEqual([
+      "core.note:read",
+      "core.task:read",
+    ]);
+    // It is still there to choose.
+    expect(
+      selects(html)
+        .find((c) => c.label === "Note")
+        ?.options.map((o) => o.value),
+    ).toContain("core.note:write");
+  });
+
+  it("does not start a level on that the app already holds in full", () => {
+    const html = render(REQUESTED, {
+      bundles: [ON, OFF],
+      priorScopes: ["core.note:read", "core.note:write"],
+    });
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
+  });
+
+  it("still offers a newly asked level off", () => {
+    const html = render(REQUESTED, {
+      bundles: [ON, OFF],
+      priorScopes: ["core.note:read"],
+    });
+    // The held read is the level the notes control starts at, and posts nothing.
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:read"]);
+  });
+
+  it("starts a scope on when any on-by-default bundle offers it", () => {
+    const html = render(["core.note:write"], {
+      bundles: [
+        OFF,
         {
           id: "write",
           label: "Write your content",
@@ -1715,23 +672,11 @@ describe("renderConsentScreen — a scope in two bundles", () => {
         },
       ],
     });
-    expect(defaultSubmission(html)).toEqual(["core.note:write"]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.note:write"]);
   });
 
-  it("ticks a scope an on-by-default bundle's wildcard reaches", () => {
-    // The same agreement one step wider, and the half a literal tie-break
-    // cannot see. `core.*:write` is ticked by default, so the user already
-    // gets `core.task:write` by leaving it alone and the device flow no
-    // longer withholds that literal. Letting the off-by-default bundle claim
-    // it here would untick a scope the other surface grants on one click,
-    // which is exactly the disagreement the tie-break exists to stop.
-    //
-    // It lands in a fallback bucket rather than under either bundle's
-    // heading: no on-by-default bundle named it, and an off-by-default one
-    // may not claim something it cannot withhold.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [{ kind: "type", typePattern: "core.task", operation: "write" }],
+  it("starts a scope on when an on-by-default wildcard reaches it", () => {
+    const html = render(["core.task:write"], {
       bundles: [
         {
           id: "manage",
@@ -1749,18 +694,11 @@ describe("renderConsentScreen — a scope in two bundles", () => {
         },
       ],
     });
-    expect(defaultSubmission(html)).toEqual(["core.task:write"]);
-    expect(offeredIn(html, "Manage your server")).toEqual([]);
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.task:write"]);
   });
 
-  it("still unticks a scope no on-by-default bundle reaches", () => {
-    // The control. The wildcard covers its own subtree and nothing else, so
-    // an off-by-default bundle keeps its scope and keeps it unticked.
-    const html = renderConsentScreen({
-      ...PARAMS,
-      scopes: [
-        { kind: "type", typePattern: "user.secret", operation: "write" },
-      ],
+  it("starts a scope off that no on-by-default bundle reaches", () => {
+    const html = render(["user.secret:write"], {
       bundles: [
         {
           id: "manage",
@@ -1778,476 +716,42 @@ describe("renderConsentScreen — a scope in two bundles", () => {
         },
       ],
     });
-    expect(defaultSubmission(html)).toEqual([]);
-    expect(offeredIn(html, "Manage your server")).toEqual([
-      "user.secret:write",
-    ]);
-  });
-});
-
-/**
- * Every label that reaches a joined sentence needs a sentence form.
- *
- * `summarize` resolves OIDC scopes through `OIDC_SHORT` and permissions
- * through `PERMISSION_SHORT`, both separate maps from the toggle labels.
- * Two maps with the same keys and no compile-time link is exactly how the
- * capitalization bug this replaced got in: adding a toggle label without
- * its sentence form breaks nothing that anything notices.
- *
- * The four OIDC literals are now keyed on their union, so the compiler
- * holds that half. The check stays as the thing that would fail if the
- * union link were ever loosened back to `string`.
- */
-describe("sentence forms cover every label that can be joined into one", () => {
-  it("has a short form for every OIDC literal", () => {
-    for (const literal of Object.keys(OIDC_LABELS)) {
-      const key = literal as keyof typeof OIDC_LABELS;
-      expect(OIDC_SHORT[key], `no short form for ${literal}`).toBeDefined();
-    }
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
   });
 
-  it("keeps every inline-list form lowercase and comma-free", () => {
-    // summarize capitalizes whichever one lands first and nothing else, so a
-    // capitalized entry landing second reproduces exactly the defect these
-    // maps exist to prevent. A label carrying its own comma turns one list
-    // item into two fragments. PERMISSION_SHORT is checked here rather than
-    // only for commas, because it is the larger map and the one whose toggle
-    // labels are full sentences.
-    for (const value of [
-      ...Object.values(OIDC_SHORT),
-      ...Object.values(PERMISSION_SHORT),
-    ]) {
-      expect(value).not.toMatch(/,/);
-      // A conjunction is NOT checked here, deliberately. It looked like the
-      // same hazard as a comma — the joiner puts "and" between the last two
-      // items, so "your name and picture and your email address" reads as
-      // three things. But no regex separates that from "connect and
-      // disconnect services", where the conjunction is inside one verb
-      // phrase and reads correctly in a list. Two `PERMISSION_SHORT` entries
-      // are of that shape and are right as they stand. The rendered
-      // snapshots are what caught the real instance and are the guard that
-      // can tell the two apart, because a person reads them.
-      expect(value[0]).toBe(value[0]?.toLowerCase());
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// The description axis: one answer per scope, whichever screen asks.
-//
-// Distinct from the label maps above, and the distinction is what the
-// renderer runs on. A label is the short name on a toggle row; a description
-// is the plain-English line, and `labelFor` falls back from the first to the
-// second. One map holds descriptions, so nothing can disagree about whether a
-// metadata scope or a wildcard gets one.
-// ---------------------------------------------------------------------------
-
-/** Throws rather than filtering, so a fixture typo cannot leave an empty
- *  scope list and quietly satisfy an assertion about what is absent. */
-const parse = (literal: string): ParsedScope => {
-  const parsed = parseScope(literal);
-  if (!parsed) throw new Error(`unparseable scope literal: ${literal}`);
-  return parsed;
-};
-
-const describeAll = (...literals: string[]): Record<string, string> =>
-  buildScopeDescriptions(literals.map(parse));
-
-describe("buildScopeDescriptions covers every kind a person can be shown", () => {
-  it("describes the metadata scopes instead of skipping them", () => {
-    // The skip rested on these being self-explanatory to whoever requests
-    // them. Whoever requests them is not who reads the screen.
-    const out = describeAll("metadata:read", "metadata.types:write");
-    expect(out.metadata).toMatch(/\S/);
-    expect(out["metadata.types"]).toBe("Custom data types on your server.");
-  });
-
-  it("names what a metadata scope reaches rather than what it permits", () => {
-    // One entry serves both operations, because `typePattern` carries no
-    // verb: `metadata.types:read` and `metadata.types:write` read the same
-    // line. All three lines opened "Register and update", so a person
-    // approving a read was shown a sentence about writing, which is the
-    // direction that matters on the screen where they decide whether to
-    // trust an app.
-    //
-    // Asked of the allowlist for the same reason the test below is: the
-    // fourth sub-resource has to arrive here rather than on a screen.
-    //
-    // Scoped to the metadata entries deliberately, and the reason is about
-    // this family rather than about the rest of the map. Every metadata line
-    // is a plain noun phrase, so the leading word settles the question on its
-    // own. Elsewhere the map is written to no such rule, and a leading-word
-    // check applied across it would be testing a convention nothing else
-    // holds — passing or failing on how an entry happens to open rather than
-    // on whether it names an act.
-    const metadata = buildAllowedScopes()
-      .map(parse)
-      .filter((s) => s.kind === "metadata");
-    const out = buildScopeDescriptions(metadata);
-    expect(Object.keys(out)).toHaveLength(
-      new Set(metadata.map((s) => s.typePattern)).size,
-    );
-    for (const [pattern, copy] of Object.entries(out)) {
-      expect(copy, `${pattern} opens with an act`).not.toMatch(
-        /^(?:register|update|create|add|change|edit|delete|remove|manage|set|read|write)\b/i,
-      );
-    }
-  });
-
-  it("describes every metadata scope a client can actually request", () => {
-    // Asked of the allowlist rather than a list beside it, so a third
-    // sub-resource added to the grammar arrives here without copy and fails,
-    // rather than reaching a screen as its own literal. `metadata.edge_types`
-    // is why: it has been requestable as long as `metadata.types` has, and
-    // the map that described one had never heard of the other.
-    const metadata = buildAllowedScopes()
-      .map(parse)
-      .filter((s) => s.kind === "metadata");
-    expect(metadata.length).toBeGreaterThan(2);
-    const out = buildScopeDescriptions(metadata);
-    for (const scope of metadata) {
-      expect(out[scope.typePattern], scope.typePattern).toMatch(/\S/);
-    }
-  });
-
-  it("describes every edge type a client can actually request", () => {
-    // The axis that actually had the gap. `in-collection` is a shipping core
-    // edge, `buildAllowedScopes` publishes `edge.in-collection:read|write`,
-    // and nothing curated described it, so the builder fell through to the
-    // registry and roughly 700 characters of schema rationale rendered as a
-    // row on the device approval screen.
-    //
-    // Derived from `EDGE_TYPE_REGISTRY` rather than from a list beside it,
-    // so a tenth edge type fails here rather than shipping a paragraph. And
-    // held to being the curated line rather than to being non-empty: the
-    // fallback is non-empty too, which is the whole defect, so a presence
-    // check would have admitted the very thing it was meant to catch.
-    const edges = [...EDGE_TYPE_REGISTRY.keys()];
-    expect(edges.length).toBeGreaterThan(4);
-    const out = buildScopeDescriptions(
-      edges.map((edgeType) => parse(`edge.${edgeType}:read`)),
-    );
-    for (const edgeType of edges) {
-      const registry = EDGE_TYPE_REGISTRY.get(edgeType)?.description;
-      expect(
-        registry,
-        `fixture assumes the registry describes ${edgeType}`,
-      ).toMatch(/\S/);
-      expect(out[`edge.${edgeType}`], edgeType).toMatch(/\S/);
-      expect(out[`edge.${edgeType}`], edgeType).not.toBe(registry);
-    }
-  });
-
-  it("describes every type it ships without reaching the registry", () => {
-    // The other half of the claim the map's docstring makes, asked of
-    // `TYPE_REGISTRY` rather than read off the map, and asked of the whole
-    // registry with no exemption: an uncurated type reaches a person as the
-    // schema's own rationale on the screen where they decide whether to
-    // trust an application. A type added to the shipped set with no curated
-    // sentence fails here, and it cannot be waved through from
-    // `consent-copy-coverage.test.ts`, because that file's known-uncovered
-    // list is not read here.
-    const shipped = [...TYPE_REGISTRY.keys()];
-    // Both families, so a filter on the line above cannot pass every
-    // assertion below on whatever survived it.
-    expect(shipped.some((id) => id.startsWith("core."))).toBe(true);
-    expect(shipped.some((id) => id.startsWith("system."))).toBe(true);
-    const out = buildScopeDescriptions(
-      shipped.map((id) => parse(`${id}:read`)),
-    );
-    for (const typeId of shipped) {
-      const registry = TYPE_REGISTRY.get(typeId)?.description;
-      expect(
-        registry,
-        `fixture assumes the registry describes ${typeId}`,
-      ).toMatch(/\S/);
-      expect(out[typeId], typeId).toMatch(/\S/);
-      expect(out[typeId], typeId).not.toBe(registry);
-    }
-  });
-
-  it("describes a wildcard, which nothing else can", () => {
-    const out = describeAll(
-      "*:read",
-      "core.*:read",
-      "user.*:read",
-      "app.*:read",
-    );
-    expect(Object.keys(out).sort()).toEqual(["*", "app.*", "core.*", "user.*"]);
-    for (const [pattern, copy] of Object.entries(out)) {
-      expect(copy, pattern).toMatch(/\S/);
-    }
-    // A publisher wildcard is derived from its root rather than curated,
-    // which is the only shape that reaches a root installed at boot. Held
-    // to naming the service and to NOT being any concrete type's copy: the
-    // failure this replaces would be one matched type's sentence standing
-    // in for a whole namespace, and a bare non-empty check admits that.
-    const derived = describeAll("acme.*:read")["acme.*"];
-    expect(derived).toContain("Acme");
-    for (const id of TYPE_REGISTRY.keys()) {
-      expect(derived, id).not.toBe(TYPE_REGISTRY.get(id)?.description);
-    }
-  });
-
-  it("derives a wildcard for a root this build has never heard of", () => {
-    // The property that makes the rule a rule. `buildAllowedScopes` folds in
-    // publisher roots boot installs from the `types` table, so a
-    // wildcard can reach a consent screen on a running instance that no list
-    // written here could name. A table closes today's set and reopens on the
-    // next connector; this is the case that tells the two apart.
-    //
-    // The root is deliberately hyphenated, because the display name is the
-    // half a person reads.
-    const out = describeAll("acme-corp.*:read", "edge.acme-corp.*:read");
-    expect(out["acme-corp.*"]).toBe(
-      "Everything Acme Corp saves on your server.",
-    );
-    expect(out["edge.acme-corp.*"]).toBe("How Acme Corp connects your items.");
-
-    // The precondition, because both assertions pass vacuously against a
-    // build that happened to ship this root: it must be unknown here.
-    expect(TYPE_REGISTRY.has("acme-corp")).toBe(false);
-    expect(
-      [...TYPE_REGISTRY.keys()].some((id) => id.startsWith("acme-corp.")),
-    ).toBe(false);
-  });
-
-  it("declines to derive a sentence for a structural root", () => {
-    // The arm that keeps the rule off the roots the map curates. Without it
-    // a deleted curated entry does not go missing, it goes wrong: `core.*`
-    // would read as a service called "Core" rather than as the standard
-    // content types, and nothing else in this file would notice.
-    for (const pattern of ["core.*", "user.*", "app.*", "marfa.*", "*"]) {
-      expect(deriveWildcardDescription(pattern), pattern).toBeUndefined();
-    }
-    // A subtree of a root is not a root. Not requestable today, and a
-    // sentence that becomes nonsense the moment it is would be worse than
-    // none.
-    expect(deriveWildcardDescription("core.media.*")).toBeUndefined();
-  });
-
-  it("cannot get a wildcard's copy from the type registry", () => {
-    // The premise the wildcard arm does not rely on, pinned so that a
-    // registry which started answering patterns fails here and points at the
-    // arm rather than shipping one type's sentence as a namespace's.
-    for (const pattern of ["*", "core.*", "user.*", "app.*"]) {
-      expect(TYPE_REGISTRY.get(pattern), pattern).toBeUndefined();
-    }
-  });
-
-  it("leaves a permission out, because both screens name one without it", () => {
-    // `labelFor`, which both screens label a row through, resolves a
-    // permission through `permission-labels.ts` and returns before
-    // it reaches this map, so an entry would be computed and discarded on
-    // every render. That is the whole reason the map has nothing for one.
-    //
-    // Held by rendering with no map at all rather than by asserting what the
-    // map holds. The absence is only safe while both screens still name a
-    // permission unaided, and asserting the absence alone would pass
-    // equally well on a screen that had started needing an entry and lost the
-    // words.
-    expect(PERMISSIONS.length).toBeGreaterThan(0);
-    const scopes = PERMISSIONS.map(parse);
-    expect(buildScopeDescriptions(scopes)).toEqual({});
-
-    const authorize = renderConsentScreen({
-      clientName: "Test CLI",
-      clientId: "client-abc",
-      oauthQuery: SIGNED_OAUTH_QUERY,
-      scopes,
+  it("starts a wildcard off when it covers something only an off-by-default bundle offers", () => {
+    const html = render(["core.*:write"], {
+      bundles: [
+        ON,
+        {
+          id: "manage",
+          label: "Manage your server",
+          description: "",
+          scopes: ["core.note:write"],
+          default_on: false,
+        },
+      ],
     });
-    const device = renderDeviceConsentScreen({
-      clientName: "Test CLI",
-      scopes,
-      userCode: "ABCD-EFGH",
+    expect(defaultSubmission(html, "scopes")).toEqual([]);
+  });
+
+  it("keeps a mechanism on whatever a bundle says", () => {
+    const html = render(["openid"], {
+      bundles: [
+        {
+          id: "profile",
+          label: "Your profile",
+          description: "",
+          scopes: ["openid"],
+          default_on: false,
+        },
+      ],
     });
-
-    for (const literal of PERMISSIONS) {
-      expect(authorize, literal).toContain(PERMISSION_LABELS[literal]);
-      expect(device, literal).toContain(PERMISSION_LABELS[literal]);
-    }
+    expect(defaultSubmission(html, "scopes")).toEqual(["openid"]);
   });
 
-  it("answers nothing for an OIDC literal", () => {
-    // `labelFor`, which both screens label a row through, resolves one
-    // through `oidc-labels.ts` and returns before it reaches this
-    // map, so an entry would be computed and discarded on every render.
-    expect(describeAll("openid", "profile", "email", "offline_access")).toEqual(
-      {},
-    );
+  it("starts a scope on that no bundle claims", () => {
+    const html = render(["core.bookmark:read"], { bundles: [OFF] });
+    expect(defaultSubmission(html, "scopes")).toEqual(["core.bookmark:read"]);
   });
-
-  it("prefers curated copy to the registry's, and falls back to it", () => {
-    // The fallback cannot serve a type registered at runtime: such a
-    // registration goes to an overlay that `TYPE_REGISTRY` does not expose,
-    // and a custom type is not requestable as a row of its own anyway, only
-    // through its namespace wildcard. Every shipped type is curated, so a
-    // fixture drawn from the shipped set would prove the opposite.
-    //
-    // The population that remains is a platform row this build does not
-    // ship. `seedPlatformTypes` refills the registry at boot from the rows
-    // the instance holds, so an instance carrying a retired type resolves
-    // it here, and no curated sentence can ever exist for it. That is what
-    // this seeds.
-    const retired = {
-      schema: {
-        id: "acme.retired_widget",
-        version: 1,
-        fields: {},
-        description:
-          "A widget shape a previous build shipped and this one does not.",
-      },
-      family: "core" as const,
-    };
-    seedPlatformTypes([...shippedPlatformTypes(), retired]);
-
-    // Preconditions, because every assertion below passes vacuously without
-    // them: the seed has to have taken, and the row has to be uncurated.
-    expect(TYPE_REGISTRY.get(retired.schema.id)?.description).toBe(
-      retired.schema.description,
-    );
-    expect(CONSENT_SCOPE_DESCRIPTIONS[retired.schema.id]).toBeUndefined();
-
-    const out = describeAll("core.note:read", `${retired.schema.id}:read`);
-    // The registry's own sentence is written for a developer reading API
-    // docs, so both screens show the curated one.
-    expect(out["core.note"]).toBe("Notes.");
-    expect(out["core.note"]).not.toBe(
-      TYPE_REGISTRY.get("core.note")?.description,
-    );
-    expect(out[retired.schema.id]).toBe(retired.schema.description);
-  });
-
-  it("does not let one kind read another kind's copy off the flat map", () => {
-    // `typePattern` carries a different namespace per kind, so one map across
-    // four kinds is only sound while no two can produce the same key. The
-    // edge entries were keyed on the bare edge type id, where `*` is an edge
-    // type the scope allowlist publishes and `metadata` is a name an edge
-    // type can be registered under. Both would have read the type axis's copy
-    // the moment the wildcard entries landed beside them.
-    const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
-    expect(out["*"]).toBe("Everything on your server.");
-    // `edge.*` has copy of its own now, which makes this check sharper
-    // rather than weaker: the failure it guards is `edge.*` resolving the
-    // TYPE axis's sentence off the flat map, and an undefined could never
-    // have told that apart from the entry simply not existing yet. Now it
-    // can, so the assertion is inequality against the string it must not be.
-    expect(out["edge.*"]).toBe("How everything on your server is connected.");
-    expect(out["edge.*"]).not.toBe(out["*"]);
-    expect(out["edge.metadata"]).toBeUndefined();
-    // The curated edge copy still resolves, keyed on the pattern. Held
-    // against the registry's line rather than against emptiness: revert the
-    // `edge.` prefix on these keys and the lookup falls through to
-    // `EDGE_TYPE_REGISTRY`, whose description is also non-empty, so a
-    // `toMatch(/\S/)` here admitted the broken keying it was written to
-    // pin.
-    const registry = EDGE_TYPE_REGISTRY.get("parent-of")?.description;
-    expect(
-      registry,
-      "fixture assumes the registry describes parent-of",
-    ).toMatch(/\S/);
-    const curated = describeAll("edge.parent-of:write")["edge.parent-of"];
-    expect(curated).toMatch(/\S/);
-    expect(curated).not.toBe(registry);
-  });
-
-  it("keeps an edge type's schema rationale off both screens", () => {
-    // `in-collection` is the instance the derived test above generalizes,
-    // and this is what it looked like where a person met it: a paragraph
-    // about containment models, cardinality and cascade behavior, rendered
-    // as one row of a consent decision.
-    //
-    // Asserted on a leading fragment rather than on the whole registry
-    // string, because both renderers escape what they print and the
-    // description carries an apostrophe. Matching the raw string would pass
-    // on a screen that was showing the paragraph in full, which is the
-    // failure this is here to see.
-    const registry = EDGE_TYPE_REGISTRY.get("in-collection")?.description ?? "";
-    const fragment = registry.split(/["'&<>]/)[0] ?? "";
-    expect(
-      fragment.length,
-      "fixture assumes a long unescaped run of registry copy",
-    ).toBeGreaterThan(40);
-
-    const scopes = [parse("edge.in-collection:read")];
-    const descriptions = buildScopeDescriptions(scopes);
-    const curated = descriptions["edge.in-collection"];
-    expect(curated).toMatch(/\S/);
-    expect(curated).not.toBe(registry);
-
-    const authorize = renderConsentScreen({ ...PARAMS, scopes, descriptions });
-    const device = renderDeviceConsentScreen({
-      clientName: "Test CLI",
-      scopes,
-      userCode: "ABCD-EFGH",
-      descriptions,
-    });
-    for (const html of [authorize, device]) {
-      expect(html).toContain(curated);
-      expect(html).not.toContain(fragment);
-    }
-  });
-});
-
-/**
- * The two screens a person meets a scope on say the same thing about it.
- *
- * Worth more than two tests each checking one screen, because the defect was
- * never that either screen was wrong on its own: each was internally
- * consistent and they disagreed with each other, so which answer somebody got
- * depended on which screen the flow had put them on.
- *
- * Only the description field is held to this, so the literals below are ones
- * with no label entry, where both screens render the description itself and
- * a disagreement would be visible.
- *
- * This holds the renderers to one source. That the device *route* still reads
- * that source rather than rebuilding a map of its own is held by
- * `device-grant.test.ts`, which drives the real request.
- */
-describe("the authorize screen and the device screen describe a scope alike", () => {
-  // Literals with no `SCOPE_LABELS` entry, which is the population this
-  // describes: a literal with a curated label renders the label on the
-  // authorize screen where this fixture needs the description.
-  // `edge.about:read` stands for the family that has no labels at all.
-  const UNLABELED = ["edge.about:read", "core.*:read", "app.*:read", "*:read"];
-
-  it("renders the same copy on both, from the one map", () => {
-    const scopes = UNLABELED.map(parse);
-    const descriptions = buildScopeDescriptions(scopes);
-    // Every literal described, or the loop below asserts over less than it
-    // reads as asserting over.
-    expect(Object.keys(descriptions)).toHaveLength(UNLABELED.length);
-
-    const authorize = renderConsentScreen({ ...PARAMS, scopes, descriptions });
-    const device = renderDeviceConsentScreen({
-      clientName: "Test CLI",
-      scopes,
-      userCode: "ABCD-EFGH",
-      descriptions,
-    });
-
-    for (const [pattern, copy] of Object.entries(descriptions)) {
-      expect(authorize, pattern).toContain(copy);
-      expect(device, pattern).toContain(copy);
-    }
-  });
-});
-
-it("keeps content and profile write in a mixed group summary", () => {
-  const html = renderConsentScreen({
-    ...PARAMS,
-    scopes: ["content:write", "profile:write"].flatMap((literal) => {
-      const parsed = parseScope(literal);
-      return parsed ? [parsed] : [];
-    }),
-  });
-  const descriptions = [...html.matchAll(/class="gdesc">([^<]*)/g)].map(
-    (match) => match[1]!,
-  );
-  expect(
-    descriptions.some(
-      (text) => /content/i.test(text) && /profile|name.*avatar/i.test(text),
-    ),
-  ).toBe(true);
 });

@@ -1,79 +1,113 @@
 /**
- * Human names for the permissions, in the two shapes the surfaces need.
+ * Human names for the permissions, and how the approval screens group them.
  *
- * One home because three surfaces read them — the consent screen, the
- * device-approval screen, and the Manage Marfa page's key form — and a
- * permission whose name differs from one of those screens to the next is
- * worse than one with no name at all.
- *
- * Both maps are keyed on `Permission` rather than `string`, so adding a
- * permission fails to compile until it has been named in both. That is
- * the only guard that matters here: the fallback these replace is
- * `humanizeType`, which takes the last dotted segment, so an unnamed
- * `webhooks.manage` renders as "Webhooks", which reads as a kind of content
- * rather than the power to point a new webhook anywhere, on the one screen
- * where a person decides whether to hand that power over.
+ * One home because every surface that names a permission reads it (the
+ * approval screens and the key form on the Manage page), and a permission
+ * whose name differs from one screen to the next is worse than one with no
+ * name. Each map is keyed on `Permission`, so adding a permission fails to
+ * compile until it has been named: the fallback is `humanizeType`, which
+ * would render `webhooks.manage` as "Webhooks", a kind of content, on the
+ * screen where a person decides whether to hand over a power.
  */
 import type { Permission } from "@withmarfa/shared";
 import { isPermission } from "@withmarfa/shared";
 
 /**
- * Consent-toggle labels: a full verb phrase, because the row is a thing the
- * person is deciding to hand over rather than a category of content, and a
- * noun reads as the latter.
+ * A full verb phrase, because the row is a power someone hands over, not a
+ * category of content. It says everything the permission permits, in words
+ * that read the same whoever holds it: an app a person approves, or a key.
  */
 export const PERMISSION_LABELS: Record<Permission, string> = {
-  "keys.manage": "See, narrow and revoke any API key",
-  "blobs.manage": "Read all files and manage their stored copies",
-  "connectors.manage":
-    "Manage all connectors and their incoming data endpoints",
+  "keys.mint": "Make, see, edit and revoke keys",
+  "keys.manage": "See, edit, narrow and revoke every key",
+  "grants.manage": "See and disconnect other apps",
+  "config.manage": "See and change Marfa's settings",
+  "instance.read": "See health, metrics, storage and job status",
   "instance.maintain":
-    "Run maintenance that can permanently delete eligible data",
-  "instance.read": "Read server health, storage and maintenance reports",
-  "webhooks.manage": "Set up webhooks that send your data elsewhere",
-  "schema.write": "Replace and remove definitions of the types it can write",
-  "config.manage": "Read and change the server configuration",
-  "audit.read": "Read your security history",
-  "items.purge": "Permanently delete things, past the trash",
-  "keys.mint": "Create and revoke API keys",
-  "grants.manage": "See and revoke the other apps you have connected",
+    "Run housekeeping, reset platform types and cancel bulk jobs",
+  "schema.write": "Replace or remove type definitions",
+  "blobs.manage": "Read and add any file, and manage file storage",
+  "webhooks.manage": "Manage webhooks that send events to other services",
+  "connectors.manage": "See, manage and remove all connectors",
+  "audit.read": "Read the activity log",
+  "items.purge": "Delete items in the trash for good",
+};
+
+/** A line under the label, where the label alone leaves out what matters. */
+export const PERMISSION_NOTES: Partial<Record<Permission, string>> = {
+  "keys.mint": "Keys made this way never hold more than their maker.",
+  "keys.manage": "A key's access can be narrowed, never widened.",
+  "instance.maintain": "Some jobs permanently delete data that is due to go.",
+  "schema.write": "Only for types and relationships with edit access.",
+  "webhooks.manage": "Includes seeing webhooks and sending events again.",
+  "connectors.manage": "Includes clearing what a connector has saved.",
 };
 
 /**
- * Inline-list forms, for a sentence naming several at once.
- *
- * Lower case and comma-free, because these are joined into a list and a
- * label carrying its own comma turns one item into two. Kept beside the
- * toggle labels rather than derived from them: the transformation that would
- * produce these is a lowercase plus a comma strip, which quietly mangles the
- * entries where the comma is load-bearing.
+ * The powers that delete data or definitions with no way back: the screens
+ * mark them, and say so.
  */
-export const PERMISSION_SHORT: Record<Permission, string> = {
-  "keys.manage": "view key details and narrow or revoke any key",
-  "blobs.manage": "read all files and manage their stored copies",
-  "connectors.manage":
-    "manage all connectors and their incoming data endpoints",
-  "instance.maintain":
-    "run maintenance that can permanently delete eligible data",
-  "instance.read": "read detailed server reports",
-  "webhooks.manage": "set up webhooks that send your data elsewhere",
-  "schema.write": "replace and remove definitions of the types it can write",
-  "config.manage": "read and change the server configuration",
-  "audit.read": "read your security history",
-  "items.purge": "permanently delete things past the trash",
-  "keys.mint": "create and revoke API keys",
-  "grants.manage": "revoke the other apps you have connected",
-};
+export const DESTRUCTIVE_PERMISSIONS: ReadonlySet<Permission> = new Set([
+  "instance.maintain",
+  "schema.write",
+  "items.purge",
+]);
 
-/** The consent-toggle label for a literal, or undefined when it names no
- *  permission. A guard rather than a cast, so a literal outside the set
- *  cannot be asserted into a lookup that has no entry for it. */
-export function permissionLabel(literal: string): string | undefined {
-  return isPermission(literal) ? PERMISSION_LABELS[literal] : undefined;
+/**
+ * The line under a permission's label wherever a person decides whether to
+ * grant it: its note, and a mark where it can't be undone. One home, so the
+ * approval pages and the key form say the same.
+ */
+export function permissionDescription(
+  permission: Permission,
+): string | undefined {
+  const note = PERMISSION_NOTES[permission];
+  return DESTRUCTIVE_PERMISSIONS.has(permission)
+    ? [note, "Can't be undone."].filter(Boolean).join(" ")
+    : note;
 }
 
-/** The inline-list form for a literal, or undefined when it names no
- *  permission. */
-export function permissionShort(literal: string): string | undefined {
-  return isPermission(literal) ? PERMISSION_SHORT[literal] : undefined;
+export interface PermissionGroup {
+  id: "keys" | "run" | "out";
+  title: string;
+  description: string;
+  permissions: readonly Permission[];
+}
+
+/** The three kinds of extra control, in the order the screens list them. */
+export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
+  {
+    id: "keys",
+    title: "Keys and apps",
+    description: "Let it hand out access, or take it away.",
+    permissions: ["keys.mint", "keys.manage", "grants.manage"],
+  },
+  {
+    id: "run",
+    title: "Running Marfa",
+    description: "Let it change how this Marfa runs and what it keeps.",
+    permissions: [
+      "config.manage",
+      "instance.read",
+      "instance.maintain",
+      "schema.write",
+      "blobs.manage",
+    ],
+  },
+  {
+    id: "out",
+    title: "Connections and records",
+    description: "Let it reach outside Marfa, or read and clear its records.",
+    permissions: [
+      "webhooks.manage",
+      "connectors.manage",
+      "audit.read",
+      "items.purge",
+    ],
+  },
+];
+
+/** The label for a permission literal, or undefined for any other string. */
+export function permissionLabel(literal: string): string | undefined {
+  return isPermission(literal) ? PERMISSION_LABELS[literal] : undefined;
 }

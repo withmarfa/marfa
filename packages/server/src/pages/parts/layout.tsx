@@ -1,11 +1,14 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import type { Child } from "hono/jsx";
+import { Icon } from "../icons.js";
 
 export interface MomentCardProps {
   title: string;
   /** Where the moment sits in a sequence: step `current` of `total`. */
   steps?: { current: number; total: number };
+  /** The app that is asking, named here for its first letter. It sits beside Marfa's mark. */
+  app?: string;
   lede?: Child;
   /** Announces the lede to a screen reader when the page loads. */
   ledeRole?: "status" | "alert";
@@ -40,6 +43,16 @@ export function MomentCard(props: MomentCardProps) {
         <div class="stack">
           {props.steps !== undefined && <StepIndicator {...props.steps} />}
           <div class="marks" aria-hidden="true">
+            {props.app !== undefined && (
+              <>
+                <span class="tile">
+                  {Array.from(props.app.trim())[0]?.toUpperCase() ?? "?"}
+                </span>
+                <span class="mark-arrow">
+                  <Icon name="arrow" />
+                </span>
+              </>
+            )}
             <span class="tile marfa">M</span>
           </div>
           <div>

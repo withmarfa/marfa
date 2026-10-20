@@ -1,4 +1,3 @@
-import { grantCoversScope } from "@withmarfa/shared";
 import type { ApiKey, Item } from "@withmarfa/shared";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -219,7 +218,10 @@ export async function projectGrantOnConsent(
   opts: {
     authUserId: string;
     clientId: string;
+    /** The grant the app holds afterwards: the standing one plus this approval. */
     scopes: string[];
+    /** What this approval alone granted. */
+    approved: string[];
     clientIp: string | null;
     /** The browser that approved. */
     by: WrittenBy;
@@ -232,18 +234,6 @@ export async function projectGrantOnConsent(
     })) ?? null;
   const now = clock.now().toISOString();
   if (itemId) {
-    const existing = await storage.items.get(itemId);
-    const prior = Array.isArray(existing?.properties.scopes)
-      ? (existing.properties.scopes as string[])
-      : [];
-    if (prior.some((scope) => !grantCoversScope(opts.scopes, scope))) {
-      if (!storage.oauthProvider)
-        throw new Error("Credential storage is unavailable");
-      await storage.oauthProvider.revokeAccessTokensForGrant(
-        opts.clientId,
-        opts.authUserId,
-      );
-    }
     const written = await writeItem(
       storage,
       { kind: "platform", by: opts.by },
@@ -289,7 +279,8 @@ export async function projectGrantOnConsent(
     details: {
       client_id: opts.clientId,
       user_id: opts.authUserId,
-      scopes: opts.scopes,
+      scopes: opts.approved,
+      resulting_scopes: opts.scopes,
       grant_item_id: itemId,
     },
   };

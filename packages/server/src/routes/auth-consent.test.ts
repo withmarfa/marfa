@@ -8,7 +8,7 @@
  *     or `client_id` is missing
  *   - POST /auth/authorize/decision without a session redirects to /auth/sign-in
  *   - POST decision reads client_id from oauth_query, not the form
- *   - POST decision accept=true with zero scopes → 302 to consent with error
+ *   - POST decision accept=true with nothing selected → denied, like Cancel
  *   - auth.grant.created audit row carries client_ip
  *   - GET /authorize render carries Cache-Control: no-store
  *   - POST decision without session preserves oauth_query in return_to
@@ -22,6 +22,7 @@ import { itemWrites } from "../storage/item-writes.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
+import { defaultSubmission, readControls, visibleText } from "../test-html.js";
 
 let ctx: TestContext | undefined;
 
@@ -189,16 +190,6 @@ async function buildSignedOauthQuery(
     ),
   );
   return params.toString();
-}
-
-/** Reverse `escapeHtml` for a value read back out of a rendered form. */
-function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, "&");
 }
 
 async function seedAccessToken(
@@ -475,8 +466,9 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('class="callout"');
-    expect(html).toContain("Marfa hasn't verified this app");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("flags an app that authenticates with a secret as unverified too", async () => {
@@ -495,9 +487,10 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Secret App");
-    expect(html).toContain('class="callout"');
-    expect(html).toContain("Marfa hasn't verified this app");
+    expect(visibleText(html)).toContain("Secret App");
+    expect(visibleText(html)).toContain(
+      "Marfa can't confirm who made this app. Only approve apps you trust.",
+    );
   });
 
   it("404s when client genuinely does not exist", async () => {
@@ -526,17 +519,21 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain("Your profile");
-    expect(html).toContain("<span>Your name and picture</span>");
-    expect(html).toContain("<span>Your email address</span>");
-    // openid + offline_access are OAuth mechanisms, not data permissions —
-    // they ride along as always-on hidden fields rather than toggles.
-    expect(html).toMatch(
-      /<input type="checkbox" name="scopes" value="openid" checked hidden>/,
-    );
-    expect(html).toMatch(
-      /<input type="checkbox" name="scopes" value="offline_access" checked hidden>/,
-    );
+    const text = visibleText(html);
+    expect(text).toContain("Your profile");
+    expect(text).toContain("Your name and picture");
+    expect(text).toContain("Your email address");
+    // openid + offline_access are OAuth mechanisms, not data permissions:
+    // they ride along as hidden fields, and the two claims are switches.
+    const controls = readControls(html);
+    expect(
+      controls
+        .filter((c) => c.name === "scopes" && c.type === "hidden")
+        .map((c) => c.value),
+    ).toEqual(["openid", "offline_access"]);
+    expect(
+      controls.filter((c) => c.role === "switch").map((c) => c.value),
+    ).toEqual(["profile", "email"]);
   });
 
   it("renders an edge scope as a per-type toggle carrying the concrete literal", async () => {
@@ -552,10 +549,15 @@ describe("GET /auth/authorize (consent page)", () => {
     );
     expect(res.status).toBe(200);
     const html = await res.text();
-    // The concrete scope is the submittable checkbox value, rendered as a
-    // labeled per-type toggle row (not a raw scope string).
-    expect(html).toContain('value="edge.parent-of:read"');
-    expect(html).toMatch(/<div class="subrow"><span>[^<]+<\/span>/);
+    // The concrete scope is the value a choice submits, offered as a
+    // labeled level on one row, not as a raw scope string.
+    const control = readControls(html).find((c) => c.tag === "select");
+    expect(control?.options.map((o) => o.value)).toEqual([
+      "",
+      "edge.parent-of:read",
+    ]);
+    expect(control?.label).toMatch(/\S/);
+    expect(visibleText(html)).not.toContain("edge.parent-of");
   });
 });
 
@@ -610,7 +612,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(location).toBe("/auth/sign-in");
   });
 
-  it("F2: accept=true with zero selected scopes redirects to consent with error (no projection)", async () => {
+  it("F2: approving with nothing selected is denied as Cancel is, with no projection", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -624,9 +626,13 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       headers: { cookie, origin: ORIGIN },
     });
     expect(res.status).toBe(302);
-    const location = res.headers.get("location") ?? "";
-    expect(location).toContain("/auth/authorize?");
-    expect(location).toContain("error=no_scopes_selected");
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe(
+      "http://localhost:0/callback",
+    );
+    expect(location.searchParams.get("error")).toBe("access_denied");
+    expect(location.searchParams.get("state")).toBe("test-state");
+    expect(location.searchParams.get("code")).toBeNull();
 
     // No projection should have been written — confirm via items list.
     const items = await ctx.storage.items.list({
@@ -643,7 +649,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(audits.data.length).toBe(0);
   });
 
-  it("REGRESSION: the zero-scope bounce keeps the signed query intact, so the retry works", async () => {
+  it("answers nothing selected exactly as it answers Cancel", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -651,35 +657,279 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       clientId,
       "openid core.note:read",
     );
+    const answer = async (form: Record<string, string | string[]>) => {
+      const res = await request(ctx!.app, "POST", "/auth/authorize/decision", {
+        form: { oauth_query: oauthQuery, ...form },
+        headers: { cookie, origin: ORIGIN },
+      });
+      return [res.status, res.headers.get("location")];
+    };
+    const denied = await answer({ accept: "false" });
+    expect(await answer({ accept: "true" })).toEqual(denied);
+    // Nothing but the mechanisms is nothing: they grant no access.
+    expect(await answer({ accept: "true", scopes: ["openid"] })).toEqual(
+      denied,
+    );
+    expect(await answer({ accept: "true", scopes: ["", ""] })).toEqual(denied);
+    // The witness: the same request, approved with something, is a code.
+    expect(
+      (await answer({ accept: "true", scopes: ["core.note:read"] }))[1],
+    ).toContain("code=");
+  });
 
-    const bounced = await request(ctx.app, "POST", "/auth/authorize/decision", {
-      form: { accept: "true", oauth_query: oauthQuery },
-      headers: { cookie, origin: ORIGIN },
-    });
-    expect(bounced.status).toBe(302);
-    const location = bounced.headers.get("location") ?? "";
+  describe("an app that already holds access", () => {
+    /** The decision a person's post makes on the screen for `scope`. */
+    async function postDecision(
+      c: TestContext,
+      cookie: string,
+      clientId: string,
+      scope: string,
+      scopes: string[],
+    ): Promise<{ location: URL; query: string }> {
+      const query = await buildSignedOauthQuery(clientId, scope);
+      const res = await request(c.app, "POST", "/auth/authorize/decision", {
+        form: {
+          accept: "true",
+          oauth_query: query,
+          client_id: clientId,
+          scopes,
+        },
+        headers: { cookie, origin: ORIGIN },
+      });
+      expect(res.status).toBe(302);
+      return { location: new URL(res.headers.get("location") ?? ""), query };
+    }
 
-    // Follow the bounce the way the browser does, and read back the
-    // query the form will actually resubmit.
-    const page = await request(ctx.app, "GET", location, {
-      headers: { cookie },
-    });
-    expect(page.status).toBe(200);
-    const html = await page.text();
-    expect(html).toContain("at least one permission");
-    const match = /name="oauth_query" value="([^"]*)"/.exec(html);
-    expect(match).not.toBeNull();
-    const resubmitted = decodeHtmlEntities(match![1]!);
+    const grantedScopes = async (c: TestContext): Promise<string[]> => {
+      const grants = await c.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      return (grants.data[0]?.properties.scopes as string[] | undefined) ?? [];
+    };
 
-    // The user ticks a box and submits. The recovery redirect must not
-    // have edited the query the plugin signed — every retry after a
-    // zero-scope slip dies on signature verification if it did.
-    const retry = await request(ctx.app, "POST", "/auth/authorize/decision", {
-      form: { accept: "true", oauth_query: resubmitted, scopes: ["openid"] },
-      headers: { cookie, origin: ORIGIN },
+    it("denies an approval with everything newly asked turned off, as Cancel is answered, and keeps what it holds", async () => {
+      ctx = await createTestContext({});
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(ctx);
+      const held = await postDecision(
+        ctx,
+        cookie,
+        clientId,
+        "openid core.note:read",
+        ["openid", "core.note:read"],
+      );
+      expect(held.location.searchParams.get("code")).toBeTruthy();
+
+      // The screen for the second request, with Tasks set to No access: what
+      // the app holds is carried, and nothing newly asked is on.
+      const asked = "openid core.note:read core.task:read";
+      const screen = await request(
+        ctx.app,
+        "GET",
+        `/auth/authorize?${await buildSignedOauthQuery(clientId, asked)}`,
+        { headers: { cookie } },
+      );
+      expect(screen.status).toBe(200);
+      const posted = defaultSubmission(await screen.text(), "scopes").filter(
+        (v) => v !== "core.task:read",
+      );
+      expect(posted).toEqual(["openid"]);
+      const audits = (
+        await ctx.storage.audit.list({
+          action: "auth.grant.created",
+          limit: 10,
+        })
+      ).data.length;
+
+      const denied = await postDecision(ctx, cookie, clientId, asked, posted);
+      expect(denied.location.searchParams.get("error")).toBe("access_denied");
+      expect(denied.location.searchParams.get("code")).toBeNull();
+      expect(await grantedScopes(ctx)).toEqual(["openid", "core.note:read"]);
+      expect(
+        (
+          await ctx.storage.audit.list({
+            action: "auth.grant.created",
+            limit: 10,
+          })
+        ).data.length,
+      ).toBe(audits);
+
+      // The witness: the same screen with Tasks left on is a code.
+      const approved = await postDecision(ctx, cookie, clientId, asked, [
+        ...posted,
+        "core.task:read",
+      ]);
+      expect(approved.location.searchParams.get("code")).toBeTruthy();
+      expect((await grantedScopes(ctx)).sort()).toEqual([
+        "core.note:read",
+        "core.task:read",
+        "openid",
+      ]);
     });
-    expect(retry.status).toBe(302);
-    expect(retry.headers.get("location") ?? "").toContain("code=");
+
+    describe("a screen left open while the app's access changes", () => {
+      const held = "openid core.note:write keys.mint";
+      const asked = `${held} core.task:read`;
+
+      /** The app approved for `held`, and the screen for `asked` open in a tab. */
+      async function openAskingAgain() {
+        ctx = await createTestContext({});
+        const clientId = await seedClient(ctx);
+        const cookie = await signInUser(ctx);
+        const first = await postDecision(
+          ctx,
+          cookie,
+          clientId,
+          held,
+          held.split(" "),
+        );
+        expect(first.location.searchParams.get("code")).toBeTruthy();
+        const screen = await request(
+          ctx.app,
+          "GET",
+          `/auth/authorize?${await buildSignedOauthQuery(clientId, asked)}`,
+          { headers: { cookie } },
+        );
+        expect(screen.status).toBe(200);
+        return {
+          clientId,
+          cookie,
+          posted: defaultSubmission(await screen.text(), "scopes"),
+        };
+      }
+
+      /** The app disconnected from another tab. */
+      async function disconnect(c: TestContext): Promise<void> {
+        const grants = await c.storage.items.list({
+          type: "system.connection",
+          state: "active",
+        });
+        const res = await request(
+          c.app,
+          "DELETE",
+          `/auth/grants/${grants.data[0]?.id ?? ""}`,
+          { key: c.workingKey },
+        );
+        expect(res.status).toBe(204);
+        expect(await standing(c)).toEqual([]);
+      }
+
+      /** What the app holds now: nothing once it is disconnected. */
+      async function standing(c: TestContext): Promise<string[]> {
+        const grant = (
+          await c.storage.items.list({ type: "system.connection" })
+        ).data[0];
+        return grant && grant.properties.status !== "revoked"
+          ? ((grant.properties.scopes as string[] | undefined) ?? [])
+          : [];
+      }
+
+      it("posts the choices and the mechanisms and not the access the app holds", async () => {
+        const { posted } = await openAskingAgain();
+        expect(posted.sort()).toEqual(["core.task:read", "openid"]);
+      });
+
+      it("keeps the access the app still holds when it is approved", async () => {
+        const { clientId, cookie, posted } = await openAskingAgain();
+        const approved = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted,
+        );
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+        expect((await grantedScopes(ctx!)).sort()).toEqual(
+          ["core.note:write", "core.task:read", "keys.mint", "openid"].sort(),
+        );
+      });
+
+      it("gives back nothing the person ended, and nothing at all where nothing new is chosen", async () => {
+        const { clientId, cookie, posted } = await openAskingAgain();
+        await disconnect(ctx!);
+
+        const denied = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted.filter((v) => v !== "core.task:read"),
+        );
+        expect(denied.location.searchParams.get("error")).toBe("access_denied");
+        expect(denied.location.searchParams.get("code")).toBeNull();
+        expect(await standing(ctx!)).toEqual([]);
+
+        // The witness: the tasks they did choose are all they get. The notes
+        // and key making they held come back with no control shown.
+        const approved = await postDecision(
+          ctx!,
+          cookie,
+          clientId,
+          asked,
+          posted,
+        );
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+        expect((await standing(ctx!)).sort()).toEqual([
+          "core.task:read",
+          "openid",
+        ]);
+      });
+    });
+
+    it("denies an approval that turns off every power it is newly asked for, though it holds another", async () => {
+      ctx = await createTestContext({});
+      const clientId = await seedClient(ctx);
+      const cookie = await signInUser(ctx);
+      await postDecision(ctx, cookie, clientId, "openid keys.mint", [
+        "openid",
+        "keys.mint",
+      ]);
+      const asked = "openid keys.mint webhooks.manage";
+      const denied = await postDecision(ctx, cookie, clientId, asked, [
+        "openid",
+        "keys.mint",
+      ]);
+      expect(denied.location.searchParams.get("error")).toBe("access_denied");
+      const approved = await postDecision(ctx, cookie, clientId, asked, [
+        "openid",
+        "keys.mint",
+        "webhooks.manage",
+      ]);
+      expect(approved.location.searchParams.get("code")).toBeTruthy();
+    });
+
+    it.each([
+      [
+        "names that level's read",
+        "openid core.note:read core.note:write",
+        "core.note:read",
+      ],
+      ["names only the write", "openid core.note:write", ""],
+    ])(
+      "denies an approval that only keeps the level the app holds, where the request %s",
+      async (_case, asked, kept) => {
+        ctx = await createTestContext({});
+        const clientId = await seedClient(ctx);
+        const cookie = await signInUser(ctx);
+        await postDecision(ctx, cookie, clientId, "openid core.note:read", [
+          "openid",
+          "core.note:read",
+        ]);
+        const denied = await postDecision(ctx, cookie, clientId, asked, [
+          "openid",
+          kept,
+        ]);
+        expect(denied.location.searchParams.get("error")).toBe("access_denied");
+        expect(await grantedScopes(ctx)).toEqual(["openid", "core.note:read"]);
+        // The witness: choosing the write is a code.
+        const approved = await postDecision(ctx, cookie, clientId, asked, [
+          "openid",
+          "core.note:write",
+        ]);
+        expect(approved.location.searchParams.get("code")).toBeTruthy();
+      },
+    );
   });
 
   it.each(["forged", "expired"] as const)(
@@ -795,8 +1045,11 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       {
         form: {
           accept: "true",
-          oauth_query: await buildSignedOauthQuery(clientId, "openid"),
-          scopes: ["openid"],
+          oauth_query: await buildSignedOauthQuery(
+            clientId,
+            "openid core.note:read",
+          ),
+          scopes: ["openid", "core.note:read"],
         },
         headers: { cookie, origin: ORIGIN },
       },
@@ -942,150 +1195,77 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(items.data.length).toBe(1);
   });
 
-  it("F4: re-consent with narrowed scopes revokes the grant's existing access tokens", async () => {
+  it("F4: approving a request the app holds in full on a later visit keeps the grant and its tokens", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
 
-    const oauthQuery = await buildSignedOauthQuery(
-      clientId,
-      "openid core.note:read core.note:write core.task:read",
-    );
+    const wide = [
+      "openid",
+      "core.note:read",
+      "core.note:write",
+      "core.task:read",
+    ];
+    const oauthQuery = await buildSignedOauthQuery(clientId, wide.join(" "));
     // First consent with wide scopes.
     const r1 = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
         oauth_query: oauthQuery,
         client_id: clientId,
-        scopes: [
-          "openid",
-          "core.note:read",
-          "core.note:write",
-          "core.task:read",
-        ],
+        scopes: wide,
       },
       headers: { cookie, origin: ORIGIN },
     });
     expect(r1.status).toBe(302);
 
-    // Look up authUserId from the projection.
     const items1 = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
     expect(items1.data.length).toBe(1);
     const authUserId = items1.data[0]!.properties.user_id as string;
+    // The token a real /oauth2/token call would have minted at the wide scope.
+    const tokenHash = await seedAccessToken(ctx, clientId, authUserId, wide);
+    expect(
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash),
+    ).not.toBeNull();
 
-    // Seed an access token row directly (simulates the token a real
-    // /oauth2/token call would have minted at the wide scope).
-    if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
-    const schemaModule = await import("../storage/sqlite/schema.js");
-    const db = ctx.storage.betterAuthDb as unknown as {
-      insert: (table: unknown) => {
-        values: (v: Record<string, unknown>) => {
-          run?: () => Promise<unknown>;
-          execute?: () => Promise<unknown>;
-        };
-      };
-    };
-    const now = new Date();
-    const tokenId = `at_${Math.random().toString(36).slice(2)}`;
-    const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
-    // `scopes` is JSON-serialized text; see the `auth_oauth_client.scopes`
-    // schema comment.
-    const wideScopes = [
-      "openid",
-      "core.note:read",
-      "core.note:write",
-      "core.task:read",
-    ];
-    const op = db.insert(schemaModule.auth_oauth_access_token).values({
-      id: tokenId,
-      token: tokenHash,
-      clientId,
-      userId: authUserId,
-      expiresAt: new Date(now.getTime() + 3600_000),
-      createdAt: now,
-      scopes: JSON.stringify(wideScopes),
-    });
-    await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
-
-    // Verify the token exists (sanity).
-    const beforeRow =
-      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
-    expect(beforeRow).not.toBeNull();
-
-    // Re-consent with narrowed scopes.
+    // A later approval that posts less than the app holds. Approving never
+    // lowers what the app holds, so the token and the grant stand, and the
+    // code this approval makes carries what the app still holds.
     const r2 = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
         oauth_query: oauthQuery,
         client_id: clientId,
-        scopes: ["openid", "core.note:read"], // narrowed
+        scopes: ["openid", "core.note:read"],
       },
       headers: { cookie, origin: ORIGIN },
     });
     expect(r2.status).toBe(302);
+    expect(r2.headers.get("location") ?? "").toContain("code=");
 
-    // F4 — the wider-scope access token must be revoked.
-    const afterRow =
-      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash);
-    expect(afterRow).toBeNull();
-  });
-
-  it("REGRESSION: a narrowing whose token revocation fails does not report success", async () => {
-    ctx = await createTestContext({});
-    const clientId = await seedClient(ctx);
-    const cookie = await signInUser(ctx);
-    const wide = ["openid", "core.note:read", "core.note:write"];
-    const oauthQuery = await buildSignedOauthQuery(clientId, wide.join(" "));
-
-    const first = await request(ctx.app, "POST", "/auth/authorize/decision", {
-      form: { accept: "true", oauth_query: oauthQuery, scopes: wide },
-      headers: { cookie, origin: ORIGIN },
-    });
-    expect(first.status).toBe(302);
-
-    const granted = await ctx.storage.items.list({
+    expect(
+      await ctx.storage.oauthProvider?.validateAccessToken(tokenHash),
+    ).not.toBeNull();
+    const after = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
-    expect(granted.data.length).toBe(1);
-    const grantItem = granted.data[0]!;
-    const authUserId = grantItem.properties.user_id as string;
-    const tokenHash = await seedAccessToken(ctx, clientId, authUserId, wide);
-
-    // The revocation the narrowing depends on cannot be performed.
-    const store = ctx.storage.oauthProvider!;
-    store.revokeAccessTokensForGrant = () =>
-      Promise.reject(new Error("token store unavailable"));
-
-    const narrowed = await request(
-      ctx.app,
-      "POST",
-      "/auth/authorize/decision",
-      {
-        form: {
-          accept: "true",
-          oauth_query: oauthQuery,
-          scopes: ["openid", "core.note:read"],
-        },
-        headers: { cookie, origin: ORIGIN },
-      },
+    expect(new Set(after.data[0]!.properties.scopes as string[])).toEqual(
+      new Set(wide),
     );
-
-    // Handing back the code-bearing redirect tells the user the narrowing
-    // took effect. It did not: the wider-scope token is still live.
-    expect(narrowed.headers.get("location") ?? "").not.toContain("code=");
-    expect(narrowed.status).toBeGreaterThanOrEqual(500);
-
-    // The token that carries the scopes the user just removed still works,
-    // which is exactly why the request must not be reported as successful.
-    expect(await store.validateAccessToken(tokenHash)).not.toBeNull();
-
-    // And the record still says what is actually true — the wider grant.
-    const after = await ctx.storage.items.get(grantItem.id);
-    expect(after!.properties.scopes).toEqual(wide);
+    expect(
+      await ctx.storage.oauthProvider?.getPriorConsent(clientId, authUserId),
+    ).toEqual(expect.arrayContaining(wide));
+    const audits = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    const latest: Record<string, unknown> = audits.data[0]!.details;
+    expect(latest.scopes).toEqual(wide);
+    expect(new Set(latest.resulting_scopes as string[])).toEqual(new Set(wide));
   });
 
   it("F4: re-consent with SAME scopes leaves access tokens alone (no narrowing → no revoke)", async () => {
@@ -1253,7 +1433,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     expect(after).toBeDefined();
   });
 
-  it("F1: scopes outside the signed set are filtered (form can only narrow, not widen)", async () => {
+  it("F1: a decision naming a scope outside the signed set is refused and grants nothing", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx);
@@ -1262,8 +1442,24 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       "openid core.note:read",
     );
 
-    // Form claims to approve a scope NOT in the signed set. It must
-    // be dropped before projection.
+    // The witness: the same decision without the extra scope is a code.
+    const honest = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        client_id: clientId,
+        scopes: ["openid", "core.note:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(honest.headers.get("location") ?? "").toContain("code=");
+    const before = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+
+    // The form claims to approve a scope NOT in the signed set: refused as a
+    // whole, so not even the signed scopes beside it are granted.
     const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
       form: {
         accept: "true",
@@ -1273,17 +1469,22 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       },
       headers: { cookie, origin: ORIGIN },
     });
-    expect(res.status).toBe(302);
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
 
     const items = await ctx.storage.items.list({
       type: "system.connection",
       state: "active",
     });
-    expect(items.data.length).toBe(1);
-    const projectedScopes = items.data[0]?.properties.scopes as
-      string[] | undefined;
-    expect(projectedScopes).toEqual(["openid", "core.note:read"]);
-    expect(projectedScopes).not.toContain("core.note:write");
+    expect(items.data[0]?.properties.scopes).toEqual([
+      "openid",
+      "core.note:read",
+    ]);
+    const after = await ctx.storage.audit.list({
+      action: "auth.grant.created",
+      limit: 10,
+    });
+    expect(after.data.length).toBe(before.data.length);
   });
 });
 
@@ -1454,16 +1655,9 @@ describe("POST /auth/authorize/decision (Origin/Referer CSRF guard)", () => {
 // ---------------------------------------------------------------------------
 
 describe("an off-by-default bundle grants nothing without a tick", () => {
-  /** What an untouched form submits: every checked `name="scopes"` input. */
-  const untouchedSubmission = (html: string): string[] => {
-    const out: string[] = [];
-    for (const tag of html.match(/<input[^>]*name="scopes"[^>]*>/g) ?? []) {
-      if (!/\schecked(\s|>)/.test(tag)) continue;
-      const value = /value="([^"]*)"/.exec(tag)?.[1];
-      if (value !== undefined) out.push(value);
-    }
-    return out;
-  };
+  /** What an untouched form submits. */
+  const untouchedSubmission = (html: string): string[] =>
+    defaultSubmission(html, "scopes");
 
   const BUNDLES = [
     {
@@ -1572,7 +1766,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
       );
       expect(page.status).toBe(200);
       const submitted = untouchedSubmission(await page.text());
-      expect(submitted).toContain("core.task:write");
+      // What the app holds is not posted back: the server adds it.
+      expect(submitted).not.toContain("core.task:write");
 
       const second = await request(
         ctx.app,
@@ -1606,8 +1801,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
 // ---------------------------------------------------------------------------
 // A literal named twice
 //
-// The rendering half is in `consent-operation.test.ts`, against the renderer.
-// This is the half that made this more than a tidy-up: the
+// The screen offers a repeated literal once (`buildAccess` in
+// `access-model.ts`). The stored grant is the half that matters: the
 // duplicate did not stop at the screen. `formScopes` kept both copies,
 // `projectGrantOnConsent` wrote them verbatim into `properties.scopes` on the
 // `system.connection` item, and every surface that later reads or diffs that
@@ -1625,7 +1820,7 @@ describe("a scope named twice is stored once", () => {
     );
 
     // The precondition, and it is the rendering fix stated end to end: the
-    // screen a person is actually served emits one checkbox for the repeated
+    // screen a person is actually served emits one control for the repeated
     // literal, so an honest browser cannot submit it twice.
     const page = await request(
       ctx.app,

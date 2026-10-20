@@ -21,6 +21,7 @@ import {
 import {
   appBehindReturnTo,
   buildScopeDescriptions,
+  resolveTypeLabels,
   resolveWildcardExpansions,
 } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
@@ -55,11 +56,12 @@ import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
 } from "../auth/ceiling-catchup.js";
+import { renderDevicePage } from "./device-pages.js";
 import {
-  renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
-} from "./device-pages.js";
+} from "./device-approval.js";
+import { resolveSelection } from "./access-model.js";
 import { setNoStore } from "./no-store.js";
 import {
   answerSignInAgain,
@@ -80,18 +82,14 @@ import { forwardHeaders } from "./forward-headers.js";
  * `writeItem` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
- * writes there are the standing grant plus this approval, never less: an
- * untick on the device screen reaches the token this device is issued, which
- * the plugin mints for the code's own narrowed scope, rather than the record.
- * A revoked grant is not a standing one, so it contributes nothing and the
- * record comes back at the approval alone.
+ * writes there are the standing grant plus this approval, never less. A
+ * lower level chosen on the device page narrows only the token this device
+ * is issued, which the plugin mints for the code's narrowed scope, not the
+ * record. A revoked grant is not a standing one, so it contributes nothing
+ * and the record comes back at the approval alone.
  *
- * **`source` is the device literal, not a union of surfaces.** The merge
- * rule inside is specific to the device surface, and the authorize surface
- * has the deliberate opposite contract: a narrowing there is a decision the
- * user made and revokes the tokens carrying what was dropped. Advertising
- * this function as serving both would let an authorize caller pick it up
- * and silently disable that revoke.
+ * **`source` is the device literal.** The authorize surface writes its
+ * projection through `projectGrantOnConsent`, which stamps its own.
  */
 async function createUserAppGrant(
   storage: Storage,
@@ -123,17 +121,17 @@ async function createUserAppGrant(
 
   if (existingItemId) {
     // Re-consent: flip status back to "active" + clear revoked_at; same
-    // rationale as projectGrantOnConsent in auth-consent.ts.
+    // rationale as projectGrantOnConsent in auth/grant-lifecycle.ts.
     const existing = await storage.items.get(existingItemId);
     if (!existing) {
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
     } else {
-      // Union rather than overwrite. This screen offers per-scope toggles,
+      // Union rather than overwrite. This screen offers a level for each type,
       // so a narrower set arriving here may be the client asking for less or
-      // the person unticking a row and nothing at this call site can tell
+      // the person choosing a lower level and nothing at this call site can tell
       // them apart. The record keeps the standing grant either way,
-      // deliberately; what the untick reaches is the token this device is
+      // deliberately; what the lower level reaches is the token this device is
       // issued.
       //
       // **A revoked grant contributes nothing to that merge, because the
@@ -160,8 +158,8 @@ async function createUserAppGrant(
       // all — the approval falls through to the fresh insert below and the
       // unreachable row is left where it is. That predicate lives in the
       // store rather than here because the code-flow twin
-      // (`projectGrantOnConsent` in `auth-consent.ts`) resolves through the
-      // same method and had the identical defect. This read stays because
+      // (`projectGrantOnConsent` in `auth/grant-lifecycle.ts`) resolves
+      // through the same method and had the identical defect. This read stays because
       // it guards the axis the lookup does not: a row the store admits can
       // still hold `status: "revoked"`, and merging against a withdrawn
       // scope set is what the clause below refuses.
@@ -713,7 +711,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // mints them, `POST /auth/oauth2/token` with the device grant exchanges an
   // approved one, and the plugin's own verify, approve and deny endpoints
   // move the row. Marfa fronts the pages a person meets and calls those
-  // endpoints in-process, so the consent screen, its per-scope toggles, the
+  // endpoints in-process, so the consent screen, its per-scope controls, the
   // grant projection and the audit row stay Marfa's:
   //   - GET /auth/device            — verification form (optionally pre-filled
   //                                   via ?user_code=…)
@@ -722,7 +720,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   //   - GET /auth/device/consent    — consent screen, gated on a session; the
   //                                   plugin's verify claims the code for the
   //                                   person on the way in
-  //   - POST /auth/device/consent   — approve with the ticked scopes, or deny
+  //   - POST /auth/device/consent   — approve with the chosen scopes, or deny
 
   const requireDeviceAuth = (): MarfaAuth => {
     if (!auth) {
@@ -863,13 +861,14 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       .filter(
         (s): s is NonNullable<ReturnType<typeof parseScope>> => s !== null,
       );
+    const priorScopes = await storage.oauthProvider?.getPriorConsent(
+      client.clientId,
+      sessionResult.session.user.id,
+    );
     const signInAgain = signInAgainBeforeConsent(
       c,
       scopeList(verdict.scope),
-      await storage.oauthProvider?.getPriorConsent(
-        client.clientId,
-        sessionResult.session.user.id,
-      ),
+      priorScopes,
       `${url.pathname}${url.search}`,
     );
     if (signInAgain) return signInAgain;
@@ -890,17 +889,19 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         webOrigins: webOriginsOf(client),
         scopes: parsedScopes,
         userCode,
+        priorScopes,
         descriptions,
+        typeLabels: await resolveTypeLabels(storage, [
+          ...scopeList(verdict.scope),
+          ...(priorScopes ?? []),
+        ]),
+        signedInAs: sessionResult.session.user.email,
         // The same enumeration of an open-ended pattern the authorize screen
         // shows, so the reach reads the same on both.
         wildcardExpansions: await resolveWildcardExpansions(
           storage,
           parsedScopes,
         ),
-        // The screen decides its own ticks from these, the same way the
-        // authorize screen does. Passed rather than read inside the
-        // renderer so both surfaces resolve the bundle set at their own
-        // call site, which is the standing convention for this pair.
         bundles: getPermissionBundles(),
       }),
     );
@@ -951,30 +952,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     )
       return c.text("Invalid scope: profile.email:write", 400);
 
-    // The ticked set, intersected with what the device asked for.
-    //
-    // **An intersection rather than a substitution**, because this form is a
-    // browser surface and its fields are whoever's browser it is to edit. A
-    // hand-edited submission must not grant an app more than the client
-    // requested or more than the screen displayed, and the stored row is what
-    // every later reader treats as the request.
-    //
-    // **Nothing ticked is a denial**, the same rule the authorize screen
-    // applies to a zero-scope accept and for the same reason: a grant of
-    // nothing is not a grant, and recording one leaves a projection and a
-    // consent row standing for an app that can do nothing with them. It also
-    // keeps the two surfaces answering one question the same way.
-    const requestedScopeSet = new Set(requestedScopes);
-    const approvedScopes = [
-      ...new Set(
-        formData
-          .getAll("scopes")
-          .filter((v): v is string => typeof v === "string")
-          .filter((v) => requestedScopeSet.has(v)),
-      ),
-    ];
-
-    if (decision === "deny" || approvedScopes.length === 0) {
+    // A denial reads no choice. An approval is read against what the device
+    // asked for and what the app holds, inside the consent lock below.
+    if (decision === "deny") {
       const denied = await deviceAuth.deviceDeny(userCode, c.req.raw.headers);
       if (!denied.ok) {
         return c.redirect(
@@ -990,9 +970,12 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         }),
       );
     }
+    const submitted = formData
+      .getAll("scopes")
+      .filter((v): v is string => typeof v === "string");
 
     // Approve: upsert the system.connection projection, narrow the code to
-    // the ticked set, and approve it through the plugin.
+    // the chosen set, and approve it through the plugin.
     //
     // The upsert resolves the projection, reads it, and writes it back
     // active with this request's scopes — a read-modify-write on the same
@@ -1015,7 +998,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     //
     // **The narrowing precedes the approval.** The plugin approves a code as
     // it was requested and issues the token for the row's scope, so the row
-    // has to read the ticked set before the status flips. A narrowing that
+    // has to read the chosen set before the status flips. A narrowing that
     // finds the row no longer pending is a race with a deny in another tab,
     // and is told it did not take effect.
     const outcome = await withConsentLock(
@@ -1031,6 +1014,21 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 clientId,
                 sessionResult.session.user.id,
               )) ?? [];
+            // What the person chose is what the device asked for, narrowed,
+            // and read on the consent the commit sees: a value the code did
+            // not carry is a form edited to ask for more than the screen
+            // showed, and nothing from it is granted. Nothing newly chosen is
+            // a denial, the same rule the authorize screen applies, because a
+            // grant of nothing leaves a projection and a consent row standing
+            // for a device that can do nothing with them.
+            const selection = resolveSelection(
+              requestedScopes,
+              submitted,
+              prior,
+            );
+            if (!selection.ok) return { kind: "refused" } as const;
+            if (!selection.chosen) return { kind: "nothing" } as const;
+            const approvedScopes = selection.scopes;
             if (needsRecentSignIn(approvedScopes, prior))
               requireRecentOwnerAuthentication(c);
             // The write the device's initiation could not make: nobody was
@@ -1086,39 +1084,48 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
                 scopes: created.scopes,
               });
             }
-            return { grant: created, ok: true };
+            return {
+              kind: "approved",
+              grant: created,
+              approvedScopes,
+            } as const;
           },
-          ({ grant }) => ({
-            action: "auth.grant.created",
-            resource_type: "oauth_grant",
-            resource_id: clientId,
-            client_ip: c.var.clientIp ?? null,
-            details: {
-              client_id: clientId,
-              user_id: sessionResult.session.user.id,
-              // Three halves, because two of them can differ in each direction
-              // and none alone answers the question an operator brings to this
-              // row. `scopes` is what this device asked for. The screen offers
-              // those as toggles, so `approved_scopes` is what the person actually
-              // ticked, which can be narrower. And an approval merges into the
-              // standing grant rather than replacing it, so `resulting_scopes` is
-              // the record afterwards, which can be wider than either. On a
-              // first-time approval where nothing was unticked, all three are the
-              // same list.
-              scopes: requestedScopes,
-              approved_scopes: approvedScopes,
-              resulting_scopes: grant.scopes,
-              grant_item_id: grant.id,
-              source: "device",
-              // `created: false` means re-consent (item already existed) —
-              // useful for the operator trail to distinguish first-time
-              // approvals from re-approvals of an existing grant.
-              created: grant.created,
-            },
-          }),
+          (result) => {
+            if (result.kind !== "approved") return null;
+            const { grant, approvedScopes } = result;
+            return {
+              action: "auth.grant.created",
+              resource_type: "oauth_grant",
+              resource_id: clientId,
+              client_ip: c.var.clientIp ?? null,
+              details: {
+                client_id: clientId,
+                user_id: sessionResult.session.user.id,
+                // Three halves, because two of them can differ in each direction
+                // and none alone answers the question an operator brings to this
+                // row. `scopes` is what this device asked for. The screen offers
+                // those as controls, so `approved_scopes` is what the person actually
+                // chose, which can be narrower. And an approval merges into the
+                // standing grant rather than replacing it, so `resulting_scopes` is
+                // the record afterwards, which can be wider than either. On a
+                // first-time approval where nothing was lowered, all three are the
+                // same list.
+                scopes: requestedScopes,
+                approved_scopes: approvedScopes,
+                resulting_scopes: grant.scopes,
+                grant_item_id: grant.id,
+                source: "device",
+                // `created: false` means re-consent (item already existed) —
+                // useful for the operator trail to distinguish first-time
+                // approvals from re-approvals of an existing grant.
+                created: grant.created,
+              },
+            };
+          },
         ),
     ).catch((error: unknown) => {
-      if (error instanceof DeviceApprovalRefused) return { ok: false };
+      if (error instanceof DeviceApprovalRefused)
+        return { kind: "raced" } as const;
       return answerSignInAgain(
         c,
         error,
@@ -1126,8 +1133,28 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       );
     });
     if (outcome instanceof Response) return outcome;
-    const { ok } = outcome;
-    if (!ok) {
+    if (outcome.kind === "refused")
+      return c.text(
+        "The decision names a scope the device did not ask for",
+        400,
+      );
+    if (outcome.kind === "nothing") {
+      const denied = await deviceAuth.deviceDeny(userCode, c.req.raw.headers);
+      if (!denied.ok) {
+        return c.redirect(
+          `/auth/device?error=${pageErrorFor(denied.reason)}&user_code=${encodeURIComponent(userCode)}`,
+          302,
+        );
+      }
+      setNoStore(c);
+      return c.html(
+        renderDeviceDecisionPage({
+          approved: false,
+          nonce: c.var.cspNonce,
+        }),
+      );
+    }
+    if (outcome.kind === "raced") {
       // Race: someone else flipped it in between. Surface as already-resolved.
       return c.redirect(
         `/auth/device?error=already_resolved&user_code=${encodeURIComponent(userCode)}`,

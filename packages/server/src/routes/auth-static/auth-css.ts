@@ -50,13 +50,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --error-border: #fecaca;
   --error-fg: #991b1b;
 
-  /* Callout — the single boxed caution (unverified app). Amber so it reads
-     as advisory, not error. */
-  --callout-bg: #fdf6e3;
-  --callout-border: #f3e0a3;
-  --callout-fg: #854d0e;
-  --callout-icon: #a16207;
-
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
   --r-card: 26px;
@@ -102,10 +95,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --error-bg: #1f1212;
     --error-border: #3d1f1f;
     --error-fg: #fca5a5;
-    --callout-bg: #241f10;
-    --callout-border: #4a3f1c;
-    --callout-fg: #e9c46a;
-    --callout-icon: #d4a73a;
 
     --shadow: none;
   }
@@ -316,65 +305,6 @@ select:focus {
   border-color: var(--error-fg);
   box-shadow: 0 0 0 3px var(--error-bg);
 }
-.field__input--code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 18px;
-  text-align: center;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
-}
-
-/* Segmented one-time-code cells (device flow). JS-enhanced from the single
-   code input, which stays as the no-JS fallback. A filled cell takes the soft
-   tile fill (matching the device-approve code tile) rather than a hard outline,
-   so a typed code reads as soft chips, not boxed letters. */
-.otp {
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-}
-/* Scoped under .otp so these beat the base input[type="text"] rule (which
-   would otherwise force full width + the field padding and clip the glyph).
-   The cells flex to share the row and shrink on narrow cards (capped on wide),
-   so eight of them plus the dash always fit inside the card without widening it. */
-.otp .otp__cell {
-  flex: 1 1 0;
-  min-width: 0;
-  max-width: 36px;
-  height: 46px;
-  padding: 0;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 19px;
-  font-weight: 600;
-  text-transform: uppercase;
-  color: var(--fg);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  transition:
-    border-color 0.12s var(--ease),
-    background 0.12s var(--ease),
-    box-shadow 0.12s var(--ease);
-}
-.otp .otp__cell--filled {
-  background: var(--tile);
-  border-color: var(--border-strong);
-}
-.otp .otp__cell:focus {
-  outline: none;
-  border-color: var(--fg);
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.otp__dash {
-  align-self: center;
-  color: var(--fg-faint);
-  font-size: 18px;
-}
-.field--error .otp .otp__cell {
-  border-color: var(--error-border);
-}
-
 /* ---------------------------------------------------------------- */
 /* Buttons                                                          */
 /* ---------------------------------------------------------------- */
@@ -422,29 +352,6 @@ select:focus {
 .btn[disabled] {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-/* Submitting state — set by submit-state.js on form submit. A small leading
-   spinner plus the swapped label keeps the button calm and on-brand; the
-   button keeps its size so the layout doesn't jump. The disabled styles above
-   handle the dimming once the script also disables the control. */
-.btn.is-loading {
-  cursor: progress;
-}
-.btn.is-loading::before {
-  content: "";
-  width: 14px;
-  height: 14px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: btn-spin 0.6s linear infinite;
-  opacity: 0.7;
-}
-@keyframes btn-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .btn--primary {
@@ -527,26 +434,9 @@ select:focus {
   margin-top: calc(var(--gap-step) - var(--gap-base));
 }
 
-/* Muted small line under a section label — used by the consent re-consent
-   diff's "No longer needed" group to list dropped capabilities as a quiet
-   line rather than toggle rows. */
-.rmeta {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-/* A second line under a toggle row's label, on the consent and device pages. */
-.subrow .rmeta {
-  display: block;
-}
-.rmeta--list {
-  padding-top: 2px;
-}
-
 /* ================================================================ */
 /* Locked design vocabulary                                         */
-/* Soft Tiles for permission groups only; airy everywhere else.     */
+/* Airy everywhere.                                                 */
 /* ================================================================ */
 
 /* Canonical card heading + subtitle. The line saying what the card is
@@ -575,206 +465,6 @@ select:focus {
    up so the pair reads as one block. */
 .sub + .sub {
   margin-top: -10px;
-}
-
-/* Inline section label inside a panel ("Connected apps", "New", …) —
-   sentence case, not a shouty uppercase eyebrow. The bottom gap gives the
-   grouped tiles below a little breathing room rather than sitting tight. */
-.lsec {
-  margin: 18px 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.lsec--first {
-  margin-top: 8px;
-}
-.lsec--later {
-  margin-top: 24px;
-}
-
-/* The single boxed caution — the unverified-app warning. One warning,
-   never a second inline badge. */
-.callout {
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  margin: 0 0 16px;
-  padding: 11px 13px;
-  background: var(--callout-bg);
-  border: 1px solid var(--callout-border);
-  border-radius: 13px;
-}
-.callout svg {
-  flex: none;
-  margin-top: 1px;
-  color: var(--callout-icon);
-}
-.callout span {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--callout-fg);
-}
-
-/* Permission groups — collapsible Soft Tiles, the ONLY boxed surface.
-   Collapsed by default; expand to per-type toggles. */
-.t-soft {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.grp {
-  background: var(--tile);
-  border-radius: var(--r-tile);
-}
-.grp > summary {
-  list-style: none;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 13px 15px;
-  cursor: pointer;
-}
-.grp > summary::-webkit-details-marker {
-  display: none;
-}
-.gmain {
-  flex: 1;
-  min-width: 0;
-}
-.gtop {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.glabel {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-}
-.gchev {
-  width: 13px;
-  height: 13px;
-  color: var(--fg-faint);
-  transition: transform 0.18s var(--ease);
-  flex: none;
-}
-.grp[open] .gchev,
-.ksec[open] .gchev {
-  transform: rotate(90deg);
-}
-
-/* The standing grant on the re-consent screen, collapsed to its heading so
-   the reader reaches the buttons. Deliberately not a .grp: the tiles inside
-   it are, and a tile holding tiles reads as a nesting that means nothing.
-
-   Its controls stay in the DOM while it is shut, which is load-bearing
-   rather than incidental. They are the standing grant, they are ticked, and
-   a closed details element still submits them, so an untouched Continue is
-   the no-op it looks like. Swap this for anything that removes or disables them
-   and the same Continue submits a narrowing, which the decision route reads
-   as a promise that the removed access stops working. */
-.ksec > summary {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  margin: 18px 0 10px;
-}
-.ksec > summary::-webkit-details-marker {
-  display: none;
-}
-.kcount {
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-.gdesc {
-  margin-top: 3px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-.gsub {
-  display: flex;
-  flex-direction: column;
-  padding: 0 15px 12px;
-}
-.gsub--above-actions {
-  margin-bottom: 10px;
-}
-.subrow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 8px 0;
-}
-.subrow > span {
-  font-size: 13.5px;
-  color: var(--fg);
-}
-
-/* Switch used inside permission groups. Supports indeterminate for a
-   partially-ticked group master. */
-.sw {
-  position: relative;
-  width: 32px;
-  height: 19px;
-  flex: none;
-}
-.sw input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  margin: 0;
-  cursor: pointer;
-  z-index: 1;
-}
-.sw .tk {
-  position: absolute;
-  inset: 0;
-  background: var(--border-strong);
-  border-radius: 999px;
-  transition: background 0.16s var(--ease);
-  pointer-events: none;
-}
-.sw .tk::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 15px;
-  height: 15px;
-  background: var(--primary-fg);
-  border-radius: 50%;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  transition: transform 0.16s var(--ease);
-}
-.sw input:checked + .tk {
-  background: var(--primary);
-}
-.sw input:checked + .tk::before {
-  transform: translateX(13px);
-}
-.sw input:indeterminate + .tk {
-  background: var(--border-strong);
-}
-.sw input:focus-visible + .tk {
-  box-shadow: 0 0 0 3px var(--ring);
-}
-
-/* Code display tile (device approve) — soft tile, centered mono. */
-.codetile {
-  background: var(--tile);
-  border-radius: var(--r-tile);
-  padding: 18px;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 30px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--fg);
 }
 
 @media (prefers-reduced-motion: reduce) {

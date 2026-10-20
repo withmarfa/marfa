@@ -234,13 +234,13 @@ export function isPermission(scope: string): scope is Permission {
 
 /**
  * Whether a consent surface must obtain a deliberate yes for this scope,
- * rather than offering it pre-ticked or granting it alongside everything
+ * rather than offering it already on or granting it alongside everything
  * else.
  *
  * **One predicate because two surfaces answer.** The code-flow consent
- * screen gives a permission its own unticked row: it is authority over the
- * instance itself rather than over a resource in it, so arriving pre-ticked
- * would hand it over by silence. The device-approval screen's other
+ * screen gives a permission its own switch, off: it is authority over the
+ * instance itself rather than over a resource in it, so arriving on would
+ * hand it over by silence. The device-approval screen's other
  * withholding input is derived from the configured bundles, and a
  * permission no bundle names is offered by no bundle, so that input alone
  * would put it in no withheld set. Were the two screens to hold opposite
@@ -252,14 +252,13 @@ export function isPermission(scope: string): scope is Permission {
  * contents.** This is the platform's opinion about a scope, so it holds
  * whether or not any bundle names the literal — which is the case the
  * bundle-derived answer could not express. A surface asks both: `default_on`
- * decides what to offer ticked among the scopes a bundle claims, and this
- * decides what may never be ticked for the person.
+ * decides what to offer on among the scopes a bundle claims, and this
+ * decides what may never be on for the person.
  *
  * **It answers about the initial offer, never about what to keep.** A scope
  * the person already granted renders from the prior grant at re-consent; a
  * default that decides what to *offer* must not be reused to decide what to
- * *keep*, or an untouched Continue silently narrows a grant and revokes the
- * app's working tokens.
+ * *keep*, or an untouched approval would drop a permission the app holds.
  *
  * A guard rather than a throw for an unrecognized literal, matching
  * `permissionLabel` and for the same reason: the callers ask this of whatever
@@ -1593,10 +1592,9 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
 /**
  * Scopes that only an off-by-default bundle offers.
  *
- * `default_on: false` means the toggle starts unticked, and the whole of
- * what it grants is that a person ticked it. Both consent surfaces read this
- * to decide which rows arrive unticked. The device flow has per-scope
- * toggles and withholds them the same way the authorize screen does.
+ * `default_on: false` means the control starts off, and the whole of what it
+ * grants is that a person turned it on. Both consent surfaces read this to
+ * decide which controls start off, and withhold them the same way.
  *
  * Claimed by at least one bundle and reached by no on-by-default one, so a
  * scope the user already gets by default is not withheld, and a scope no

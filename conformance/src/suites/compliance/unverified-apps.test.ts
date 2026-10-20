@@ -1,3 +1,8 @@
+import {
+  readControls,
+  readRows,
+  visibleText,
+} from "../../utils/approval-form.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -5,7 +10,6 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { visibleText } from "../../utils/page-html.js";
 
 /**
  * The caution the pages a person approves an app on show beside its name.
@@ -22,7 +26,8 @@ let origin: string;
 let cookie: string;
 
 const CALLBACK = "http://127.0.0.1:9/callback";
-const CAUTION = "hasn't verified this app";
+const CAUTION = "can't confirm who made this app";
+const SIGN_IN_CAUTION = "hasn't verified this app";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 beforeAll(async () => {
@@ -122,14 +127,14 @@ async function consentPage(clientId: string, scope?: string): Promise<string> {
   return page.text();
 }
 
-/** The text of the sign-in page a person nobody has signed in is sent to by the app. */
+/** The sign-in page a person nobody has signed in is sent to by the app. */
 async function signInPage(clientId: string): Promise<string> {
   const authorize = await fetch(authorizeUrl(clientId), { redirect: "manual" });
   const signIn = await sentTo(authorize);
   expect(signIn.pathname).toBe("/auth/sign-in");
   const page = await fetch(signIn);
   expect(page.status).toBe(200);
-  return visibleText(await page.text());
+  return page.text();
 }
 
 /** The approval page for a code the app asked for on a device. */
@@ -172,10 +177,10 @@ describe("an app a person approves", () => {
       "client_secret_basic",
       grants,
     );
-    const openPage = await consentPage(open.clientId);
+    const openPage = visibleText(await consentPage(open.clientId));
     expect(openPage).toContain("Open Consent App");
     expect(openPage).toContain(CAUTION);
-    const secretPage = await consentPage(secret.clientId);
+    const secretPage = visibleText(await consentPage(secret.clientId));
     expect(secretPage).toContain("Secret Consent App");
     expect(secretPage).toContain(CAUTION);
   });
@@ -188,12 +193,12 @@ describe("an app a person approves", () => {
       "client_secret_basic",
       grants,
     );
-    const openPage = await signInPage(open.clientId);
+    const openPage = visibleText(await signInPage(open.clientId));
     expect(openPage).toContain("Open Sign-In App");
-    expect(openPage).toContain(CAUTION);
-    const secretPage = await signInPage(secret.clientId);
+    expect(openPage).toContain(SIGN_IN_CAUTION);
+    const secretPage = visibleText(await signInPage(secret.clientId));
     expect(secretPage).toContain("Secret Sign-In App");
-    expect(secretPage).toContain(CAUTION);
+    expect(secretPage).toContain(SIGN_IN_CAUTION);
   });
 
   it("is shown with the caution on the device approval page, whether or not it authenticates with a secret", async () => {
@@ -204,31 +209,28 @@ describe("an app a person approves", () => {
       "client_secret_basic",
       grants,
     );
-    const openPage = await deviceApprovalPage(open);
+    const openPage = visibleText(await deviceApprovalPage(open));
     expect(openPage).toContain("Open Device App");
     expect(openPage).toContain(CAUTION);
-    const secretPage = await deviceApprovalPage(secret);
+    const secretPage = visibleText(await deviceApprovalPage(secret));
     expect(secretPage).toContain("Secret Device App");
     expect(secretPage).toContain(CAUTION);
   });
 });
 
 /**
- * The line each toggle row on a page says, by the literal its checkbox
- * submits: the row's label and, where it has one, how far it reaches.
+ * What each choice on a page says, by the literal it submits: for a level
+ * control, the text after its name, for each level it offers.
  */
 function rowLines(html: string): Map<string, string> {
   const rows = new Map<string, string>();
-  for (const m of html.matchAll(
-    /<div class="subrow"><span>(.*?)<\/span><label class="sw"><input type="checkbox" name="scopes" value="([^"]+)"/g,
-  )) {
-    rows.set(
-      m[2]!,
-      m[1]!
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim(),
-    );
+  for (const { control, text } of readRows(html)) {
+    const name = control.label ?? "";
+    const after = text.slice(text.lastIndexOf(name) + name.length).trim();
+    for (const literal of control.tag === "select"
+      ? control.options.map((o) => o.value).filter((v) => v !== "")
+      : [control.value])
+      rows.set(literal, `${name} | ${after}`);
   }
   return rows;
 }
@@ -254,14 +256,21 @@ describe("a grant a person reads", () => {
       "authorization_code",
     ]);
     const device = await register("Same Words Device", "none", [DEVICE_GRANT]);
-    const consent = rowLines(await consentPage(browser.clientId, scope));
+    const consentPageHtml = await consentPage(browser.clientId, scope);
+    const consent = rowLines(consentPageHtml);
     const approval = rowLines(await deviceApprovalPage(device, scope));
     expect([...consent.keys()].sort()).toEqual(scope.split(" ").sort());
     expect(Object.fromEntries(approval)).toEqual(Object.fromEntries(consent));
-    // The read and the write of one type are told apart.
-    expect(consent.get("core.note:read")).not.toBe(
-      consent.get("core.note:write"),
+    // The read and the write of one type are one control, with the levels
+    // told apart.
+    const notes = readControls(consentPageHtml).find(
+      (c) => c.tag === "select" && c.label === "Note",
     );
+    expect(notes?.options.map((o) => [o.value, o.label])).toEqual([
+      ["", "No access"],
+      ["core.note:read", "Read only"],
+      ["core.note:write", "Read and edit"],
+    ]);
     // A wildcard names the types it covers today and says it grows; a
     // grant of one type says no reach beyond it.
     expect(consent.get("user.*:read")).toContain("Conformance recipe");

@@ -38,10 +38,9 @@ describe("form controls are styled", () => {
 
 describe("one section-label style", () => {
   it("has no second, competing label primitive", () => {
-    // `.eyebrow` was uppercase and gray, `.lsec` is sentence case and black,
-    // and they did the same job on different pages. The second is the one
-    // that stayed.
-    expect(AUTH_CSS).toContain(".lsec");
+    // `.eyebrow` was uppercase and gray, `.lsec` sentence case and black,
+    // and they did the same job on different pages. Neither is left.
+    expect(AUTH_CSS).not.toContain(".lsec");
     expect(AUTH_CSS).not.toContain(".eyebrow {");
   });
 });

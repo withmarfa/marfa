@@ -61,6 +61,18 @@ function rawRun(query: string, params: unknown[]): Promise<unknown> {
   ).__sqliteRun(query, params);
 }
 
+/** Lower the consent a grant stands on to exactly `scopes`, as storage holds it. */
+async function narrowConsent(
+  clientId: string,
+  userId: string,
+  scopes: string[],
+): Promise<void> {
+  const prior = (await provider().getPriorConsent(clientId, userId)) ?? [];
+  expect(
+    await provider().setConsentScopes(clientId, userId, scopes, prior),
+  ).toBe(true);
+}
+
 /** A consented grant and a first token under it. */
 async function grant(scopes = SCOPES) {
   const seeded = await seedOauthBearer(ctx, scopes);
@@ -238,9 +250,10 @@ describe("a signed-in app's subscription", () => {
   it("narrows its deliveries when the grant is narrowed", async () => {
     const g = await grant();
     await register(g.first);
-    await seedOauthBearer(ctx, ["core.note:read", "webhooks.manage"], {
-      clientId: g.clientId,
-    });
+    await narrowConsent(g.clientId, g.userId, [
+      "core.note:read",
+      "webhooks.manage",
+    ]);
     expect(
       await delivered([
         item("01HNARROWTASKNARROWTASK00", "core.task"),

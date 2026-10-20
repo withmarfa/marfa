@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { raw } from "hono/html";
 import { Breadcrumb } from "./parts/breadcrumb.js";
 import { CommandSearch } from "./parts/command-search.js";
-import { Button, Select, Switch } from "./parts/controls.js";
+import { CodeCells } from "./parts/code-cells.js";
+import { Button, ButtonPair, Select, Switch } from "./parts/controls.js";
 import { Dialog } from "./parts/dialog.js";
 import { EmptyState, Notice } from "./parts/feedback.js";
 import {
@@ -20,7 +21,13 @@ import {
   Section,
 } from "./parts/layout.js";
 import { ListToolbar, Pager, Tabs } from "./parts/list.js";
-import { ClosingAction, Row, RowGroup } from "./parts/rows.js";
+import {
+  ClosingAction,
+  DisclosureRow,
+  Row,
+  RowGroup,
+  RowNote,
+} from "./parts/rows.js";
 import { PageShell } from "./parts/shell.js";
 import { pageAssetUrl } from "./assets.js";
 import { paginate } from "./navigation.js";
@@ -171,6 +178,22 @@ describe("layout", () => {
     expect(attrs(out, /<main /).id).toBe("main");
   });
 
+  it("names the asking app beside Marfa's mark by its first letter, and only when given one", () => {
+    const withApp = html(<MomentCard title="Allow" app="harbor" />);
+    expect(withApp).toContain('<span class="tile">H</span>');
+    expect(withApp.indexOf('class="tile"')).toBeLessThan(
+      withApp.indexOf('class="tile marfa"'),
+    );
+    expect(html(<MomentCard title="Allow" />)).not.toContain('class="tile"');
+    // An app named in markup is text, and a name with nothing to show is a question mark.
+    expect(html(<MomentCard title="Allow" app="<b>" />)).toContain(
+      '<span class="tile">&lt;</span>',
+    );
+    expect(html(<MomentCard title="Allow" app=" " />)).toContain(
+      '<span class="tile">?</span>',
+    );
+  });
+
   it("leaves out the lede and foot it was not given", () => {
     const out = html(<MomentCard title="Signed out" />);
     expect(out).not.toContain('class="lede"');
@@ -292,6 +315,71 @@ describe("rows", () => {
   });
 });
 
+describe("a row that opens in place", () => {
+  it("is a native disclosure a keyboard can open, closed unless told otherwise", () => {
+    const closed = html(
+      <DisclosureRow title="Already allowed" description="It keeps this.">
+        <Row title="Notes" value="Read only" />
+      </DisclosureRow>,
+    );
+    expect(closed).toContain('<details class="disclosure-row">');
+    expect(closed).toContain('<summary class="row has-d">');
+    expect(closed).toContain('<div class="rt">Already allowed</div>');
+    expect(closed).toContain('<div class="rd">It keeps this.</div>');
+    expect(closed).toContain('<div class="sub">');
+    expect(closed).not.toMatch(/<details[^>]* open/);
+    expect(
+      html(
+        <DisclosureRow title="x" open>
+          y
+        </DisclosureRow>,
+      ),
+    ).toMatch(/<details[^>]* open/);
+  });
+
+  it("marks the line under its title for the script only when the script keeps it true, and passes data to it", () => {
+    const live = html(
+      <DisclosureRow
+        title="Your data"
+        description="Read notes"
+        live
+        data={{ "access-group": "data" }}
+      />,
+    );
+    expect(live).toContain(
+      '<details class="disclosure-row" data-access-group="data">',
+    );
+    expect(live).toContain('<div class="rd" data-summary="">Read notes</div>');
+    expect(
+      html(
+        <DisclosureRow title="Already allowed" description="It keeps this." />,
+      ),
+    ).not.toContain("data-summary");
+  });
+
+  it("ends in small print that sits inside what the row opens to", () => {
+    expect(
+      html(
+        <DisclosureRow title="x">
+          <RowNote>Approving never lowers this.</RowNote>
+        </DisclosureRow>,
+      ),
+    ).toContain(
+      '<div class="sub"><p class="sub-note">Approving never lowers this.</p></div>',
+    );
+  });
+
+  it("shows a badge after the title of a row or a disclosure", () => {
+    expect(html(<Row title="Notes" badge="New" />)).toContain(
+      '<div class="rt">Notes<span class="badge new">New</span></div>',
+    );
+    expect(html(<DisclosureRow title="More" badge="New" />)).toContain(
+      '<span class="badge new">New</span>',
+    );
+    expect(html(<Row title="Notes" />)).not.toContain("badge");
+  });
+});
+
 describe("controls", () => {
   it("makes a link that looks like a button, and a button that is not a submit by default", () => {
     expect(
@@ -341,6 +429,55 @@ describe("controls", () => {
     ).toBe("Saving...");
   });
 
+  it("passes data to a select and a switch for the script that reads them", () => {
+    expect(
+      attrs(
+        html(
+          <Select
+            label="Note"
+            options={[{ value: "", label: "No access" }]}
+            data={{ noun: "notes", held: "read" }}
+          />,
+        ),
+        /<select /,
+      ),
+    ).toMatchObject({ "data-noun": "notes", "data-held": "read" });
+    expect(
+      attrs(
+        html(<Switch id="s" data={{ phrase: "Your email address" }} />),
+        /<input /,
+      )["data-phrase"],
+    ).toBe("Your email address");
+  });
+
+  it("puts two buttons side by side as a pair", () => {
+    const out = html(
+      <ButtonPair>
+        <Button>Cancel</Button>
+        <Button kind="primary">Approve</Button>
+      </ButtonPair>,
+    );
+    expect(out.startsWith('<div class="pair">')).toBe(true);
+    expect(out.match(/<button /g)).toHaveLength(2);
+  });
+
+  it("shows a device code as cells in two groups of four, named by the code with its dash", () => {
+    const out = html(
+      <CodeCells
+        code="ABCD1234"
+        caption="Check this code matches your device"
+      />,
+    );
+    expect(attrs(out, /<div class="code-cells"/)).toMatchObject({
+      role: "img",
+      "aria-label": "ABCD-1234",
+    });
+    expect(out.match(/<span>/g)).toHaveLength(8);
+    expect(out).toContain("Check this code matches your device");
+    // The dash sits between the groups.
+    expect(out).toMatch(/<span>D<\/span><i><\/i><span>1<\/span>/);
+  });
+
   it("marks the chosen option, in groups too", () => {
     const out = html(
       <Select
@@ -373,6 +510,12 @@ describe("controls", () => {
     });
     expect("checked" in on).toBe(true);
     expect("checked" in attrs(html(<Switch id="s" />), /<input /)).toBe(false);
+  });
+
+  it("sends the value a switch was given when it is on", () => {
+    expect(
+      attrs(html(<Switch id="s" name="scopes" value="keys.mint" />), /<input /),
+    ).toMatchObject({ name: "scopes", value: "keys.mint" });
   });
 });
 
@@ -936,5 +1079,18 @@ describe("the noscript line", () => {
 
   it("is on by default, so a page must say it does not need the script", () => {
     expect(page()).toContain("<noscript>");
+  });
+
+  it("is left out, though the script loads, on a page the script only improves", () => {
+    const out = renderDocument(
+      <PageShell
+        title="T"
+        nonce="abc123"
+        needsScript={false}
+        enhancedByScript
+      />,
+    );
+    expect(out).not.toContain("noscript");
+    expect(out).toContain("<script ");
   });
 });

@@ -1115,13 +1115,15 @@ A signed-in person approves an app on the consent screen, and the decision ends 
 
 ### `keys-and-oauth/consent-screen`
 
-When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names.
+When a signed-in person's authorization request names scopes no standing consent covers, the server MUST send the browser to `/auth/authorize`, a consent screen offering each scope the request names that no standing consent covers.
 
-**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`.
+**Reason:** A scope the person's standing consent already covers is shown as held and not offered again (`keys-and-oauth/approval-held-shown`). The server adds it to an approval while the consent still covers it (`keys-and-oauth/approval-held-now`).
+
+**Tests:** `compliance/oauth-authorize.test.ts › shows a signed-in person a consent screen offering each scope the request names`, `compliance/approval-screens.test.ts › shows a scope the app holds in full without offering it as a choice, and does not post it, on the consent screen`.
 
 ### `keys-and-oauth/consent-accepted`
 
-When a person accepts on the consent screen, the server MUST send the browser to the request's redirect URI with a `code` and the request's `state`.
+When a person approves on the consent screen and `keys-and-oauth/consent-nothing-denies` does not apply, the server MUST send the browser to the request's redirect URI with a `code` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends the code for an accepted consent to the redirect URI with the request's state`.
 
@@ -1131,11 +1133,19 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a declined consent to the redirect URI as access_denied with the request's state`.
 
+### `keys-and-oauth/consent-nothing-denies`
+
+Where a request names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+
+**Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `openid` and `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
+
+**Tests:** `compliance/approval-screens.test.ts › answers an approval with nothing chosen as access_denied, as declining is answered`, `› answers an approval with everything newly asked turned off as access_denied for an app that already holds access, on the consent screen`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+
 ### `keys-and-oauth/consent-ticked`
 
-When a person accepts with only some of the offered scopes ticked, the server MUST issue a token for exactly the scopes left ticked.
+When a person approves on the consent screen with only some of the scopes the request names chosen, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
 
-**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person left ticked`, `compliance/web-page-origin.test.ts › issues a narrowed page only what it left ticked, though its origin is allowed`.
+**Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what the person chose, though its origin is allowed`.
 
 ### `keys-and-oauth/consent-standing`
 
@@ -1205,7 +1215,7 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 **Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every one of the twelve permissions is left out, and so is any scope this build cannot read.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left unticked`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off`.
 
 ### `keys-and-oauth/consent-recent-needed`
 
@@ -1236,6 +1246,132 @@ If a browser session that signed in more than five minutes ago opens `/auth/auth
 **Reason:** The person is asked for the password before the screen, so they are not shown an approval the server would refuse. A screen already open when the five minutes pass is covered by `keys-and-oauth/consent-recent-browser`.
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › sends a session that signed in more than five minutes ago to sign in again before it shows a request for a permission or a write`, `› lands the person back on the screen after they sign in again, where they approve`, `› shows a session that signed in more than five minutes ago a request that only reads`, `› answers a request a standing consent covers with a code, whatever the age of the session`.
+
+## What the approval pages offer
+
+The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, so what a form posts is the request narrowed.
+
+### `keys-and-oauth/approval-one-control`
+
+While an app holds no access to an item type, where a request names both the read and the write of it, the server MUST offer that type, on the consent screen or the device approval page, as one control with the choices no access, read only and read and edit.
+
+**Reason:** Two boxes for one type let a person turn on writing and turn off reading, which is not a level anyone means. Once the app holds the read, `keys-and-oauth/approval-levels-held` takes no access away and the control starts at read only.
+
+**Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`.
+
+### `keys-and-oauth/approval-edit-words`
+
+Where the consent screen or the device approval page offers the choice read and edit for an item type or for content, the server MUST say beside the choices for data that edit includes adding and deleting items.
+
+**Reason:** Read and edit is the write level, which creates, changes and deletes items, a delete moving the item to the bin. Destroying a trashed item for good takes the separate power `items.purge`, which the page offers on its own. Editing a definition, a link type or the profile adds and deletes no item, so those choices do not bring the line: `metadata.types:write` registers and changes types, and deleting one takes `schema.write`.
+
+**Tests:** `compliance/approval-screens.test.ts › says that editing includes adding and deleting items, where a level to edit is offered, on both pages`.
+
+### `keys-and-oauth/approval-levels-asked`
+
+The server MUST NOT offer, on the consent screen or the device approval page, a level for a type above the highest level the request names for it.
+
+**Tests:** `compliance/approval-screens.test.ts › offers no level above the one the request names, on both pages`.
+
+### `keys-and-oauth/approval-only-asked`
+
+The server MUST NOT offer, on the consent screen or the device approval page, a choice for a scope the request does not name.
+
+**Reason:** Links between items, an app's own metadata and the profile appear only when an app asks for them.
+
+**Tests:** `compliance/approval-screens.test.ts › offers only the scopes the request names, on both pages`.
+
+### `keys-and-oauth/approval-open-ended`
+
+Where a request names a scope that reaches types registered later, the server MUST say beside its control, on the consent screen or the device approval page, that it covers anything added later.
+
+**Tests:** `compliance/approval-screens.test.ts › says beside a scope that reaches later types that it does, on both pages`.
+
+### `keys-and-oauth/approval-powers-off`
+
+The server MUST offer each permission a request names, on the consent screen or the device approval page, turned off.
+
+**Reason:** A permission is authority over the instance itself, handed over only by turning it on.
+
+**Tests:** `compliance/approval-screens.test.ts › offers every permission turned off, on both pages`.
+
+### `keys-and-oauth/approval-powers-marked`
+
+Where a request names `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each on the consent screen and the device approval page as unable to be undone.
+
+**Reason:** These delete data or definitions with no way back.
+
+**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good, and no other, on both pages`.
+
+### `keys-and-oauth/approval-powers-words`
+
+The server MUST describe each of the twelve permissions in the same words on the consent screen, the device approval page and the key form on the Manage page.
+
+**Reason:** The same grant reads the same wherever a person decides on it, so a power read once is recognized everywhere.
+
+**Tests:** `compliance/approval-screens.test.ts › describes each permission in the same words on both pages and on the key form`.
+
+### `keys-and-oauth/manage-powers-marked`
+
+Where the key form on the Manage page offers `instance.maintain`, `schema.write` or `items.purge`, the server MUST mark each as unable to be undone.
+
+**Reason:** `keys-and-oauth/approval-powers-marked` holds for the approval pages, and a key holds the same powers.
+
+**Tests:** `compliance/approval-screens.test.ts › marks the permissions that delete for good on the key form, and no other`.
+
+### `keys-and-oauth/approval-held-shown`
+
+While an app holds consent, the server MUST show on the consent screen and the device approval page what the app holds, apart from what the request newly asks for.
+
+**Tests:** `compliance/approval-screens.test.ts › shows what the app holds apart from what it asks for, on both pages`.
+
+### `keys-and-oauth/approval-levels-held`
+
+While an app holds access to a type, the server MUST NOT offer, on the consent screen or the device approval page, a level for that type below the level the app holds.
+
+**Reason:** Neither page lowers an app's access.
+
+**Tests:** `compliance/approval-screens.test.ts › offers no level below what the app holds, on both pages`.
+
+### `keys-and-oauth/approval-keep-held`
+
+While an app holds the read of an item type or of the profile and not its write, and a request names the write of it, the server MUST offer, on the consent screen or the device approval page, the choice read only, which posts no scope, beside the choice read and edit.
+
+**Reason:** The page offers no level below what the app holds, so without this choice a person who holds the read could not decline the write: the only choice left would be the write. Choosing the held read leaves the standing consent as it is and asks nothing new. It posts no scope even where the request names the read, so a screen left open while the person disconnects the app does not count the read as newly chosen.
+
+**Tests:** `compliance/approval-screens.test.ts › offers the held read beside the write, on both pages, for an item type's write asked while its read is held`, `› offers the held read beside the write, on both pages, for a type's write asked beside a wildcard read the app holds`, `› offers the held read beside the write, on both pages, for the profile's write asked while its read is held`, `› gives back no held read through Read only beside the write once the app is disconnected`.
+
+### `keys-and-oauth/approval-never-lowers`
+
+When a person approves on the consent screen or the device approval page, the server MUST keep every scope the app already holds.
+
+**Reason:** The page shows what is held and cannot lower it, so a submission that omits a held scope does not lower it either. The token the approval makes carries what was chosen and the held scopes the request names.
+
+**Tests:** `compliance/approval-screens.test.ts › keeps what the app holds when a narrower choice is approved on the consent screen`, `› keeps what the app holds when a narrower choice is approved on the device approval page`.
+
+### `keys-and-oauth/approval-held-now`
+
+When a person approves on the consent screen or the device approval page, the server MUST add to the approval only the scopes the request names that the app's standing consent covers when the approval commits.
+
+**Reason:** The page posts the person's choices and the mechanisms, not the access the app holds. A screen left open while the person disconnects the app, in another tab, then gives nothing back: with the held scopes gone and nothing newly chosen the approval is a denial, and with a choice the app gets that choice and nothing it held.
+
+**Tests:** `compliance/approval-screens.test.ts › adds the access the app still holds to what is approved on the consent screen`, `› adds the access the app still holds to what is approved on the device approval page`, `› gives back nothing the person ended, and denies where nothing new is chosen, on the consent screen`, `› refuses the device code of a screen left open once the app is disconnected, and grants nothing`.
+
+### `keys-and-oauth/approval-write-read`
+
+When an approval names a write scope for an item type and the request also names the read scope of that type, the server MUST issue the token for both.
+
+**Reason:** A write includes the read, so "read and edit" gives a token the same scopes as before a level was one control.
+
+**Tests:** `compliance/approval-screens.test.ts › issues the read a chosen write includes`.
+
+### `keys-and-oauth/approval-beyond-shown`
+
+If an approval posted from the consent screen or the device approval page names a scope the request did not name, then the server MUST answer `400` and grant nothing.
+
+**Reason:** A form can only narrow the request. A post asking for more than the page showed is refused whole, so not even the scopes beside the extra one are granted.
+
+**Tests:** `compliance/approval-screens.test.ts › refuses a consent decision that names a scope the request did not, and grants nothing`, `› refuses a device approval that names a scope the code did not carry, and leaves the code pending`.
 
 ## A client's registration
 
@@ -1679,6 +1815,14 @@ When a client polls with a device code the person denied, the server MUST answer
 
 **Tests:** `compliance/device-grant.test.ts › answers access_denied to a poll of a code the person denied`.
 
+### `keys-and-oauth/device-nothing-denies`
+
+Where a device code names a scope other than `openid` and `offline_access` that the app's standing consent does not cover, when a person approves it with none of those scopes chosen, the server MUST deny the code, so that the next poll of it is answered `400 access_denied`.
+
+**Reason:** The same rule as `keys-and-oauth/consent-nothing-denies`, so a request is answered the same way on either page.
+
+**Tests:** `compliance/approval-screens.test.ts › denies a device code approved with nothing chosen`, `› denies a device code approved with everything newly asked turned off by an app that already holds access, on the device approval page`, `› approves a request that names only openid and offline_access, which offers nothing to turn off`.
+
 ### `keys-and-oauth/device-expired`
 
 When a client polls with a device code past its expiry, the server MUST answer `400 expired_token`.
@@ -1715,7 +1859,7 @@ When a signed-in person approves a device code, the server MUST add to the clien
 
 When a browser session that signed in more than five minutes ago approves a device code with only scopes that `keys-and-oauth/consent-older-reads` lists, the server MUST approve the code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left unticked`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off`.
 
 ### `keys-and-oauth/device-recent-needed`
 
@@ -1869,6 +2013,20 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a person who has tried too many device codes how long to wait, in whole minutes rounded up`.
 
+### `keys-and-oauth/device-code-not-right`
+
+When `GET /auth/device` carries `error=invalid_code` or `error=expired_code`, the server MUST answer a page saying the code isn't right or has ended.
+
+**Reason:** A person who meets either needs the same next step, a new code from their device, so the page says one thing for both.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+
+### `keys-and-oauth/device-code-lifetime`
+
+The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+
 ### `keys-and-oauth/device-lookup-instance-limit`
 
 If every address together has made a hundred counted device code lookups without direct owner browser authority in fifteen minutes, then the server MUST redirect the next lookup without that authority from any address with `error=too_many_attempts` before the code is looked up.
@@ -1979,7 +2137,7 @@ The server MUST show the unverified-app caution for an app that authenticates wi
 
 ### `keys-and-oauth/consent-names-page`
 
-When the consent screen offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+When the consent screen offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered, written without its `https://` scheme where it has one.
 
 **Reason:** Approving the page allows those addresses, so the owner confirms the address and not only the name the page chose.
 
@@ -1987,7 +2145,7 @@ When the consent screen offers access to a web client, the server MUST name on i
 
 ### `keys-and-oauth/device-names-page`
 
-When the device approval page offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered.
+When the device approval page offers access to a web client, the server MUST name on it the origin of each redirect URI the client registered, written without its `https://` scheme where it has one.
 
 **Reason:** Approving a web client on this page allows its addresses as approving it on the consent screen does.
 

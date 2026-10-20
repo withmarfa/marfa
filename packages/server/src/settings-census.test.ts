@@ -33,6 +33,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
   "test-browser.ts":
     "finds the browser a test runs in, from the machine's own environment, a test's own switch",
+  "pages/browser/approve-access.browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "pages/browser/pages.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "pages/browser/sign-in.browser.test.ts":

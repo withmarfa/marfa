@@ -15,6 +15,7 @@ There is no client framework and no client-side rendering.
 | `client/`             | The browser modules, bundled into one script.                               |
 | `lockout.ts`          | Turns the wait a refusal names into the minutes a page says.                |
 | `reading.ts`          | Reads a rendered page as a person does, for tests: text, fields, forms.     |
+| `access-summary.ts`   | The words an approval page says about a choice, for the server and browser. |
 | `registry.ts`         | The pages of the console, for the page picker and the command search.       |
 | `navigation.ts`       | Logic the server and the browser share: stepping, matching, pagination.     |
 | `assets.generated.ts` | The built stylesheet and script, with their hashes. Generated; do not edit. |
@@ -26,11 +27,24 @@ There is no client framework and no client-side rendering.
   `needsScript={false}`, it also loads the script with the nonce and writes a
   one-line `<noscript>` notice. A page that works in full without script (the
   signed-out and problem pages) sets it to false, so it loads no script and
-  does not say it needs one.
-- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and `Divider`.
-- **Rows:** `RowGroup`, `Row` and `ClosingAction`.
-- **Controls and fields:** `Button`, `Select`, `Switch`, `TextField`,
-  `PasswordField`, `SearchField` and `FormFoot`.
+  does not say it needs one. A page that works in full without script but is
+  better with it (the approval pages, whose summary lines the script keeps
+  true) adds `enhancedByScript`: the script loads and the notice stays out.
+- **Layout:** `MomentCard`, `ConsoleColumn`, `PageHeader`, `Section` and
+  `Divider`. A `MomentCard` that an app is asking through names it with `app`,
+  and shows its first letter beside Marfa's mark.
+- **Rows:** `RowGroup`, `Row`, `DisclosureRow`, `RowNote` and `ClosingAction`.
+  A `Row` or a `DisclosureRow` takes a `badge` such as "New". A `DisclosureRow`
+  is a row that opens in place to show more rows, with a line under its title
+  that says what they give; the browser opens it, with no script, and `live`
+  marks the line for the browser module that rewrites it as they change. A
+  `RowNote` is small print at the end of what a row opens to.
+- **Controls and fields:** `Button`, `ButtonPair`, `Select`, `Switch`,
+  `TextField`, `PasswordField`, `SearchField` and `FormFoot`. A `Select` and a
+  `Switch` take `data`, which becomes `data-*` attributes for a browser module.
+  A `ButtonPair` is two buttons of equal width, the main one last.
+- **Codes:** `CodeCells` shows a code for a person to compare with the one on
+  their device, one cell for each character, as one picture named by the code.
 - **Feedback:** `Notice`, `EmptyState` and `Dialog`.
 - **Lists:** `ListToolbar`, `Tabs` and `Pager`.
 - **Navigation:** `Breadcrumb` (with the page picker) and `CommandSearch`.
@@ -131,7 +145,11 @@ Render it as a child or an attribute value and it is escaped. Do not use
 ## Browser modules
 
 Each module in `client/` finds its own markup through a `data-` attribute and
-does nothing without it. `client/index.ts` starts them all. They use the DOM
+does nothing without it. `access.ts` finds an approval form (`data-access`),
+keeps the line under each of its rows (`data-access-group`) true as controls
+change, and hides "If everything is off, approving denies the request." while
+something is on. It calls the functions in `access-summary.ts`, which the
+server calls for the same lines, so the two cannot disagree. `client/index.ts` starts them all. They use the DOM
 only: no `innerHTML`, and styles are set through `element.style` where needed.
 The server renders a control that needs a script (the picker button, the
 password toggle, the shortcut hint) hidden, and the script shows it, so a

@@ -1,6 +1,8 @@
 /** The one script every page loads. Each module finds its own markup and does nothing without it. */
+import { initAccess } from "./access.js";
 import { initCommandSearch } from "./command-search.js";
 import { initCopy } from "./copy.js";
+import { initDeviceCode } from "./device-code.js";
 import { initDialogs } from "./dialog.js";
 import { initForms } from "./form.js";
 import { initPasskey } from "./passkey.js";
@@ -19,6 +21,8 @@ function start(): void {
   initPasskey();
   initSetup();
   initPasskeySignIn();
+  initAccess();
+  initDeviceCode();
 }
 
 if (document.readyState === "loading")
