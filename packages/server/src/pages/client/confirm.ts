@@ -17,7 +17,11 @@
  * of its own (`ConfirmDialogHost`). `window.marfaConfirm` lets such a page's
  * own script use the same flow.
  */
-import { CONFIRM_REFUSALS, isSignInAgainRefusal } from "../recent-sign-in.js";
+import {
+  CONFIRM_REFUSALS,
+  isSignInAgainRefusal,
+  RECENT_SIGN_IN_MS,
+} from "../recent-sign-in.js";
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
 import { clearFieldError, showFieldError } from "./form.js";
@@ -43,6 +47,18 @@ const WORDS = {
 
 export type Send = () => Promise<Response>;
 
+/**
+ * How long a page's sign-in has left, for a change too large to send and have
+ * refused. The page makes one when it loads, from what the server wrote on its
+ * form, and this module moves it on after a confirmation.
+ */
+export interface Gate {
+  /** Milliseconds the sign-in had left when the page arrived. */
+  left: number;
+  /** When the page arrived, in the browser's own clock. */
+  rendered: number;
+}
+
 export interface MarfaConfirm {
   /**
    * Send a change. If it is refused for an old sign-in, ask the person to
@@ -53,6 +69,7 @@ export interface MarfaConfirm {
     send: Send,
     why: string,
     opener?: Element | null,
+    gate?: Gate,
   ) => Promise<Response | null>;
 }
 
@@ -426,7 +443,18 @@ export async function sendConfirmed(
   send: Send,
   why: string,
   opener: Element | null = document.activeElement,
+  gate?: Gate,
 ): Promise<Response | null> {
+  // With a gate the question comes first when the sign-in has run out, so a
+  // large body is never sent only to be refused.
+  if (gate && Date.now() - gate.rendered >= gate.left - EARLY) {
+    const view = dialogView();
+    if (view) {
+      if (!(await ask(view, why, opener))) return null;
+      gate.rendered = Date.now();
+      gate.left = RECENT_SIGN_IN_MS;
+    }
+  }
   const first = await send();
   if (!(await refusedForOldSignIn(first))) return first;
   const view = dialogView();

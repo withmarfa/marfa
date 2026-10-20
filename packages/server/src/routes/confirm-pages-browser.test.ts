@@ -100,7 +100,8 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
         (await keySources()).filter((source) => source === "confirmed-key"),
       ).toHaveLength(1);
     } finally {
-      clock.resetClockForTests();
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
       await context.close();
     }
   });
@@ -132,7 +133,8 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
         .toBe(true);
       expect(await keySources()).not.toContain("cancelled-key");
     } finally {
-      clock.resetClockForTests();
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
       await context.close();
     }
   });
@@ -140,16 +142,15 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
   it("asks to confirm it's you to revoke a key, and revokes it once", async () => {
     const { context, page } = await signedIn();
     try {
-      const made = await ctx.ownerRequest("/keys", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+      const made = await context.request.post(`${origin}/keys`, {
+        headers: { origin },
+        data: {
           label: "To revoke",
           source: "to-revoke",
           permissions: ["instance.read"],
-        }),
+        },
       });
-      expect(made.status).toBe(201);
+      expect(made.status()).toBe(201);
       page.on("dialog", (alert) => void alert.accept());
       await page.goto(`${origin}/auth/owner/manage`);
       await page.locator("#keys li").filter({ hasText: "To revoke" }).waitFor();
@@ -169,34 +170,96 @@ inBrowser("Manage, with a sign-in older than five minutes", () => {
         .waitFor({ state: "detached" });
       expect(await keySources()).not.toContain("to-revoke");
     } finally {
-      clock.resetClockForTests();
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
       await context.close();
     }
   });
 });
 
 inBrowser("Restore, with a sign-in older than five minutes", () => {
-  it("asks to confirm it's you, then restores the archive once", async () => {
+  async function archiveFile() {
+    const exported = await ctx.ownerRequest("/export?format=archive");
+    expect(exported.status).toBe(200);
+    return {
+      name: "marfa.tgz",
+      mimeType: "application/gzip",
+      buffer: Buffer.from(await exported.arrayBuffer()),
+    };
+  }
+
+  /** The uploads a page has sent, counted as the browser sends them. */
+  function countUploads(page: Page): () => number {
+    let sent = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url() === `${origin}/restore`)
+        sent += 1;
+    });
+    return () => sent;
+  }
+
+  it("asks to confirm it's you before the upload starts, then sends it once", async () => {
     const { context, page } = await signedIn();
     try {
-      const exported = await ctx.ownerRequest("/export?format=archive");
-      expect(exported.status).toBe(200);
-      const archive = Buffer.from(await exported.arrayBuffer());
-      await page.goto(`${origin}/auth/owner/restore`);
+      const archive = await archiveFile();
       clock.advanceClock(6 * MINUTE);
-      await page.setInputFiles("#archive", {
-        name: "marfa.tgz",
-        mimeType: "application/gzip",
-        buffer: archive,
-      });
+      await page.goto(`${origin}/auth/owner/restore`);
+      const uploads = countUploads(page);
+      await page.setInputFiles("#archive", archive);
       await page.click("#restore button");
       expect(await dialogOf(page).innerText()).toContain(
         "Restoring adds to your data.",
       );
+      expect(uploads()).toBe(0);
       await confirmWithPassword(page);
       await page.locator("#result").filter({ hasText: "Restored" }).waitFor();
+      expect(uploads()).toBe(1);
     } finally {
-      clock.resetClockForTests();
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
+
+  it("sends nothing when the person cancels the question", async () => {
+    const { context, page } = await signedIn();
+    try {
+      const archive = await archiveFile();
+      clock.advanceClock(6 * MINUTE);
+      await page.goto(`${origin}/auth/owner/restore`);
+      const uploads = countUploads(page);
+      await page.setInputFiles("#archive", archive);
+      await page.click("#restore button");
+      await dialogOf(page).waitFor();
+      await page.keyboard.press("Escape");
+      await page
+        .locator("#result")
+        .filter({ hasText: "Nothing was restored" })
+        .waitFor();
+      expect(uploads()).toBe(0);
+    } finally {
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
+
+  it("still asks when the server refuses an upload the page thought was in time", async () => {
+    const { context, page } = await signedIn();
+    try {
+      const archive = await archiveFile();
+      await page.goto(`${origin}/auth/owner/restore`);
+      const uploads = countUploads(page);
+      // Only the server's clock moves, so the page has no way to know.
+      clock.advanceClock(6 * MINUTE);
+      await page.setInputFiles("#archive", archive);
+      await page.click("#restore button");
+      await confirmWithPassword(page);
+      await page.locator("#result").filter({ hasText: "Restored" }).waitFor();
+      expect(uploads()).toBe(2);
+    } finally {
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
       await context.close();
     }
   });
@@ -248,7 +311,8 @@ inBrowser("Passkeys, with a sign-in older than five minutes", () => {
       await page.getByText("Passkey removed.", { exact: true }).waitFor();
       expect(await ctx.auth.listOwnerPasskeys(ownerId)).toHaveLength(0);
     } finally {
-      clock.resetClockForTests();
+      // Past the window a sign-in address is counted over, so the next case starts clear.
+      clock.advanceClock(16 * MINUTE);
       await context.close();
     }
   });

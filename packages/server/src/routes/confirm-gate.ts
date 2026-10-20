@@ -1,9 +1,22 @@
 import type { Context } from "hono";
 import { needsRecentSignIn } from "@withmarfa/shared";
-import { RECENT_SIGN_IN_MS, type AppEnv } from "../middleware/auth.js";
+import type { AppEnv } from "../middleware/auth.js";
+import { RECENT_SIGN_IN_MS } from "../pages/recent-sign-in.js";
 import type { ConfirmGate } from "../pages/parts/index.js";
 import { contentSecurityPolicy } from "./content-security-policy.js";
 import * as clock from "../clock.js";
+
+/**
+ * Milliseconds until the owner's sign-in stops counting as recent, which is
+ * negative once it has, or `undefined` for a request that is not an owner's
+ * browser session. A page that sends a large body reads it to open the dialog
+ * before the upload starts, rather than after the server has refused it.
+ */
+export function signInLeft(c: Context<AppEnv>): number | undefined {
+  const authority = c.get("authority");
+  if (authority?.kind !== "owner") return undefined;
+  return authority.authenticatedAt + RECENT_SIGN_IN_MS - clock.nowMs();
+}
 
 /**
  * What an approval page needs to ask the person to confirm it's them before it
@@ -18,8 +31,8 @@ export function confirmGateFor(
   offered: readonly string[],
   held: readonly string[] | undefined,
 ): ConfirmGate | undefined {
-  const authority = c.get("authority");
-  if (authority?.kind !== "owner") return undefined;
+  const left = signInLeft(c);
+  if (left === undefined) return undefined;
   const scopes = offered.filter((scope) => needsRecentSignIn([scope], held));
   if (scopes.length === 0) return undefined;
   // The dialog posts to this server, which the baseline policy does not allow.
@@ -28,7 +41,7 @@ export function confirmGateFor(
     `${contentSecurityPolicy(c.var.cspNonce)}; connect-src 'self'`,
   );
   return {
-    left: authority.authenticatedAt + RECENT_SIGN_IN_MS - clock.nowMs(),
+    left,
     scopes,
     why: `To let ${appName} change your data or control Marfa, confirm it's you.`,
   };

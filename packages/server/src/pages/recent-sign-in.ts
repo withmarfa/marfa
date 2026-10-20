@@ -4,6 +4,9 @@
  * same definition, so the refusal cannot be reworded on one side only.
  */
 
+/** How long after a browser session was created a change that needs a recent sign-in is still allowed. */
+export const RECENT_SIGN_IN_MS = 300_000;
+
 /** The message of the `403 forbidden` a door answers when the sign-in is too old. */
 export const SIGN_IN_AGAIN_MESSAGE = "Sign in again to perform this operation";
 

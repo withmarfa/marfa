@@ -6,6 +6,7 @@ import { PERMISSIONS } from "@withmarfa/shared";
 import { requireDirectAuthority, type AppEnv } from "../middleware/auth.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { confirmDialogMarkup } from "./confirm-host.js";
+import { signInLeft } from "./confirm-gate.js";
 import { escapeHtml } from "./auth-html.js";
 import {
   PERMISSION_LABELS,
@@ -118,21 +119,25 @@ refresh().catch(error => {status.textContent = error.message;});
       }),
     );
   });
-  router.get("/restore", (c) =>
-    c.html(
+  router.get("/restore", (c) => {
+    // A restore is usually large, so the page asks the owner to confirm before
+    // the upload starts rather than after the server has refused it.
+    const left = signInLeft(c);
+    return c.html(
       renderAuthLayout({
         nonce: c.var.cspNonce,
         title: "Restore an archive",
         bodyHtml: `<h1>Restore an archive</h1><p>Restore a Marfa archive into this instance. Existing items stay as they are. The archive can also restore server-managed records.</p>
-<form id="restore"><label for="archive">Marfa archive</label><input id="archive" type="file" accept=".gz,.tgz,application/gzip" required><button>Restore archive</button></form>
+<form id="restore"${left === undefined ? "" : ` data-confirm-left="${String(Math.max(0, Math.round(left)))}"`}><label for="archive">Marfa archive</label><input id="archive" type="file" accept=".gz,.tgz,application/gzip" required><button>Restore archive</button></form>
 <p id="result" role="status"></p><a href="/auth/owner/manage">Back to settings</a>
 ${confirmDialogMarkup(c.var.cspNonce)}
 <script nonce="${escapeHtml(c.var.cspNonce)}">
+const gate = { left: Number(document.getElementById('restore').dataset.confirmLeft), rendered: Date.now() };
 document.getElementById('restore').addEventListener('submit', async (event) => {
   event.preventDefault(); const file = document.getElementById('archive').files[0]; if (!file) return;
   const button = event.currentTarget.querySelector('button'); button.disabled = true;
   const result = document.getElementById('result'); result.textContent = 'Restoring…';
-  try { const response = await window.marfaConfirm.send(() => fetch('/restore', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/gzip'}, body:file}), 'Restoring adds to your data.');
+  try { const response = await window.marfaConfirm.send(() => fetch('/restore', {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/gzip'}, body:file}), 'Restoring adds to your data.', button, Number.isFinite(gate.left) ? gate : undefined);
     if (response === null) { result.textContent = 'Nothing was restored.'; return; }
     const body = await response.json(); if (!response.ok) throw new Error(body.error?.message || 'The archive could not be restored.');
     const lacking = body.blobs_missing.length; const missing = lacking ? ' ' + lacking + (lacking === 1 ? ' file is' : ' files are') + ' missing from both the archive and this instance.' : '';
@@ -141,7 +146,7 @@ document.getElementById('restore').addEventListener('submit', async (event) => {
 });
 </script>`,
       }),
-    ),
-  );
+    );
+  });
   return router;
 }

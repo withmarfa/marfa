@@ -29,7 +29,10 @@ import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 import type { BoundCredential } from "../auth/live-credential.js";
 import type { ReadViewAuthority } from "../storage/read-view.js";
-import { SIGN_IN_AGAIN_MESSAGE } from "../pages/recent-sign-in.js";
+import {
+  RECENT_SIGN_IN_MS,
+  SIGN_IN_AGAIN_MESSAGE,
+} from "../pages/recent-sign-in.js";
 import * as clock from "../clock.js";
 
 // ---------------------------------------------------------------------------
@@ -104,9 +107,6 @@ export function requireDirectAuthority(c: Context<AppEnv>): void {
     );
   }
 }
-
-/** How long after a browser session was created a change that needs a recent sign-in is still allowed. */
-export const RECENT_SIGN_IN_MS = 300_000;
 
 /**
  * Whether a session created at `authenticatedAt` is still recent at `at`: the
