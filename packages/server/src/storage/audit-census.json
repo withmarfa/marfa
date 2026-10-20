@@ -232,8 +232,8 @@
   "routes/config.ts": {
     "boundary": "Audited instance configuration write; audit-atomicity.test.ts.",
     "calls": {
-      "runAuditedTransaction": 1,
-      "writeInstanceConfig": 1
+      "runAuditedTransaction": 2,
+      "writeInstanceConfig": 2
     }
   },
   "routes/connector-state.ts": {

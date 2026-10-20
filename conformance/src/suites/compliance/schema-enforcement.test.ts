@@ -113,6 +113,12 @@ describe("the configuration door", () => {
     expect(cleared).toEqual({ instance_id: instanceId });
     const readAgain = await client.getConfig();
     expect(readAgain.data).toEqual({ instance_id: instanceId });
+
+    const patched = await client.patchConfig(lever);
+    expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    await expectMatchesSchema("PATCH", "/config", 200, patched.data);
+    expect(patched.data).toEqual({ instance_id: instanceId, ...lever });
+    await setConfig({});
   });
 
   it("takes a body back as read, and refuses one addressed elsewhere", async () => {
