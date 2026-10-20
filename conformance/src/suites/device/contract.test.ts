@@ -2365,12 +2365,9 @@ describe("the contract the working copy was built for", () => {
         refused(403, "forbidden", "the key may not write this"),
       ],
       read: [answers.updated(wireItem(held))],
-      create: [
-        (request) =>
-          answers.created(
-            wireItem({ id: (JSON.parse(request.body) as { id: string }).id }),
-          ),
-      ],
+      // The proxy answers every door the same way, so the create sent to
+      // test the edit from the third drain on meets it as well.
+      create: Array.from({ length: 6 }, () => unnamed(404, "not_found")),
     });
     expect(
       (
@@ -2409,12 +2406,22 @@ describe("the contract the working copy was built for", () => {
           verdict.refusals,
         ]),
         "a proxy's answer was counted against a write the server never saw",
-      ).toEqual([[null, 0]]);
+      ).toEqual(
+        pass < 2
+          ? [[null, 0]]
+          : [
+              [null, 0],
+              [null, 0],
+            ],
+      );
     }
+    // Past the first two drains the write behind is sent once a drain, to
+    // test the edit (`queue-and-verdicts/stuck-write-tested`), and meeting the
+    // proxy as well it sets nothing aside (`queue-and-verdicts/stuck-write-test-failed`).
     expect(
       scripted.requests.filter((request) => request.method === "POST").length,
-      "the pass went on past an answer from in front of the server",
-    ).toBe(0);
+      "the pass went on past an answer from in front of the server, or sent the write behind it before the edit had met the failure three drains running",
+    ).toBe(5);
 
     // The witness: the server's own refusal, naming its contract, refuses.
     const own = await device.drain();

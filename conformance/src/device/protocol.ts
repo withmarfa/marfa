@@ -227,8 +227,21 @@ export interface QueuedWrite {
   body: unknown;
   conflicted_copy_id: string | null;
   refusals: number;
+  /** The drains in a row in which the write met an environmental failure
+   *  (`queue-and-verdicts/streak-counted`). */
+  environmental_streak: number;
+  /** What the write last met when the failure was environmental
+   *  (`queue-and-verdicts/queue-shows-last-failure`). */
+  last_failure: LastFailure | null;
   queued_at: string;
   answered_at: string | null;
+}
+
+/** What a write met that was no answer to it: the HTTP status, null where
+ *  nothing answered, and the start of the body where it was text. */
+export interface LastFailure {
+  status: number | null;
+  text: string | null;
 }
 
 /** A refused write's refusal, read from the server's envelope once
