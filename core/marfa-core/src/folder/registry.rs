@@ -852,7 +852,7 @@ pub(super) fn gone(entry: &Registered) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::folder) mod tests {
     use super::*;
 
     thread_local! {
@@ -865,7 +865,7 @@ mod tests {
 
     /// Ends a test's own registry, panicking or not, since a single test
     /// thread runs the next test on the same thread.
-    struct OwnRegistry {
+    pub(in crate::folder) struct OwnRegistry {
         _dir: tempfile::TempDir,
     }
 
@@ -876,7 +876,7 @@ mod tests {
     }
 
     /// Lists this test's folders, on this thread, in a registry of its own.
-    fn own_registry() -> (Registry, OwnRegistry) {
+    pub(in crate::folder) fn own_registry() -> (Registry, OwnRegistry) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         OWN.with(|own| *own.borrow_mut() = Some(dir.path().join(FILE_NAME)));
         (Registry::located().unwrap(), OwnRegistry { _dir: dir })

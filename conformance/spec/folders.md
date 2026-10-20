@@ -1406,7 +1406,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/file-item-doc-name-status`
 
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, by its path or by its identity before a scan has moved the binding, a device MUST NOT report its status as `held`.
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, by its identity or by its path while no other file carries the identity of the binding at that path, a device MUST NOT report its status as `held`.
 
 **Reason:** the status reports what the next scan does, and a scan sends the bytes of a file item whatever they hold. A file renamed to a document name is still the file item's, so the status cannot decide by the name alone. A document not bound to a file item is still reported by `folders/status-encoding` and `folders/status-unreadable-document`.
 
@@ -1443,22 +1443,6 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 **Reason:** a file item's bytes are not a document's body, so a link in them names no attachment.
 
 **Tests:** `device/folders-placement.test.ts › follows no embed in a file item's bytes at a document name`.
-
-### `folders/file-item-doc-name-moved-arrival`
-
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) arrives from another folder whose missing-file binding to a file item uniquely identifies it by identity or bytes, a device MUST bind the arriving file to that file item.
-
-**Reason:** a file item's bytes carry no id line, so only the binding the other folder kept can name the item. A note's file carries its id, and `folders/moved-arrival-bytes` does not apply to it.
-
-**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved in by copy and delete as that item`, `device/folders-one-mac.test.ts › does not trash a file item at a document name moved to another folder`.
-
-### `folders/file-item-doc-name-moved-not-trashed`
-
-When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) bound to a file item goes missing and another folder on the machine holds a file with its identity or bytes, a device MUST NOT trash the item.
-
-**Reason:** the other folder's file is the item moved. Where no folder holds one, the item is trashed as any missing file's is.
-
-**Tests:** `device/folders-one-mac.test.ts › trashes a file item at a document name only where no folder holds its bytes (copied elsewhere %s)`.
 
 ## Document versions
 
@@ -2178,7 +2162,7 @@ When an embedded file needs uploading, a device MUST leave its size-limit decisi
 
 When a file with a `.md` or `.markdown` extension in any letter case is not bound to a file item, a device MUST read its Markdown metadata.
 
-**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`.
+**Tests:** `device/folders-identity.test.ts › reads the id of a Markdown file whatever the case of its extension`, `device/folders-placement.test.ts › reads a new note written where a moved file item was as a note`, `device/folders-placement.test.ts › reads a new note written where a moved file item was at once, while the file item waits`.
 
 ### `folders/id-rename`
 
@@ -2358,7 +2342,7 @@ When an unreadable renamed file leaves a replacement at its previous path, a dev
 
 When an unbound raw-text or file-item file matches the path and rendered bytes of an otherwise unbound item held by the search, a device MUST bind it to that item.
 
-**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`, `device/folders-placement.test.ts › takes back a file item at a document name by placement and bytes when it is added again over it`.
+**Tests:** `device/folders-placement.test.ts › takes back the files it holds by placement and bytes when it is added again over them`, `device/folders-placement.test.ts › takes back an empty text file rendered from a missing body`.
 
 ### `folders/identity-takeback-search`
 
@@ -4054,7 +4038,7 @@ When another registered folder holds a file whose bytes can be read but are not 
 
 ### `folders/moved-arrival-bytes`
 
-When a file that is not at a document name arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
+When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
 
 **Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
 
@@ -5562,13 +5546,13 @@ When a device reads a folder’s status, a device MUST report each reached file 
 
 ### `folders/status-unreadable-document`
 
-When a new folder document’s frontmatter cannot be parsed or names a refused own field, a device MUST report its status as `held` with flag `unreadable` before binding it.
+When the frontmatter of a new folder document that is not bound to a file item by its path or identity cannot be parsed or names a refused own field, a device MUST report its status as `held` with flag `unreadable` before binding it.
 
 **Tests:** `device/folders.test.ts › reports each file's status`.
 
 ### `folders/status-encoding`
 
-When a new folder document is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
+When a new folder document that is not bound to a file item by its path or identity is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 

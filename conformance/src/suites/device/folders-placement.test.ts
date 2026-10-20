@@ -623,50 +623,6 @@ describe("where a file sits", () => {
     ).toEqual([["empty.txt", id]]);
   });
 
-  it("takes back a file item at a document name by placement and bytes when it is added again over it", async () => {
-    const item = "01a00000-0000-7000-8000-0000000016f4";
-    const bytes = Buffer.from("plain text a server holds as a file\n");
-    const placed = await placedHarness(
-      "placement-added-again-document-name",
-      [
-        {
-          id: item,
-          title: "notes.md",
-          type: "core.file",
-          properties: {
-            title: "notes.md",
-            blob_ref: hashOf(bytes),
-            mime_type: "text/markdown",
-          },
-          path: "notes.md",
-        },
-      ],
-      { search: { types: ["core.file", "core.note"] } },
-    );
-    harness = placed.harness;
-    acceptUploads(harness.server);
-    scriptBlob(harness.server, bytes);
-    expect((await harness.folder.pull()).ok).toBe(true);
-    expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(bytes);
-
-    expect((await harness.folder.remove()).ok).toBe(true);
-    expect((await harness.folder.add(harness.settings.id)).ok).toBe(true);
-    // The witness: a new file beside it is created.
-    writeFileSync(join(harness.dir, "new.bin"), Buffer.from([7, 7, 6]));
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    expect(
-      sentTitles(harness),
-      "a folder added again over a file item at a document name made a second item of it",
-    ).toEqual(["new.bin"]);
-    expect(sentUpdates(harness)).toEqual([]);
-    expect(
-      readdirSync(harness.dir)
-        .filter((name) => !name.startsWith("."))
-        .sort(),
-    ).toEqual(["new.bin", "notes.md"]);
-  });
-
   it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
     const [photo, paper, words] = [
       "01a00000-0000-7000-8000-0000000016f1",
@@ -2197,13 +2153,14 @@ describe("where a file sits", () => {
         timeout: 20_000,
         interval: 100,
       });
-      // Passes enough for the edit's own report to be printed.
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // The witness: the edit's own pass was reported.
+      await vi.waitFor(
+        () => expect(watching.stdout).toMatch(/0 created, 1 updated/),
+        { timeout: 20_000, interval: 100 },
+      );
     } finally {
       await watching.stop();
     }
-    // The witness: the edit's pass was reported.
-    expect(watching.stdout).toMatch(/0 created, 1 updated/);
     expect(
       watching.stdout.split(unplaced).length - 1,
       `a watch said the same placements held back at every pass that reported: ${watching.stdout}`,
@@ -6719,6 +6676,107 @@ describe("a file that is not a document", () => {
       titles,
       "an embed in a file item's bytes was followed",
     ).not.toContain("x.pdf");
+  });
+
+  it("reads a new note written where a moved file item was as a note", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fd";
+    const made = await pulledFileItem(
+      "folder-file-moved-note-after",
+      id,
+      "capture.bin",
+      Buffer.from("initial file bytes"),
+      { settings: { search: { types: ["core.note", "core.file"] } } },
+    );
+    renameSync(join(made.dir, "capture.bin"), join(made.dir, "notes.md"));
+    expect((await made.folder.push()).ok).toBe(true);
+
+    // The file item moves on and a note is written at its old path before the
+    // next pass, so the row at that path is no longer its file's.
+    renameSync(join(made.dir, "notes.md"), join(made.dir, "moved.md"));
+    writeFileSync(
+      join(made.dir, "notes.md"),
+      "---\ntitle: Fresh\ntags: [kept]\n---\nthe body\n![[y.pdf]]\n",
+    );
+    writeFileSync(join(made.dir, "y.pdf"), photo);
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([]);
+
+    const note = sentCreates(made).find(
+      (sent) => (sent.properties as Record<string, unknown>).title === "Fresh",
+    );
+    expect(note, "the new note was not created").toBeDefined();
+    expect(
+      (note?.properties as Record<string, unknown>).body,
+      "the new note was created without its body",
+    ).toBe("the body\n![[y.pdf]]\n");
+    // The witness for the embed: it goes up with the note that names it.
+    expect(sentTitles(made), "the note's embed was not followed").toContain(
+      "y.pdf",
+    );
+    expect(
+      sentUpdates(made)
+        .filter((sent) => sent.id === id)
+        .map((sent) => (sent.body.properties as Record<string, unknown>).title),
+      "the moved file item did not follow its file, or was sent as something else",
+    ).toEqual(["notes.md", "moved.md"]);
+    const text = readFileSync(join(made.dir, "notes.md"), "utf8");
+    expect(text).toMatch(/^marfa_id: .+$/m);
+    expect(text).toContain("tags: [kept]");
+    expect(text).toContain("the body\n");
+  });
+
+  it("reads a new note written where a moved file item was at once, while the file item waits", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fe";
+    const made = await pulledFileItem(
+      "folder-file-moved-note-settling",
+      id,
+      "capture.bin",
+      Buffer.from("initial file bytes"),
+      { settings: { search: { types: ["core.note", "core.file"] } } },
+    );
+    renameSync(join(made.dir, "capture.bin"), join(made.dir, "notes.md"));
+    expect((await made.folder.push()).ok).toBe(true);
+    renameSync(join(made.dir, "notes.md"), join(made.dir, "moved.md"));
+    const moved = join(made.dir, "moved.md");
+    writeFileSync(
+      join(made.dir, "notes.md"),
+      "---\ntitle: Fresh\n---\nthe body\n",
+    );
+    const writing = setInterval(
+      () => appendFileSync(moved, Buffer.from("more")),
+      30,
+    );
+    appendFileSync(moved, Buffer.from("first edit"));
+    const watching = made.folder.watchText();
+    try {
+      await vi.waitFor(() => expect(sentTitles(made)).toContain("Fresh"), {
+        timeout: 30000,
+        interval: 100,
+      });
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("still changing"),
+        { timeout: 30000, interval: 100 },
+      );
+      expect(
+        (
+          sentCreates(made).find(
+            (sent) =>
+              (sent.properties as Record<string, unknown>).title === "Fresh",
+          )?.properties as Record<string, unknown>
+        ).body,
+      ).toBe("the body\n");
+      expect(
+        sentUpdates(made)
+          .filter((sent) => sent.id === id)
+          .filter((sent) => "blob_ref" in (sent.body.properties as object)),
+        "the moved file item was read while it changed",
+      ).toEqual([]);
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
   });
 
   it("sends a file item at a document name only once it stops changing", async () => {

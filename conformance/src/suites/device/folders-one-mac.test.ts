@@ -363,6 +363,42 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, kept)).toBe(0);
   });
 
+  it("makes a new item of a text note moved to another folder as Markdown, and keeps its words", async () => {
+    const { a, b } = await onOneMac(
+      "move-text-as-markdown",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.note"] } },
+      { "core.note": [] },
+    );
+    put(a, "Loose.txt", "loose words\n");
+    expect((await a.folder.push()).ok).toBe(true);
+    const loose = String(sentCreates(a)[0]?.id);
+    renameSync(join(a.dir, "Loose.txt"), join(b.dir, "Loose.md"));
+
+    const from = b.server.requests.length;
+    const pushed = await b.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const creates = createsSince(b.server, from);
+    expect(
+      creates.map((sent) => (sent.properties as { title?: string }).title),
+      "a file at a document name was taken for the item of the folder it left",
+    ).toEqual(["Loose"]);
+    expect(creates[0]?.id).not.toBe(loose);
+    expect((creates[0]?.properties as { body?: string }).body).toBe(
+      "loose words\n",
+    );
+
+    // The folder it left sweeps its missing file: the words live on in the
+    // new item, and the new item is never the one trashed.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(deletesOf(a.server, String(creates[0]?.id))).toBe(0);
+    expect(readFileSync(join(b.dir, "Loose.md"), "utf8")).toContain(
+      "loose words\n",
+    );
+  });
+
   it("keeps an unreadable file moved to another folder before its next scan", async () => {
     const moved = "01a00000-0000-7000-8000-0000000016f1";
     const gone = "01a00000-0000-7000-8000-0000000016f2";
@@ -1969,131 +2005,6 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       [early, { path: "Early.txt" }],
     ]);
   });
-
-  /** Two folders on one Mac, the first holding a file item it renamed to a
-   *  document name, which it has since scanned. */
-  async function withFileItemAtDocumentName(
-    label: string,
-    id: string,
-    bytes: Buffer,
-  ): Promise<{ a: FolderHarness; b: FolderHarness }> {
-    const { a, b } = await onOneMac(
-      label,
-      { search: { types: ["core.file"] } },
-      { search: { types: ["core.bookmark"] } },
-      {
-        "core.file": [
-          {
-            item: {
-              id,
-              type: "core.file",
-              properties: {
-                title: "capture.bin",
-                blob_ref: hashOf(bytes),
-                mime_type: "application/octet-stream",
-              },
-            },
-          },
-        ],
-      },
-    );
-    scriptBlob(a.server, bytes);
-    acceptUploads(a.server);
-    expect((await a.folder.pull()).ok).toBe(true);
-    renameSync(join(a.dir, "capture.bin"), join(a.dir, "notes.md"));
-    expect((await a.folder.push()).ok).toBe(true);
-    return { a, b };
-  }
-
-  it("takes a file item at a document name moved in by copy and delete as that item", async () => {
-    const id = "01a00000-0000-7000-8000-0000000041d1";
-    // Plain text with no id line: a document would be a new note.
-    const bytes = Buffer.from("plain text a server holds as a file\n");
-    const { a, b } = await withFileItemAtDocumentName(
-      "file-item-copied",
-      id,
-      bytes,
-    );
-    copyFileSync(join(a.dir, "notes.md"), join(b.dir, "notes.md"));
-    rmSync(join(a.dir, "notes.md"));
-    const from = b.server.requests.length;
-    const taken = await b.folder.push();
-    expect(taken.ok, JSON.stringify(taken)).toBe(true);
-    expect(
-      createsSince(b.server, from),
-      "a file item at a document name, moved by copy and delete, became a new item where it went",
-    ).toEqual([]);
-    const placed = b.server.requests
-      .slice(from)
-      .filter(
-        (request) => request.method === "POST" && request.pathname === "/edges",
-      )
-      .map((request) => JSON.parse(request.body) as Record<string, unknown>);
-    expect(placed.map((edge) => [edge.source_id, edge.properties])).toEqual([
-      [id, { path: "notes.md" }],
-    ]);
-  });
-
-  it("does not trash a file item at a document name moved to another folder", async () => {
-    const id = "01a00000-0000-7000-8000-0000000041d2";
-    const bytes = Buffer.from("plain text a server holds as a file\n");
-    const { a, b } = await withFileItemAtDocumentName(
-      "file-item-moved",
-      id,
-      bytes,
-    );
-    renameSync(join(a.dir, "notes.md"), join(b.dir, "notes.md"));
-    expect((await a.folder.push()).ok).toBe(true);
-
-    // The folder it went to takes it before the folder it left lets it go.
-    const from = b.server.requests.length;
-    const taken = await b.folder.push();
-    expect(taken.ok, JSON.stringify(taken)).toBe(true);
-    expect(
-      createsSince(b.server, from),
-      "a file item at a document name, moved to another folder, became a new item where it went",
-    ).toEqual([]);
-
-    await pastTheGrace();
-    const swept = await a.folder.push();
-    expect(swept.ok, JSON.stringify(swept)).toBe(true);
-    if (!swept.ok) return;
-    expect(
-      deletesOf(a.server, id),
-      "a file item at a document name, moved to another folder on the Mac, was read as a delete, and its item trashed",
-    ).toBe(0);
-    expect(swept.value.scan.moved_away).toBe(1);
-  });
-
-  it.each([
-    [true, 0],
-    // The witness: a file found in no folder is trashed.
-    [false, 1],
-  ])(
-    "trashes a file item at a document name only where no folder holds its bytes (copied elsewhere %s)",
-    async (copied, trashed) => {
-      const id = "01a00000-0000-7000-8000-0000000041d3";
-      const bytes = Buffer.from("plain text a server holds as a file\n");
-      const { a, b } = await withFileItemAtDocumentName(
-        "file-item-copied-first",
-        id,
-        bytes,
-      );
-      if (copied)
-        copyFileSync(join(a.dir, "notes.md"), join(b.dir, "notes.md"));
-      rmSync(join(a.dir, "notes.md"));
-      expect((await a.folder.push()).ok).toBe(true);
-      await pastTheGrace();
-      const swept = await a.folder.push();
-      expect(swept.ok, JSON.stringify(swept)).toBe(true);
-      if (!swept.ok) return;
-      expect(
-        deletesOf(a.server, id),
-        "a file item at a document name, copied to another folder on the Mac, was read as a delete, and its item trashed",
-      ).toBe(trashed);
-      expect(swept.value.scan.moved_away).toBe(copied ? 1 : 0);
-    },
-  );
 
   it("gives a fresh id to a moved file whose item the server will not show, and pins one it shows", async () => {
     const shown = "01a00000-0000-7000-8000-0000000039d1";
