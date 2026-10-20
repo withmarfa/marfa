@@ -348,17 +348,33 @@ If an item names a `datetime` value with a time and no zone, or outside the boun
 
 When an item names a value for a `url` field, or an element of an array field whose `items_type` is `url`, the server MUST take the value where the WHATWG URL standard parses it as an absolute URL after the whitespace of JavaScript's `String.prototype.trim` is removed from both ends: the characters Unicode counts as white space except U+0085, and U+FEFF.
 
-**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both.
+**Reason:** a device judges the same value offline as the server does online (`device/url-trimmed`), so a padded value that the standard takes is taken on both. The Node versions the server supports judge some hosts differently from each other and from the standard, so the server runs the standard with `whatwg-url`, its reference implementation, and does not use the platform's `URL`.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
 
 ### `types/url-punycode`
 
-If the host of a `url` value of a special scheme has a label that starts `xn--` and is not valid Punycode, then the server MUST refuse the value `invalid_properties`.
+When a `url` value of a special scheme has a host that is ASCII once percent-decoded, the server MUST take the host whatever its labels hold, including a label that starts `xn--` and is not valid Punycode, except as `types/url-host-refused` states.
 
-**Reason:** the standard keeps such a label as written, and the Node versions the server supports differ on whether they take it: 22 and 24 refuse `http://xn--` and `http://xn--%41`, and 26 takes them. A device refuses them too (`device/url-trimmed`), so one value has one answer on every server and every device, whatever Node the server runs on. A label that decodes to nothing but ASCII is not a valid IDNA A-label.
+**Reason:** the standard lowercases an ASCII host and does not judge its labels, so `http://xn--`, `http://xn--%41` and `http://xn--xn---yna/` are URLs. The platform's `URL` gives three answers across Node 22, 24 and 26, and the `url` crate in a device's core gave a fourth. The rule is the standard's, so one value has one answer on every server and every device (`device/url-trimmed`).
 
-**Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› takes a url whose host is valid Punycode`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
+**Tests:** `compliance/field-types.test.ts › takes the url %s on a create`, `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`.
+
+### `types/url-idna`
+
+If a `url` value of a special scheme has a host with a character that is not ASCII once percent-decoded, and the host is not valid IDNA, then the server MUST refuse the value `invalid_properties`.
+
+**Reason:** the standard runs only such a host through IDNA, so `http://bücher.xn--` is refused, because its `xn--` label is not Punycode and its host is not ASCII, while `http://xn--mnchen-3ya.de/` is taken.
+
+**Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
+
+### `types/url-host-refused`
+
+If a `url` value of a special scheme has a host that holds a forbidden domain code point once percent-decoded, or whose last label is a number and the host is not a valid IPv4 address, then the server MUST refuse the value `invalid_properties`.
+
+**Reason:** the standard refuses these hosts whatever their labels hold, so `http://xn--%2f/` and `http://xn--a.1/` are refused: the first decodes to a host with a slash, and the second goes to the standard's IPv4 parser.
+
+**Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
 
 ### `types/url-stored`
 

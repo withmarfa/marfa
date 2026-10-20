@@ -33,7 +33,7 @@ Field definitions:
 - **`enum_values`**: required for `enum` type
 - **`items_type`**: required for `array` type
 
-A property holds a number as a 64-bit float, and Marfa serves it in the shortest digits that name that float. A write that holds a whole number written in other digits, such as `1152921504606846976`, which is served as `1152921504606847000`, in a declared or an undeclared property at any depth, in an item, an edge or an extension, is refused as `invalid_properties`; send such a number as a string. Every whole number up to 9007199254740991 is kept as written. Marfa stores a `url` value without the whitespace around it and without any tab or line break inside it.
+A property holds a number as a 64-bit float, and Marfa serves it in the shortest digits that name that float. A write that holds a whole number written in other digits, such as `1152921504606846976`, which is served as `1152921504606847000`, in a declared or an undeclared property at any depth, in an item, an edge or an extension, is refused as `invalid_properties`; send such a number as a string. Every whole number up to 9007199254740991 is kept as written, except `-0`, which is served as `0` and so is refused. Marfa judges a `url` value as the WHATWG URL standard does and stores it without the whitespace around it and without any tab or line break inside it.
 
 Subtypes only declare fields they add. They inherit all parent fields and **may not redefine them** (enforced at registration).
 

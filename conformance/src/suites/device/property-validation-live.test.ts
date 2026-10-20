@@ -168,6 +168,7 @@ const KEPT_AS: Record<string, string> = {
   "-9007199254740993": "-9007199254740992",
   "1152921504606846976": "1152921504606847000",
   "1000000000000000000000": "1e+21",
+  "-0": "0",
 };
 
 const message = (digits: string) =>
@@ -196,6 +197,7 @@ it.each([
   ["-9007199254740993"],
   ["1152921504606846976"],
   ["1000000000000000000000"],
+  ["-0"],
 ])(
   "refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message",
   async (digits) => {
@@ -259,6 +261,7 @@ it.each([
   ["1500000000000000001"],
   ["1152921504606846976"],
   ["1000000000000000000000"],
+  ["-0"],
 ])(
   "refuses %s in the properties of an edge and the data of an extension on both paths with one message",
   async (digits) => {
@@ -499,6 +502,26 @@ it.each([
     "https://münchen.de/straße",
     "https://münchen.de/straße",
   ],
+  ["an ASCII host with an empty punycode label", "http://xn--", "http://xn--"],
+  ["a percent-encoded punycode label", "http://xn--%41", "http://xn--%41"],
+  [
+    "a scheme with no slashes before an empty punycode label",
+    "http:xn--",
+    "http:xn--",
+  ],
+  ["a punycode label of punctuation", "http://xn--!", "http://xn--!"],
+  ["a punycode label of a tilde", "http://xn--%7E", "http://xn--%7E"],
+  ["a punycode label of one letter", "http://xn--a", "http://xn--a"],
+  [
+    "a punycode label of an xn-- prefix",
+    "http://xn--xn---yna/",
+    "http://xn--xn---yna/",
+  ],
+  [
+    "two punycode labels led by hyphens",
+    "http://xn----pfa.xn--4db/",
+    "http://xn----pfa.xn--4db/",
+  ],
 ])(
   "treats %s in a url the same on both paths and stores the same value",
   async (_name, written, stored) => {
@@ -534,14 +557,10 @@ it.each([
   ["http://xn--é/"],
   ["http://xn--%e9/"],
   ["http://xn--%2f/"],
-  ["http://xn--"],
-  ["http://xn--%41"],
-  ["http://xn--a"],
   ["http://bücher.xn--"],
   ["http://xn--a.münchen.de/"],
-  ["http:xn--"],
-  ["http://xn--!"],
-  ["http://xn--%7E"],
+  ["http://xn--a.1/"],
+  ["http://xn--a.0x1/"],
   ["   "],
 ])("refuses the url %j on both paths", async (written) => {
   const properties = { title: "t", url: written };

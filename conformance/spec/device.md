@@ -2838,7 +2838,7 @@ If a write to an item, or to an edge or an item's extension, names a value, at a
 
 If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest digits that name the 64-bit float it parses to, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
 
-**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits.
+**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits. A YAML loader reads `-0` as the integer 0, so a document that names it is taken.
 
 **Tests:** `device/property-validation.test.ts › flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended`.
 
@@ -2860,7 +2860,7 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode` and `types/url-stored` have the server do.
+When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the row shown before the answer must be the row stored after it.
 

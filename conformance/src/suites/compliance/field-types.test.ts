@@ -323,18 +323,18 @@ describe("an array field", () => {
       "sites.1",
     ],
     [
-      "a url array with an empty punycode host",
-      { sites: ["https://example.test", "http://xn--"] },
-      "sites.1",
-    ],
-    [
-      "a url array with a percent-encoded punycode label",
-      { sites: ["http://xn--%41"] },
+      "a url array with a punycode label beside a host that is not ASCII",
+      { sites: ["http://xn--a.münchen.de/"] },
       "sites.0",
     ],
     [
-      "a url array with a punctuated punycode label",
-      { sites: ["http://xn--!"] },
+      "a url array with a punycode label whose host ends in a number",
+      { sites: ["http://xn--a.1/"] },
+      "sites.0",
+    ],
+    [
+      "a url array with a punycode label and a forbidden code point",
+      { sites: ["http://xn--%2f/"] },
       "sites.0",
     ],
     [
@@ -363,12 +363,22 @@ describe("an array field", () => {
     },
   );
 
-  it("takes a url whose host is valid Punycode", async () => {
-    const taken = await create({ sites: ["http://xn--mnchen-3ya.de/"] });
+  // An ASCII host is taken whatever its labels hold, so a label that starts
+  // `xn--` and is not Punycode is taken.
+  const TAKEN_URLS = [
+    "http://xn--mnchen-3ya.de/",
+    "http://xn--",
+    "http://xn--%41",
+    "http://xn--!",
+    "http://xn--xn---yna/",
+    "http://xn----pfa.xn--4db/",
+    "http://a.b.c.xn--pokxncvks",
+  ];
+
+  it.each(TAKEN_URLS)("takes the url %s on a create", async (url) => {
+    const taken = await create({ sites: [url] });
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
-    expect(taken.data.item.properties.sites).toEqual([
-      "http://xn--mnchen-3ya.de/",
-    ]);
+    expect(taken.data.item.properties.sites).toEqual([url]);
   });
 
   it("takes the values of the declared types, an empty array and a null", async () => {
