@@ -184,7 +184,7 @@ describe("owner and setup routes", () => {
     );
     await expect(
       requireOwnerSession(storage, auth, headers, { recent: true }),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "forbidden" });
     await storage.__sqliteRun(
       "UPDATE auth_session SET created_at = created_at - 60",
       [],
@@ -195,7 +195,7 @@ describe("owner and setup routes", () => {
     );
     await expect(
       requireOwnerSession(storage, auth, headers, { recent: true }),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "forbidden" });
     await storage.__sqliteRun("UPDATE auth_session SET expires_at = 1", []);
     const audit = vi
       .spyOn(storage.audit, "log")
@@ -250,7 +250,7 @@ describe("owner and setup routes", () => {
           json({}, { cookie, origin }),
         )
       ).status,
-    ).toBe(401);
+    ).toBe(403);
     await storage.__sqliteRun(
       "UPDATE auth_session SET created_at = created_at - 60",
       [],
@@ -266,7 +266,7 @@ describe("owner and setup routes", () => {
           json({}, { cookie, origin }),
         )
       ).status,
-    ).toBe(401);
+    ).toBe(403);
     expect(
       (
         await app.request(
@@ -274,7 +274,7 @@ describe("owner and setup routes", () => {
           json({}, { cookie, origin }),
         )
       ).status,
-    ).toBe(401);
+    ).toBe(403);
     const page = await app.request(
       `${origin}/auth/sign-in?prompt=login&return_to=/auth/owner/restore`,
       { headers: { cookie } },

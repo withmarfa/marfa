@@ -1,5 +1,6 @@
 import { afterEach, expect, it } from "vitest";
 import { createClaimTestApp } from "./claim-test-app.js";
+import { SIGN_IN_AGAIN_MESSAGE } from "../pages/recent-sign-in.js";
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
@@ -270,7 +271,10 @@ it("requires the owner's recent browser session and same origin at every managem
         ? { body: JSON.stringify({ id: registered.id, response: {} }) }
         : {}),
     });
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
+    expect(
+      ((await response.json()) as { error: { message: string } }).error.message,
+    ).toBe(SIGN_IN_AGAIN_MESSAGE);
   }
   const list = await ctx.app.request(origin + "/owner/passkeys", {
     headers: { origin, cookie: ctx.ownerCookie },

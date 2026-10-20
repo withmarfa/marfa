@@ -17,6 +17,16 @@ body {
   font-variant-numeric: tabular-nums;
   overflow-wrap: break-word;
 }
+/* A part kept in a shadow root, on a page with a stylesheet of its own, has no
+   body to take these from. */
+:host {
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: var(--text-size);
+  line-height: var(--text-line);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: break-word;
+}
 a {
   color: inherit;
   text-decoration: none;

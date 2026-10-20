@@ -77,6 +77,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /auth/owner/password": "a same-origin owner password form post",
   "POST /inbound/{token}": "a sender's delivery, whatever bytes it sent",
   "POST /auth/sign-in": "a form post",
+  "POST /auth/confirm":
+    "the owner's proof from the confirmation dialog, which takes exactly one of two keys and refuses any other body (routes/auth-confirm.test.ts)",
   "POST /auth/authorize/decision": "a form post",
   "POST /auth/device": "a form post",
   "POST /auth/device/consent": "a form post",

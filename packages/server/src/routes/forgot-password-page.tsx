@@ -44,7 +44,7 @@ export function renderForgotPasswordPage(nonce: string): string {
           <p class="strong">If Marfa runs on your Mac</p>
           <p>
             In Terminal, as the user account that runs Marfa, run this. Replace{" "}
-            <code>PATH</code> with the private socket, which is{" "}
+            <code>PATH</code> with the full path of the private socket,{" "}
             <code>control/marfa.sock</code> in the folder that holds Marfa's
             database.
           </p>

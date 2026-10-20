@@ -166,7 +166,13 @@ export function readRows(html: string): RowRead[] {
   for (const match of html.matchAll(pattern)) {
     const control = readControls(match[0])[0];
     const end = (match.index ?? 0) + match[0].length;
-    if (control && control.type !== "hidden" && control.tag !== "button") {
+    // The confirm dialog's password field is on the same page as the rows.
+    if (
+      control &&
+      control.type !== "hidden" &&
+      control.type !== "password" &&
+      control.tag !== "button"
+    ) {
       rows.push({
         control,
         text: visibleText(html.slice(from, match.index ?? 0)),

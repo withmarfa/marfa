@@ -9,7 +9,7 @@
   "auth/credential-adapter.ts": {
     "boundary": "Provider persistence phase joins the shared SQLite transaction and retains responses until strict audit commit; generic adapter mutation methods are guarded here, with native model and lifecycle controls in credential-audit.test.ts.",
     "calls": {
-      "runAuditedTransaction": 3
+      "runAuditedTransaction": 4
     }
   },
   "auth/grant-lifecycle.ts": {

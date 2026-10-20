@@ -245,6 +245,7 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
       "GET /auth/oauth2/end-session",
       "GET /auth/sign-in",
       "POST /auth/sign-in",
+      "POST /auth/confirm",
       "GET /auth/forgot-password",
       "GET /auth/static/auth.css",
       "GET /auth/static/pages.css",

@@ -64,7 +64,13 @@ export default [
     // move. The selectors cover `Date`, and `globalThis.Date`, called, built
     // with no argument, asked for `now` or destructured for `now`.
     files: ["packages/server/src/**/*.{ts,tsx}"],
-    ignores: ["**/*.test.{ts,tsx}", "packages/server/src/clock.ts"],
+    // The browser modules run in a person's browser, where the server's test
+    // hooks do not reach.
+    ignores: [
+      "**/*.test.{ts,tsx}",
+      "packages/server/src/clock.ts",
+      "packages/server/src/pages/client/**",
+    ],
     rules: {
       "no-restricted-syntax": [
         "error",

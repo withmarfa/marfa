@@ -25,6 +25,10 @@ describe("the forgot-password page", () => {
     expect(text).toContain("If Marfa runs on your Mac");
     expect(text).toContain("marfa --socket PATH owner recover");
     expect(text).toContain("control/marfa.sock");
+    // The command refuses a relative socket path, so the page asks for the whole one.
+    expect(text).toContain(
+      "Replace PATH with the full path of the private socket",
+    );
     expect(text).toContain("If Marfa runs in Docker");
     expect(text).toContain(
       "docker exec -it marfa marfa --socket /data/control/marfa.sock owner recover",

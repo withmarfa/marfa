@@ -64,10 +64,7 @@ import {
 import { resolveSelection } from "./access-model.js";
 import { chooseTypesFor } from "./access-types.js";
 import { setNoStore } from "./no-store.js";
-import {
-  answerSignInAgain,
-  signInAgainBeforeConsent,
-} from "./sign-in-again.js";
+import { confirmGateFor } from "./confirm-gate.js";
 import { forwardHeaders } from "./forward-headers.js";
 
 /**
@@ -866,13 +863,6 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       client.clientId,
       sessionResult.session.user.id,
     );
-    const signInAgain = signInAgainBeforeConsent(
-      c,
-      scopeList(verdict.scope),
-      priorScopes,
-      `${url.pathname}${url.search}`,
-    );
-    if (signInAgain) return signInAgain;
     // The same copy `/auth/authorize` renders, from the same function, so
     // which answer a person gets does not depend on which screen the flow
     // put them on.
@@ -881,6 +871,11 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     // owner decides, however old its registration is.
     await storage.oauthProvider?.markClientOffered(client.clientId);
 
+    const chooseTypes = await chooseTypesFor(
+      storage,
+      verdict.clientId,
+      scopeList(verdict.scope),
+    );
     setNoStore(c);
     return c.html(
       renderDeviceConsentScreen({
@@ -903,12 +898,15 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           storage,
           parsedScopes,
         ),
-        chooseTypes: await chooseTypesFor(
-          storage,
-          verdict.clientId,
-          scopeList(verdict.scope),
-        ),
+        chooseTypes,
         bundles: getPermissionBundles(),
+        confirmGate: confirmGateFor(
+          c,
+          client.name ?? client.clientId,
+          scopeList(verdict.scope),
+          priorScopes,
+          chooseTypes,
+        ),
       }),
     );
   });
@@ -1142,11 +1140,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     ).catch((error: unknown) => {
       if (error instanceof DeviceApprovalRefused)
         return { kind: "raced" } as const;
-      return answerSignInAgain(
-        c,
-        error,
-        `/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-      );
+      throw error;
     });
     if (outcome instanceof Response) return outcome;
     if (outcome.kind === "refused")

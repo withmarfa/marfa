@@ -17,6 +17,7 @@ import {
   requireSecureOwnerTransport,
 } from "../auth/owner-browser.js";
 import { renderAuthLayout } from "./auth-layout.js";
+import { confirmDialogMarkup } from "./confirm-host.js";
 import { setNoStore } from "./no-store.js";
 export function ownerPages(storage: Storage, auth: MarfaAuth) {
   const router = new Hono<AppEnv>();
@@ -37,11 +38,11 @@ export function ownerPages(storage: Storage, auth: MarfaAuth) {
         title: "Passkeys",
         bodyHtml: `<h1>Passkeys</h1>
 <p>Sign in with a passkey even when password attempts are locked. Passkeys require a secure HTTPS address, or localhost for development. Use this same address each time you sign in.</p>
-<p>To add or remove a passkey, sign in within the last five minutes. <a href="/auth/sign-in?prompt=login&amp;return_to=%2Fauth%2Fowner%2Fpasskeys">Sign in again</a></p>
 <ul id="passkeys"></ul>
 <label for="passkey-name">Passkey name</label><input id="passkey-name" name="passkey-name" maxlength="200" autocomplete="off">
 <button type="button" id="add-passkey">Add passkey</button><p id="passkey-status" role="status"></p>
 <p><a href="/auth/owner/manage">Manage ${escapeHtml(await readInstanceName(storage.settings))}</a></p>
+${confirmDialogMarkup(c.var.cspNonce)}
 <script src="${authAssetUrl("passkeys.js")}" nonce="${escapeHtml(c.var.cspNonce)}"></script>`,
       }),
     );

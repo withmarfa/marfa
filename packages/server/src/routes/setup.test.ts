@@ -452,11 +452,12 @@ describe("the owner's steps", () => {
       expect(html, step).toContain(title);
       expect(html, step).toContain(`aria-label="Step ${String(number)} of 6"`);
     }
-    expect(
-      await (
-        await ctx.app.request("/setup/passkey", { headers: { cookie } })
-      ).text(),
-    ).toContain("/auth/sign-in?prompt=login&amp;return_to=%2Fsetup%2Fpasskey");
+    // The passkey step asks for a recent sign-in in a dialog, not a redirect.
+    const passkeyStep = await (
+      await ctx.app.request("/setup/passkey", { headers: { cookie } })
+    ).text();
+    expect(passkeyStep).toContain("data-confirm-dialog");
+    expect(passkeyStep).not.toContain("prompt=login");
     // A new computer has no server saved, so the command names this one.
     const connect = await ctx.app.request("/setup/connect", {
       headers: { cookie },

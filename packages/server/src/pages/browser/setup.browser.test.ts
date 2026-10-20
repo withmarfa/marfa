@@ -14,6 +14,7 @@ import type {
 } from "playwright-core";
 import { afterAll, describe, expect, it } from "vitest";
 import { createClaimTestApp } from "../../auth/claim-test-app.js";
+import * as clock from "../../clock.js";
 import {
   getClaimStatus,
   issueSetupCode,
@@ -788,5 +789,126 @@ describe("light, dark and a phone's width", () => {
       });
     },
     60_000,
+  );
+});
+
+describe("the passkey step with a sign-in older than five minutes", () => {
+  inBrowser(
+    "asks to confirm it's you, then adds the passkey once, and nothing when the person cancels",
+    async () => {
+      await withInstance(async ({ origin, ctx }) => {
+        const { context, page } = await open();
+        clock.installDateShim();
+        try {
+          await virtualAuthenticator(context, page);
+          await issueSetupCode(ctx.storage);
+          const { ticket } = await issueSetupTicket(ctx.storage);
+          await page.goto(`${origin}/setup#handoff=${ticket}`);
+          await page.locator("#owner-form").waitFor();
+          await claim(page);
+          await page.waitForURL(`${origin}/setup/passkey`);
+          clock.advanceClock(6 * 60_000);
+
+          const dialog = page.getByRole("dialog", { name: "Confirm it's you" });
+          const credentials = async (): Promise<number> => {
+            const { ownerId } = await getClaimStatus(ctx.storage);
+            return ownerId === null
+              ? 0
+              : (await ctx.auth.listOwnerPasskeys(ownerId)).length;
+          };
+          const add = page.getByRole("button", { name: "Add passkey" });
+
+          // Cancelling asks for nothing more and makes no passkey.
+          await add.click();
+          await dialog.waitFor();
+          expect(await dialog.innerText()).toContain(
+            "To add a passkey, confirm it's you. Changes like this need a sign-in from the last 5 minutes.",
+          );
+          await dialog.getByRole("button", { name: "Cancel" }).click();
+          await dialog.waitFor({ state: "hidden" });
+          expect(await credentials()).toBe(0);
+          expect(await add.isEnabled()).toBe(true);
+
+          // A wrong password says so in place; the right one carries on.
+          await add.click();
+          await dialog.waitFor();
+          await dialog.getByLabel("Or your password").fill("not the password");
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          await dialog
+            .getByText("That password is wrong. Try again.")
+            .waitFor();
+          await dialog.getByLabel("Or your password").fill(OWNER.password);
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          await page.getByText("Passkey added", { exact: true }).waitFor();
+          expect(await credentials()).toBe(1);
+        } finally {
+          clock.resetClockForTests();
+          await context.close();
+        }
+      });
+    },
+  );
+
+  inBrowser(
+    "sends the passkey again after a password when the five minutes run out during the prompt",
+    async () => {
+      await withInstance(async ({ origin, ctx }) => {
+        const { context, page } = await open();
+        clock.installDateShim();
+        try {
+          await virtualAuthenticator(context, page);
+          await issueSetupCode(ctx.storage);
+          const { ticket } = await issueSetupTicket(ctx.storage);
+          await page.goto(`${origin}/setup#handoff=${ticket}`);
+          await page.locator("#owner-form").waitFor();
+          await claim(page);
+          await page.waitForURL(`${origin}/setup/passkey`);
+          let verifies = 0;
+          let options = 0;
+          await page.route(
+            "**/auth/passkey/generate-register-options",
+            async (route) => {
+              options += 1;
+              await route.continue();
+            },
+          );
+          await page.route(
+            "**/auth/passkey/verify-registration",
+            async (route) => {
+              verifies += 1;
+              // The session ages without the clock moving, which would also
+              // end the challenge the prompt is holding.
+              if (verifies === 1)
+                await (
+                  ctx.storage as unknown as {
+                    __sqliteRun: (s: string, p: unknown[]) => Promise<unknown>;
+                  }
+                ).__sqliteRun(
+                  "UPDATE auth_session SET created_at = created_at - 360",
+                  [],
+                );
+              await route.continue();
+            },
+          );
+          await page.getByRole("button", { name: "Add passkey" }).click();
+          const dialog = page.getByRole("dialog", { name: "Confirm it's you" });
+          await dialog.waitFor();
+          await dialog.getByLabel("Or your password").fill(OWNER.password);
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          await page.getByText("Passkey added", { exact: true }).waitFor();
+          // The password leaves the first challenge good, so the credential
+          // already made is sent again and no second one is made.
+          expect(options).toBe(1);
+          expect(verifies).toBe(2);
+          const { ownerId } = await getClaimStatus(ctx.storage);
+          expect((await ctx.auth.listOwnerPasskeys(ownerId ?? "")).length).toBe(
+            1,
+          );
+        } finally {
+          clock.resetClockForTests();
+          await context.close();
+        }
+      });
+    },
   );
 });

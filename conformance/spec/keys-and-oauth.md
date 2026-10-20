@@ -1157,7 +1157,7 @@ When a signed-in person's authorization request names only scopes their standing
 
 ### `keys-and-oauth/consent-wider`
 
-When an authorization request names a scope the person's standing consent to the app does not cover, the server MUST show the consent screen again, unless `keys-and-oauth/consent-page-recent` sends the browser to sign in first.
+When an authorization request names a scope the person's standing consent to the app does not cover, the server MUST show the consent screen again, with the dialog `keys-and-oauth/consent-page-confirm` names when the request needs a recent sign-in.
 
 **Tests:** `compliance/oauth-authorize.test.ts › asks again for a request reaching past the standing consent`.
 
@@ -1235,19 +1235,11 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 ### `keys-and-oauth/consent-recent-needed`
 
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before any `application/json`, then the server MUST answer `403 forbidden`.
+If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`, whatever the request's `Accept`, and issue no code.
 
-**Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password.
+**Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password. The page recognises the refusal and asks the person to confirm it's them (`authentication/confirm-replaces`), then sends the approval once more.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`, `› refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in`.
-
-### `keys-and-oauth/consent-recent-browser`
-
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before any `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/authorize` with the request's signed query as `return_to`.
-
-**Reason:** A screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same request, if its signed window has not closed.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a browser that approves a request for a permission or a write on a screen left open past five minutes to sign in again, and back to the request`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`, `› refuses a browser that approves a request for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and issues no code`.
 
 ### `keys-and-oauth/consent-recent-held`
 
@@ -1255,13 +1247,19 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before, and refuses a second one`.
 
-### `keys-and-oauth/consent-page-recent`
+### `keys-and-oauth/consent-page-confirm`
 
-If a browser session that signed in more than five minutes ago opens `/auth/authorize` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and the request's address as `return_to`.
+When a signed-in owner opens `/auth/authorize` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the consent screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
-**Reason:** The person is asked for the password before the screen, so they are not shown an approval the server would refuse. A screen already open when the five minutes pass is covered by `keys-and-oauth/consent-recent-browser`.
+**Reason:** The screen is shown to a session older than five minutes, which confirms it's the owner when Approve is pressed, and to a fresh one, because a screen left open can pass its five minutes before the person decides.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a session that signed in more than five minutes ago to sign in again before it shows a request for a permission or a write`, `› lands the person back on the screen after they sign in again, where they approve`, `› shows a session that signed in more than five minutes ago a request that only reads`, `› answers a request a standing consent covers with a code, whatever the age of the session`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them`.
+
+### `keys-and-oauth/consent-page-reads`
+
+When a browser session that signed in more than five minutes ago opens `/auth/authorize` for a request whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the consent screen holding no "Confirm it's you" dialog.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
 
 ## What the approval pages offer
 
@@ -1937,19 +1935,11 @@ When a browser session that signed in more than five minutes ago approves a devi
 
 ### `keys-and-oauth/device-recent-needed`
 
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` does not name `text/html` before any `application/json`, then the server MUST answer `403 forbidden`.
+If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`, whatever the request's `Accept`, and leave the code pending.
 
 **Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`, `› refuses a caller that does not ask for a page 403, though the browser asking the same is sent to sign in`.
-
-### `keys-and-oauth/device-recent-browser`
-
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, and the request's `Accept` names `text/html` before any `application/json`, then the server MUST answer `303` to `/auth/sign-in` with `prompt=login` and `/auth/device/consent` with the code as `return_to`.
-
-**Reason:** As on the authorization screen, a screen left open past five minutes would otherwise end on an error page. The person signs in and lands on the same code, if it has not expired.
-
-**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a browser that approves a device code for a permission or a write on a screen left open past five minutes to sign in again, and back to the code`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`, `› refuses a browser that approves a device code for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and leaves the code pending`.
 
 ### `keys-and-oauth/device-recent-held`
 
@@ -1957,11 +1947,17 @@ When a browser session that signed in more than five minutes ago approves a devi
 
 **Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before`.
 
-### `keys-and-oauth/device-page-recent`
+### `keys-and-oauth/device-page-confirm`
 
-If a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST send the browser to `/auth/sign-in` with `prompt=login` and the screen's address as `return_to`.
+When a signed-in owner opens `/auth/device/consent` for a code whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › sends a session that signed in more than five minutes ago to sign in again before it shows a request for a permission or a write`, `› lands the person back on the screen after they sign in again, where they approve`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them`.
+
+### `keys-and-oauth/device-page-reads`
+
+When a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
+
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
 
 ### `keys-and-oauth/device-client-gone`
 
@@ -2287,9 +2283,9 @@ When a person who holds a session opens `GET /auth/sign-in` and an authorization
 
 When a browser with a live session opens `/auth/sign-in` with `prompt=login`, the server MUST show the sign-in form.
 
-**Reason:** A new sign-in is the only thing that makes a session recent, so the page cannot answer that the person is already signed in.
+**Reason:** An app can ask for a new sign-in with `prompt=login`, and only a new session satisfies it, so the page cannot answer that the person is already signed in.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › lands the person back on the screen after they sign in again, where they approve`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows the sign-in form to a browser that holds a session and opens the sign-in page with prompt=login`.
 
 ### `keys-and-oauth/link-unverified`
 
@@ -2531,11 +2527,19 @@ If `DELETE /owner/sign-ins/{id}` names no live sign-in of the owner, then the se
 
 ### `keys-and-oauth/sign-in-end-recent`
 
-If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago, then the server MUST answer `403 forbidden`.
+If the browser session asking `DELETE /owner/sign-ins/{id}` signed in more than five minutes ago and `{id}` names a sign-in other than that session, then the server MUST answer `403 forbidden`.
 
 **Reason:** A browser left signed in, or a copied cookie, cannot end the owner's other sign-ins without the password.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`, `› refuses a browser that signed in more than five minutes ago 403, and ends no app or key`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and ends nothing`, `› refuses a browser that signed in more than five minutes ago 403, and ends no app or key`, `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
+
+### `keys-and-oauth/sign-in-end-self`
+
+When the browser session asking `DELETE /owner/sign-ins/{id}` names its own session and does not set `revoke_keys` to `true`, the server MUST end it whatever the session's age.
+
+**Reason:** Ending the browser's own sign-in only gives up authority, so it needs no recent sign-in, and a page does not ask the owner to confirm it's them first. A confirmation would replace the session the request names.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › lets a stale browser session sign itself out in one request, and ends another only with a recent one`.
 
 ### `keys-and-oauth/sign-in-end-restart`
 

@@ -6,6 +6,8 @@ import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { MarfaAuth, MarfaAuthSession } from "./instance.js";
 import { KeyedThrottle } from "./keyed-throttle.js";
 import { addressBucket } from "../middleware/client-ip.js";
+import { signedInRecently } from "../middleware/auth.js";
+import { SIGN_IN_AGAIN_MESSAGE } from "../pages/recent-sign-in.js";
 import { PasswordAttemptsSpent, passwordAttempts } from "./sign-in-throttle.js";
 import * as clock from "../clock.js";
 
@@ -336,17 +338,14 @@ export async function requireOwnerSession(
       ErrorCode.UNAUTHORIZED,
       "Sign in as the owner to continue.",
     );
-  const authenticatedAt = new Date(session.session.createdAt).getTime();
   if (
     options.recent &&
-    (!Number.isFinite(authenticatedAt) ||
-      authenticatedAt > clock.nowMs() ||
-      clock.nowMs() - authenticatedAt > 5 * 60_000)
+    !signedInRecently(
+      new Date(session.session.createdAt).getTime(),
+      clock.nowMs(),
+    )
   )
-    throw new MarfaError(
-      ErrorCode.UNAUTHORIZED,
-      "Sign in again to continue. This operation needs authentication within five minutes.",
-    );
+    throw new MarfaError(ErrorCode.FORBIDDEN, SIGN_IN_AGAIN_MESSAGE);
   return session;
 }
 export async function recoverOwnerPassword(

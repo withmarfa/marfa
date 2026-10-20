@@ -83,6 +83,8 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
     "RFC 9728 resource metadata, which a bearer challenge points at",
   "GET /auth/sign-in": "a page a redirect lands on, carrying the OAuth flow",
   "POST /auth/sign-in": "its form post",
+  "POST /auth/confirm":
+    "the dialog's answer, which carries its proof in the body",
   "GET /auth/forgot-password":
     "the page that says how to recover a forgotten password, reached by a link",
   "GET /auth/authorize": "the consent screen, reached with the OAuth request",

@@ -315,7 +315,7 @@ const endSignInRoute = createRoute({
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Ends a sign-in at once: it can't make another request, and an app can't refresh its tokens. The keys an app minted stay unless `revoke_keys` is `true`. Requires the owner's browser session, signed in within five minutes, or the local command.",
+    "Ends a sign-in at once: it can't refresh or make another request. An app's keys stay unless `revoke_keys` is `true`. Needs the owner's browser session or the local command. A browser over five minutes old can end only itself, without `revoke_keys`.",
   request: {
     params: z.object({
       id: z.string().describe("The ID of the sign-in."),
@@ -341,7 +341,7 @@ const endSignInRoute = createRoute({
     401: failure(["unauthorized"], "Sign in as the owner."),
     403: failure(
       ["forbidden"],
-      `${SIGN_IN_DOOR_REFUSAL}, or the browser signed in more than five minutes ago.`,
+      `${SIGN_IN_DOOR_REFUSAL}, or the browser signed in more than five minutes ago and the ID names another sign-in or \`revoke_keys\` is \`true\`.`,
     ),
     404: failure(["sign_in_not_found"], SIGN_IN_NOT_FOUND),
   },
@@ -450,10 +450,16 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
     return c.json(signInWire(renamed, undefined), 200);
   });
   router.openapi(endSignInRoute, async (c) => {
-    requireRecentOwnerAuthentication(c);
     const authority = c.get("authority");
     const { id } = c.req.valid("param");
     const { revoke_keys } = c.req.valid("query");
+    // A browser ending its own session only gives up authority, so its age
+    // does not matter. Ending any other sign-in needs a recent one.
+    const endsItself =
+      authority?.kind === "owner" &&
+      id === authority.sessionId &&
+      revoke_keys !== "true";
+    if (!endsItself) requireRecentOwnerAuthentication(c);
     const owner = await storage.owner?.find();
     const ended = await endSignIn(
       storage,

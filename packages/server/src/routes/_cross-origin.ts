@@ -27,6 +27,7 @@ import type { AppEnv } from "../middleware/auth.js";
  */
 export const BROWSER_FORM_DOORS: readonly string[] = [
   "POST /auth/sign-in",
+  "POST /auth/confirm",
   "POST /auth/device",
   "POST /auth/device/consent",
   "POST /auth/authorize/decision",

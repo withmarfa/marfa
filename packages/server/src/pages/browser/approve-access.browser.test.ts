@@ -5,7 +5,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as clock from "../../clock.js";
 import {
   launchTestBrowser,
@@ -204,6 +204,16 @@ async function openConsent(
   const proof = pkce();
   await b.page.goto(authorizeUrl(app, scope, proof, extra));
   return { app, proof };
+}
+
+/** The dialog that asks a person with an old sign-in to confirm it's them. */
+const confirmDialog = (page: Page) =>
+  page.getByRole("dialog", { name: "Confirm it's you" });
+
+/** Let the five minutes pass for the server and for the page's own clock. */
+async function letFiveMinutesPass(page: Page): Promise<void> {
+  clock.advanceClock(6 * MINUTE);
+  await page.clock.fastForward(6 * MINUTE);
 }
 
 /** Contrast failures: text under 4.5 to 1 against its background. */
@@ -503,23 +513,84 @@ describe("Approve access in a browser", () => {
       }
     },
   );
+});
+
+describe("Approve access in a browser, confirming it's you", () => {
+  inWorld();
+  // The sign-in library reads `Date` itself, and a confirmation after the
+  // clock moved must make a session that is new on the moved clock.
+  beforeEach(() => {
+    clock.installDateShim();
+  });
 
   inBrowser(
-    "sends a screen left open past five minutes to sign in again when Approve is pressed on a write, and grants nothing",
+    "asks to confirm it's you when Approve is pressed on a write after the five minutes, then approves once",
     async () => {
       const b = await openSignedIn();
       try {
-        const { app } = await openConsent(b, "Left Open App");
+        await b.page.clock.install();
+        const { app, proof } = await openConsent(b, "Left Open App");
         await b.page.getByRole("button", { name: "Approve" }).waitFor();
-        clock.advanceClock(6 * MINUTE);
+        await letFiveMinutesPass(b.page);
         const before = b.callbacks.length;
         await b.page.getByRole("button", { name: "Approve" }).click();
-        await b.page.waitForURL(/\/auth\/sign-in/);
-        expect(new URL(b.page.url()).searchParams.get("prompt")).toBe("login");
-        expect(new URL(b.page.url()).searchParams.get("return_to")).toContain(
-          "/auth/authorize",
+        const dialog = confirmDialog(b.page);
+        await dialog.waitFor();
+        expect(await dialog.innerText()).toContain(
+          "To let Left Open App change your data or control Marfa, confirm it's you. Changes like this need a sign-in from the last 5 minutes.",
         );
         expect(b.callbacks.length).toBe(before);
+
+        // A wrong password is answered in place, and nothing is sent.
+        await dialog.getByLabel("Or your password").fill("not the password");
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await dialog.getByText("That password is wrong. Try again.").waitFor();
+        expect(await dialog.isVisible()).toBe(true);
+        expect(b.callbacks.length).toBe(before);
+
+        // The right one confirms, and the approval goes out once.
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        const sent = await arrival(b, () =>
+          dialog.getByRole("button", { name: "Continue" }).click(),
+        );
+        expect(await scopesOf(app, sent, proof)).toContain("core.note:write");
+        expect(b.callbacks.length).toBe(before + 1);
+      } finally {
+        clock.resetClockForTests();
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "sends nothing when the person cancels the confirmation, and gives focus back to Approve",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        const { app } = await openConsent(b, "Cancelled App");
+        const approve = b.page.getByRole("button", { name: "Approve" });
+        await approve.waitFor();
+        await letFiveMinutesPass(b.page);
+        const before = b.callbacks.length;
+        const focused = () =>
+          approve.evaluate((el) => el === document.activeElement);
+
+        await approve.click();
+        await confirmDialog(b.page).waitFor();
+        await b.page.keyboard.press("Escape");
+        await confirmDialog(b.page).waitFor({ state: "hidden" });
+        await expect.poll(focused).toBe(true);
+
+        await approve.click();
+        await confirmDialog(b.page).waitFor();
+        await confirmDialog(b.page)
+          .getByRole("button", { name: "Cancel" })
+          .click();
+        await confirmDialog(b.page).waitFor({ state: "hidden" });
+        await expect.poll(focused).toBe(true);
+        expect(b.callbacks.length).toBe(before);
+
         // The app holds nothing: asked again, it is not answered with a code.
         const asked = await fetch(authorizeUrl(app, REQUEST, pkce()), {
           redirect: "manual",
@@ -538,24 +609,195 @@ describe("Approve access in a browser", () => {
   );
 
   inBrowser(
-    "sends a session older than five minutes to sign in again for a write, and shows it a request that only reads",
+    "cannot be dismissed while the confirmation is being sent, and then goes on",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        const { app, proof } = await openConsent(b, "Busy Confirm App");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        await letFiveMinutesPass(b.page);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await b.page.route("**/auth/confirm", async (route) => {
+          await held;
+          await route.continue();
+        });
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await expect
+          .poll(() => dialog.locator(".card").getAttribute("aria-busy"))
+          .toBe("true");
+        // Neither Cancel, Escape nor the backdrop closes it now.
+        await dialog
+          .getByRole("button", { name: "Cancel" })
+          .dispatchEvent("click");
+        await b.page.keyboard.press("Escape");
+        await b.page.mouse.click(5, 5);
+        expect(await dialog.isVisible()).toBe(true);
+        const sent = await arrival(b, () => {
+          release();
+          return Promise.resolve();
+        });
+        expect(await scopesOf(app, sent, proof)).toContain("core.note:write");
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "does not ask again for the next Approve after confirming, while the sign-in is new",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        await openConsent(b, "Twice App");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        await letFiveMinutesPass(b.page);
+        // The first decision goes nowhere, so the form stays on the page.
+        let decisions = 0;
+        await b.page.route("**/auth/authorize/decision", async (route) => {
+          decisions += 1;
+          if (decisions === 1) await route.fulfill({ status: 204, body: "" });
+          else await route.continue();
+        });
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await expect.poll(() => decisions).toBe(1);
+        await dialog.waitFor({ state: "hidden" });
+        // A real decision leaves the page; this one did not, so the form's
+        // submitting state is cleared by hand.
+        await b.page.evaluate(
+          `(() => {
+            const form = document.querySelector("form[data-access]");
+            delete form.dataset.submitting;
+            for (const button of form.querySelectorAll("button")) {
+              button.disabled = false;
+              button.classList.remove("is-loading");
+              if (button.dataset.idleLabel !== undefined)
+                button.textContent = button.dataset.idleLabel;
+            }
+          })()`,
+        );
+
+        const sent = await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(sent).toContain("code=");
+        expect(decisions).toBe(2);
+        expect(await dialog.isVisible()).toBe(false);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "asks to confirm it's you for types chosen in place of all data, then approves them",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        clock.advanceClock(6 * MINUTE);
+        const { app, proof } = await openConsent(
+          b,
+          "Chosen Types App",
+          "*:read *:write",
+        );
+        await openChoices(b.page);
+        await b.page
+          .getByRole("combobox", { name: "All your data" })
+          .selectOption({ label: "Choose types" });
+        await b.page.getByRole("button", { name: /^Show all/ }).click();
+        await b.page
+          .getByRole("combobox", { name: "Note" })
+          .selectOption({ label: "Read and edit" });
+        const before = b.callbacks.length;
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.waitFor();
+        expect(b.callbacks.length).toBe(before);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        const sent = await arrival(b, () =>
+          dialog.getByRole("button", { name: "Continue" }).click(),
+        );
+        expect(await scopesOf(app, sent, proof)).toContain("core.note:write");
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "keeps the keyboard inside the confirmation while it is open",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        await b.page.clock.install();
+        await openConsent(b, "Keyboard Confirm App");
+        await b.page.getByRole("button", { name: "Approve" }).waitFor();
+        await letFiveMinutesPass(b.page);
+        await b.page.getByRole("button", { name: "Approve" }).press("Enter");
+        await confirmDialog(b.page).waitFor();
+        for (let press = 0; press < 8; press++) {
+          expect(
+            await b.page.evaluate(
+              () =>
+                document.activeElement === document.body ||
+                document.activeElement?.closest("dialog") != null,
+            ),
+            `focus after ${String(press)} presses of Tab`,
+          ).toBe(true);
+          await b.page.keyboard.press("Tab");
+        }
+      } finally {
+        clock.resetClockForTests();
+        await b.context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "shows a session older than five minutes the screen and asks to confirm only for a write",
     async () => {
       const b = await openSignedIn();
       try {
         clock.advanceClock(6 * MINUTE);
         const writing = await registerApp(REQUEST, "Older Write App");
-        await b.page.goto(authorizeUrl(writing, REQUEST, pkce()));
-        expect(new URL(b.page.url()).pathname).toBe("/auth/sign-in");
-        expect(new URL(b.page.url()).searchParams.get("prompt")).toBe("login");
-        expect(new URL(b.page.url()).searchParams.get("return_to")).toContain(
-          "/auth/authorize",
+        const proof = pkce();
+        await b.page.goto(authorizeUrl(writing, REQUEST, proof));
+        expect(new URL(b.page.url()).pathname).toBe("/auth/authorize");
+        const before = b.callbacks.length;
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        const dialog = confirmDialog(b.page);
+        await dialog.waitFor();
+        expect(b.callbacks.length).toBe(before);
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        const sent = await arrival(b, () =>
+          dialog.getByRole("button", { name: "Continue" }).click(),
+        );
+        expect(await scopesOf(writing, sent, proof)).toContain(
+          "core.note:write",
         );
 
+        // A request that only reads is approved with no confirmation.
         const reading = "openid core.note:read";
         const app = await registerApp(reading, "Older Read App");
+        clock.advanceClock(6 * MINUTE);
         await b.page.goto(authorizeUrl(app, reading, pkce()));
-        await b.page.getByRole("button", { name: "Approve" }).waitFor();
-        expect(new URL(b.page.url()).pathname).toBe("/auth/authorize");
+        await arrival(b, () =>
+          b.page.getByRole("button", { name: "Approve" }).click(),
+        );
+        expect(await confirmDialog(b.page).count()).toBe(0);
       } finally {
         clock.resetClockForTests();
         await b.context.close();
@@ -1007,6 +1249,9 @@ describe("Connect a device in a browser", () => {
 
 describe("Connect a device in a browser, deciding", () => {
   inWorld();
+  beforeEach(() => {
+    clock.installDateShim();
+  });
 
   inBrowser(
     "denies on Cancel, and when everything is turned off and Approve is pressed",
@@ -1059,31 +1304,49 @@ describe("Connect a device in a browser, deciding", () => {
   });
 
   inBrowser(
-    "sends a session older than five minutes to sign in again for a write, and the screen left open past five minutes too",
+    "asks to confirm it's you for a write after the five minutes, then approves the code once, and the code stays pending until then",
     async () => {
       const b = await openSignedIn();
       try {
+        await b.page.clock.install();
         const open = await askAsDevice(REQUEST, "Left Open Device");
         await b.page.goto(
           `${origin}/auth/device/consent?user_code=${open.userCode}`,
         );
         await b.page.getByRole("button", { name: "Approve" }).waitFor();
-        clock.advanceClock(6 * MINUTE);
-        // The screen was fresh when it opened; approving a write now asks again.
+        await letFiveMinutesPass(b.page);
         await b.page.getByRole("button", { name: "Approve" }).click();
-        await b.page.waitForURL(/\/auth\/sign-in/);
-        expect(new URL(b.page.url()).searchParams.get("prompt")).toBe("login");
-        expect(new URL(b.page.url()).searchParams.get("return_to")).toContain(
-          "/auth/device/consent",
-        );
-        // The code is still pending: nothing was granted by the refusal.
+        const dialog = confirmDialog(b.page);
+        await dialog.waitFor();
         expect((await pollDevice(open)).error).toBe("authorization_pending");
+        await dialog.getByLabel("Or your password").fill(ctx.owner.password);
+        await dialog.getByRole("button", { name: "Continue" }).click();
+        await b.page
+          .getByRole("heading", { name: "Access approved" })
+          .waitFor();
+        expect((await pollDevice(open)).status).toBe(200);
+      } finally {
+        clock.resetClockForTests();
+        await b.context.close();
+      }
+    },
+  );
 
+  inBrowser(
+    "shows a code to a session older than five minutes and asks to confirm at Approve",
+    async () => {
+      const b = await openSignedIn();
+      try {
+        clock.advanceClock(6 * MINUTE);
         const stale = await askAsDevice(REQUEST, "Older Device");
         await b.page.goto(
           `${origin}/auth/device/consent?user_code=${stale.userCode}`,
         );
-        expect(new URL(b.page.url()).pathname).toBe("/auth/sign-in");
+        expect(new URL(b.page.url()).pathname).toBe("/auth/device/consent");
+        await b.page.getByRole("button", { name: "Approve" }).click();
+        await confirmDialog(b.page).waitFor();
+        await b.page.keyboard.press("Escape");
+        expect((await pollDevice(stale)).error).toBe("authorization_pending");
       } finally {
         clock.resetClockForTests();
         await b.context.close();

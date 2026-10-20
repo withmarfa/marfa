@@ -72,6 +72,7 @@ import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS } from "./upload-body.js";
 import { platformTypeRoutes } from "./routes/platform-types.js";
 import { ownerRoutes } from "./routes/owner.js";
 import { authRoutes } from "./routes/auth-pages.js";
+import { confirmRoutes } from "./routes/auth-confirm.js";
 import { refuseUnservedLibraryPath } from "./routes/auth-fence.js";
 import {
   oauthProviderAuthServerMetadata,
@@ -622,6 +623,7 @@ export function createApp(
         "/auth/device": 30,
         "/auth/sign-in/email": 30,
         "/auth/sign-in": 30,
+        "/auth/confirm": 30,
         // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
         // this, every plugin endpoint inherits the global default
         // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
@@ -859,6 +861,7 @@ export function createApp(
       bulkBodyCap(config),
     ),
   );
+  if (auth) app.route("/auth", confirmRoutes(storage, auth));
   app.route("/auth", authRoutes(storage, auth));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all

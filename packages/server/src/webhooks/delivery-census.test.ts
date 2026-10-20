@@ -34,6 +34,8 @@ const OUTBOUND: Record<string, string> = {
     "pings the liveness URL the operator configures; no credential names it",
   "middleware/error-notifier.ts":
     "posts 500 alerts to the URL the operator configures; no credential names it",
+  "pages/client/confirm.ts":
+    "runs in the owner's browser and calls this server's own confirmation and passkey doors; it sends no webhook delivery",
   "pages/client/passkey-sign-in.ts":
     "browser code that asks the server it was loaded from for passkey options; it runs in a person's browser and sends no webhook delivery",
   "pages/client/passkey.ts":

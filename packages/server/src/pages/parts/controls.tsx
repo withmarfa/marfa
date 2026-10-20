@@ -32,6 +32,8 @@ export interface ButtonProps {
   hidden?: boolean;
   /** Names the button to the browser module that drives it. */
   hook?: string;
+  /** Read by the browser module that drives the page, as `data-*` attributes. */
+  data?: Readonly<Record<string, string>>;
   children?: Child;
 }
 
@@ -47,6 +49,7 @@ export function Button(props: ButtonProps) {
         title={props.kind === "icon-only" ? props.label : undefined}
         hidden={props.hidden}
         data-hook={props.hook}
+        {...dataAttributes(props.data)}
       >
         {props.icon !== undefined && <Icon name={props.icon} />}
         {props.children}
@@ -68,6 +71,7 @@ export function Button(props: ButtonProps) {
       value={props.value}
       hidden={props.hidden}
       data-hook={props.hook}
+      {...dataAttributes(props.data)}
     >
       {props.icon !== undefined && <Icon name={props.icon} />}
       {props.children}
