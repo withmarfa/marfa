@@ -921,9 +921,10 @@ function failureCopy(
  * Mirrors the plugin's own `verifyOAuthQueryParams`: reject anything
  * carrying other than exactly one `sig`, strip it, canonicalize what
  * remains, re-sign with the instance's signing secret, compare in
- * constant time, and reject anything past `exp`. The plugin's copy is
- * internal to the package, so this is a deliberate re-implementation
- * against the same public primitives (`makeSignature` from
+ * constant time, and reject anything past `exp`. The plugin exports its
+ * copy, but it answers one boolean and cannot tell an expired query from
+ * one it never signed, which the two failure pages need, so this is a
+ * deliberate re-implementation against the same public primitives (`makeSignature` from
  * `better-auth/crypto`) and the same secret the instance signs with —
  * `MarfaAuth.signingSecret` exists so there is one resolved value rather
  * than a verifier guessing at what the signer used.
