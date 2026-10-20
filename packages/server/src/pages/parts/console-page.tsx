@@ -18,9 +18,9 @@ export interface ConsolePageProps {
   title: string;
   /** The nonce this response's content security policy names. */
   nonce: string;
-  /** Home's crumb: what the person has named this Marfa. */
+  /** The first crumb of every other page: what the person has named this Marfa. */
   instanceName: string;
-  /** The trail under Home: the page first, then each item deeper. Empty on Home. */
+  /** The trail under Home: the page first, then each item deeper. Empty on Home, which shows no breadcrumb. */
   trail?: readonly Crumb[];
   /** The registry id of `trail[0]`, which the picker marks as the current page. */
   pageId?: string;

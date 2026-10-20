@@ -952,12 +952,16 @@ describe("Breadcrumb", () => {
     expect(out).toContain('aria-current="page"');
   });
 
-  it("is Home alone, with no picker, on Home", () => {
+  it("is an empty bar on Home, which has no trail: no crumb, no landmark and no picker", () => {
     const out = render({ trail: [] });
-    expect(out).toContain(
-      '<span class="here" aria-current="page">Marfa</span>',
-    );
+    expect(out).toContain('<div class="crumbs"></div>');
+    expect(out).not.toContain("<nav");
+    expect(out).not.toContain("<a ");
+    expect(out).not.toContain("Marfa");
     expect(out).not.toContain("<button");
+    // Witness: with a trail the same props give the bar's crumbs.
+    expect(render()).toContain("<nav");
+    expect(render()).toContain("Marfa");
   });
 });
 

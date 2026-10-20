@@ -71,12 +71,12 @@ describe("Home", () => {
     expect(visibleText(out)).toContain("Sign out");
   });
 
-  it("starts with the instance's name as its one crumb, the page it is", async () => {
+  it("shows no breadcrumb, because Home is where a breadcrumb begins", async () => {
     const out = await home({}, { instanceName: "August's Marfa" });
-    expect(out).toMatch(
-      /<nav class="crumbs"[\s\S]*<span class="here" aria-current="page">August&#39;s Marfa<\/span>/,
-    );
+    expect(out).not.toContain('aria-label="Breadcrumb"');
     expect(out).not.toContain("data-picker-button");
+    expect(out).not.toContain('class="here"');
+    expect(out).toContain('<div class="crumbs"></div>');
   });
 
   it("shows only the pages that are built, grouped as the registry groups them", async () => {

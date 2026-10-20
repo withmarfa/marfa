@@ -66,7 +66,8 @@ Keep these in every page you build.
 
 - A console page is one quiet column 720 pixels wide with no sidebar. A moment
   (sign-in, claim, approval, signed out, problem) is one card 384 pixels wide.
-- A console page is a `ConsolePage`, which starts with a `Breadcrumb`. The page
+- A console page is a `ConsolePage`, which starts with a `Breadcrumb`, except
+  Home, which has no trail and shows an empty bar. The page
   under Home carries the picker, which lists every other page grouped as Home
   groups them. One level down, a page that has items lists them in a side
   panel.
