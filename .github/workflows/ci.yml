@@ -22,9 +22,12 @@ on:
 
 # Release gates need a verdict for each main commit. Even with cancellation
 # disabled, a shared group replaces older pending runs; non-PR runs need
-# their own groups.
+# their own groups. A pull request's draft and ready runs have separate
+# groups: a push to a draft and marking it ready start two runs at once, and
+# in one group the later-queued run cancels the other. When the draft run won,
+# only `Draft CI` reported and the required `Full CI` stayed expected.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && format('{0}-{1}', github.ref, github.event.pull_request.draft && 'draft' || 'ready') || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
