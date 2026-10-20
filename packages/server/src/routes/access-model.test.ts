@@ -997,4 +997,26 @@ describe("types that share a label", () => {
       "Read and edit core.task and aic.ticket.task",
     );
   });
+
+  it("names a type by identifier in the line for what is held and the line for what is asked when the two read alike", () => {
+    const model = buildAccess({
+      scopes: [scope("aic.ticket.task:write")],
+      held: ["core.task:read"],
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles,
+    });
+    expect(model.summaries.held).toBe("Read core.task");
+    expect(model.summaries.data).toBe("Read and edit aic.ticket.task");
+    expect(model.heldLevels).toEqual([
+      { noun: "tasks", alias: "core.task", level: "read" },
+    ]);
+    // The witness: with no other type of the label, both lines keep the noun.
+    const alone = buildAccess({
+      scopes: [scope("core.task:write")],
+      held: ["core.task:read"],
+      bundles,
+    });
+    expect(alone.summaries.held).toBe("Read tasks");
+    expect(alone.summaries.data).toBe("Read and edit tasks");
+  });
 });

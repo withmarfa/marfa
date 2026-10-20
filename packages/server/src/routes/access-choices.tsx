@@ -195,6 +195,15 @@ export function AccessChoices(props: AccessChoicesProps) {
       {model.mechanisms.map((literal) => (
         <input type="hidden" name="scopes" value={literal} />
       ))}
+      {/* What the app holds, for the browser to name a type by beside it. */}
+      {model.heldLevels.map((held) => (
+        <span
+          hidden
+          data-held-pick=""
+          data-noun={held.noun}
+          data-alias={held.alias}
+        />
+      ))}
       {model.held.length > 0 && (
         <RowGroup>
           <DisclosureRow

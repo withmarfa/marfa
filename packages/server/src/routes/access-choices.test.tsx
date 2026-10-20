@@ -143,3 +143,27 @@ describe("a row's line, for a person who hears the page", () => {
     );
   });
 });
+
+describe("what the app holds, for the line the browser rebuilds", () => {
+  it("is on the page as each held level's noun and identifier", () => {
+    const model = buildAccess({
+      scopes: [parseScope("aic.ticket.task:write")].flatMap((s) =>
+        s ? [s] : [],
+      ),
+      held: ["core.task:read", "core.note:read"],
+      typeLabels: { "aic.ticket.task": "Task" },
+      bundles: [],
+    });
+    const html = markup(<AccessChoices model={model} />);
+    const held = [
+      ...html.matchAll(/<[a-z]+[^>]*\bdata-held-pick\b[^>]*>/g),
+    ].map((m) => [
+      /data-noun="([^"]*)"/.exec(m[0])?.[1],
+      /data-alias="([^"]*)"/.exec(m[0])?.[1],
+    ]);
+    expect(held).toEqual([
+      ["tasks", "core.task"],
+      ["notes", "core.note"],
+    ]);
+  });
+});

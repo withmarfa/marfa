@@ -35,6 +35,7 @@ import {
   levelOfValue,
   lowerFirst,
   nameApart,
+  type Nameable,
   powersSummary,
   profileSummary,
   type HeldLevel,
@@ -160,6 +161,8 @@ export interface AccessModel {
   powers: SwitchRow[];
   /** What the app already holds, to show and not to change. */
   held: HeldRow[];
+  /** The levels it holds, which the browser names beside the ones it rebuilds a line from. */
+  heldLevels: HeldLevel[];
   summaries: AccessSummaries;
   /** Submitted with the form without a control: the OAuth mechanisms the request names. */
   mechanisms: string[];
@@ -486,6 +489,7 @@ export function buildAccess(given: AccessInput): AccessModel {
     {},
     offered.map((row) => ({
       row,
+      noun: row.noun,
       pattern: patternOf.get(row.id) ?? "",
       exact: row.type !== undefined,
     })),
@@ -509,8 +513,9 @@ export function buildAccess(given: AccessInput): AccessModel {
     profile,
     powers: ordered,
     held: heldList.rows,
+    heldLevels: heldList.levels,
     summaries: {
-      data: dataSummary(picks(data), empty.data),
+      data: dataSummary(picks(data), empty.data, undefined, heldList.levels),
       profile: profileSummary(
         picks(profile),
         profile
@@ -518,6 +523,7 @@ export function buildAccess(given: AccessInput): AccessModel {
           .filter((row) => row.checked)
           .map((row) => row.title),
         empty.profile,
+        heldList.levels,
       ),
       powers: powersSummary(
         ordered.filter((row) => row.checked).length,
@@ -550,6 +556,8 @@ export interface HeldPower {
 export interface HeldAccess {
   /** One line for each thing held, in the order held: the box on the approval pages. */
   rows: HeldRow[];
+  /** What is held at each level, as a line names it. */
+  levels: HeldLevel[];
   /** What is held of the person's data, links and definitions, at the level held. */
   data: HeldRow[];
   /** What is held of the person's profile, at the level held. */
@@ -565,6 +573,8 @@ export interface HeldAccess {
 /** A row of a page beside the pattern it stands for, and whether that is one item type exactly. */
 interface Named {
   row: { title: string; description?: string };
+  /** What the row's control is for, as a lines names it. */
+  noun: string;
   pattern: string;
   exact: boolean;
 }
@@ -652,7 +662,7 @@ export function describeHeld(
       rows.set(key, row);
       const exact = isExactTypeScope(scope);
       const alias = exact ? scope.typePattern : undefined;
-      named.push({ row, pattern: scope.typePattern, exact });
+      named.push({ row, noun, pattern: scope.typePattern, exact });
       levels.push({ noun, alias, level });
       if (scope.kind === "profile") {
         profile.push(row);
@@ -693,7 +703,7 @@ export function describeHeld(
     const row: HeldRow = { title, value: LEVEL_LABELS.none };
     rows.set(key, row);
     const exact = isExactTypeScope(scope);
-    named.push({ row, pattern: scope.typePattern, exact });
+    named.push({ row, noun, pattern: scope.typePattern, exact });
     (isProfile ? profile : data).push(row);
     (isProfile ? noAccess.profile : noAccess.data).push({
       noun,
@@ -711,6 +721,10 @@ export function describeHeld(
     }
   }
   tellApart([...named, ...alongside]);
+  const beside: Nameable[] = alongside.map((other) => ({
+    noun: other.noun,
+    alias: other.exact ? other.pattern : undefined,
+  }));
   const none = {
     data: "No access to your data",
     profile: "No access to your profile",
@@ -721,22 +735,25 @@ export function describeHeld(
     denied: readonly { noun: string; alias?: string }[],
   ): string => {
     if (denied.length === 0) return line;
-    const denial = `no access to ${listWords(nameApart(denied).map((d) => d.noun))}`;
+    const denial = `no access to ${listWords(nameApart(denied, beside).map((d) => d.noun))}`;
     return line === empty
       ? denial.charAt(0).toUpperCase() + denial.slice(1)
       : `${line}; ${denial}`;
   };
   return {
     rows: [...rows.values()],
+    levels,
     data,
     profile,
     powers,
-    summary: heldSummary(levels, seen, powerTitles),
+    summary: heldSummary(levels, seen, powerTitles, beside),
     summaries: {
       data: withNoAccess(
         dataSummary(
           dataLevels.map((pick) => ({ ...pick, held: "none" })),
           none.data,
+          undefined,
+          beside,
         ),
         none.data,
         noAccess.data,
@@ -746,6 +763,7 @@ export function describeHeld(
           profileLevels.map((pick) => ({ ...pick, held: "none" })),
           seen,
           none.profile,
+          beside,
         ),
         none.profile,
         noAccess.profile,

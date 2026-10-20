@@ -1654,3 +1654,25 @@ describe("what the approval pages say of item types that share a label", () => {
     expect(linesUnder(one.html, "Task")).toEqual([""]);
   });
 });
+
+describe("what the approval pages say of one item type shown in two rows", () => {
+  const booted = bootFor("approval-types-one-type-twice");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("shows no identifier under either row, because both are the same type", async () => {
+    // Asked beside all data, the type has a row of its own and one in the list of types.
+    const { html } = await consentScreen(
+      await register(ALL),
+      "*:read core.task:write",
+    );
+    const tasks = readRows(html).filter((r) => r.control.label === "Task");
+    // The witness: it is shown twice.
+    expect(tasks.map((r) => r.control.name).sort()).toEqual([
+      "scopes",
+      "types",
+    ]);
+    for (const row of tasks)
+      expect(row.text.slice(row.text.lastIndexOf("Task") + 4).trim()).toBe("");
+  });
+});

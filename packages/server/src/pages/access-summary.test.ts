@@ -237,4 +237,29 @@ describe("two things that read alike", () => {
       ),
     ).toBe("Read and edit aic.ticket.task; read core.task");
   });
+
+  it("are named by identifier where what is held reads alike, in the line for what is held and the line for what is asked", () => {
+    const held = [{ noun: "tasks", alias: "core.task" }];
+    const asked = [{ noun: "tasks", alias: "aic.ticket.task" }];
+    expect(
+      dataSummary(
+        [pick("tasks", "write", "aic.ticket.task")],
+        "",
+        undefined,
+        held,
+      ),
+    ).toBe("Read and edit aic.ticket.task");
+    expect(
+      heldSummary(
+        [{ noun: "tasks", level: "read", alias: "core.task" }],
+        [],
+        [],
+        asked,
+      ),
+    ).toBe("Read core.task");
+    // The witness: the same type on both sides is one thing, named as it was.
+    expect(
+      dataSummary([pick("tasks", "write", "core.task")], "", undefined, held),
+    ).toBe("Read and edit tasks");
+  });
 });
