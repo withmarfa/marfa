@@ -43,7 +43,7 @@ const KEPT_AS: Record<string, string> = {
 };
 
 const message = (digits: string) =>
-  `Must be a whole number that a 64-bit float keeps digit for digit, not ${digits}, which it keeps as ${KEPT_AS[digits]}. Send it as a string.`;
+  `Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${KEPT_AS[digits]}. Send it as a string.`;
 
 const REFUSED = Object.keys(KEPT_AS);
 
@@ -138,6 +138,89 @@ describe("a whole number a 64-bit float would change", () => {
         `{"version":${own.data.item.version},"defaults":{"properties":{"weight":${digits}}}}`,
       );
       await refusedAt(changed, "weight", digits);
+    },
+  );
+
+  it.each(REFUSED)(
+    "refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension",
+    async (digits) => {
+      const ends: string[] = [];
+      for (const body of ["from", "to", "other"]) {
+        const made = await client.createItem(
+          createNote({ source: ctx.source, properties: { body } }),
+        );
+        expect(made.ok).toBe(true);
+        trackItem(ctx, made.data.item.id);
+        ends.push(made.data.item.id);
+      }
+      const [from, to, other] = ends as [string, string, string];
+      const edgesFrom = async () => {
+        const listed = await client.rawRequest<{ data: unknown[] }>(
+          `/items/${from}/edges?edge_type=about&limit=100`,
+          { method: "GET" },
+        );
+        expect(listed.status).toBe(200);
+        return listed.data.data.length;
+      };
+
+      const created = await send(
+        "POST",
+        "/edges",
+        `{"edge_type":"about","source_id":"${from}","target_id":"${to}","properties":{"list":[${digits}]}}`,
+      );
+      await refusedAt(created, "list.0", digits);
+      expect(await edgesFrom()).toBe(0);
+
+      const bulk = await send(
+        "POST",
+        "/edges/bulk",
+        `{"edges":[{"edge_type":"about","source_id":"${from}","target_id":"${to}"},{"edge_type":"about","source_id":"${from}","target_id":"${other}","properties":{"weight":${digits}}}]}`,
+      );
+      await refusedAt(bulk, "weight", digits);
+      expect(bulk.error?.error.details?.index).toBe(1);
+      expect(await edgesFrom()).toBe(0);
+
+      // The witness: the same doors take the edge once the number is safe.
+      const taken = await send(
+        "POST",
+        "/edges",
+        `{"edge_type":"about","source_id":"${from}","target_id":"${to}","properties":{"weight":9007199254740991}}`,
+      );
+      expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+      const edge = (
+        taken.data as unknown as { edge: { id: string; version: number } }
+      ).edge;
+      const changed = await send(
+        "PATCH",
+        `/edges/${edge.id}`,
+        `{"version":${edge.version},"properties":{"weight":${digits}}}`,
+      );
+      await refusedAt(changed, "weight", digits);
+      const kept = await client.rawRequest<{
+        edge: { version: number; properties: Record<string, unknown> };
+      }>(`/edges/${edge.id}`, { method: "GET" });
+      expect(kept.data.edge).toMatchObject({
+        version: edge.version,
+        properties: { weight: 9007199254740991 },
+      });
+
+      const extension = await send(
+        "PUT",
+        `/items/${from}/extensions/mine`,
+        `{"nested":{"list":[1,${digits}]}}`,
+      );
+      await refusedAt(extension, "nested.list.1", digits);
+      const read = await client.rawRequest<Record<string, unknown>>(
+        `/items/${from}/extensions`,
+        { method: "GET" },
+      );
+      expect(JSON.stringify(read.data)).not.toContain("nested");
+      const stored = await send(
+        "PUT",
+        `/items/${from}/extensions/mine`,
+        `{"nested":{"list":[1,9007199254740991]}}`,
+      );
+      expect(stored.status, JSON.stringify(stored.error)).toBe(200);
     },
   );
 

@@ -372,6 +372,9 @@ export interface EdgeDraft {
   target: string;
   type: string;
   properties?: Record<string, unknown>;
+  /** The properties as JSON text, where a number's digits are the point and a
+   *  JavaScript value would have rounded them. */
+  propertiesText?: string;
   id?: string;
 }
 

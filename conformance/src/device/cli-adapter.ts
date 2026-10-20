@@ -744,7 +744,7 @@ export class CliDevice implements DeviceUnderTest {
       "--type",
       edge.type,
       "--properties",
-      JSON.stringify(edge.properties ?? {}),
+      edge.propertiesText ?? JSON.stringify(edge.properties ?? {}),
     ];
     if (edge.id !== undefined) args.push("--id", edge.id);
     return this.json<QueuedWrite>(args);
@@ -754,6 +754,7 @@ export class CliDevice implements DeviceUnderTest {
     id: string,
     edit: {
       properties: Record<string, unknown>;
+      propertiesText?: string;
       version?: number;
       source_id?: string;
       target_id?: string;
@@ -764,7 +765,7 @@ export class CliDevice implements DeviceUnderTest {
       "update",
       id,
       "--properties",
-      JSON.stringify(edit.properties),
+      edit.propertiesText ?? JSON.stringify(edit.properties),
     ];
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
@@ -808,13 +809,22 @@ export class CliDevice implements DeviceUnderTest {
     namespace: string,
     body: Record<string, unknown>,
   ): Promise<Outcome<QueuedWrite>> {
+    return this.writeExtensionText(item, namespace, JSON.stringify(body));
+  }
+
+  /** The data as JSON text, where a number's digits are the point. */
+  async writeExtensionText(
+    item: string,
+    namespace: string,
+    text: string,
+  ): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>([
       "extensions",
       "write",
       item,
       namespace,
       "--body",
-      JSON.stringify(body),
+      text,
     ]);
   }
 

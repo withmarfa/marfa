@@ -171,7 +171,7 @@ const KEPT_AS: Record<string, string> = {
 };
 
 const message = (digits: string) =>
-  `Must be a whole number that a 64-bit float keeps digit for digit, not ${digits}, which it keeps as ${KEPT_AS[digits]}. Send it as a string.`;
+  `Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${KEPT_AS[digits]}. Send it as a string.`;
 
 /** What the server answers a create of `text` (the request's properties as JSON text), and what the device queues and then the server stores. */
 async function bothPaths(text: string) {
@@ -220,6 +220,155 @@ it.each([
     expect(await device.queue()).toEqual(before);
   },
 );
+
+/** An item pair and an edge between them, on the server and held by the device. */
+let linked: { from: string; to: string; edge: string; version: number };
+async function linkedItems() {
+  if (linked) return linked;
+  const made = [];
+  for (const title of ["from", "to"]) {
+    const item = await device.create({
+      type: valuesType,
+      properties: { title },
+    });
+    expect(item.ok).toBe(true);
+    if (!item.ok) throw new Error("the device refused an item");
+    trackItem(ctx, item.value.item_id!);
+    made.push(item.value.item_id!);
+  }
+  const edge = await device.createEdge({
+    source: made[0]!,
+    target: made[1]!,
+    type: "references",
+  });
+  expect(edge.ok).toBe(true);
+  expect((await device.drain()).ok).toBe(true);
+  const held = await device.edgesFrom(made[0]!);
+  expect(held.ok && held.value).toHaveLength(1);
+  if (!held.ok) throw new Error("the device holds no edge");
+  linked = {
+    from: made[0]!,
+    to: made[1]!,
+    edge: held.value[0]!.id,
+    version: held.value[0]!.version,
+  };
+  return linked;
+}
+
+it.each([
+  ["1500000000000000001"],
+  ["1152921504606846976"],
+  ["1000000000000000000000"],
+])(
+  "refuses %s in the properties of an edge and the data of an extension on both paths with one message",
+  async (digits) => {
+    const { from, to, edge, version } = await linkedItems();
+    const nested = `{"weight":${digits},"list":[1,${digits}]}`;
+    const before = await device.queue();
+    const refusedOnBoth = async (
+      server: Awaited<ReturnType<typeof client.rawRequest>>,
+      local: { ok: boolean; refusal?: { raw: string } },
+      field: string,
+    ) => {
+      expect(server.ok).toBe(false);
+      expect((server.error as { error: { code: string } }).error.code).toBe(
+        "invalid_properties",
+      );
+      expect(
+        (
+          server.error as {
+            error: { details?: { errors?: unknown } };
+          }
+        ).error.details?.errors,
+      ).toEqual([{ field, message: message(digits) }]);
+      expect(local.ok).toBe(false);
+      expect(local.refusal?.raw).toContain(`${field}: ${message(digits)}`);
+    };
+    const json = { "Content-Type": "application/json" };
+    await refusedOnBoth(
+      await client.rawRequest("/edges", {
+        method: "POST",
+        headers: json,
+        body: `{"source_id":"${from}","target_id":"${to}","edge_type":"about","properties":${nested}}`,
+      }),
+      await device.createEdge({
+        source: from,
+        target: to,
+        type: "about",
+        propertiesText: nested,
+      }),
+      "weight",
+    );
+    await refusedOnBoth(
+      await client.rawRequest(`/edges/${edge}`, {
+        method: "PATCH",
+        headers: json,
+        body: `{"version":${version},"properties":${nested}}`,
+      }),
+      await device.updateEdge(edge, {
+        properties: {},
+        propertiesText: nested,
+        version,
+      }),
+      "weight",
+    );
+    await refusedOnBoth(
+      await client.rawRequest(`/items/${from}/extensions/fixture.digits`, {
+        method: "PUT",
+        headers: json,
+        body: nested,
+      }),
+      await device.writeExtensionText(from, "fixture.digits", nested),
+      "weight",
+    );
+    expect(await device.queue()).toEqual(before);
+  },
+);
+
+it("keeps a number a float keeps in the properties of an edge and the data of an extension on both paths", async () => {
+  const { from, to, edge, version } = await linkedItems();
+  const text = '{"weight":1152921504606847000,"digits":"1152921504606846976"}';
+  const json = { "Content-Type": "application/json" };
+  expect(
+    (
+      await client.rawRequest(`/items/${from}/extensions/fixture.kept`, {
+        method: "PUT",
+        headers: json,
+        body: text,
+      })
+    ).ok,
+  ).toBe(true);
+  expect((await device.writeExtensionText(from, "fixture.kept", text)).ok).toBe(
+    true,
+  );
+  expect(
+    (
+      await device.updateEdge(edge, {
+        properties: {},
+        propertiesText: text,
+        version,
+      })
+    ).ok,
+  ).toBe(true);
+  expect(
+    (
+      await device.createEdge({
+        source: to,
+        target: from,
+        type: "about",
+        propertiesText: text,
+      })
+    ).ok,
+  ).toBe(true);
+  const drained = await device.drain();
+  expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
+    "accepted",
+    "accepted",
+    "accepted",
+  ]);
+  const stored = await client.getItem(from);
+  expect(stored.ok).toBe(true);
+});
 
 it.each([
   ["9007199254740991", 9007199254740991],
@@ -340,8 +489,11 @@ it.each([
     "https://exa\tmple.com/\na",
     "https://example.com/a",
   ],
-  ["an empty punycode host", "http://xn--", "http://xn--"],
-  ["a percent-encoded punycode label", "http://xn--%41", "http://xn--%41"],
+  [
+    "a valid punycode host",
+    "http://xn--mnchen-3ya.de/",
+    "http://xn--mnchen-3ya.de/",
+  ],
   [
     "an internationalized host",
     "https://münchen.de/straße",
@@ -382,6 +534,14 @@ it.each([
   ["http://xn--é/"],
   ["http://xn--%e9/"],
   ["http://xn--%2f/"],
+  ["http://xn--"],
+  ["http://xn--%41"],
+  ["http://xn--a"],
+  ["http://bücher.xn--"],
+  ["http://xn--a.münchen.de/"],
+  ["http:xn--"],
+  ["http://xn--!"],
+  ["http://xn--%7E"],
   ["   "],
 ])("refuses the url %j on both paths", async (written) => {
   const properties = { title: "t", url: written };

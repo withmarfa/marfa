@@ -673,4 +673,48 @@ describe("a working copy checks the fields its catalog holds", () => {
     const mended = await folder.folder.scan();
     expect(mended.ok && mended.value.created).toBe(1);
   });
+
+  it.each([
+    ["9999999999999999999", "10000000000000000000"],
+    ["1152921504606846976", "1152921504606847000"],
+    ["-1152921504606846976", "-1152921504606847000"],
+  ])(
+    "flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended",
+    async (digits, served) => {
+      folder = await folderHarness("property-validation-digits", {
+        settings: { search: { types: [TYPE] } },
+        catalog: typeCatalog(types),
+        rows: {},
+      });
+      expect((await folder.folder.pull()).ok).toBe(true);
+      const path = join(folder.dir, "digits.md");
+      const bad = `---\ntype: fixture.fields\ntitle: digit\nbig: ${digits}\n---\nkeep these bytes\n`;
+      writeFileSync(path, bad);
+      // The witness: a neighbour holding a whole number a float keeps is taken.
+      writeFileSync(
+        join(folder.dir, "neighbour.md"),
+        "---\ntype: fixture.fields\ntitle: next\nbig: 1152921504606847000\n---\nvalid body\n",
+      );
+      const scanned = await folder.folder.scan();
+      expect(scanned.ok).toBe(true);
+      if (scanned.ok) {
+        expect(scanned.value.created, "the neighbour was taken").toBe(1);
+        expect(scanned.value.flagged).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              path: "digits.md",
+              reason: expect.stringContaining(
+                `big: Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${served}. Send it as a string.`,
+              ),
+            }),
+          ]),
+        );
+      }
+      expect(readFileSync(path, "utf8")).toBe(bad);
+
+      writeFileSync(path, bad.replace(`big: ${digits}`, `big: "${digits}"`));
+      const mended = await folder.folder.scan();
+      expect(mended.ok && mended.value.created).toBe(1);
+    },
+  );
 });

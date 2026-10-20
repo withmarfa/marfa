@@ -328,17 +328,17 @@ If a write leaves out a property its type requires, or names one the type declar
 
 ### `items/property-number-exact`
 
-If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions` or the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}` names a property, at any depth, whose value is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then the server MUST answer `400 invalid_properties` with `details.errors` naming the property in `field`, as `list.1`, and the message `Must be a whole number that a 64-bit float keeps digit for digit, not <digits>, which it keeps as <kept>. Send it as a string.`, leaving out `, which it keeps as <kept>` where the float is infinite.
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then the server MUST answer `400 invalid_properties` with `details.errors` naming the value in `field`, as `list.1`, and the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. Send it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
 
 **Reason:** the server holds a number as a 64-bit float and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
 
-**Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
 
 ### `items/property-number-exact-bulk`
 
-If an entry of `POST /items/bulk` names a property holding a number `items/property-number-exact` refuses, then the server MUST answer `400 invalid_properties` for the whole batch, with the entry's position in `details.index`, and write none of its entries.
+If an entry of `POST /items/bulk` or `POST /edges/bulk` names a value `items/property-number-exact` refuses, then the server MUST answer `400 invalid_properties` for the whole batch, with the entry's position in `details.index`, and write none of its entries.
 
-**Tests:** `compliance/exact-integers.test.ts › refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`.
+**Tests:** `compliance/exact-integers.test.ts › refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`.
 
 ### `items/property-number-kept`
 

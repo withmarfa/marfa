@@ -2828,11 +2828,27 @@ A device MUST refuse `validation` a write to a type its app declared that misses
 
 ### `device/number-exact`
 
-If a write to an item names a property, at any depth, whose value is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
+If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest digits that name the 64-bit float it parses to, as JavaScript's `Number.prototype.toString` writes them, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`.
+
+### `device/number-exact-folder-flagged`
+
+If the frontmatter of a folder document names, at any depth, a whole number that is written with digits other than the shortest digits that name the 64-bit float it parses to, then a device MUST flag the document with the field and the message `items/property-number-exact` gives.
+
+**Reason:** a document taken with the number would be stored changed. A number beyond 64 bits is already a float by the time a parser hands it over, so the device reads the written digits.
+
+**Tests:** `device/property-validation.test.ts › flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended`.
+
+### `device/number-exact-folder-kept`
+
+If the frontmatter of a folder document names a whole number that `device/number-exact-folder-flagged` flags, then a device MUST retain the file's bytes.
+
+**Reason:** the file is the person's, and a document rewritten from the stored number would lose what they wrote.
+
+**Tests:** `device/property-validation.test.ts › flags a document whose frontmatter holds the whole number %s a float would change, keeps its bytes and takes it once mended`.
 
 ### `device/number-digits`
 
@@ -2844,7 +2860,7 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value` and `types/url-stored` have the server do.
+When a write names a value for a `url` field, or an element of an array of `url`, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode` and `types/url-stored` have the server do.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the row shown before the answer must be the row stored after it.
 
