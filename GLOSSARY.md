@@ -72,7 +72,7 @@ The words are grouped by topic.
 
 ### Access words
 
-Access is read the same way wherever a person sees it: on the pages where they approve it, on a key's page, on an app's page and in the CLI's output. For each kind of thing it is one level, and a short list of named powers. The server builds the description in `packages/server/src/routes/access-model.ts`, from the words in `scope-copy.ts` and `permission-labels.ts` beside it; the CLI keeps the same words in `core/marfa-cli/src/access.rs`; `ci/access-words.test.ts` holds both to the tables below. An item type is named by its own label on a page and by its identifier in the CLI.
+Access is read the same way wherever a person sees it: on the pages where they approve it, on a key's page, on an app's page and in the CLI's output. For each kind of thing it is one level, and a short list of named powers. The server builds the description in `packages/server/src/routes/access-model.ts`, from the words in `scope-copy.ts` and `permission-labels.ts` beside it; the CLI keeps the same words in `core/marfa-cli/src/access.rs`; `ci/access-words.test.ts` holds both to the tables below. A row the table does not title, such as an item type or a link type, is named by its own label on a page and as the scope writes it in the CLI (`core.note`, `edge.references`).
 
 | Level   | The word      |
 | ------- | ------------- |
