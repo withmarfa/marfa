@@ -6425,12 +6425,13 @@ describe("a file that is not a document", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
     expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(text);
 
+    const made = harness;
     const uploads = () =>
-      harness.server.requests
+      made.server.requests
         .filter((request) => request.pathname === "/blobs")
         .map((request) => request.raw);
     const bytesSentFor = (id: string) =>
-      sentUpdates(harness)
+      sentUpdates(made)
         .filter((sent) => sent.id === id)
         .map((sent) => sent.body);
 

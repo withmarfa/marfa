@@ -1390,7 +1390,7 @@ When a non-document file contains bytes that are not valid UTF-8 or include NUL,
 
 ### `folders/file-item-doc-name-sent`
 
-When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
+When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) change and the file is bound to a file item, a device MUST send those bytes as the file item's content whatever they hold.
 
 **Reason:** the item's kind, not the file's name, says how its bytes are read, and a pull can place a file item at a document name. Frontmatter that does not parse and bytes that are not UTF-8 are then the file item's own content.
 
@@ -1398,7 +1398,7 @@ When the bytes of a file at a document name (`.md`, `.markdown` or `.txt`) chang
 
 ### `folders/file-item-doc-name-unflagged`
 
-When a file at a document name is bound to a file item, a device MUST NOT flag it `unreadable` or `encoding`.
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is bound to a file item, a device MUST NOT flag it `unreadable` or `encoding`.
 
 **Reason:** a flag holds a document whose text the device cannot read, and a file item's bytes are not read as text. A document not bound to a file item, a new file included, is still held by `folders/unreadable-yaml` and `folders/encoding-flag`.
 
