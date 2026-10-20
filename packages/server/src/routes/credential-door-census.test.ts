@@ -164,6 +164,8 @@ const OPEN_DOORS: Record<string, string> = {
     "RFC 9728 resource metadata, which a bearer challenge points at",
   "GET /auth/sign-in": "the sign-in page",
   "POST /auth/sign-in": "its form post, which is how a credential is got",
+  "POST /auth/confirm":
+    "the owner's browser proving it is still there; it takes the session cookie, which it replaces",
   "GET /auth/forgot-password":
     "the page that says how to recover a forgotten password, which needs no credential",
   "GET /auth/authorize": "the consent screen, gated on a session cookie",

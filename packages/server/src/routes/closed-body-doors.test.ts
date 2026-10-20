@@ -97,6 +97,8 @@ const UNPUBLISHED_WRITES: Record<string, string> = {
   "POST /inbound/{token}":
     "a sender's delivery, whatever bytes it sent, recorded as it arrived",
   "POST /auth/sign-in": "a form post, not a JSON body",
+  "POST /auth/confirm":
+    "JSON is closed: refused here by the handler, which takes exactly one of two keys (tested in routes/auth-confirm.test.ts)",
   "POST /auth/authorize/decision": "a form post, not a JSON body",
   "POST /auth/device": "a form post, not a JSON body",
   "POST /auth/device/consent": "a form post, not a JSON body",

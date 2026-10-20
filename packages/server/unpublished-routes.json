@@ -10,6 +10,7 @@
   "GET /.well-known/oauth-protected-resource": "RFC 9728 resource metadata, which a bearer challenge points at",
   "GET /auth/sign-in": "the sign-in page",
   "POST /auth/sign-in": "its form post",
+  "POST /auth/confirm": "the dialog's answer, which renews a stale browser session",
   "GET /auth/forgot-password": "the page that says how to recover a forgotten password",
   "GET /auth/authorize": "the consent screen",
   "POST /auth/authorize/decision": "its decision",
