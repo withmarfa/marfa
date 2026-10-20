@@ -73,6 +73,11 @@ async function seedHolding(
   return { id: created.data.item.id, since: row.created_at };
 }
 
+/** A bound that is exclusive, moved back so the entry it came from is inside. */
+function justBefore(instant: string): string {
+  return new Date(Date.parse(instant) - 1).toISOString();
+}
+
 async function createdRow(itemId: string) {
   const rows = await client.listAudit({
     resource_id: itemId,
@@ -170,7 +175,8 @@ describe("audit log", () => {
   });
 
   it("sorts entries by kind, each into exactly one", async () => {
-    const { id, since } = await seedHolding(`audit-kind-${ctx.runId}`);
+    const { id, since: seeded } = await seedHolding(`audit-kind-${ctx.runId}`);
+    const since = justBefore(seeded);
     const minted = await client.createKey({
       label: "audit-kind",
       source: `${ctx.source}-kind`,
@@ -229,7 +235,10 @@ describe("audit log", () => {
   });
 
   it("searches by every word, ignoring case and order", async () => {
-    const { id, since } = await seedHolding(`audit-search-${ctx.runId}`);
+    const { id, since: seeded } = await seedHolding(
+      `audit-search-${ctx.runId}`,
+    );
+    const since = justBefore(seeded);
     const search = async (q: string): Promise<string[]> => {
       const page = await client.listAudit({
         q,
