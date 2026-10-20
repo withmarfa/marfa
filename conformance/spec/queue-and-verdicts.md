@@ -938,7 +938,7 @@ If a write sent to test a suspect meets an environmental failure, including a `4
 
 **Reason:** the failure may be an outage or a gateway failing, which the streak was counted to rule out, and no answer to a write that does not depend on the suspect has shown it is not. The write that tested has its streak counted as any write has (`queue-and-verdicts/streak-counted`), and is not made a suspect. The suspect keeps the streak and last answer its failure gave it, and a stop of the drain while the test is in flight loses neither.
 
-**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`, `› keeps the streak of a suspect when the drain is stopped while the write sent to test it is in flight`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`, `device/contract.test.ts › takes a refusal that names no contract as the network's, ending the pass uncounted`.
+**Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› ends the pass at a write sent to test them that the server limits, adding nothing to its streak`, `› keeps the streak of a suspect when the drain is stopped while the write sent to test it is in flight`, `› sends at most two requests a drain, and sets nothing aside, in an outage that fails ten queued writes`.
 
 ### `queue-and-verdicts/stuck-write-test-refused`
 
