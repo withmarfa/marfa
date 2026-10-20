@@ -4040,7 +4040,9 @@ When another registered folder holds a file whose bytes can be read but are not 
 
 When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
 
-**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Reason:** a file at a document name is read as a document, and a document without an id line is a new item, so a `.txt` note moved to another folder as `.md` is a new item there.
+
+**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`.
 
 ### `folders/moved-awaiting-peer`
 
