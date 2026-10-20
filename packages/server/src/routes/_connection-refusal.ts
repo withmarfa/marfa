@@ -58,8 +58,8 @@ export function liveConnectionRefusal(
     if (props.status === "revoked") return undefined;
     return (
       `Grant ${item.id} is still live. Revoke it first with ` +
-      `DELETE /auth/grants/${item.id} or POST /auth/grants/${item.id}/revoke, ` +
-      `which drop the app's tokens and its stored consent. Removing the row ` +
+      `DELETE /owner/sign-ins/${item.id}, which drops the app's tokens and ` +
+      `its stored consent. Removing the row ` +
       `here would leave both behind with nothing listing them.`
     );
   }

@@ -659,7 +659,7 @@ describe("GET /auth/authorize (consent skip)", () => {
     ]);
 
     // Resolve the consenting user from the projection, then revoke the
-    // grant the way /auth/grants/:id/revoke does.
+    // grant the way DELETE /owner/sign-ins/:id does.
     const authUserId = await grantUserId(ctx);
     await ctx.storage.oauthProvider!.revokeTokensForGrant(clientId, authUserId);
 

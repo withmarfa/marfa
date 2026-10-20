@@ -50,7 +50,7 @@ export interface SignInActor {
 }
 
 /** The app grant `item` is, when it is a live one of the owner. */
-function ownersLiveApp(
+export function ownersLiveApp(
   item: Item | null,
   ownerId: string | null,
 ): { clientId: string; authUserId: string } | null {

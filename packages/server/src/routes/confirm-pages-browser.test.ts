@@ -1,6 +1,6 @@
 /**
- * The owner's pages that ask for a change (the API keys pages, Manage,
- * Restore, and Password and passkeys) asking "Confirm it's you" in a real browser when a change is
+ * The owner's pages that ask for a change (the API keys pages, Connected apps, Browsers,
+ * Manage, Restore, and Password and passkeys) asking "Confirm it's you" in a real browser when a change is
  * refused for a sign-in older than five minutes, and carrying the change out
  * once after it. Each case sends its change from a session that is six minutes
  * old on the server's clock.
@@ -9,7 +9,11 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import * as clock from "../clock.js";
 import { launchTestBrowser, listen, reserveOrigin } from "../test-browser.js";
-import { createTestContext, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  seedOauthBearer,
+  type TestContext,
+} from "../test-utils.js";
 
 const launched = await launchTestBrowser();
 if (launched instanceof Error && process.env.CI) throw launched;
@@ -304,42 +308,6 @@ inBrowser("API keys, with a sign-in older than five minutes", () => {
     }
   });
 });
-
-inBrowser(
-  "Manage, signing out this browser with a sign-in older than five minutes",
-  () => {
-    it("signs this browser out in one request, with no question", async () => {
-      const { context, page } = await signedIn();
-      try {
-        await page.goto(`${origin}/auth/owner/manage`);
-        await page.locator("#health").filter({ hasText: "Status:" }).waitFor();
-        clock.advanceClock(6 * MINUTE);
-        page.on("dialog", (alert) => void alert.accept());
-        let deletes = 0;
-        page.on("request", (request) => {
-          if (
-            request.method() === "DELETE" &&
-            request.url().includes("/owner/sign-ins/")
-          )
-            deletes += 1;
-        });
-        await page
-          .locator("#browsers li")
-          .filter({ hasText: "(this browser)" })
-          .getByRole("button", { name: "Sign out" })
-          .click();
-        await page.waitForURL(/\/auth\/sign-in/);
-        expect(deletes).toBe(1);
-        expect(await dialogOf(page).count()).toBe(0);
-        const after = await context.request.get(`${origin}/owner/sign-ins`);
-        expect(after.status()).toBe(401);
-      } finally {
-        clock.advanceClock(16 * MINUTE);
-        await context.close();
-      }
-    });
-  },
-);
 
 inBrowser("The confirmation's password field", () => {
   it("has the show-password button on the API keys pages", async () => {
@@ -647,6 +615,93 @@ inBrowser(
         expect(optionsAsked).toBe(2);
       } finally {
         clock.advanceClock(16 * MINUTE);
+        await context.close();
+      }
+    });
+  },
+);
+
+// Last in the file: signing out the other browsers ends the session `ctx.ownerRequest` holds.
+inBrowser(
+  "Connected apps and Browsers, with a sign-in older than five minutes",
+  () => {
+    it("asks to confirm it's you to disconnect an app, and disconnects it once", async () => {
+      const { context, page } = await signedIn();
+      try {
+        const app = await seedOauthBearer(ctx, ["core.note:read"], {
+          clientName: "Stale app",
+        });
+        await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+        clock.advanceClock(6 * MINUTE);
+        let deletes = 0;
+        page.on("request", (request) => {
+          if (
+            request.method() === "DELETE" &&
+            request.url().includes("/owner/sign-ins/")
+          )
+            deletes += 1;
+        });
+        await page
+          .locator('[data-dialog-open="app-disconnect-dialog"]')
+          .click();
+        await page.locator('[data-hook="app-disconnect"]').click();
+        expect(await dialogOf(page).innerText()).toContain(
+          "Disconnecting an app needs a recent sign-in.",
+        );
+        await confirmWithPassword(page);
+        await page.waitForURL(`${origin}/auth/owner/apps`);
+        // The refused send and the one after it.
+        expect(deletes).toBe(2);
+        const listed = await ctx.ownerRequest("/owner/sign-ins");
+        const rows = ((await listed.json()) as { data: { id: string }[] }).data;
+        expect(rows.some((row) => row.id === app.grantId)).toBe(false);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await context.close();
+      }
+    });
+
+    it("asks to confirm it's you to sign out the other browsers, and signs them out once", async () => {
+      const { context, page } = await signedIn();
+      const other = await signedIn();
+      try {
+        await page.goto(`${origin}/auth/owner/browsers`);
+        expect(
+          (
+            await other.context.request.get(`${origin}/owner/sign-ins`)
+          ).status(),
+        ).toBe(200);
+        clock.advanceClock(6 * MINUTE);
+        let posts = 0;
+        page.on("request", (request) => {
+          if (
+            request.method() === "POST" &&
+            request.url().endsWith("/auth/revoke-other-sessions")
+          )
+            posts += 1;
+        });
+        await page
+          .locator('[data-dialog-open="browsers-others-dialog"]')
+          .click();
+        await page.locator('[data-hook="browsers-others"]').click();
+        expect(await dialogOf(page).innerText()).toContain(
+          "Signing out other browsers needs a recent sign-in.",
+        );
+        await confirmWithPassword(page);
+        await page.getByText("Signed out the other browsers").waitFor();
+        expect(posts).toBe(2);
+        expect(
+          (
+            await other.context.request.get(`${origin}/owner/sign-ins`)
+          ).status(),
+        ).toBe(401);
+        // This browser is still signed in.
+        expect(
+          (await context.request.get(`${origin}/owner/sign-ins`)).status(),
+        ).toBe(200);
+      } finally {
+        clock.advanceClock(16 * MINUTE);
+        await other.context.close();
         await context.close();
       }
     });

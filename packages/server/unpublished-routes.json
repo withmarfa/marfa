@@ -39,5 +39,8 @@
   "GET /auth/owner/keys/new": "owner page for making a key",
   "GET /auth/owner/keys/{id}": "owner page for one key",
   "GET /auth/owner/keys/{id}/copy": "where a new key's secret was shown once",
+  "GET /auth/owner/apps": "owner connected apps list",
+  "GET /auth/owner/apps/{id}": "owner page for one connected app",
+  "GET /auth/owner/browsers": "owner page for the browsers signed in",
   "GET /auth/owner/passkeys": "owner password and passkeys page"
 }

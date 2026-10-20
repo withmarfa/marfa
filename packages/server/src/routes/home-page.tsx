@@ -37,7 +37,7 @@ const MAX_SETTING_HITS = 8;
 const OLDER_MANAGEMENT_PAGE = {
   groupId: "marfa",
   title: "Older management page",
-  description: "Keys, apps, connectors, sign-ins and restore, all on one page",
+  description: "Maintenance, connectors and restore, all on one page",
   href: "/auth/owner/manage",
 } as const;
 

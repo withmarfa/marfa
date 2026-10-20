@@ -5,6 +5,8 @@ import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { accountPages } from "./account-pages.js";
+import { appRoutes } from "./app-routes.js";
+import { browserRoutes } from "./browser-routes.js";
 import type { ConsoleHealth } from "./console-health.js";
 import { consoleGate } from "./console-gate.js";
 import { generalRoutes } from "./general-routes.js";
@@ -27,6 +29,8 @@ export function ownerPages(
   router.use("*", consoleGate(storage, auth));
   router.route("/", accountPages(storage, auth));
   router.route("/", keyRoutes(storage));
+  router.route("/", appRoutes(storage));
+  router.route("/", browserRoutes(storage, auth));
   router.route("/", generalRoutes(storage, view.config));
   router.route("/", healthPageRoutes(storage, view.health));
   router.route("/", managementPages(storage));
