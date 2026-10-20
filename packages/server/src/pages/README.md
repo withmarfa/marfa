@@ -133,7 +133,10 @@ Keep these in every page you build.
    `value` returns the text at the right end of the page's row on Home and
    `attention` returns the lines Home lists under Needs attention, each a short
    title and a link. Both are optional and Home reads them as it renders, so
-   Home never changes when a page is added.
+   Home never changes when a page is added. Home waits two seconds for each.
+   One that is late, throws, or returns a link that is not a path on this
+   server or a tone other than `warn` or `danger` is left out, logged, and
+   shown as "Couldn't check" the page, so one page never takes Home down.
 1. Add a test that renders the page and checks its behavior (status, text,
    links, roles), not its class names.
 

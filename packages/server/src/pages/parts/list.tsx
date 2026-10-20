@@ -51,7 +51,9 @@ export interface PagerProps {
 /**
  * Under a long list: the "Rows per page" select on the left (10, 25 or 50,
  * sent as `size`), and where you are with the arrows on the right. A list of
- * ten rows or fewer shows none, because no size changes what it shows.
+ * ten rows or fewer shows none, because no size changes what it shows. The
+ * select sends its form when it changes, which takes a script, so the form
+ * starts hidden and the script shows it.
  */
 export function Pager(props: PagerProps) {
   const { pagination: p } = props;
@@ -59,7 +61,7 @@ export function Pager(props: PagerProps) {
   const range = `${String(p.from + 1)}–${String(p.to)} of ${String(p.total)}`;
   return (
     <nav class="pager" aria-label={`${props.noun}, pages`}>
-      <form class="line" method="get">
+      <form class="line" method="get" data-script-only hidden>
         {Object.entries(props.carry ?? {})
           .filter(([name]) => name !== "size" && name !== "page")
           .map(([name, value]) => (

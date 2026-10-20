@@ -765,6 +765,12 @@ describe("without the script", () => {
           false,
         );
         expect(await page.locator(".pw-toggle").isVisible()).toBe(false);
+        // The page is longer than ten rows, so its pager is there to be seen
+        // without the script, and the select that needs one is not.
+        expect(
+          await page.getByRole("link", { name: "Next page" }).count(),
+        ).toBe(1);
+        expect(await page.getByLabel("Rows per page").isVisible()).toBe(false);
         expect(await page.getByRole("heading", { level: 1 }).count()).toBe(1);
       } finally {
         await context.close();

@@ -224,6 +224,38 @@ describe("Home", () => {
   );
 
   inBrowser(
+    "focuses the search field when its icon or its padding is clicked",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(origin);
+        const field = page.locator(".search");
+        const input = field.locator("input");
+        const focused = () =>
+          page.evaluate(
+            () => document.activeElement?.getAttribute("type") === "search",
+          );
+        await page.getByRole("button", { name: "Sign out" }).waitFor();
+        expect(await focused()).toBe(false);
+        await field.locator(".icon").click();
+        expect(await focused()).toBe(true);
+        await input.blur();
+        expect(await focused()).toBe(false);
+        const box = await field.boundingBox();
+        await field.click({ position: { x: 3, y: (box?.height ?? 2) / 2 } });
+        expect(await focused()).toBe(true);
+        // The shortcut button keeps its own job: it opens the search, and the
+        // field stays unfocused.
+        await input.blur();
+        await page.locator("[data-command-search-open]").click();
+        await page.locator("#command-search[open]").waitFor();
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "searches by form with the keyboard alone, and a search that finds nothing says so",
     async () => {
       const { page, context } = await open();

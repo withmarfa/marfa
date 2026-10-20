@@ -752,7 +752,12 @@ describe("lists", () => {
       />,
     );
     expect(out).toContain("Rows per page");
-    expect(attrs(out, /<form /)).toMatchObject({ method: "get" });
+    // The select only works with a script, so the script shows it.
+    expect(attrs(out, /<form /)).toMatchObject({
+      method: "get",
+      hidden: "",
+      "data-script-only": "true",
+    });
     const select = attrs(out, /<select /);
     expect(select).toMatchObject({ name: "size", "data-autosubmit": "" });
     expect(select["aria-label"]).toBe("Rows per page");
