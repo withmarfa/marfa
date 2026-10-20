@@ -256,6 +256,52 @@ describe("Home at the root", () => {
     }
   });
 
+  it("still answers when a page throws at once or hands Home an address off this server", async () => {
+    const pages = createConsolePages(createPageRegistry(HOME_GROUPS));
+    pages.register("keys", {
+      href: "/auth/owner/keys",
+      value: () => {
+        throw new Error("sync");
+      },
+    });
+    pages.register("trash", {
+      href: "/auth/owner/trash",
+      attention: () =>
+        Promise.resolve([
+          { title: "Elsewhere", href: "https://evil.example/x" },
+          { title: "Here", href: "/auth/owner/trash" },
+        ]),
+    });
+    pages.register("apps", {
+      href: "/auth/owner/apps",
+      value: () => Promise.resolve({ text: "2 apps" }),
+    });
+    const mine = await createTestContext();
+    try {
+      const app = createApp(
+        mine.storage,
+        mine.blobs,
+        mine.housekeeping,
+        mine.config,
+        "instance-id-for-home",
+        { consolePages: pages },
+      );
+      const res = await app.request("/", {
+        headers: { ...BROWSER, cookie: mine.owner.cookie },
+      });
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      const text = visibleText(html);
+      expect(text).toContain("2 apps");
+      expect(text).toContain("Here");
+      expect(text).toContain("Couldn't check Trash");
+      expect(text).toContain("Couldn't check API keys");
+      expect(html).not.toContain("evil.example");
+    } finally {
+      await mine.cleanup();
+    }
+  });
+
   it("lists the pages a console is given, with each page's value, and survives one that fails", async () => {
     const pages = createConsolePages(createPageRegistry(HOME_GROUPS));
     pages.register("keys", {

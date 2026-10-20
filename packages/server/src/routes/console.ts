@@ -8,9 +8,12 @@
  * never edits Home. The registry itself holds no storage; the providers that
  * read it live here, in the routes layer.
  */
+import { errorMessage } from "../error-text.js";
+import { localHref } from "../pages/href.js";
 import { PAGE_REGISTRY } from "../pages/registry.js";
 import type { PageRegistry, Registration } from "../pages/registry.js";
 import type { AppConfig } from "../config.js";
+import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 
 /** What Home's row for a page says at its right end. */
@@ -62,6 +65,54 @@ export interface ConsolePages {
   read(reads: ConsoleReads): Promise<HomeReading>;
 }
 
+/** How long Home waits for one page's value or attention items. */
+const PROVIDER_DEADLINE_MS = 2000;
+
+const TONES: readonly unknown[] = ["warn", "danger"];
+
+/** Runs `provider` and gives up on it at the deadline. Its timer never outlives it. */
+async function withinDeadline<T>(
+  provider: (() => Promise<T> | T) | undefined,
+): Promise<T | undefined> {
+  if (!provider) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new Error(`no answer within ${String(PROVIDER_DEADLINE_MS)} ms`),
+      );
+    }, PROVIDER_DEADLINE_MS);
+  });
+  try {
+    // Started from a promise so a provider that throws before it returns one
+    // is a rejection like any other.
+    return await Promise.race([Promise.resolve().then(provider), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function checkedValue(value: HomeValue | undefined): HomeValue | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value.text !== "string")
+    throw new Error("a value must have text");
+  if (value.tone !== undefined && !TONES.includes(value.tone))
+    throw new Error(`unknown tone ${JSON.stringify(value.tone)}`);
+  return value;
+}
+
+/** Checks one item the way Home will render it, so rendering cannot throw on it. */
+function checkedItem(item: AttentionItem): AttentionItem {
+  if (typeof item.title !== "string")
+    throw new Error("an attention item must have a title");
+  if (item.description !== undefined && typeof item.description !== "string")
+    throw new Error("an attention item's description must be text");
+  if (item.tone !== undefined && !TONES.includes(item.tone))
+    throw new Error(`unknown tone ${JSON.stringify(item.tone)}`);
+  localHref(item.href);
+  return item;
+}
+
 export function createConsolePages(registry: PageRegistry): ConsolePages {
   const providers = new Map<
     string,
@@ -80,20 +131,45 @@ export function createConsolePages(registry: PageRegistry): ConsolePages {
           const page = registry.page(id);
           if (!page) return [];
           const [value, attention] = await Promise.allSettled([
-            provider.value?.(reads),
-            provider.attention?.(reads),
+            withinDeadline(async () =>
+              checkedValue(await provider.value?.(reads)),
+            ),
+            withinDeadline(async () => {
+              const items = await provider.attention?.(reads);
+              if (items === undefined) return [];
+              if (!Array.isArray(items))
+                throw new Error("attention must be a list");
+              return items;
+            }),
           ]);
-          if (value.status === "fulfilled" && value.value !== undefined)
-            values.set(id, value.value);
-          if (attention.status === "rejected")
-            return [
-              {
-                title: `Couldn't check ${page.title}`,
-                href: page.href,
-                tone: "warn",
-              } satisfies AttentionItem,
-            ];
-          return attention.value ?? [];
+          let failed = false;
+          const fail = (error: unknown): void => {
+            failed = true;
+            log("warn", "console: a page could not be read for Home", {
+              page: id,
+              error: errorMessage(error),
+            });
+          };
+          if (value.status === "fulfilled") {
+            if (value.value !== undefined) values.set(id, value.value);
+          } else fail(value.reason);
+          const items: AttentionItem[] = [];
+          if (attention.status === "fulfilled") {
+            for (const item of attention.value ?? []) {
+              try {
+                items.push(checkedItem(item));
+              } catch (error) {
+                fail(error);
+              }
+            }
+          } else fail(attention.reason);
+          if (failed)
+            items.push({
+              title: `Couldn't check ${page.title}`,
+              href: page.href,
+              tone: "warn",
+            });
+          return items;
         }),
       );
       return { values, attention: lists.flat() };
