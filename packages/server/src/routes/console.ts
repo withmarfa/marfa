@@ -78,9 +78,7 @@ async function withinDeadline<T>(
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
-      reject(
-        new Error(`no answer within ${String(PROVIDER_DEADLINE_MS)} ms`),
-      );
+      reject(new Error(`no answer within ${String(PROVIDER_DEADLINE_MS)} ms`));
     }, PROVIDER_DEADLINE_MS);
   });
   try {
@@ -94,8 +92,7 @@ async function withinDeadline<T>(
 
 function checkedValue(value: HomeValue | undefined): HomeValue | undefined {
   if (value === undefined) return undefined;
-  if (typeof value.text !== "string")
-    throw new Error("a value must have text");
+  if (typeof value.text !== "string") throw new Error("a value must have text");
   if (value.tone !== undefined && !TONES.includes(value.tone))
     throw new Error(`unknown tone ${JSON.stringify(value.tone)}`);
   return value;

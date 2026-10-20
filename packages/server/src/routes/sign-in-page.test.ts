@@ -9,10 +9,7 @@ import {
 } from "../pages/reading.js";
 import type { TestContext } from "../test-utils.js";
 import { createTestContext, request } from "../test-utils.js";
-import {
-  synthesizeOauthReturnTo,
-  validateReturnTo,
-} from "./sign-in-return.js";
+import { synthesizeOauthReturnTo, validateReturnTo } from "./sign-in-return.js";
 import { renderSignInPage } from "./test-render.js";
 
 /**
