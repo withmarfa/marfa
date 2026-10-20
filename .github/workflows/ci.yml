@@ -88,7 +88,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.ci-sqlite != 'false') }}
     name: CI (SQLite)
-    timeout-minutes: 60
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -99,14 +99,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install socket ACL inspection
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y acl
       - run: pnpm install --frozen-lockfile
       # Prettier reads Markdown as well as code, and the classifier's test
       # and the contract's reference check read the whole tree, so a
-      # documentation change stops after these. A draft stops before the
-      # tests.
+      # documentation change stops after these. The tests are the next job.
       - run: pnpm format:check
       - run: pnpm vitest run ci/ci-required.test.ts
       - working-directory: conformance
@@ -117,16 +113,48 @@ jobs:
         run: pnpm typecheck
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
         run: pnpm lint
+
+  # The workspace's tests, in three shards on runners of their own. Vitest
+  # gives each shard a third of the test files, chosen by a hash of the path,
+  # so the three together run every file once. A file keeps its own temporary
+  # database and shares nothing with another, which is what lets a shard run
+  # without the rest. A draft skips them, like every job `full` guards.
+  # `Full CI` waits for the job, which fails if any shard does.
+  ci-sqlite-tests:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false')) }}
+    name: CI (SQLite) tests ${{ matrix.shard }}/3
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard reports, so one failure shows all the others there are.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # The private control socket's tests call `getfacl`.
+      - name: Install socket ACL inspection
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y acl
+      - run: pnpm install --frozen-lockfile
+      # The server's tests import `types` and `shared` through their builds.
+      - run: pnpm build
       # Cache the language model fetched by the real OCR test.
-      - if: ${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}
-        uses: actions/cache@v6
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/marfa-tessdata
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       # The version check asks cargo how it reads the manifests, so it runs
       # in its own job and this one needs no Rust.
-      - if: ${{ needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false' }}
-        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
+      - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts --shard=${{ matrix.shard }}/3
 
   core-checks:
     needs: changes
@@ -850,7 +878,7 @@ jobs:
     uses: ./.github/workflows/core-live.yml
 
   # The private control socket's tests on macOS, the only run of them there.
-  # Linux runs them in `CI (SQLite)`, which installs the `getfacl` they call.
+  # Linux runs them in `CI (SQLite) tests`, which installs the `getfacl` they call.
   control-socket:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.control-socket != 'false') }}
@@ -883,6 +911,7 @@ jobs:
       [
         changes,
         ci-sqlite,
+        ci-sqlite-tests,
         core-checks,
         core-checks-linux,
         conformance-shards,
@@ -921,6 +950,7 @@ jobs:
       [
         changes,
         ci-sqlite,
+        ci-sqlite-tests,
         core-checks,
         core-checks-linux,
         conformance-shards,

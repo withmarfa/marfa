@@ -184,8 +184,8 @@ describe("the control socket's tests under Full CI", () => {
     expect(needsOf(jobs["report-failure"])).toContain("control-socket");
   });
 
-  it("run on Linux in CI (SQLite), where the tool they read is installed first and nothing leaves them out", () => {
-    const steps = workflow("ci.yml").jobs["ci-sqlite"]?.steps ?? [];
+  it("run on Linux in CI (SQLite) tests, where the tool they read is installed first and nothing leaves them out", () => {
+    const steps = workflow("ci.yml").jobs["ci-sqlite-tests"]?.steps ?? [];
     const install = steps.findIndex((step) =>
       step.run?.includes("apt-get install -y acl"),
     );

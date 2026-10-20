@@ -33,8 +33,9 @@ import { fileURLToPath } from "node:url";
 /** Each output, named for the job that reads it. */
 export const JOBS = [
   // `CI (SQLite)`. It runs the format check, this classifier's test and the
-  // contract's reference check for any change, and its build, typecheck,
-  // lint and tests only for `workspace`.
+  // contract's reference check for any change, and its build, typecheck and
+  // lint only for `workspace`. The tests are `CI (SQLite) tests`, three
+  // shards that run for `workspace` unless the pull request is a draft.
   "ci-sqlite",
   "workspace",
   // `Core checks`, on macOS: the core's format, lint and tests, the login
