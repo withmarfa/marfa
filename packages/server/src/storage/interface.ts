@@ -37,6 +37,7 @@ import type {
 } from "@withmarfa/shared";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { HousekeepingReport } from "../housekeeping/scheduler.js";
+import type { AuditKind } from "./audit-kinds.js";
 import type { ConflictMode } from "./conflict.js";
 import type { SourceFilterSettings } from "./filter-sql.js";
 
@@ -2184,6 +2185,11 @@ export interface AuditStore {
     action?: string;
     resource_type?: string;
     resource_id?: string;
+    /** Only entries of this kind, sorted from `action` by `audit-kinds.ts`. */
+    kind?: AuditKind;
+    /** Only entries holding every word of this text in their action,
+     *  resource, key, address or details. */
+    q?: string;
     /** Exclusive lower bound on `created_at`, when the entry was written. */
     created_after?: string;
     /** Exclusive upper bound on the same column. */

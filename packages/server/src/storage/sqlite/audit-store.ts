@@ -1,4 +1,14 @@
-import { eq, and, desc, gt, lt, or } from "drizzle-orm";
+import {
+  eq,
+  and,
+  desc,
+  gt,
+  lt,
+  or,
+  sql,
+  type SQL,
+  type SQLWrapper,
+} from "drizzle-orm";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
@@ -14,6 +24,14 @@ import {
   normalizeTimeBound,
 } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
+import {
+  ACCESS_FAMILIES,
+  HOUSEKEEPING_ACTIONS,
+  SETTINGS_ACTIONS,
+  SETTINGS_FAMILIES,
+  auditSearchWords,
+  type AuditKind,
+} from "../audit-kinds.js";
 import { auditLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
@@ -33,6 +51,51 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
       "audit_log.details",
     ),
   };
+}
+
+/** The part of `action` before its first dot, or all of it when it has none. */
+const family = sql`(CASE WHEN instr(${auditLog.action}, '.') > 0 THEN substr(${auditLog.action}, 1, instr(${auditLog.action}, '.') - 1) ELSE ${auditLog.action} END)`;
+
+const inList = (values: readonly string[]): SQL =>
+  sql.join(
+    values.map((value) => sql`${value}`),
+    sql`, `,
+  );
+
+function kindClause(kind: AuditKind): SQL {
+  const housekeeping = sql`${auditLog.action} IN (${inList(HOUSEKEEPING_ACTIONS)})`;
+  const settings = sql`(${auditLog.action} IN (${inList(SETTINGS_ACTIONS)}) OR ${family} IN (${inList(SETTINGS_FAMILIES)}))`;
+  const access = sql`${family} IN (${inList(ACCESS_FAMILIES)})`;
+  switch (kind) {
+    case "housekeeping":
+      return housekeeping;
+    case "settings":
+      return sql`(NOT ${housekeeping} AND ${settings})`;
+    case "access":
+      return sql`(NOT ${housekeeping} AND NOT ${settings} AND ${access})`;
+    case "data":
+      return sql`(NOT ${housekeeping} AND NOT ${settings} AND NOT ${access})`;
+  }
+}
+
+/** Every word is somewhere in the entry's text, in any order, ignoring case. */
+function searchClause(q: string): SQL | undefined {
+  const words = auditSearchWords(q);
+  if (words.length === 0) return undefined;
+  return and(
+    ...words.map((word) => {
+      const holds = (column: SQLWrapper): SQL =>
+        sql`instr(lower(coalesce(${column}, '')), ${word}) > 0`;
+      return or(
+        holds(auditLog.action),
+        holds(auditLog.resource_type),
+        holds(auditLog.resource_id),
+        holds(auditLog.key_id),
+        holds(auditLog.client_ip),
+        holds(auditLog.details),
+      );
+    }),
+  );
 }
 
 export class SqliteAuditStore implements AuditStore {
@@ -73,6 +136,8 @@ export class SqliteAuditStore implements AuditStore {
     action?: string;
     resource_type?: string;
     resource_id?: string;
+    kind?: AuditKind;
+    q?: string;
     created_after?: string;
     created_before?: string;
     limit?: number;
@@ -92,6 +157,11 @@ export class SqliteAuditStore implements AuditStore {
     }
     if (filters.resource_id) {
       conditions.push(eq(auditLog.resource_id, filters.resource_id));
+    }
+    if (filters.kind) conditions.push(kindClause(filters.kind));
+    if (filters.q) {
+      const clause = searchClause(filters.q);
+      if (clause) conditions.push(clause);
     }
     // Re-spelled to the width the column is stamped at, like every other
     // bounded door. The comparison is lexical against text, so a bound

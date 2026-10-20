@@ -50211,6 +50211,33 @@
           {
             "schema": {
               "type": "string",
+              "enum": [
+                "access",
+                "data",
+                "settings",
+                "housekeeping"
+              ],
+              "description": "Only return entries of this kind, sorted from `action`: `access` is sign-ins, accounts, keys, folders and the owner's profile, `data` is items, edges, types, extensions, files, exports and restores, `settings` is configuration, webhooks and connectors, and `housekeeping` is what Marfa does on its own, such as clearing the trash."
+            },
+            "required": false,
+            "description": "Only return entries of this kind, sorted from `action`: `access` is sign-ins, accounts, keys, folders and the owner's profile, `data` is items, edges, types, extensions, files, exports and restores, `settings` is configuration, webhooks and connectors, and `housekeeping` is what Marfa does on its own, such as clearing the trash.",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details."
+            },
+            "required": false,
+            "description": "Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
               "description": "Only return entries recorded after this time."
             },
             "required": false,

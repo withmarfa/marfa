@@ -8,6 +8,11 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requirePermission, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import {
+  AUDIT_KINDS,
+  AUDIT_KIND_WORDS,
+  AUDIT_SEARCH_MAX_LENGTH,
+} from "../storage/audit-kinds.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { pageOf } from "./_schemas.js";
 
@@ -72,6 +77,19 @@ const listAuditRoute = createRoute({
         .string()
         .optional()
         .describe("Only return entries for the resource with this ID."),
+      kind: z
+        .enum(AUDIT_KINDS)
+        .optional()
+        .describe(
+          `Only return entries of this kind, sorted from \`action\`: \`access\` is ${AUDIT_KIND_WORDS.access}, \`data\` is ${AUDIT_KIND_WORDS.data}, \`settings\` is ${AUDIT_KIND_WORDS.settings}, and \`housekeeping\` is ${AUDIT_KIND_WORDS.housekeeping}.`,
+        ),
+      q: z
+        .string()
+        .max(AUDIT_SEARCH_MAX_LENGTH)
+        .optional()
+        .describe(
+          "Only return entries that hold every word of this text, in any order and ignoring case, in their action, resource, key, address or details.",
+        ),
       created_after: z
         .string()
         .optional()
@@ -134,6 +152,8 @@ export function auditRoutes(storage: Storage) {
       action,
       resource_type,
       resource_id,
+      kind,
+      q,
       created_after,
       created_before,
       limit,
@@ -144,6 +164,8 @@ export function auditRoutes(storage: Storage) {
       action,
       resource_type,
       resource_id,
+      kind,
+      q,
       created_after,
       created_before,
       limit,

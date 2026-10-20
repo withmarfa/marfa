@@ -1388,6 +1388,8 @@ export class MarfaClient {
       action?: string;
       resource_type?: string;
       resource_id?: string;
+      kind?: "access" | "data" | "settings" | "housekeeping";
+      q?: string;
       created_after?: string;
       created_before?: string;
       limit?: number;
