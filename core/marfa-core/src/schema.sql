@@ -183,6 +183,30 @@ CREATE TABLE IF NOT EXISTS queue (
   -- A release must reset this to zero: a released row refused again would
   -- break the `CHECK` and abort its transaction rather than go `dead`.
   refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals BETWEEN 0 AND 5),
+  -- The drains in a row in which this write met an environmental failure. Not
+  -- a refusal count: it is never held against the ceiling. An answer that is
+  -- not an environmental failure, and every release, set it back to zero; a
+  -- `429` leaves it as it was.
+  environmental_streak INTEGER NOT NULL DEFAULT 0 CHECK (environmental_streak >= 0),
+  -- When the current streak began, in milliseconds on the store's clock: the
+  -- first failure of the run. Null while the streak is zero. A write is asked
+  -- about only when this is five minutes back or more.
+  environmental_since INTEGER,
+  -- When the latest failure of the streak was met, on the same clock. A
+  -- failure more than fifteen minutes after it, or after a time the clock has
+  -- not reached, begins a new run instead of adding to this one.
+  environmental_last INTEGER,
+  -- A JSON `{"status": ..., "text": ...}`: the last answer the server gave the
+  -- write that was no answer to it, a `429` included, `status` null where
+  -- nothing answered and `text` null where the body was not text. A failure
+  -- that was not the write's own, such as a credential renewal that failed,
+  -- leaves it as it was.
+  last_failure TEXT,
+  -- The number of the write's last send: one past the highest number any write
+  -- holds, taken when it is sent. Null for a write never sent. A drain tests a
+  -- stuck write with the write sent least recently, the lowest number, a null
+  -- first. A number rather than a time, so a clock set back reorders nothing.
+  last_sent_seq INTEGER,
   queued_at TEXT NOT NULL,
   answered_at TEXT
 );

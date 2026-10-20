@@ -355,6 +355,9 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
+    /// The write keeps meeting an environmental failure while the server
+    /// answers other writes.
+    FailingAlone,
 }
 
 /// Which handle this process holds on the store.
@@ -534,8 +537,20 @@ pub struct QueuedWrite {
     /// The server's answer, whole, as it arrived.
     pub answer: Option<String>,
     pub refusals: i64,
+    /// The drains in a row in which the write met an environmental failure.
+    pub environmental_streak: i64,
+    /// What the write last met when the failure was environmental.
+    pub last_failure: Option<LastFailure>,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+/// What a write met that was no answer to it: the HTTP status, absent where
+/// nothing answered, and the start of the answer's body when it is text.
+#[napi(object)]
+pub struct LastFailure {
+    pub status: Option<u32>,
+    pub text: Option<String>,
 }
 
 /// How a file is attached. Every field has a default: the MIME type from the
@@ -710,6 +725,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::KeySpent => BlockedReason::KeySpent,
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
+            R::FailingAlone => BlockedReason::FailingAlone,
         }
     }
 }
@@ -722,6 +738,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::KeySpent => R::KeySpent,
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
+            BlockedReason::FailingAlone => R::FailingAlone,
         }
     }
 }
@@ -811,6 +828,11 @@ fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
         follows: write.follows,
         answer: write.answer,
         refusals: write.refusals,
+        environmental_streak: write.environmental_streak,
+        last_failure: write.last_failure.map(|failure| LastFailure {
+            status: failure.status.map(u32::from),
+            text: failure.text,
+        }),
         queued_at: write.queued_at,
         answered_at: write.answered_at,
     })
@@ -2374,8 +2396,8 @@ impl MarfaCore {
         Ok(count(released as u64))
     }
 
-    /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
-    /// out of the queue, and puts the copy back to what the server holds;
+    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved` or
+    /// `failing_alone` out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes. Off the JavaScript thread, because it reads each
     /// row it puts back from the server.

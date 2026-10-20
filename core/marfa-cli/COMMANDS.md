@@ -2703,7 +2703,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Send what the queue holds and record what came back.
 
-One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain.
+One pass. A write that met a network rather than an answer is left where it was, uncounted, for the next drain. A write that has met one in three drains in a row, no two more than 15 minutes apart and the first at least five minutes ago, is tested: the drain sends the write that does not depend on it and was sent least recently, one never sent first. If the server answers that write, the drain sends the tested write once more, and if that meets one again it is set aside as failing_alone and the drain carries on. If the write sent to test it meets one too, cannot be sent, or the tested write is answered, nothing is set aside. A device that drains less often than every 15 minutes never sets a write aside.
 
 ```text
 marfa device drain [OPTIONS]
@@ -2761,15 +2761,15 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device withdraw
 
-Take a write blocked `ancestor_unavailable` or `conflict_unresolved` out of the queue, and put the copy back to what the server holds.
+Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone` out of the queue, and put the copy back to what the server holds.
 
-Sent again, such a write is refused the same way under any key. The writes held for it are refused unsent.
+Sent again, a write blocked `ancestor_unavailable` or `conflict_unresolved` is refused the same way under any key. The writes held for the withdrawn write are refused unsent.
 
 ```text
 marfa device withdraw [OPTIONS] <ID>

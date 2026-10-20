@@ -80,9 +80,9 @@ pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport, Draft, Edge,
     EdgeDraft, EdgeEdit, Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item,
-    ItemState, ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal,
-    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Thumbnail,
-    Tier, UnregisteredType, Verdict, WriteKind,
+    ItemState, LastFailure, ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite,
+    Refusal, SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status,
+    Thumbnail, Tier, UnregisteredType, Verdict, WriteKind,
 };
 pub use scaffold::{ScaffoldField, scaffold_type};
 pub use store::CEILING;
@@ -1278,8 +1278,8 @@ impl Core {
         Ok(released)
     }
 
-    /// Answers `false` for any row not blocked `ancestor_unavailable` or
-    /// `conflict_unresolved`. Everything it puts back is read from the server
+    /// Answers `false` for any row not blocked `ancestor_unavailable`,
+    /// `conflict_unresolved` or `failing_alone`. Everything it puts back is read from the server
     /// before anything changes, so a withdraw that cannot read leaves the
     /// queue and the copy as they were.
     pub fn withdraw(&self, id: &str) -> Result<bool> {

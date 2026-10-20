@@ -9,6 +9,7 @@ import {
   writeAnswers,
 } from "../../device/marfa-answers.js";
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
+import type { Answer } from "../../device/scripted-server.js";
 import { hydratedHarness, queuedEdit, scriptWrites } from "./harness.js";
 import type { Harness, ScriptedWrites } from "./harness.js";
 
@@ -30,13 +31,14 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The five, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
+/** The six, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
   "ancestor_unavailable",
   "conflict_unresolved",
   "awaiting_dependency",
+  "failing_alone",
 ] as const;
 
 function held() {
@@ -1034,11 +1036,11 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(0);
   });
 
-  it("reports one of the five blocked reasons and no other", async () => {
+  it("reports one of the six blocked reasons and no other", async () => {
     // Every answer that blocks, each in its own store, and the set of
-    // reasons they produce compared against the five. Both directions: a
-    // reason outside the five is a store no later build reads, and a reason
-    // in the five that nothing produces is a promise the device cannot keep.
+    // reasons they produce compared against the six. Both directions: a
+    // reason outside the six is a store no later build reads, and a reason
+    // in the six that nothing produces is a promise the device cannot keep.
     const reached = new Set<string>();
     const blocking: ScriptedWrites[] = [
       { update: [refusal(401, "unauthorized", "revoked")] },
@@ -1092,9 +1094,69 @@ describe("the ceiling, and releasing what it stopped", () => {
       await waiting.stop();
     }
 
+    // The sixth comes from no one answer either: a create a gateway refuses
+    // in three drains running, the first five minutes ago, set aside once the
+    // create sent to test it is taken and it fails again.
+    const failing = await hydratedHarness("class-reasons-failing-alone", {
+      rows: held(),
+    });
+    try {
+      const stuck = await failing.device.create({
+        type: "core.note",
+        properties: { title: "stuck", body: "stuck" },
+      });
+      expect(stuck.ok).toBe(true);
+      const other = await failing.device.create({
+        type: "core.note",
+        properties: { title: "other", body: "other" },
+      });
+      expect(other.ok).toBe(true);
+      const gateway: Answer = {
+        kind: "json",
+        status: 413,
+        contract: null,
+        body: null,
+        raw: "<html>413 Request Entity Too Large</html>",
+        headers: { "Content-Type": "text/html" },
+      };
+      scriptWrites(failing.server, {
+        create: [
+          (request) => {
+            const sent = JSON.parse(request.body) as {
+              id: string;
+              properties?: { title?: string };
+            };
+            return sent.properties?.title === "stuck"
+              ? gateway
+              : answers.created(wireItem({ id: sent.id, properties: {} }));
+          },
+        ],
+        read: [
+          (request) =>
+            answers.updated(
+              wireItem({ id: request.pathname.split("/")[2], properties: {} }),
+            ),
+        ],
+      });
+      for (let drain = 0; drain < 3; drain += 1) {
+        expect((await failing.device.drain()).ok).toBe(true);
+      }
+      // The store's clock six minutes on, by the debug build's fault.
+      process.env.MARFA_TEST_FAULT = "clock-offset=360000";
+      expect((await failing.device.drain()).ok).toBe(true);
+      const row = (await queueOf(failing)).find(
+        (row) => stuck.ok && row.id === stuck.value.id,
+      );
+      expect(row?.reason).not.toBeNull();
+      if (row?.reason != null) reached.add(row.reason);
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+      await failing.stop();
+    }
+
     expect(
       [...reached].sort(),
-      "the reasons this device can reach are not the five the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
+      "the reasons this device can reach are not the six the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
     ).toEqual([...BLOCKED_REASONS].sort());
   });
 

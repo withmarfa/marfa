@@ -472,6 +472,9 @@ pub enum BlockedReason {
     KeySpent,
     AncestorUnavailable,
     ConflictUnresolved,
+    /// The write keeps meeting an environmental failure while the server
+    /// answers other writes.
+    FailingAlone,
 }
 
 /// Which handle this process holds on the store.
@@ -699,8 +702,20 @@ pub struct QueuedWrite {
     /// an answer that was not JSON, its text as a string.
     pub answer: Option<JsonValue>,
     pub refusals: i64,
+    /// The drains in a row in which the write met an environmental failure.
+    pub environmental_streak: i64,
+    /// What the write last met when the failure was environmental.
+    pub last_failure: Option<LastFailure>,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+/// What a write met that was no answer to it: the HTTP status, absent where
+/// nothing answered, and the start of the answer's body when it is text.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct LastFailure {
+    pub status: Option<u16>,
+    pub text: Option<String>,
 }
 
 /// How a file is attached. Every field has a default: the MIME type from the
@@ -1334,6 +1349,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::KeySpent => BlockedReason::KeySpent,
             R::AncestorUnavailable => BlockedReason::AncestorUnavailable,
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
+            R::FailingAlone => BlockedReason::FailingAlone,
         }
     }
 }
@@ -1346,6 +1362,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::KeySpent => R::KeySpent,
             BlockedReason::AncestorUnavailable => R::AncestorUnavailable,
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
+            BlockedReason::FailingAlone => R::FailingAlone,
         }
     }
 }
@@ -1438,6 +1455,11 @@ fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
         follows: write.follows,
         answer: write.answer.as_deref().map(json::answer),
         refusals: write.refusals,
+        environmental_streak: write.environmental_streak,
+        last_failure: write.last_failure.map(|failure| LastFailure {
+            status: failure.status,
+            text: failure.text,
+        }),
         queued_at: write.queued_at,
         answered_at: write.answered_at,
     })
@@ -2257,8 +2279,8 @@ impl Core {
         Ok(self.inner.release_reason(reason.into())? as u64)
     }
 
-    /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
-    /// out of the queue, and puts the copy back to what the server holds;
+    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved` or
+    /// `failing_alone` out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes.
     pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {
@@ -3948,6 +3970,8 @@ mod tests {
                 body: serde_json::json!({ "properties": { "title": "t" } }),
                 conflicted_copy_id: None,
                 refusals: 0,
+                environmental_streak: 0,
+                last_failure: None,
                 queued_at: String::new(),
                 answered_at: None,
             };

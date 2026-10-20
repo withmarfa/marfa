@@ -160,7 +160,16 @@ pub enum DeviceCommand {
     /// Send what the queue holds and record what came back.
     ///
     /// One pass. A write that met a network rather than an answer is left
-    /// where it was, uncounted, for the next drain.
+    /// where it was, uncounted, for the next drain. A write that has met one
+    /// in three drains in a row, no two more than 15 minutes apart and the
+    /// first at least five minutes ago, is tested: the drain sends the write
+    /// that does not depend on it and was sent least recently, one never sent
+    /// first. If the server answers that write, the drain sends the tested
+    /// write once more, and if that meets one again it is set aside as
+    /// failing_alone and the drain carries on. If the write sent to test it
+    /// meets one too, cannot be sent, or the tested write is answered,
+    /// nothing is set aside. A device that drains less often than every 15
+    /// minutes never sets a write aside.
     Drain,
     /// Clear the writes the server has answered.
     ///
@@ -204,11 +213,13 @@ pub enum DeviceCommand {
         #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
         reason: Option<marfa_core::BlockedReason>,
     },
-    /// Take a write blocked `ancestor_unavailable` or `conflict_unresolved`
-    /// out of the queue, and put the copy back to what the server holds.
+    /// Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or
+    /// `failing_alone` out of the queue, and put the copy back to what the
+    /// server holds.
     ///
-    /// Sent again, such a write is refused the same way under any key. The
-    /// writes held for it are refused unsent.
+    /// Sent again, a write blocked `ancestor_unavailable` or
+    /// `conflict_unresolved` is refused the same way under any key. The writes
+    /// held for the withdrawn write are refused unsent.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]
@@ -1318,7 +1329,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     format!("withdrew {id}; the copy holds what the server holds")
                 } else {
                     format!(
-                        "nothing to withdraw: {id} is not blocked ancestor_unavailable or conflict_unresolved"
+                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved or failing_alone"
                     )
                 }
             })

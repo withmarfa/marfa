@@ -148,6 +148,10 @@ pub fn queued(
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
+        let last_failure = match &write.last_failure {
+            Some(failure) => format!("  last answer: {}", failure.describe()),
+            None => String::new(),
+        };
         // One missing from the whole queue was withdrawn or discarded, and
         // holds nothing.
         let pending: Vec<_> = write
@@ -180,8 +184,17 @@ pub fn queued(
         };
         writeln!(
             out,
-            "{}  {}  {}{}{}{}{}{}{}",
-            write.kind, subject, verdict, reason, refusal, refusals, held, after, unlanded
+            "{}  {}  {}{}{}{}{}{}{}{}",
+            write.kind,
+            subject,
+            verdict,
+            reason,
+            refusal,
+            refusals,
+            last_failure,
+            held,
+            after,
+            unlanded
         )?;
     }
     if writes.is_empty() {

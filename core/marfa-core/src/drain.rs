@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
-use crate::model::{BlockedReason, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
+use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
@@ -134,6 +134,217 @@ enum Classified {
     Trashed,
     /// The write ran, and the server kept no answer to repeat.
     Delivered,
+}
+
+/// The drains in a row in which a write meets an environmental failure
+/// before the drain asks whether it fails alone.
+const ENVIRONMENTAL_STREAK: i64 = 3;
+
+/// How long a streak has run, from its first failure, before the drain asks
+/// whether the write fails alone: a gateway that restarts or flaps for a few
+/// minutes is over before it counts.
+const STREAK_FLOOR_MILLIS: i64 = 5 * 60 * 1000;
+
+/// Why a write is sent at this point of the pass.
+#[derive(Clone, Copy, PartialEq)]
+enum Role {
+    /// Its place in the queue.
+    Walk,
+    /// Out of queue order, to learn whether the server answers a write that
+    /// does not depend on the suspect.
+    Test,
+    /// The suspect again, once the server has answered its test.
+    Resend,
+}
+
+/// Where a suspect stands.
+#[derive(Clone, Copy, PartialEq)]
+enum Phase {
+    /// Waiting for a write to test it.
+    Testing,
+    /// A write has landed, so the suspect is sent once more.
+    Resending,
+}
+
+/// A write that has met an environmental failure in three drains in a row, the
+/// first five minutes ago, and so is asked about: whether the server answers a
+/// write that does not depend on it, and then takes this one.
+struct Suspect {
+    id: String,
+    key: String,
+    /// Where the write stands in the queue the pass read.
+    at: usize,
+    unavailable: String,
+    /// Where the write's entry stands in the report's verdicts.
+    verdict_at: usize,
+    phase: Phase,
+}
+
+/// What a pass has decided so far, which says which writes are ready.
+struct Standing<'a> {
+    rows: &'a HashMap<&'a str, &'a QueuedWrite>,
+    answers: &'a HashMap<String, Option<Verdict>>,
+    waiting: &'a HashSet<String>,
+    landing: &'a HashMap<String, String>,
+}
+
+/// The write that tests a suspect: of the writes from `from` on that are ready
+/// and depend on no write ahead of them that has not been sent, the one sent
+/// least recently, by the number of its send. A write never sent counts as the
+/// least recent, and a tie goes to the earlier in the queue. Its streak does
+/// not decide, so the test moves through the queue and a stuck write cannot
+/// hold it for good.
+fn next_test(
+    core: &Core,
+    all: &[QueuedWrite],
+    from: usize,
+    tested: &HashSet<String>,
+    standing: &Standing,
+) -> Result<Option<usize>> {
+    let mut ahead = standing.waiting.clone();
+    let mut ready: Vec<(Option<i64>, usize, QueuedWrite)> = Vec::new();
+    for (at, candidate) in all.iter().enumerate().skip(from) {
+        if tested.contains(&candidate.id)
+            || standing
+                .answers
+                .get(&candidate.id)
+                .and_then(Option::as_ref)
+                .is_some()
+        {
+            continue;
+        }
+        let current = store::queued_write(&*core.conn()?, &candidate.id)?;
+        let candidate = current.as_ref().unwrap_or(candidate);
+        if matches!(
+            readiness(
+                candidate,
+                standing.rows,
+                standing.answers,
+                &ahead,
+                standing.landing,
+            ),
+            Readiness::Ready
+        ) {
+            let sent = store::last_sent_seq(&*core.conn()?, &candidate.id)?;
+            ready.push((sent, at, candidate.clone()));
+        }
+        // Chosen or not, a later write on the same subject is not sent ahead
+        // of it.
+        ahead.insert(candidate.id.clone());
+    }
+    // `None` orders before every number, and the sort is stable, so a tie
+    // stays in queue order.
+    ready.sort_by_key(|candidate| candidate.0);
+    for (_, at, candidate) in ready {
+        if crate::body::rule::lost_body(&*core.conn()?, &candidate)?.is_none() {
+            return Ok(Some(at));
+        }
+    }
+    Ok(None)
+}
+
+/// The pass ended before the suspect was sent again: it waits as any write
+/// does that met an environmental failure. Its streak and last answer were
+/// kept when it failed, so this counts it undelivered and no more.
+fn leave_waiting(stuck: &Suspect, report: &mut DrainReport) {
+    report.undelivered += 1;
+    if report.unavailable.is_none() {
+        report.unavailable = Some(stuck.unavailable.clone());
+    }
+}
+
+/// Puts the write's entry in the report: in place of the one it already has,
+/// where it has one, and last otherwise.
+fn put_verdict(report: &mut DrainReport, replacing: Option<usize>, entry: DrainVerdict) {
+    match replacing.and_then(|at| report.verdicts.get_mut(at)) {
+        Some(slot) => *slot = entry,
+        None => report.verdicts.push(entry),
+    }
+}
+
+/// Whether the server asked the caller to slow down, which says nothing of
+/// the write that met it.
+fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
+    match answer {
+        Ok(answer) => answer.status == 429,
+        Err(error) => matches!(
+            error,
+            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. }
+        ),
+    }
+}
+
+/// Whether the failure came before the write was answered, from the credential
+/// renewal or the device's own disk, and so says nothing of the write.
+fn not_the_writes(answer: &std::result::Result<Answer, CoreError>) -> bool {
+    matches!(
+        answer,
+        Err(CoreError::RenewalFailed(_) | CoreError::StorageFull(_) | CoreError::Io(_))
+    )
+}
+
+/// What a write met that was no answer to it: the server's status where it
+/// answered, a rate limit's and a gateway's included.
+fn failure_of(answer: &std::result::Result<Answer, CoreError>) -> LastFailure {
+    match answer {
+        Ok(answer) => LastFailure::of(Some(answer.status), answer.body.as_bytes()),
+        Err(CoreError::Unnamed { status, .. } | CoreError::Server { status, .. }) => {
+            LastFailure::of(Some(*status), b"")
+        }
+        Err(CoreError::RateLimited { .. }) => LastFailure::of(Some(429), b""),
+        Err(_) => LastFailure::of(None, b""),
+    }
+}
+
+/// Sets the suspect aside as `failing_alone`: the server answered another
+/// write that does not depend on it, and the suspect met the failure again, so
+/// it is this write that cannot be taken. `failure` is what it met this time.
+fn set_aside(
+    core: &Core,
+    stuck: &Suspect,
+    failure: &LastFailure,
+    report: &mut DrainReport,
+    answers: &mut HashMap<String, Option<Verdict>>,
+) -> Result<()> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    // Released, withdrawn or answered while the test was out: not the same
+    // attempt any more, and the verdict would be about another write.
+    let Some(row) = store::queued_write(&tx, &stuck.id)?
+        .filter(|row| row.verdict.is_none() && row.idempotency_key == stuck.key)
+    else {
+        return Ok(());
+    };
+    store::note_last_failure(&tx, &row.id, failure)?;
+    store::record_verdict(
+        &tx,
+        &row.id,
+        &store::Answered {
+            verdict: Verdict::Blocked,
+            reason: Some(BlockedReason::FailingAlone.as_str()),
+            answer: None,
+            conflicted_copy_id: None,
+        },
+    )?;
+    // The later edit read this edit's optimistic fields, which will not reach
+    // the server until a person releases it.
+    move_edits_back(&tx, &row)?;
+    let set_aside = store::queued_write(&tx, &row.id)?.unwrap_or(row);
+    tx.commit()?;
+    answers.insert(set_aside.id.clone(), Some(Verdict::Blocked));
+    report.answered += 1;
+    if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
+        *entry = verdict_of(
+            &set_aside,
+            &Settled::plain(
+                Some(Verdict::Blocked),
+                Some(BlockedReason::FailingAlone.as_str().into()),
+                set_aside.refusals,
+            ),
+            None,
+        );
+    }
+    Ok(())
 }
 
 /// Reads a create's answer again: a key that landed on a held row, an
@@ -846,11 +1057,85 @@ fn send_queue(
     // cannot be moved onto the answer ahead of it.
     let mut waiting: HashSet<String> = HashSet::new();
     let mut lookups = Lookups::new();
+    // The write being asked about, until the pass settles it.
+    let mut suspect: Option<Suspect> = None;
+    // Sent out of queue order as a test, so the walk does not reach it again.
+    let mut tested: HashSet<String> = HashSet::new();
+    let mut cursor = 0;
 
-    for row in &all {
+    loop {
         crate::catch_up::refuse_if_stopped(stop)?;
+        // The pass ended before the suspect was sent again.
+        if report.unavailable.is_some()
+            && let Some(stuck) = suspect.take()
+        {
+            leave_waiting(&stuck, &mut report);
+        }
+        let mut role = Role::Walk;
+        let mut resending: Option<Suspect> = None;
+        let mut next: Option<&QueuedWrite> = None;
+        match suspect.as_ref().map(|stuck| (stuck.phase, stuck.at)) {
+            Some((Phase::Resending, at)) => {
+                // From here the write is sent as any other, so every path
+                // below settles it and counts it once.
+                resending = suspect.take();
+                role = Role::Resend;
+                next = Some(&all[at]);
+            }
+            Some((Phase::Testing, _)) => {
+                let at = next_test(
+                    core,
+                    &all,
+                    cursor,
+                    &tested,
+                    &Standing {
+                        rows: &rows,
+                        answers: &answers,
+                        waiting: &waiting,
+                        landing: &landing,
+                    },
+                )?;
+                match at {
+                    Some(at) => {
+                        tested.insert(all[at].id.clone());
+                        role = Role::Test;
+                        next = Some(&all[at]);
+                    }
+                    None => {
+                        // No write could test it, so the pass ends here.
+                        if let Some(stuck) = suspect.take() {
+                            leave_waiting(&stuck, &mut report);
+                        }
+                    }
+                }
+            }
+            None => {}
+        }
+        let row = match next {
+            Some(row) => row,
+            None => {
+                let Some(row) = all.get(cursor) else {
+                    break;
+                };
+                cursor += 1;
+                if tested.contains(&row.id) {
+                    continue;
+                }
+                row
+            }
+        };
         if answers.get(&row.id).and_then(Option::as_ref).is_some() {
             continue;
+        }
+        let replacing = resending.as_ref().map(|stuck| stuck.verdict_at);
+        if let Some(stuck) = &resending {
+            // Released, withdrawn or answered while the test was out: not the
+            // same attempt any more, and nothing is sent for it.
+            let same = store::queued_write(&*core.conn()?, &row.id)?
+                .is_some_and(|now| now.verdict.is_none() && now.idempotency_key == stuck.key);
+            if !same {
+                continue;
+            }
         }
         // Read again: an earlier answer this pass can have moved the row onto
         // the one a create landed on.
@@ -868,6 +1153,14 @@ fn send_queue(
             other => other,
         };
         match ready {
+            // It was ready when it was first sent this pass. What changed
+            // since is not for a send again to decide: it waits as it was.
+            _ if role == Role::Resend && !matches!(ready, Readiness::Ready) => {
+                if let Some(stuck) = &resending {
+                    leave_waiting(stuck, &mut report);
+                }
+                continue;
+            }
             Readiness::Held => {
                 // Decided on the verdicts read when the pass began, which a
                 // withdraw or a discard since may have answered: their
@@ -935,11 +1228,15 @@ fn send_queue(
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
                 let unread = reconcile(core, row, pass)?;
                 report.unsent += 1;
-                report.verdicts.push(verdict_of(
-                    row,
-                    &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
-                    None,
-                ));
+                put_verdict(
+                    &mut report,
+                    replacing,
+                    verdict_of(
+                        row,
+                        &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
+                        None,
+                    ),
+                );
                 if let Some(unread) = unread {
                     report.unavailable = Some(unread.reason);
                     waited(&mut report, unread.retry_after_seconds);
@@ -1001,26 +1298,36 @@ fn send_queue(
                         drop(conn);
                         answers.insert(row.id.clone(), Some(Verdict::Refused));
                         report.unsent += 1;
-                        report.verdicts.push(verdict_of(
-                            row,
-                            &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
-                            None,
-                        ));
+                        put_verdict(
+                            &mut report,
+                            replacing,
+                            verdict_of(
+                                row,
+                                &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
+                                None,
+                            ),
+                        );
                         continue;
                     }
                     // A locked file or a process out of handles is not the
                     // write's fault: unanswered and uncounted.
                     Err(error) => {
                         report.undelivered += 1;
-                        report.verdicts.push(verdict_of(
-                            row,
-                            &Settled::plain(
+                        put_verdict(
+                            &mut report,
+                            replacing,
+                            verdict_of(
+                                row,
+                                &Settled::plain(
+                                    None,
+                                    Some(format!(
+                                        "the bytes of {hash} could not be opened: {error}"
+                                    )),
+                                    row.refusals,
+                                ),
                                 None,
-                                Some(format!("the bytes of {hash} could not be opened: {error}")),
-                                row.refusals,
                             ),
-                            None,
-                        ));
+                        );
                         continue;
                     }
                 }
@@ -1105,8 +1412,8 @@ fn send_queue(
         if let Ok(answer) = &answer {
             waited(&mut report, answer.retry_after_seconds);
         }
-
         let class = refine(row, &payload, &answer, classify(&answer));
+        let environmental = class == Classified::Environmental;
         let taken = match store_fault(row) {
             Some(error) => Err(error),
             None => settle(core, row, &answer, class, shape, pass),
@@ -1145,6 +1452,30 @@ fn send_queue(
                 settled
             }
         };
+        // What the write met is kept for every answer it had from the server,
+        // a rate limit included. A failure that came before the write was
+        // answered says nothing of it.
+        let mut counted = false;
+        let mut met_again = None;
+        if environmental && !not_the_writes(&answer) {
+            let failure = failure_of(&answer);
+            if rate_limited(&answer) {
+                // Says nothing of the write: the streak, and so the start of
+                // it, stand as they were.
+                store::note_last_failure(&*core.conn()?, &row.id, &failure)?;
+            } else if role == Role::Resend {
+                // The same drain's failure: the streak was counted when the
+                // write first met it.
+                met_again = Some(failure);
+            } else {
+                let streak = store::count_environmental(&*core.conn()?, &row.id, &failure)?;
+                // A write sent to test another that meets the failure as well
+                // ends the pass, however long its own run.
+                counted = role == Role::Walk
+                    && streak.count >= ENVIRONMENTAL_STREAK
+                    && store::now_millis() - streak.began_ms >= STREAK_FLOOR_MILLIS;
+            }
+        }
         if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
             report.answered += 1;
         } else if answer.is_err() && settled.unavailable.is_none() {
@@ -1190,9 +1521,40 @@ fn send_queue(
             store::queued_write(&conn, &row.id)?
         };
         let answered = settled_row.as_ref().unwrap_or(row);
-        report
-            .verdicts
-            .push(verdict_of(answered, &settled, answered.answer.as_deref()));
+        put_verdict(
+            &mut report,
+            replacing,
+            verdict_of(answered, &settled, answered.answer.as_deref()),
+        );
+        // The write has met the failure in three drains in a row, the first
+        // five minutes ago: it waits for a write to test it.
+        let mut carry_on = counted;
+        if counted {
+            suspect = Some(Suspect {
+                id: row.id.clone(),
+                key: row.idempotency_key.clone(),
+                at: cursor - 1,
+                unavailable: settled.unavailable.clone().unwrap_or_default(),
+                verdict_at: report.verdicts.len() - 1,
+                phase: Phase::Testing,
+            });
+        }
+        // The server answered a write that does not depend on the suspect,
+        // and now the suspect is sent again.
+        if answer.is_ok()
+            && !environmental
+            && !stop
+            && role == Role::Test
+            && let Some(stuck) = suspect.as_mut()
+        {
+            stuck.phase = Phase::Resending;
+        }
+        // Sent again after the test landed and met the failure again: set
+        // aside, and the pass goes on.
+        if let (Some(failure), Some(stuck)) = (&met_again, &resending) {
+            set_aside(core, stuck, failure, &mut report, &mut answers)?;
+            carry_on = true;
+        }
         if stop {
             let conn = core.conn()?;
             let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
@@ -1201,11 +1563,26 @@ fn send_queue(
             ));
             break;
         }
-        if settled.unavailable.is_some() {
+        if settled.unavailable.is_some() && !carry_on {
             if settled.verdict.is_none() {
                 report.undelivered += 1;
             }
             report.unavailable = settled.unavailable;
+        }
+        // A test that failed before the server could answer it, such as a
+        // request that cannot be built, says nothing of the server. The pass
+        // ends with the suspect waiting, so one test at most reaches the
+        // server for it.
+        if role == Role::Test
+            && !environmental
+            && let Err(error) = &answer
+            && let Some(stuck) = &suspect
+            && report.unavailable.is_none()
+        {
+            report.unavailable = Some(format!(
+                "the write {} could not be sent to test {}, so nothing more was sent: {error}",
+                row.id, stuck.id
+            ));
         }
     }
 
