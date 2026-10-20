@@ -374,7 +374,7 @@ const updateWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates a webhook and returns it. Fields you leave out keep their values. Changing `url`, or setting `active` to `false`, cancels its pending deliveries. To change the secret, create a new webhook.",
+    "Updates a webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {

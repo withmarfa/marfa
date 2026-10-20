@@ -110,7 +110,32 @@ export const DELIVERY_CANCELED = {
     "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.",
   unreadable:
     "The credential the subscription belongs to may not read this event.",
+  unselected:
+    "The subscription's events or type filter no longer select this event.",
 } as const;
+
+/**
+ * Whether a subscription's `events` and `type_filter` select an event: the
+ * one rule scheduling applies when an event is queued and an attempt applies
+ * when a queued delivery is sent. An edge event is never held to the type
+ * filter.
+ */
+export function subscriptionSelects(
+  subscription: { events: readonly string[]; type_filter?: string | null },
+  eventType: string,
+  frame: Record<string, unknown>,
+): boolean {
+  if (!subscription.events.includes(eventType)) return false;
+  if (eventType.startsWith("edge.") || !subscription.type_filter) return true;
+  const item = frame.item;
+  return (
+    typeof item === "object" &&
+    item !== null &&
+    "type" in item &&
+    typeof item.type === "string" &&
+    eventMatchesTypeFilter(item.type, subscription.type_filter)
+  );
+}
 
 /**
  * The credential a subscription belongs to, as it stands now, where it still
@@ -169,6 +194,15 @@ export async function deliveryInReach(
   }
   if (typeof stored !== "object" || stored === null) {
     return { cancel: DELIVERY_CANCELED.unreadable };
+  }
+  if (
+    !subscriptionSelects(
+      subscription,
+      delivery.event_type,
+      stored as Record<string, unknown>,
+    )
+  ) {
+    return { cancel: DELIVERY_CANCELED.unselected };
   }
   const frame = frameInReach(
     await deliveryReach(storage, credential),
@@ -515,7 +549,6 @@ export class WebhookScheduler {
         const eventType = loggedWireEventName(event.event_type);
         // Validate each fan-out frame independently of subscription matching
         // and authorization: malformed fan-out is a failed job, not a skip.
-        const isEdge = eventType.startsWith("edge.");
         if (!validWebhookFrame(frame, eventType))
           throw new Error("Outbound webhook event payload is inconsistent");
         const pageLimit = 50 - examined;
@@ -534,16 +567,7 @@ export class WebhookScheduler {
           let eligible =
             subscription.active &&
             event.id > subscription.event_start_id &&
-            subscription.events.includes(eventType);
-          if (eligible && !isEdge && subscription.type_filter) {
-            const item = frame.item;
-            eligible =
-              typeof item === "object" &&
-              item !== null &&
-              "type" in item &&
-              typeof item.type === "string" &&
-              eventMatchesTypeFilter(item.type, subscription.type_filter);
-          }
+            subscriptionSelects(subscription, eventType, frame);
           if (eligible) {
             const name = ownerName(subscription.owner);
             let reach = reaches.get(name);

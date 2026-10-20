@@ -529,6 +529,132 @@ describe("outbound webhook delivery", () => {
     }
   });
 
+  it("settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt", async () => {
+    const hook = await startScriptedReceiver((_, n) => ({
+      status: n === 1 ? 500 : 200,
+    }));
+    const reason =
+      "The subscription's events or type filter no longer select this event.";
+    try {
+      const create = async (
+        label: string,
+        events: string[],
+        typeFilter?: string,
+      ) => {
+        const created = await client.createWebhook({
+          url: hook.hookUrl(label),
+          events,
+          ...(typeFilter !== undefined && { type_filter: typeFilter }),
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+        trackWebhook(ctx, created.data.id, client);
+        return created.data;
+      };
+      const both = ["item.created", "item.deleted"];
+      const subs = new Map<string, { id: string }>();
+      subs.set("events-narrowed", await create("events-narrowed", both));
+      subs.set(
+        "type-narrowed",
+        await create("type-narrowed", ["item.created"], "core.note"),
+      );
+      subs.set("unrelated", await create("unrelated", both, "core.note"));
+      subs.set("events-restored", await create("events-restored", both));
+      subs.set(
+        "type-restored",
+        await create("type-restored", ["item.created"], "core.note"),
+      );
+      subs.set("control", await create("control", both));
+      const earlier = await makeNote("filters-narrowed");
+      for (const [label, sub] of subs) {
+        expect(
+          await deliveryOf(sub.id, (r) => r.attempt === 1),
+          label,
+        ).toMatchObject({ status: "pending", status_code: 500 });
+      }
+
+      const patch = async (
+        label: string,
+        changes: Parameters<MarfaClient["updateWebhook"]>[1],
+      ) => {
+        const updated = await client.updateWebhook(
+          subs.get(label)!.id,
+          changes,
+        );
+        expect(updated.ok, `${label}: ${JSON.stringify(updated.error)}`).toBe(
+          true,
+        );
+      };
+      await patch("events-narrowed", { events: ["item.deleted"] });
+      await patch("type-narrowed", { type_filter: "core.task" });
+      await patch("unrelated", { active: true });
+      await patch("events-restored", { events: ["item.deleted"] });
+      await patch("events-restored", { events: both });
+      await patch("type-restored", { type_filter: "core.task" });
+      await patch("type-restored", { type_filter: "core.note" });
+
+      const lastFirst = Math.max(
+        ...[...subs.keys()].map((label) => hook.attempts(label)[0]!.at),
+      );
+      await runRetriesUntil(
+        () =>
+          hook.attempts("control").length >= 2 &&
+          Date.now() >= lastFirst + 1500,
+        "the retry of the untouched subscription",
+      );
+
+      for (const label of ["events-narrowed", "type-narrowed"]) {
+        expect(
+          await deliveryOf(subs.get(label)!.id, () => true),
+          label,
+        ).toMatchObject({
+          status: "canceled",
+          succeeded: false,
+          error: reason,
+          status_code: 500,
+          attempt: 1,
+        });
+        expect(hook.attempts(label), `${label} was sent to again`).toHaveLength(
+          1,
+        );
+      }
+      for (const label of [
+        "unrelated",
+        "events-restored",
+        "type-restored",
+        "control",
+      ]) {
+        expect(
+          await deliveryOf(subs.get(label)!.id, (r) => r.status === "success"),
+          label,
+        ).toMatchObject({ attempt: 2, error: null });
+        expect(hook.attempts(label), label).toHaveLength(2);
+      }
+
+      // Widening again revives nothing: the settled delivery stays settled,
+      // and only an event written after the change is sent.
+      await patch("events-narrowed", { events: both });
+      await patch("type-narrowed", { type_filter: null });
+      const later = await makeNote("filters-widened");
+      for (const label of ["events-narrowed", "type-narrowed"]) {
+        await waitFor(`the delivery of ${label} for a later event`, async () =>
+          hook.attempts(label).length >= 2 ? true : undefined,
+        );
+        const rows = await client.listWebhookDeliveries(subs.get(label)!.id);
+        expect(rows.data.data, label).toHaveLength(2);
+        expect(rows.data.data.map((r) => r.status).sort(), label).toEqual([
+          "canceled",
+          "success",
+        ]);
+        const bodies = hook
+          .attempts(label)
+          .map((a) => (JSON.parse(a.body) as { item: { id: string } }).item.id);
+        expect(bodies, label).toEqual([earlier, later]);
+      }
+    } finally {
+      await hook.close();
+    }
+  });
+
   it("refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted", async () => {
     const hook = await startScriptedReceiver((label) => ({
       status: label === "delivered" ? 200 : label === "failed" ? 400 : 500,

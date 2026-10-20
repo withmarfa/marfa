@@ -957,7 +957,7 @@ When `PATCH /webhooks/{id}` sets `type_filter` to blank text or `null`, the serv
 
 When a subscription has a `type_filter`, the server MUST deliver an item event or a `metadata.changed` only where the filter selects the item's type, declared subtypes and dotted children included.
 
-**Tests:** `compliance/webhooks.test.ts › delivers only the events whose item type a type_filter selects, declared subtypes and dotted children included`.
+**Tests:** `compliance/webhooks.test.ts › delivers only the events whose item type a type_filter selects, declared subtypes and dotted children included`, `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
 
 ### `events/webhook-filter-edges`
 
@@ -1037,7 +1037,7 @@ When an event that fans out is one an active subscription names, and the subscri
 
 The server MUST NOT deliver an event the subscription's `events` does not name.
 
-**Tests:** `compliance/webhooks.test.ts › does not deliver an event outside the subscription`.
+**Tests:** `compliance/webhooks.test.ts › does not deliver an event outside the subscription`, `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
 
 ### `events/delivery-post-json`
 
@@ -1320,6 +1320,22 @@ When the server stops while it schedules deliveries and starts again, the server
 When a subscription is pointed at another URL or turned off, the server MUST settle its pending deliveries unsent, so that none goes to the old address.
 
 **Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its subscription is repointed, turned off or deleted, and keeps its last answer`.
+
+### `events/cancel-unselected`
+
+When the `events` or the `type_filter` of a subscription no longer select the event of one of its pending deliveries, the server MUST settle that delivery unsent with the `error` `The subscription's events or type filter no longer select this event.`
+
+**Reason:** `events/delivery-unmatched` and `events/webhook-filter-matches` hold for a delivery that waits for a retry, so a receiver is not sent an event the owner has since excluded.
+
+**Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
+
+### `events/cancel-unselected-live`
+
+When the server attempts a pending delivery, the server MUST select it against the `events` and the `type_filter` the subscription holds at that attempt.
+
+**Reason:** a change to either field made by any route is covered, and a field narrowed and widened again before the attempt leaves the delivery selected. Widening a field queues no delivery for an event it did not select when the event was published.
+
+**Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its events or type_filter no longer select it, and sends one they select at the attempt`.
 
 ### `events/cancel-deleted`
 
