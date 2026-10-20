@@ -41,6 +41,7 @@ import {
   usedWords,
   dateWords,
 } from "../pages/key-time.js";
+import { ALL_EXTENSIONS } from "../pages/access-summary.js";
 import type { RegistryItem } from "../pages/registry.js";
 import type { Storage, StoredApiKey } from "../storage/interface.js";
 import { buildAccess, describeHeld } from "./access-model.js";
@@ -403,8 +404,10 @@ export function keyRoutes(storage: Storage) {
       ...(extensions.length > 0
         ? [
             {
-              title: "Its own notes on your items",
-              value: extensions.join(", "),
+              title: ALL_EXTENSIONS.title,
+              value: extensions
+                .map((namespace) => (namespace === "*" ? "All" : namespace))
+                .join(", "),
             },
           ]
         : []),

@@ -313,6 +313,23 @@ describe("a key's own page", () => {
     expect(only).not.toContain('name="types"');
   });
 
+  it("names integration data on every namespace as all of it, not as a pattern", async () => {
+    await clearKeys();
+    const key = await seed("integrations", {
+      extension_permissions: { "*": "write" },
+    });
+    const text = visibleText((await page(`/auth/owner/keys/${key.id}`)).html);
+    expect(text).toContain("Integration data All");
+    expect(text).not.toMatch(/Integration data \*/);
+    // Witness: a named namespace is shown by its name.
+    const named = await seed("one integration", {
+      extension_permissions: { "app.cursor": "write" },
+    });
+    expect(
+      visibleText((await page(`/auth/owner/keys/${named.id}`)).html),
+    ).toContain("Integration data app.cursor");
+  });
+
   it("says it holds nothing for a key with no access", async () => {
     await clearKeys();
     const key = await seed("empty", { type_permissions: {} });
