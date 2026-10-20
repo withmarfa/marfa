@@ -230,19 +230,11 @@ export function buildAllowedScopes(
     // which now guards the stored client ceiling rather than this list.
     ...PERMISSIONS,
     // The content category, the parent grant over everything a person
-    // saves. It is requestable only because two things below hold, and it
-    // is worth naming them: both literals share the type pattern `content`,
-    // which is the key both consent surfaces resolve copy on, so without
-    // them the authorize screen renders one identical toggle for read and
-    // for write and the device screen, which dedupes on the resolved
-    // string, prints ONE row where two grants were approved. A sentence
-    // written for the pattern alone would take the write level off that
-    // screen rather than merely leave it undescribed.
-    //
-    // What holds: a row label carries its operation, so the two literals
-    // resolve different strings and neither screen folds one away; and the
-    // pattern has curated copy on both maps rather than falling through to
-    // a title-cased fragment of itself.
+    // saves. Both literals share the type pattern `content`, so both approval
+    // pages offer them as one control with a level for each
+    // (`buildAccess` in `routes/access-model.ts`), and the pattern has
+    // curated copy rather than falling through to a title-cased fragment of
+    // itself.
     //
     // Requestable, and in no default bundle. An app opts into the category
     // the way it opts into `*:read` — deliberately, by name. The default
@@ -256,7 +248,7 @@ export function buildAllowedScopes(
     "*:write",
     // Core subtree wildcards — requestable for back-compat (an app that asks
     // for all content at once). The default bundle uses concrete per-type
-    // scopes instead; a requested wildcard renders as a single toggle.
+    // scopes instead; a requested wildcard renders as a single control.
     "core.*:read",
     "core.*:write",
     // Runtime and publisher namespace wildcards. These cover an app's own

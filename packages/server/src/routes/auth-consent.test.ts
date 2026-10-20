@@ -550,7 +550,7 @@ describe("GET /auth/authorize (consent page)", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     // The concrete scope is the value a choice submits, offered as a
-    // labelled level on one row, not as a raw scope string.
+    // labeled level on one row, not as a raw scope string.
     const control = readControls(html).find((c) => c.tag === "select");
     expect(control?.options.map((o) => o.value)).toEqual([
       "",
@@ -1801,8 +1801,8 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
 // ---------------------------------------------------------------------------
 // A literal named twice
 //
-// The rendering half is in `consent-operation.test.ts`, against the renderer.
-// This is the half that made this more than a tidy-up: the
+// The screen offers a repeated literal once (`buildAccess` in
+// `access-model.ts`). The stored grant is the half that matters: the
 // duplicate did not stop at the screen. `formScopes` kept both copies,
 // `projectGrantOnConsent` wrote them verbatim into `properties.scopes` on the
 // `system.connection` item, and every surface that later reads or diffs that
@@ -1820,7 +1820,7 @@ describe("a scope named twice is stored once", () => {
     );
 
     // The precondition, and it is the rendering fix stated end to end: the
-    // screen a person is actually served emits one checkbox for the repeated
+    // screen a person is actually served emits one control for the repeated
     // literal, so an honest browser cannot submit it twice.
     const page = await request(
       ctx.app,

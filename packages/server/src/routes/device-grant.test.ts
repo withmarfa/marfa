@@ -4,7 +4,7 @@
  *
  * The plugin owns the codes, the approval state machine and the exchange;
  * Marfa fronts the pages a person meets and calls the plugin in-process, so
- * the consent screen, its per-scope toggles, the grant projection, the
+ * the consent screen, its controls, the grant projection, the
  * consent row and the audit row stay Marfa's. The cases drive the real
  * flow: a client registered through the plugin's own registration
  * initiates, a signed-in person approves on Marfa's consent screen, the
