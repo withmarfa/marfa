@@ -608,6 +608,38 @@ describe("A key", () => {
   );
 
   inBrowser(
+    "keeps the revoke dialog open on Escape while the revoke is being sent",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const id = await makeKey(context, "Held key");
+        await page.goto(`${origin}/auth/owner/keys/${id}`);
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        await page.route("**/keys/*", async (route) => {
+          if (route.request().method() !== "DELETE") return route.continue();
+          await held;
+          await route.continue();
+        });
+        await page.getByRole("button", { name: "Revoke" }).click();
+        const dialog = page.getByRole("dialog", { name: "Revoke Held key?" });
+        await dialog.waitFor();
+        await dialog.getByRole("button", { name: "Revoke" }).click();
+        await dialog.locator('.card[aria-busy="true"]').waitFor();
+        await page.keyboard.press("Escape");
+        expect(await dialog.isVisible()).toBe(true);
+        release();
+        await page.waitForURL(`${origin}/auth/owner/keys`);
+        expect(await ctx.storage.keys.get(id)).toBeNull();
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
     "says it was revoked when it is revoked under an open page, and revoking it again is not an error",
     async () => {
       const { page, context } = await open();

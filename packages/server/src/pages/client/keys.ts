@@ -31,7 +31,7 @@ import {
 } from "../key-body.js";
 import { parseWaitSeconds, waitInMinutes } from "../lockout.js";
 import { SETUP_WORDS } from "../setup-words.js";
-import { sendConfirmed, signInAgain } from "./confirm.js";
+import { messageOf, sendConfirmed, signInAgain } from "./confirm.js";
 import { hideNotices, showNotice } from "./notice.js";
 
 const KEYS_HREF = "/auth/owner/keys";
@@ -45,19 +45,6 @@ const COPIED_MS = 2000;
 const keyHref = (id: string): string =>
   `${KEYS_HREF}/${encodeURIComponent(id)}`;
 
-interface ErrorBody {
-  error?: { message?: unknown };
-}
-
-async function messageOf(
-  response: Response,
-  fallback: string,
-): Promise<string> {
-  const body = (await response.json().catch(() => null)) as ErrorBody | null;
-  const message = body?.error?.message;
-  return typeof message === "string" && message !== "" ? message : fallback;
-}
-
 /** What a refusal says when it is not about one field. */
 async function refusalText(response: Response): Promise<string> {
   if (response.status === 429) {
@@ -67,7 +54,7 @@ async function refusalText(response: Response): Promise<string> {
       : `Too many attempts. Try again in ${waitInMinutes(wait)}.`;
   }
   return response.status === 400 || response.status === 403
-    ? messageOf(response, SETUP_WORDS.somethingWrong)
+    ? (await messageOf(response)) || SETUP_WORDS.somethingWrong
     : SETUP_WORDS.somethingWrong;
 }
 
@@ -385,10 +372,8 @@ async function submitCreate(form: HTMLFormElement): Promise<void> {
     if (response.status === 409) {
       setNote(
         source,
-        await messageOf(
-          response,
+        (await messageOf(response)) ||
           "Another key already writes as that source. Choose another.",
-        ),
         "danger",
       );
       source.focus();
@@ -606,6 +591,8 @@ async function revoke(): Promise<void> {
   const label = dialog.dataset.keyLabel ?? "the key";
   hideNotices(dialog);
   dialog.dataset.sending = "1";
+  // The shared dialog script refuses Escape and the backdrop while its card is busy.
+  dialog.querySelector(".card")?.setAttribute("aria-busy", "true");
   busy(button, true);
   let leaving = false;
   try {
@@ -637,6 +624,7 @@ async function revoke(): Promise<void> {
     showNotice(dialog, "revoke-problem", SETUP_WORDS.network);
   } finally {
     delete dialog.dataset.sending;
+    dialog.querySelector(".card")?.removeAttribute("aria-busy");
     if (!leaving) busy(button, false);
   }
 }
