@@ -828,6 +828,44 @@ describe("at 375 pixels", () => {
   );
 
   inBrowser(
+    "keeps a page header's action beside its title, at the trailing edge, however long the title",
+    async () => {
+      for (const width of [375, 320]) {
+        const { page, context } = await open({ width });
+        try {
+          await page.goto(`${origin}/fixture`);
+          const g = await page.evaluate(() => {
+            const head = document.querySelector(".head");
+            const rect = (el: Element | null | undefined) => {
+              if (!el) throw new Error("missing header part");
+              const r = el.getBoundingClientRect();
+              return {
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom,
+              };
+            };
+            return {
+              title: rect(head?.querySelector("h1")),
+              action: rect(head?.querySelector(".actions .btn")),
+              head: rect(head),
+            };
+          });
+          const label = `${String(width)}px`;
+          expect(g.action.top, label).toBeGreaterThanOrEqual(g.title.top - 0.5);
+          expect(g.action.top, label).toBeLessThan(g.title.bottom);
+          expect(g.action.right, label).toBeCloseTo(g.head.right, 0);
+          expect(g.title.right, label).toBeLessThanOrEqual(g.action.left + 0.5);
+          expect(await overflow(page), label).toBeLessThanOrEqual(0);
+        } finally {
+          await context.close();
+        }
+      }
+    },
+  );
+
+  inBrowser(
     "shows none with the picker, a dialog or the command search open",
     async () => {
       const { page, context } = await open({ width: 375 });
