@@ -1569,6 +1569,21 @@ fn send_queue(
             }
             report.unavailable = settled.unavailable;
         }
+        // A test that failed before the server could answer it, such as a
+        // request that cannot be built, says nothing of the server. The pass
+        // ends with the suspect waiting, so one test at most reaches the
+        // server for it.
+        if role == Role::Test
+            && !environmental
+            && let Err(error) = &answer
+            && let Some(stuck) = &suspect
+            && report.unavailable.is_none()
+        {
+            report.unavailable = Some(format!(
+                "the write {} could not be sent to test {}, so nothing more was sent: {error}",
+                row.id, stuck.id
+            ));
+        }
     }
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;

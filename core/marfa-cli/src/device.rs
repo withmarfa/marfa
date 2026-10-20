@@ -161,13 +161,15 @@ pub enum DeviceCommand {
     ///
     /// One pass. A write that met a network rather than an answer is left
     /// where it was, uncounted, for the next drain. A write that has met one
-    /// in three drains in a row, the first at least five minutes ago, is
-    /// tested: the drain sends the write that does not depend on it and was
-    /// sent least recently, one never sent first. If the server answers that
-    /// write, the drain sends the tested write once more, and if that meets
-    /// one again it is set aside as failing_alone and the drain carries on.
-    /// If the write sent to test it meets one too, or the tested write is
-    /// answered, nothing is set aside.
+    /// in three drains in a row, no two more than 15 minutes apart and the
+    /// first at least five minutes ago, is tested: the drain sends the write
+    /// that does not depend on it and was sent least recently, one never sent
+    /// first. If the server answers that write, the drain sends the tested
+    /// write once more, and if that meets one again it is set aside as
+    /// failing_alone and the drain carries on. If the write sent to test it
+    /// meets one too, cannot be sent, or the tested write is answered,
+    /// nothing is set aside. A device that drains less often than every 15
+    /// minutes never sets a write aside.
     Drain,
     /// Clear the writes the server has answered.
     ///

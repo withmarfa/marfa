@@ -192,6 +192,10 @@ CREATE TABLE IF NOT EXISTS queue (
   -- first failure of the run. Null while the streak is zero. A write is asked
   -- about only when this is five minutes back or more.
   environmental_since INTEGER,
+  -- When the latest failure of the streak was met, on the same clock. A
+  -- failure more than fifteen minutes after it, or after a time the clock has
+  -- not reached, begins a new run instead of adding to this one.
+  environmental_last INTEGER,
   -- A JSON `{"status": ..., "text": ...}`: the last answer the server gave the
   -- write that was no answer to it, a `429` included, `status` null where
   -- nothing answered and `text` null where the body was not text. A failure

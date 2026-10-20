@@ -3096,6 +3096,7 @@ fn record_verdict_inner(
                 conflicted_copy_id = ?5, answered_at = ?6,
                 environmental_streak = CASE WHEN ?7 THEN environmental_streak ELSE 0 END,
                 environmental_since = CASE WHEN ?7 THEN environmental_since ELSE NULL END,
+                environmental_last = CASE WHEN ?7 THEN environmental_last ELSE NULL END,
                 last_failure = CASE WHEN ?7 THEN last_failure ELSE NULL END
           WHERE id = ?1",
         params![
@@ -3148,9 +3149,16 @@ pub struct Streak {
     pub began_ms: i64,
 }
 
+/// The longest gap between two failures of one run, in milliseconds. A write
+/// that failed, then went unsent for longer, starts a run again: a failure
+/// long ago says nothing of the one now.
+const RUN_GAP_MILLIS: i64 = 15 * 60 * 1000;
+
 /// Counts an environmental failure the write met in this drain: one more on
-/// its streak, the start of the streak kept (or set, for the first), and what
-/// it met. None of it touches the refusals.
+/// its streak, or the first of a new run where there is no run, the previous
+/// failure is more than `RUN_GAP_MILLIS` back, or the previous failure is
+/// ahead of the clock (a clock that was set forward and corrected). The start
+/// of a run stands until the run ends. None of it touches the refusals.
 pub fn count_environmental(
     conn: &Connection,
     id: &str,
@@ -3159,12 +3167,28 @@ pub fn count_environmental(
     conn.execute(
         "UPDATE queue
             SET environmental_since = CASE WHEN environmental_streak = 0
+                                                OR environmental_since IS NULL
+                                                OR environmental_last IS NULL
+                                                OR environmental_last > ?3
+                                                OR ?3 - environmental_last > ?4
                                            THEN ?3
-                                           ELSE COALESCE(environmental_since, ?3) END,
-                environmental_streak = environmental_streak + 1,
+                                           ELSE environmental_since END,
+                environmental_streak = CASE WHEN environmental_streak = 0
+                                                 OR environmental_since IS NULL
+                                                 OR environmental_last IS NULL
+                                                 OR environmental_last > ?3
+                                                 OR ?3 - environmental_last > ?4
+                                            THEN 1
+                                            ELSE environmental_streak + 1 END,
+                environmental_last = ?3,
                 last_failure = ?2
           WHERE id = ?1",
-        params![id, serde_json::to_string(failure)?, now_millis()],
+        params![
+            id,
+            serde_json::to_string(failure)?,
+            now_millis(),
+            RUN_GAP_MILLIS
+        ],
     )?;
     conn.query_row(
         "SELECT environmental_streak, environmental_since FROM queue WHERE id = ?1",
@@ -3200,10 +3224,11 @@ pub fn note_last_failure(
 pub fn clear_environmental(conn: &Connection, id: &str) -> Result<(), CoreError> {
     conn.execute(
         "UPDATE queue
-            SET environmental_streak = 0, environmental_since = NULL, last_failure = NULL
+            SET environmental_streak = 0, environmental_since = NULL,
+                environmental_last = NULL, last_failure = NULL
           WHERE id = ?1
             AND (environmental_streak <> 0 OR environmental_since IS NOT NULL
-                 OR last_failure IS NOT NULL)",
+                 OR environmental_last IS NOT NULL OR last_failure IS NOT NULL)",
         [id],
     )?;
     Ok(())
@@ -3303,7 +3328,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             SET verdict = NULL, reason = NULL, answer = NULL,
                 conflicted_copy_id = NULL, answered_at = NULL,
                 refusals = 0, environmental_streak = 0, environmental_since = NULL,
-                last_failure = NULL,
+                environmental_last = NULL, last_failure = NULL,
                 spent_keys = ?2, idempotency_key = ?3
           WHERE id = ?1",
         params![
@@ -5467,6 +5492,41 @@ mod tests {
             }
         };
 
+        // A failure more than fifteen minutes after the last, or after a time
+        // the clock has not reached, begins a new run.
+        let set_last = |id: &str, behind_ms: i64| {
+            conn.execute(
+                "UPDATE queue SET environmental_since = environmental_since - ?2,
+                                  environmental_last = environmental_last - ?2
+                  WHERE id = ?1",
+                params![id, behind_ms],
+            )
+            .unwrap();
+        };
+        let minute = 60_000;
+        let old_run = queue();
+        fail(&old_run.id, 2);
+        set_last(&old_run.id, 14 * minute);
+        let kept = count_environmental(&conn, &old_run.id, &met).unwrap();
+        assert_eq!(kept.count, 3, "a gap under fifteen minutes began a new run");
+        set_last(&old_run.id, 16 * minute);
+        let again = count_environmental(&conn, &old_run.id, &met).unwrap();
+        assert_eq!(again.count, 1, "a gap over fifteen minutes kept the run");
+        assert!(
+            now_millis() - again.began_ms < minute,
+            "the new run did not begin at the failure"
+        );
+
+        let ahead = queue();
+        fail(&ahead.id, 2);
+        set_last(&ahead.id, -24 * 60 * minute);
+        let restarted = count_environmental(&conn, &ahead.id, &met).unwrap();
+        assert_eq!(restarted.count, 1, "a run ahead of the clock was kept");
+        assert!(
+            restarted.began_ms <= now_millis(),
+            "the run still began ahead of the clock"
+        );
+
         let counted = queue();
         assert_eq!(began(&counted.id), None);
         let first = count_environmental(&conn, &counted.id, &met).unwrap();
@@ -6435,7 +6495,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "7732fdd105dbb248",
+            "e50d03a09ffea311",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride
