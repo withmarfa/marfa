@@ -28,10 +28,7 @@ const ORIGIN = "http://localhost:0";
 const FOREIGN = "https://foreign.example";
 
 /** Browser doors guarded by owner authority or their own origin check. */
-const OWNER_COOKIE_DOORS = [
-  "POST /auth/owner/password",
-  "DELETE /auth/grants/:id",
-];
+const OWNER_COOKIE_DOORS = ["DELETE /auth/grants/:id"];
 const COOKIE_DOORS = [...BROWSER_FORM_DOORS, ...OWNER_COOKIE_DOORS];
 
 const STATE_CHANGING = new Set(["POST", "PUT", "PATCH", "DELETE"]);

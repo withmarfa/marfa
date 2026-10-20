@@ -65,11 +65,9 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
   "GET /auth/owner/restore":
     "restore form authenticated by direct owner session",
   "GET /auth/owner/passkeys":
-    "passkey management authenticated by the owner session cookie",
-  "GET /auth/owner/password":
-    "owner password form authenticated by the owner session cookie",
-  "POST /auth/owner/password":
-    "owner password change authenticated by session, current password and origin",
+    "the Password and passkeys page, authenticated by the owner session cookie",
+  "GET /auth/owner/profile":
+    "the Profile page, authenticated by the owner session cookie",
 
   "POST /inbound/:token":
     "a sender's delivery, whose query string is recorded as it arrived",
@@ -99,7 +97,6 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
   "GET /auth/static/auth.css": "a stylesheet those pages load",
   "GET /auth/static/pages.css": "a stylesheet those pages load",
   "GET /auth/static/pages.js": "a script those pages load",
-  "GET /auth/static/passkeys.js": "a script those pages load",
   "GET /auth/grants": "the page listing the apps the owner authorized",
   "DELETE /auth/grants/:id": "its revoke",
   "GET /auth/*": "the Better Auth catch-all, which answers its own protocol",

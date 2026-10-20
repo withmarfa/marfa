@@ -90,7 +90,7 @@ describe("GET /auth/static/auth.css", () => {
   });
 });
 
-it.each(["auth.css", "passkeys.js"] as const)(
+it.each(["auth.css"] as const)(
   "versions %s with the hash of its served bytes",
   async (name) => {
     ctx = await createTestContext();

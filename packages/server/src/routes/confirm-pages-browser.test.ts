@@ -1,6 +1,6 @@
 /**
- * The owner's pages that keep a stylesheet of their own (Manage, Restore and
- * Passkeys) asking "Confirm it's you" in a real browser when a change is
+ * The owner's pages that keep a stylesheet of their own (Manage and Restore),
+ * and Password and passkeys, asking "Confirm it's you" in a real browser when a change is
  * refused for a sign-in older than five minutes, and carrying the change out
  * once after it. Each case sends its change from a session that is six minutes
  * old on the server's clock.
@@ -73,6 +73,14 @@ async function ageSession(): Promise<void> {
       __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     }
   ).__sqliteRun("UPDATE auth_session SET created_at = created_at - 360", []);
+}
+
+/** Opens the Add dialog on Password and passkeys, names the passkey and sends it. */
+async function addPasskeyNamed(page: Page, name: string): Promise<void> {
+  await page.locator('[data-hook="add-passkey"]').click();
+  const dialog = page.getByRole("dialog", { name: "Add a passkey" });
+  await dialog.getByLabel("Name").fill(name);
+  await dialog.getByRole("button", { name: "Add passkey" }).click();
 }
 
 async function keySources(): Promise<string[]> {
@@ -362,10 +370,9 @@ inBrowser("Passkeys, with a sign-in older than five minutes", () => {
 
       // Adding, answered with the password.
       clock.advanceClock(6 * MINUTE);
-      await page.fill('[name="passkey-name"]', "First");
-      await page.click("#add-passkey");
+      await addPasskeyNamed(page, "First");
       expect(await dialogOf(page).innerText()).toContain(
-        "Adding a passkey needs a recent sign-in.",
+        "To add a passkey, confirm it's you.",
       );
       await confirmWithPassword(page);
       await page.getByText("First", { exact: true }).waitFor();
@@ -373,18 +380,19 @@ inBrowser("Passkeys, with a sign-in older than five minutes", () => {
 
       // Removing, answered with the passkey itself.
       clock.advanceClock(6 * MINUTE);
+      await page.getByRole("button", { name: "Manage" }).click();
+      await page.getByRole("button", { name: "Remove passkey" }).click();
       await page
-        .locator("li")
-        .filter({ has: page.getByText("First", { exact: true }) })
-        .getByRole("button", { name: "Remove" })
+        .getByRole("dialog", { name: "Remove First?" })
+        .getByRole("button", { name: "Remove passkey" })
         .click();
       const dialog = dialogOf(page);
       await dialog.waitFor();
       expect(await dialog.innerText()).toContain(
-        "Removing a passkey needs a recent sign-in.",
+        "To remove a passkey, confirm it's you.",
       );
       await dialog.getByRole("button", { name: "Use a passkey" }).click();
-      await page.getByText("Passkey removed.", { exact: true }).waitFor();
+      await page.getByText("Passkey removed", { exact: true }).waitFor();
       expect(await ctx.auth.listOwnerPasskeys(ownerId)).toHaveLength(0);
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
@@ -450,13 +458,12 @@ inBrowser(
         await page.goto(`${origin}/auth/owner/passkeys`);
         const before = await countPasskeys();
         const requests = await staleOnFirstVerify(page);
-        await page.fill('[name="passkey-name"]', "Stale during prompt");
-        await page.click("#add-passkey");
+        await addPasskeyNamed(page, "Stale during prompt");
         expect(await dialogOf(page).innerText()).toContain(
-          "Adding a passkey needs a recent sign-in.",
+          "To add a passkey, confirm it's you.",
         );
         await confirmWithPassword(page);
-        await page.getByText("Passkey added.", { exact: true }).waitFor();
+        await page.getByText("Passkey added", { exact: true }).waitFor();
         // The password leaves the first challenge good: the credential already
         // made is sent again, and no second one is made.
         expect(requests.options()).toBe(1);
@@ -493,9 +500,8 @@ inBrowser(
           });
         const first = await add("internal");
         await page.goto(`${origin}/auth/owner/passkeys`);
-        await page.fill('[name="passkey-name"]', "First");
-        await page.click("#add-passkey");
-        await page.getByText("Passkey added.", { exact: true }).waitFor();
+        await addPasskeyNamed(page, "First");
+        await page.getByText("Passkey added", { exact: true }).waitFor();
         const before = await countPasskeys();
 
         // The second passkey is made on another device. The first answers the
@@ -527,8 +533,7 @@ inBrowser(
             await route.continue();
           },
         );
-        await page.fill('[name="passkey-name"]', "Second");
-        await page.click("#add-passkey");
+        await addPasskeyNamed(page, "Second");
         const dialog = dialogOf(page);
         await dialog.waitFor();
         await dialog.getByRole("button", { name: "Use a passkey" }).click();

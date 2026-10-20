@@ -11,6 +11,10 @@ const openers = new WeakMap<HTMLDialogElement, HTMLElement>();
 const answersItself = (dialog: Element | null): boolean =>
   dialog?.hasAttribute("data-confirm-dialog") === true;
 
+/** A dialog that is sending a change cannot be dismissed, or its answer would have nobody waiting for it. */
+const sending = (dialog: Element | null): boolean =>
+  dialog?.querySelector('.card[aria-busy="true"]') != null;
+
 export function openDialog(
   dialog: HTMLDialogElement,
   opener: Element | null = document.activeElement,
@@ -60,7 +64,7 @@ export function initDialogs(): void {
     const closer = target.closest("[data-dialog-close]");
     if (closer) {
       const dialog = closer.closest("dialog");
-      if (dialog && !answersItself(dialog)) {
+      if (dialog && !answersItself(dialog) && !sending(dialog)) {
         event.preventDefault();
         dialog.close();
       }
@@ -73,6 +77,7 @@ export function initDialogs(): void {
       target instanceof HTMLDialogElement &&
       target.open &&
       !answersItself(target) &&
+      !sending(target) &&
       pressedOnBackdrop &&
       releasedOnBackdrop
     )

@@ -217,8 +217,7 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
     "GET /auth/owner/manage",
     "GET /auth/owner/restore",
     "GET /auth/owner/passkeys",
-    "GET /auth/owner/password",
-    "POST /auth/owner/password",
+    "GET /auth/owner/profile",
     "POST /owner",
   ],
   "who the instance is, and how it is reached and described": [
@@ -250,7 +249,6 @@ const NO_CREDENTIAL: Record<string, readonly string[]> = {
       "GET /auth/static/auth.css",
       "GET /auth/static/pages.css",
       "GET /auth/static/pages.js",
-      "GET /auth/static/passkeys.js",
     ],
   "the address or the signature in it is the credential": [
     "GET /blobs/:hash/fetch",

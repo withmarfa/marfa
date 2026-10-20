@@ -1,7 +1,6 @@
 /**
  * The owner's current password, checked by a password change, counts against
- * the sign-in windows at both doors that change it, and each refusal is in
- * the audit log.
+ * the sign-in windows, and each refusal is in the audit log.
  */
 import { afterEach, expect, it, vi } from "vitest";
 import type { TestContext } from "../test-utils.js";
@@ -41,13 +40,6 @@ function changeOverApi(c: TestContext, cookie: string, current: string) {
   });
 }
 
-function changeOnPage(c: TestContext, cookie: string, current: string) {
-  return request(c.app, "POST", "/auth/owner/password", {
-    form: { currentPassword: current, password: "a new password here" },
-    headers: { cookie, origin: ORIGIN },
-  });
-}
-
 async function refusals(c: TestContext): Promise<string[]> {
   const page = await c.storage.audit.list({
     action: "owner.password.change_failed",
@@ -58,7 +50,7 @@ async function refusals(c: TestContext): Promise<string[]> {
   );
 }
 
-it("refuses guesses at either door once the sign-in window is spent, before judging the password", async () => {
+it("refuses guesses once the sign-in window is spent, before judging the password", async () => {
   ctx = await createTestContext({});
   const signedIn = await signIn(ctx);
   expect(signedIn.status).toBe(200);
@@ -67,25 +59,18 @@ it("refuses guesses at either door once the sign-in window is spent, before judg
   await ctx.storage.rateLimits.clearSignIn(ctx.owner.email);
 
   for (let i = 0; i < SIGN_IN_ADDRESS_LIMIT; i++) {
-    const door = i % 2 === 0 ? changeOnPage : changeOverApi;
-    const wrong = await door(ctx, cookie, `guess ${String(i)}`);
+    const wrong = await changeOverApi(ctx, cookie, `guess ${String(i)}`);
     expect(wrong.status, `guess ${String(i)}`).toBe(401);
   }
   expect(await refusals(ctx)).toEqual(
     Array(SIGN_IN_ADDRESS_LIMIT).fill("invalid_credentials"),
   );
 
-  const overApi = await changeOverApi(ctx, cookie, ctx.owner.password);
-  expect(overApi.status).toBe(429);
-  expect(overApi.headers.get("x-error-code")).toBe("rate_limited");
-  expect(Number(overApi.headers.get("retry-after"))).toBeGreaterThan(0);
-  const onPage = await changeOnPage(ctx, cookie, ctx.owner.password);
-  expect(onPage.status).toBe(429);
-  expect(Number(onPage.headers.get("retry-after"))).toBeGreaterThan(0);
-  expect((await refusals(ctx)).slice(0, 2)).toEqual([
-    "too_many_attempts",
-    "too_many_attempts",
-  ]);
+  const refused = await changeOverApi(ctx, cookie, ctx.owner.password);
+  expect(refused.status).toBe(429);
+  expect(refused.headers.get("x-error-code")).toBe("rate_limited");
+  expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
+  expect((await refusals(ctx)).slice(0, 1)).toEqual(["too_many_attempts"]);
   // The password did not change, and sign-in is held by the same window.
   expect((await signIn(ctx)).status).toBe(429);
 });

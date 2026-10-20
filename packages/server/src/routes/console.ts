@@ -13,6 +13,7 @@ import { localHref } from "../pages/href.js";
 import { PAGE_REGISTRY } from "../pages/registry.js";
 import type { PageRegistry, Registration } from "../pages/registry.js";
 import type { AppConfig } from "../config.js";
+import type { MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -37,6 +38,8 @@ export interface AttentionItem {
 export interface ConsoleReads {
   storage: Storage;
   config: AppConfig;
+  /** Present where the owner can sign in; a page that reads sign-ins leaves its value out without it. */
+  auth?: MarfaAuth;
 }
 
 export interface ConsoleRegistration extends Registration {

@@ -505,7 +505,7 @@ export function createApp(
           instanceName,
           address: new URL(config.authBaseUrl).host,
           registry: consolePages.registry,
-          reading: await consolePages.read({ storage, config }),
+          reading: await consolePages.read({ storage, config, auth }),
           query: homeSearchQuery(c.req.query("q")),
         }),
       );

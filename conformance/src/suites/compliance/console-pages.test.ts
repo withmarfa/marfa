@@ -31,7 +31,7 @@ const BROWSER = {
 const CONSOLE_PAGES = [
   "/auth/owner/manage",
   "/auth/owner/restore",
-  "/auth/owner/password",
+  "/auth/owner/profile",
   "/auth/owner/passkeys",
 ];
 

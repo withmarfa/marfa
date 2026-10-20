@@ -187,8 +187,8 @@ interface Body {
   error?: { message?: unknown };
 }
 
-/** The sign-in page, for a session that ended while the dialog was open. */
-function signInAgain(): void {
+/** The sign-in page, for a session that ended while a page was open. */
+export function signInAgain(): void {
   location.assign(
     `/auth/sign-in?return_to=${encodeURIComponent(location.pathname + location.search)}`,
   );

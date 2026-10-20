@@ -58,7 +58,7 @@ When the server restarts, the server MUST preserve registered passkeys and their
 
 ### `authentication/passkey-address`
 
-When the server renders the owner's passkey setup page, the server MUST explain the secure HTTPS address requirement and the localhost development exception.
+When the server renders the owner's Password and passkeys page, the server MUST explain the secure HTTPS address requirement and the localhost development exception.
 
 **Tests:** `compliance/passkeys.test.ts › registers and lists independent owner credentials`.
 
@@ -198,7 +198,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/restore`, `/auth/owner/password` and `/auth/owner/passkeys`. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/restore`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 

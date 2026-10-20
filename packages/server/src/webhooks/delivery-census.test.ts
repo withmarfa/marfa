@@ -34,6 +34,8 @@ const OUTBOUND: Record<string, string> = {
     "pings the liveness URL the operator configures; no credential names it",
   "middleware/error-notifier.ts":
     "posts 500 alerts to the URL the operator configures; no credential names it",
+  "pages/client/account.ts":
+    "runs in the owner's browser and calls this server's own owner, password and passkey doors; it sends no webhook delivery",
   "pages/client/confirm.ts":
     "runs in the owner's browser and calls this server's own confirmation and passkey doors; it sends no webhook delivery",
   "pages/client/passkey-sign-in.ts":
@@ -44,6 +46,8 @@ const OUTBOUND: Record<string, string> = {
     "runs in the owner's browser and calls this server's own setup doors; it sends no webhook delivery",
   "pages/client/sign-out.ts":
     "runs in the owner's browser and calls this server's own sign-out door; it sends no webhook delivery",
+  "routes/account-pages.ts":
+    "asks node:net only whether the base URL's host is an IP literal; it opens no connection and sends no webhook delivery",
   "test-browser.ts":
     "dispatches browser fixture requests through app.fetch in process; it sends no webhook delivery",
 };

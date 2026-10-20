@@ -1,5 +1,6 @@
 /** The one script every page loads. Each module finds its own markup and does nothing without it. */
 import { initAccess } from "./access.js";
+import { initAccount } from "./account.js";
 import { initConfirm } from "./confirm.js";
 import { initCommandSearch } from "./command-search.js";
 import { initCopy } from "./copy.js";
@@ -24,6 +25,7 @@ function start(): void {
   initSetup();
   initPasskeySignIn();
   initAccess();
+  initAccount();
   initDeviceCode();
   initConfirm();
   initSignOut();

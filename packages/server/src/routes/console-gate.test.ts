@@ -33,7 +33,7 @@ describe("a console page, asked for by a browser that is not signed in", () => {
         "/auth/owner/manage?tab=keys&x=%20y",
       ],
       ["/auth/owner/passkeys", "/auth/owner/passkeys"],
-      ["/auth/owner/password", "/auth/owner/password"],
+      ["/auth/owner/profile", "/auth/owner/profile"],
     ] as const) {
       const res = await asBrowser(path);
       expect(res.status, path).toBe(302);
