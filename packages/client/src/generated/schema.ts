@@ -1717,7 +1717,7 @@ export interface paths {
          * Rename a passkey
          * @description Renames the passkey and returns its public details. Requires the owner's browser session authenticated within five minutes or private local authority.
          */
-        patch: operations["updateOwnerPasskey"];
+        patch: operations["renameOwnerPasskey"];
         trace?: never;
     };
     "/": {
@@ -25867,7 +25867,7 @@ export interface operations {
             };
         };
     };
-    updateOwnerPasskey: {
+    renameOwnerPasskey: {
         parameters: {
             query?: never;
             header?: {

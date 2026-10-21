@@ -131,7 +131,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("registerOAuthClient", "login"),
     reached("getOwner", "owner show"),
     reached("listOwnerPasskeys", "owner passkeys list"),
-    reached("updateOwnerPasskey", "owner passkeys rename"),
+    reached("renameOwnerPasskey", "owner passkeys rename"),
     reached("deleteOwnerPasskey", "owner passkeys remove"),
     reached("updateOwner", "owner update"),
     reached("updateProfile", "profile update"),

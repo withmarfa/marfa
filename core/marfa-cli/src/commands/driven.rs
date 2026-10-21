@@ -671,7 +671,7 @@ const MISSED: &[&str] = &[
     // Private transport: the CLI scenarios drive these with a real passkey,
     // and `device/contract.test.ts` checks their socket response contract.
     "listOwnerPasskeys",
-    "updateOwnerPasskey",
+    "renameOwnerPasskey",
     "deleteOwnerPasskey",
     // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
     "updateOwner",

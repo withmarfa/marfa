@@ -50401,7 +50401,7 @@
     },
     "/owner/passkeys/{id}": {
       "patch": {
-        "operationId": "updateOwnerPasskey",
+        "operationId": "renameOwnerPasskey",
         "tags": [
           "Sign-ins and passkeys"
         ],
@@ -55756,7 +55756,7 @@
         "renameSignIn",
         "endSignIn",
         "listOwnerPasskeys",
-        "updateOwnerPasskey",
+        "renameOwnerPasskey",
         "deleteOwnerPasskey"
       ]
     },

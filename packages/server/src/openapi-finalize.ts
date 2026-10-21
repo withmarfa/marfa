@@ -331,7 +331,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "renameSignIn",
       "endSignIn",
       "listOwnerPasskeys",
-      "updateOwnerPasskey",
+      "renameOwnerPasskey",
       "deleteOwnerPasskey",
     ],
   },

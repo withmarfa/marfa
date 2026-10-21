@@ -84,7 +84,7 @@ const list = createRoute({
   },
 });
 const rename = createRoute({
-  operationId: "updateOwnerPasskey",
+  operationId: "renameOwnerPasskey",
   method: "patch",
   path: "/{id}",
   tags: ["Sign-ins and passkeys"],
