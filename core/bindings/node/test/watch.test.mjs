@@ -183,7 +183,9 @@ test(
     await sleep(300);
     const unreachable = told.filter((change) => change.kind === "serverUnreachable");
     assert.equal(unreachable.length, 1, "the loss was told more than once");
-    assert.match(unreachable[0]?.kind === "serverUnreachable" ? unreachable[0].reason : "", /network/);
+    const reason = unreachable[0]?.kind === "serverUnreachable" ? unreachable[0].reason : "";
+    const origin = new URL(server.url).origin;
+    assert.ok(reason.startsWith(`request to ${origin} failed: `), reason);
   },
 );
 

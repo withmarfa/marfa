@@ -51,6 +51,9 @@ function post(
     body: JSON.stringify(body),
   });
 }
+async function errorCode(response: Response): Promise<string> {
+  return ((await response.json()) as { error: { code: string } }).error.code;
+}
 function local(path: string, body?: unknown) {
   return controlRequest(
     server.controlSocket,
@@ -64,8 +67,12 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
     expect((await local("/owner")).status).toBe(404);
     expect((await fetch(`${server.url}/owner`)).status).toBe(401);
-    expect((await post("/setup/claim", OWNER)).status).toBe(401);
-    expect((await post("/owner", OWNER)).status).toBe(401);
+    const noProofClaim = await post("/setup/claim", OWNER);
+    expect(noProofClaim.status).toBe(401);
+    expect(await errorCode(noProofClaim)).toBe("setup_proof_invalid");
+    const noProofOwner = await post("/owner", OWNER);
+    expect(noProofOwner.status).toBe(401);
+    expect(await errorCode(noProofOwner)).toBe("setup_proof_invalid");
     expect(
       (await post("/auth/sign-in/email", OWNER, { origin: server.url })).status,
     ).toBe(401);
@@ -90,9 +97,12 @@ describe("claiming the one owner", () => {
         )
       ).status,
     ).toBe(403);
-    expect(
-      (await post("/setup/claim", { ...OWNER, code: first.body.code })).status,
-    ).toBe(401);
+    const replaced = await post("/setup/claim", {
+      ...OWNER,
+      code: first.body.code,
+    });
+    expect(replaced.status).toBe(401);
+    expect(await errorCode(replaced)).toBe("setup_proof_invalid");
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
@@ -103,10 +113,13 @@ describe("claiming the one owner", () => {
         "x-conformance-client": `192.0.2.${address}`,
       };
       for (let attempt = 0; attempt < 10; attempt++) {
-        expect(
-          (await post("/setup/exchange", { code: "invalid-code" }, headers))
-            .status,
-        ).toBe(401);
+        const wrong = await post(
+          "/setup/exchange",
+          { code: "invalid-code" },
+          headers,
+        );
+        expect(wrong.status).toBe(401);
+        expect(await errorCode(wrong)).toBe("setup_proof_invalid");
       }
       expect((await post("/setup/exchange", { code }, headers)).status).toBe(
         429,
@@ -132,10 +145,13 @@ describe("claiming the one owner", () => {
       .getSetCookie()
       .map((v) => v.split(";")[0])
       .join("; ");
-    expect(
-      (await post("/setup/exchange", { ticket: ticket.body.ticket }, headers))
-        .status,
-    ).toBe(401);
+    const spent = await post(
+      "/setup/exchange",
+      { ticket: ticket.body.ticket },
+      headers,
+    );
+    expect(spent.status).toBe(401);
+    expect(await errorCode(spent)).toBe("setup_proof_invalid");
     expect(
       (await fetch(`${server.url}/owner`, { headers: { cookie: setupCookie } }))
         .status,

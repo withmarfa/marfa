@@ -106,8 +106,10 @@ struct Unavailable(std::path::PathBuf);
 
 #[cfg(all(not(test), not(target_os = "macos")))]
 impl Keychain for Unavailable {
+    // A keychain file cannot exist here, so it holds nothing; keeping or
+    // removing an entry is what is refused.
     fn get(&self, _: &str) -> Result<Option<String>, CliError> {
-        Err(Self::refusal())
+        Ok(None)
     }
 
     fn set(&self, _: &str, _: &str) -> Result<(), CliError> {

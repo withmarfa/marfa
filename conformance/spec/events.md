@@ -1401,6 +1401,14 @@ If a redelivery names a delivery of a subscription that is not active, then the 
 
 **Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`.
 
+### `events/redeliver-conflict-reason`
+
+When the server answers a redelivery `409 conflict`, the server MUST carry in `details.reason` the first of these that holds: `webhook_inactive` if the subscription is not active, `credential_unavailable` if the credential that registered the subscription no longer holds `webhooks.manage` or is no longer live, `delivery_not_failed` if the delivery is not `dead_letter`, `delivery_expired` if the delivery is older than the instance's audit retention, or `delivery_not_retained` if the server no longer holds the event in a form it can send.
+
+**Reason:** the five refusals need different remedies, and a caller who is told only that the request collides cannot tell a switch to turn on from a delivery that cannot be sent again.
+
+**Tests:** `compliance/webhooks.test.ts › redelivers a retained failed row to the current address with stable identity`, `compliance/webhook-delivery.test.ts › refuses to redeliver a delivery that is pending, delivered or canceled with 409 conflict, where a failed one is accepted`, `compliance/webhook-history.test.ts › refuses to redeliver a dead_letter delivery older than the audit retention`, `compliance/webhooks-owner.test.ts › names a maker that no longer holds webhooks.manage as the reason the owner's redelivery is refused`.
+
 ### `events/redeliver-missing`
 
 If a redelivery names a delivery the subscription does not hold, then the server MUST answer `404 webhook_not_found`.

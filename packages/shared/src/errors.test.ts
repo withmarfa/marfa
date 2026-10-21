@@ -15,6 +15,7 @@ describe("ErrorCode", () => {
     expect(ErrorCode.VALIDATION_ERROR).toBe("validation_error");
     expect(ErrorCode.VERSION_CONFLICT).toBe("version_conflict");
     expect(ErrorCode.UNAUTHORIZED).toBe("unauthorized");
+    expect(ErrorCode.SETUP_PROOF_INVALID).toBe("setup_proof_invalid");
     expect(ErrorCode.FORBIDDEN).toBe("forbidden");
     expect(ErrorCode.INVALID_TRANSITION).toBe("invalid_transition");
     expect(ErrorCode.TYPE_NOT_FOUND).toBe("type_not_found");
@@ -36,6 +37,7 @@ describe("httpStatus", () => {
     expect(httpStatus(ErrorCode.VALIDATION_ERROR)).toBe(400);
     expect(httpStatus(ErrorCode.VERSION_CONFLICT)).toBe(409);
     expect(httpStatus(ErrorCode.UNAUTHORIZED)).toBe(401);
+    expect(httpStatus(ErrorCode.SETUP_PROOF_INVALID)).toBe(401);
     expect(httpStatus(ErrorCode.FORBIDDEN)).toBe(403);
     expect(httpStatus(ErrorCode.INVALID_TRANSITION)).toBe(400);
     expect(httpStatus(ErrorCode.TYPE_NOT_FOUND)).toBe(404);

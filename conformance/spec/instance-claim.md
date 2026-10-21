@@ -24,19 +24,21 @@ When a public HTTP request addresses a private `/_control` operation, the server
 
 ### `instance-claim/claim-proof`
 
-When a public request submits valid owner details without valid machine-issued setup proof, the server MUST refuse the claim with `401 unauthorized`.
+When a public request submits valid owner details without valid machine-issued setup proof, the server MUST refuse the claim with `401 setup_proof_invalid`.
+
+**Reason:** a command line that is told only `401 unauthorized` cannot tell a refused setup code, which a person fixes by asking for a new one, from a credential that is missing or ended.
 
 **Tests:** `compliance/owner.test.ts › starts unclaimed with local authority and no public claim authority`, `› replaces setup proof and rejects the earlier code`.
 
 ### `instance-claim/replace-code`
 
-When the private local command replaces an unclaimed instance's setup code, the server MUST refuse the earlier code with `401 unauthorized`.
+When the private local command replaces an unclaimed instance's setup code, the server MUST refuse the earlier code with `401 setup_proof_invalid`.
 
 **Tests:** `compliance/owner.test.ts › replaces setup proof and rejects the earlier code`.
 
 ### `instance-claim/replace-browser-proof`
 
-When the private local command replaces an unclaimed instance's setup code, the server MUST refuse earlier handoff tickets and setup-only browser sessions with `401 unauthorized`.
+When the private local command replaces an unclaimed instance's setup code, the server MUST refuse earlier handoff tickets and setup-only browser sessions with `401 setup_proof_invalid`.
 
 **Tests:** `compliance/owner.test.ts › limits code guesses per address without an instance-wide cap and accepts handoffs past the limit`.
 
@@ -154,13 +156,13 @@ When the private local command requests browser setup, the server MUST return a 
 
 ### `instance-claim/handoff-single-use`
 
-When a handoff ticket has been exchanged successfully, the server MUST refuse another exchange of that ticket with `401 unauthorized`.
+When a handoff ticket has been exchanged successfully, the server MUST refuse another exchange of that ticket with `401 setup_proof_invalid`.
 
 **Tests:** `compliance/owner.test.ts › limits code guesses per address without an instance-wide cap and accepts handoffs past the limit`.
 
 ### `instance-claim/handoff-expiry`
 
-When five minutes have elapsed since a handoff ticket was issued, the server MUST refuse its exchange with `401 unauthorized`.
+When five minutes have elapsed since a handoff ticket was issued, the server MUST refuse its exchange with `401 setup_proof_invalid`.
 
 **Tests:** `compliance/owner.test.ts › expires a handoff after five minutes while its exchanged setup session remains usable`.
 
@@ -244,7 +246,7 @@ When an unclaimed instance restarts, the server MUST retain an address's exhaust
 
 ### `instance-claim/unclaimed-restart-proof`
 
-When an unclaimed instance restarts, the server MUST refuse its previous setup code with `401 unauthorized`.
+When an unclaimed instance restarts, the server MUST refuse its previous setup code with `401 setup_proof_invalid`.
 
 **Tests:** `compliance/owner.test.ts › keeps code-attempt counters through restart and replaces unclaimed setup proof`.
 

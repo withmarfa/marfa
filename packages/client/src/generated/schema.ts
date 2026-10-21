@@ -4819,6 +4819,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        SetupProofInvalidRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "setup_proof_invalid";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         OwnerExistsRefusal: {
             /** @description What went wrong. */
             error: {
@@ -23914,7 +23931,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["SetupProofInvalidRefusal"];
                 };
             };
             /** @description The browser origin or transport is not permitted. */
@@ -27485,7 +27502,7 @@ export interface operations {
                     "application/json": components["schemas"]["WebhookNotFoundRefusal"];
                 };
             };
-            /** @description - `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off. */
+            /** @description - `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

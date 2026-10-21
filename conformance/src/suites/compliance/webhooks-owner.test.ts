@@ -202,3 +202,56 @@ it("reads a full last delivery page through owner authority", async () => {
   expect(last.next_cursor).toBeNull();
   expect(new Set([...first.data, ...last.data].map((d) => d.id)).size).toBe(12);
 });
+
+it("names a maker that no longer holds webhooks.manage as the reason the owner's redelivery is refused", async () => {
+  fail = true;
+  expect(
+    (
+      await credential("/items", server.workingKey, "POST", {
+        type: "core.note",
+        properties: { body: "refused redelivery" },
+      })
+    ).status,
+  ).toBe(201);
+  const path = `/webhooks/${ids[1]!}/deliveries`;
+  const failed = await waitFor("a failed delivery", async () => {
+    const page = (await (await owner(path)).json()) as {
+      data: { id: string; status: string }[];
+    };
+    return page.data.find((d) => d.status === "dead_letter");
+  });
+
+  // The witness: while the maker holds the permission the owner's request is
+  // accepted, so the refusal below is about the maker.
+  const accepted = await owner(`${path}/${failed.id}/redeliver`, {
+    method: "POST",
+  });
+  expect(accepted.status).toBe(202);
+  const failedAgain = await waitFor("the delivery to fail again", async () => {
+    const page = (await (await owner(path)).json()) as {
+      data: { id: string; status: string }[];
+    };
+    return page.data.find(
+      (d) => d.id === failed.id && d.status === "dead_letter",
+    );
+  });
+
+  const current = (await (
+    await credential("/keys/current", second)
+  ).json()) as {
+    id: string;
+  };
+  const narrowed = await owner(`/keys/${current.id}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ permissions: [] }),
+  });
+  expect(narrowed.status).toBe(200);
+  const refused = await owner(`${path}/${failedAgain.id}/redeliver`, {
+    method: "POST",
+  });
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toMatchObject({
+    error: { code: "conflict", details: { reason: "credential_unavailable" } },
+  });
+});

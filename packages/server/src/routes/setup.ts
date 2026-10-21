@@ -155,7 +155,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
             }),
             429,
           );
-        if (error.code === ErrorCode.UNAUTHORIZED)
+        if (error.code === ErrorCode.SETUP_PROOF_INVALID)
           return page(
             c,
             renderCodePage(c.var.cspNonce, {
@@ -233,7 +233,7 @@ export function setupRoutes(storage: Storage, auth: MarfaAuth) {
   ): Response | Promise<Response> {
     const nonce = c.var.cspNonce;
     if (error.code === ErrorCode.OWNER_EXISTS) return claimedPage(c, 409);
-    if (error.code === ErrorCode.UNAUTHORIZED)
+    if (error.code === ErrorCode.SETUP_PROOF_INVALID)
       return page(
         c,
         renderCodePage(nonce, { notice: SETUP_WORDS.sessionEnded }),

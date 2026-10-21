@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   answers,
   certifiedRead,
@@ -144,7 +144,7 @@ function refusal(stderr: string): {
   error: {
     code: string;
     message: string;
-    server: { status: number } | null;
+    server: { status: number; code?: string } | null;
   };
   exit: number;
 } {
@@ -152,7 +152,7 @@ function refusal(stderr: string): {
     error: {
       code: string;
       message: string;
-      server: { status: number } | null;
+      server: { status: number; code?: string } | null;
     };
     exit: number;
   };
@@ -692,6 +692,105 @@ describe("the contract the binary was built for", () => {
       expect(refusal(invalid.outcome.stderr).error.code).toBe("invalid");
       expect(invalid.claims).toEqual([]);
     }
+  });
+
+  // Only macOS has a keychain file that can fail to open; elsewhere one
+  // named reads as holding nothing.
+  it.runIf(process.platform === "darwin")(
+    "reports a keychain that cannot be read as itself, not as no server named",
+    async () => {
+      const unreadable = await marfa(["--json", "whoami"], undefined, {
+        MARFA_KEYCHAIN: "/marfa-test-no-keychain",
+      });
+      expect(unreadable.code, unreadable.stderr).toBe(4);
+      const error = refusal(unreadable.stderr).error;
+      expect(error.code).toBe("no_keychain");
+      expect(error.message).toMatch(/keychain/);
+      // The witness: with the keychain off nothing is kept, and a server is
+      // what the command asks for.
+      const off = await marfa(["--json", "whoami"], undefined, {
+        MARFA_NO_KEYCHAIN: "1",
+      });
+      expect(off.code, off.stderr).toBe(2);
+      expect(refusal(off.stderr).error.code).toBe("no_server");
+    },
+  );
+
+  // Only macOS has a keychain file that can fail to open; elsewhere one
+  // named reads as holding nothing.
+  it.runIf(process.platform === "darwin")(
+    "runs a command on held bytes alone when the keychain cannot be read",
+    async () => {
+      boundFolder = await folderHarness("contract-unreadable-keychain");
+      // As over SSH on a Mac: no server is named and the keychain cannot be
+      // read. `whoami` needs the server, so it is the witness that the same
+      // environment is refused.
+      const unreadable = {
+        MARFA_KEYCHAIN: join(dirname(boundFolder.dir), "no-keychain-here"),
+        MARFA_FOLDER_REGISTRY: boundFolder.registry,
+      };
+      const whoami = await marfa(["--json", "whoami"], undefined, unreadable);
+      expect(whoami.code, whoami.stderr).toBe(4);
+      expect(refusal(whoami.stderr).error.code).toBe("no_keychain");
+      const pull = await marfa(
+        ["--json", "folders", "pull", boundFolder.dir],
+        undefined,
+        unreadable,
+      );
+      expect(pull.code, pull.stderr).toBe(0);
+      // A server named outright is not told it may go without a credential.
+      const named = await marfa(
+        [
+          "--json",
+          "folders",
+          "pull",
+          boundFolder.dir,
+          "--url",
+          boundFolder.server.url,
+        ],
+        undefined,
+        unreadable,
+      );
+      expect(named.code, named.stderr).toBe(5);
+      expect(refusal(named.stderr).error.code).toBe("no_credential");
+    },
+  );
+
+  it("exits 1, not 5, when the server refuses the setup code", async () => {
+    const started = await ScriptedServer.start();
+    server = started;
+    const claim = () =>
+      marfa(
+        ["--json", "--url", started.url, "setup", "claim", "--stdin"],
+        JSON.stringify({
+          email: "a@cyzr.me",
+          password: "an owner password",
+          code: "WRONG-CODE",
+        }),
+      );
+    started.answer(
+      "POST",
+      "/owner",
+      {
+        kind: "json",
+        status: 401,
+        body: {
+          error: {
+            code: "setup_proof_invalid",
+            message: "Setup proof is invalid, expired, spent or replaced",
+          },
+        },
+      },
+      answers.unauthorized(),
+    );
+    const wrong = await claim();
+    expect(wrong.code, wrong.stderr).toBe(1);
+    expect(refusal(wrong.stderr).error.server?.code).toBe(
+      "setup_proof_invalid",
+    );
+    // The same status under the credential's own code is still exit 5.
+    const credential = await claim();
+    expect(credential.code, credential.stderr).toBe(5);
   });
 
   it("refuses ambiguous or unavailable sockets without falling back to HTTP", async () => {
@@ -3053,7 +3152,7 @@ describe("the contract the working copy was built for", () => {
         error: {
           code: string;
           message: string;
-          server: { status: number } | null;
+          server: { status: number; code?: string } | null;
         };
         exit: number;
       };

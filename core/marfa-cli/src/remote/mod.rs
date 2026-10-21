@@ -156,12 +156,13 @@ impl Named {
     }
 
     /// The session, or none where no server is named and no key is in hand,
-    /// for a command that can run on held bytes alone. A key in hand with no
-    /// server is refused, so it is never dropped without a word.
+    /// or where a keychain that cannot be read hides the server, for a
+    /// command that can run on held bytes alone. A key in hand with no server
+    /// is refused, so it is never dropped without a word.
     pub fn session_if_named(&self) -> Result<Option<Session>, CliError> {
         match self.session() {
             Ok(session) => Ok(Some(session)),
-            Err(CliError::NoServerNamed) => Ok(None),
+            Err(CliError::NoServerNamed | CliError::NoKeychain(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -371,9 +372,10 @@ impl Remote {
         }
         match credentials::current() {
             Ok(Some(origin)) => Ok(origin),
-            // A keychain that cannot be asked means no server was named,
-            // whose message says how to name one.
-            Ok(None) | Err(CliError::NoKeychain(_)) => Err(CliError::NoServerNamed),
+            // Nothing kept, or a keychain that is off: naming a server is the
+            // way on. A keychain that fails to answer may hold one, so its
+            // reason is the answer.
+            Ok(None) => Err(CliError::NoServerNamed),
             Err(error) => Err(error),
         }
     }
@@ -1719,6 +1721,34 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn an_unreachable_server_is_named_by_its_origin_alone_and_the_code_is_not_repeated() {
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let remote = Remote::keyed(
+            &format!("http://127.0.0.1:{port}/tenant/gateway?token=marfa_t_secret"),
+            "marfa_k1_secret",
+        )
+        .unwrap();
+        let error = remote
+            .json(&Request::get(&["items"]))
+            .expect_err("nothing listens on the port");
+        let message = error.to_string();
+        assert!(
+            message.contains(&format!("http://127.0.0.1:{port}")),
+            "{message}"
+        );
+        for kept_out in ["tenant", "gateway", "items", "token", "secret"] {
+            assert!(!message.contains(kept_out), "{kept_out} is in: {message}");
+        }
+        assert!(!message.starts_with("network"), "{message}");
+        let envelope = error.envelope();
+        assert_eq!(envelope["error"]["code"], "network");
+        assert_eq!(envelope["error"]["message"], message.as_str());
     }
 
     // The witness, on the server's own contract, is `cli/login.test.ts`.

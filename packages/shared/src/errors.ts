@@ -40,6 +40,15 @@ export enum ErrorCode {
    */
   ANCESTOR_UNAVAILABLE = "ancestor_unavailable",
   UNAUTHORIZED = "unauthorized",
+  /**
+   * A setup code, handoff ticket or setup session the server does not accept:
+   * wrong, spent, expired, or replaced.
+   *
+   * Its own code rather than `unauthorized`, which a client reads as a
+   * credential that is missing or ended. Neither is true of a person who
+   * mistyped a code before they have a credential.
+   */
+  SETUP_PROOF_INVALID = "setup_proof_invalid",
   FORBIDDEN = "forbidden",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
@@ -430,6 +439,11 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
     status: 401,
     summary:
       "The request carries no credential the server accepts: none, an unknown or revoked one, or an expired or altered link.",
+  },
+  [ErrorCode.SETUP_PROOF_INVALID]: {
+    status: 401,
+    summary:
+      "The setup code, handoff link or setup session is wrong, spent, expired or replaced. Ask for a new setup code or link.",
   },
   [ErrorCode.FORBIDDEN]: {
     status: 403,

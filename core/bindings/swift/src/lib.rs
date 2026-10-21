@@ -2452,7 +2452,7 @@ mod tests {
             ),
             Change::ServerUnreachable {
                 reason: MarfaError::Network {
-                    message: "network: refused".into()
+                    message: "refused".into()
                 },
                 cursor: "11".into()
             }
@@ -2483,7 +2483,7 @@ mod tests {
             ),
             Change::QueueNotDrained {
                 error: MarfaError::Network {
-                    message: "network: refused".into()
+                    message: "refused".into()
                 },
                 cursor: "11".into()
             }

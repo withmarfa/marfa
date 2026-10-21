@@ -733,6 +733,9 @@ describe("outbound webhook delivery", () => {
         const refused = await redeliver(label);
         expect(refused.status, label).toBe(409);
         expect(refused.error?.error.code, label).toBe("conflict");
+        expect(refused.error?.error.details, label).toEqual({
+          reason: "delivery_not_failed",
+        });
         const audit = await client.listAudit({
           action: "webhook.delivery.redeliver",
           resource_id: rows.get(label)!.id,

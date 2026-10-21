@@ -1,7 +1,7 @@
 import { deliveryOutcome, deliveryStatus } from "../webhook-delivery.js";
 import { localizeDates } from "./local-date.js";
 import type { WebhookDelivery, PaginatedResult } from "@withmarfa/shared";
-import { sendConfirmed } from "./confirm.js";
+import { messageOf, sendConfirmed } from "./confirm.js";
 import { busy } from "./page-state.js";
 
 function notice(root: HTMLElement, text: string): void {
@@ -88,11 +88,14 @@ export function initWebhooks(): void {
             : await send();
           if (response === null) return;
           if (!response.ok) {
+            const reason =
+              retry && response.status === 409 ? await messageOf(response) : "";
             notice(
               noticeRoot,
               retry
                 ? response.status === 409
-                  ? "This delivery cannot be retried. It may no longer be retained, or the webhook or its access has changed."
+                  ? reason ||
+                    "This delivery cannot be retried. It may no longer be retained, or the webhook or its access has changed."
                   : "The retry could not be confirmed. Reload the history before trying again."
                 : "More deliveries could not be loaded. Try again.",
             );

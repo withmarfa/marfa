@@ -146,7 +146,7 @@ const createOwnerRoute = createRoute({
       "Owner details are invalid, or the body has a field this endpoint doesn't take.",
     ),
     401: failure(
-      ["unauthorized"],
+      ["setup_proof_invalid"],
       "Setup proof is invalid, expired, or replaced.",
     ),
     403: failure(

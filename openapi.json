@@ -7509,6 +7509,41 @@
         ],
         "description": "An error response."
       },
+      "SetupProofInvalidRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "setup_proof_invalid"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "OwnerExistsRefusal": {
         "type": "object",
         "properties": {
@@ -47388,7 +47423,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/SetupProofInvalidRefusal"
                 }
               }
             },
@@ -54263,7 +54298,7 @@
             }
           },
           "409": {
-            "description": "- `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off.",
+            "description": "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held.",
             "content": {
               "application/json": {
                 "schema": {

@@ -1484,6 +1484,22 @@ If a refusal names no contract, then the CLI MUST report it `unnamed_answer` wit
 
 **Tests:** `device/contract.test.ts › hands on a refusal that names no contract, as a proxy's would`.
 
+### `device/command-unreachable-origin`
+
+If the CLI cannot reach the server it was sent to, then the CLI MUST report it `network` with exit 3, in a message that names the server by its scheme, host and port alone.
+
+**Reason:** a person with several servers needs to know which one did not answer, and a gateway's path or a credential in the address must not reach a terminal or a log.
+
+**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
+
+### `device/command-unreachable-code-once`
+
+If the CLI reports `network`, then the CLI MUST NOT begin the message with the word `network`.
+
+**Reason:** a surface that prints the code beside the message would show it twice.
+
+**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
+
 ### `device/command-redirect`
 
 If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
@@ -1573,6 +1589,14 @@ If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST refuse
 If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST NOT send a claim.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
+
+### `device/claim-refused-proof-exit`
+
+If the server answers `setup claim` `401 setup_proof_invalid`, then the CLI MUST exit `1`, with the server's code in the error's `server.code`.
+
+**Reason:** a wrong, spent or replaced setup code is a refusal that asking for a new code fixes, so the exit `5` for a missing or ended credential (`sign in again`) would send a person or an agent to the wrong remedy.
+
+**Tests:** `device/contract.test.ts › exits 1, not 5, when the server refuses the setup code`.
 
 ### `device/local-socket-exclusive`
 
@@ -1703,6 +1727,14 @@ If the server answers the check of `keys keep` `403 forbidden`, as it does for a
 If the answer to the check of `keys keep` names another contract than the CLI was built for or none, then the CLI MUST keep nothing and refuse it as it refuses any such answer (`device/command-contract-mismatch`, `device/command-unnamed-refusal`).
 
 **Tests:** `device/credential-locks.test.ts › keeps no key for $name, refusing it with exit $exit`.
+
+### `device/command-keychain-unreadable`
+
+If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason, except for a command that runs on held bytes alone.
+
+**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off, or holds no current server, nothing is kept and `no_server` with exit 2 is right. `folders pull`, `folders restore` and `device blobs get` need no server for the bytes they hold, and over SSH on a Mac, where there is no default keychain, refusing them would stop work that needs no credential, so they run on what the device holds.
+
+**Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`, `device/contract.test.ts › runs a command on held bytes alone when the keychain cannot be read`.
 
 ### `device/command-events-refuses-cursor`
 

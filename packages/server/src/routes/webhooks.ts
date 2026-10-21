@@ -534,6 +534,11 @@ const deleteWebhookRoute = createRoute({
   },
 });
 
+/** Why a redelivery is refused, in `details.reason` and in words. */
+function redeliveryRefused(reason: string, message: string): MarfaError {
+  return new MarfaError(ErrorCode.CONFLICT, message, { reason });
+}
+
 const redeliverRoute = createRoute({
   operationId: "redeliverWebhookDelivery",
   method: "post",
@@ -575,7 +580,7 @@ const redeliverRoute = createRoute({
     },
     409: {
       description:
-        "- `conflict`: the delivery isn't `dead_letter`, it's older than the instance's audit retention, or the webhook is turned off.",
+        "- `conflict`: Marfa can't send it again. `details.reason` is the first that applies: `webhook_inactive`; `credential_unavailable`, the registering key or app is gone or lacks `webhooks.manage`; `delivery_not_failed`; `delivery_expired`, past audit retention; or `delivery_not_retained`, its event is no longer held.",
       content: {
         "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
       },
@@ -872,33 +877,48 @@ export function webhookRoutes(
             ErrorCode.WEBHOOK_NOT_FOUND,
             "Webhook not found",
           );
-        if (
-          !subscription.active ||
-          !(await ownerCredential(storage, subscription.owner))
-        )
-          throw new MarfaError(
-            ErrorCode.CONFLICT,
-            "Delivery cannot be redelivered",
+        if (!subscription.active)
+          throw redeliveryRefused(
+            "webhook_inactive",
+            "The webhook is turned off. Turn it on, then redeliver.",
+          );
+        if (!(await ownerCredential(storage, subscription.owner)))
+          throw redeliveryRefused(
+            "credential_unavailable",
+            "The key or app that registered this webhook has been revoked, has expired or no longer has webhooks.manage, so Marfa sends it nothing.",
           );
         const config = await readInstanceConfig(storage.settings);
         const retention =
           config?.audit_retention_days ?? c.get("config").auditRetentionDays;
         const now = clock.now();
+        const cutoff =
+          retention > 0
+            ? new Date(now.getTime() - retention * 86400000).toISOString()
+            : null;
         const reopened = await storage.outboundWebhookDeliveries.reopen(
           id,
           delivery_id,
           subscription.url,
           now.toISOString(),
-          retention > 0
-            ? new Date(now.getTime() - retention * 86400000).toISOString()
-            : null,
+          cutoff,
         );
-        if (!reopened)
-          throw new MarfaError(
-            ErrorCode.CONFLICT,
-            "Delivery cannot be redelivered",
+        if (reopened) return reopened;
+        // The transaction serializes this refusal with every other
+        // redelivery, so `existing` is the state `reopen` found.
+        if (existing.status !== "dead_letter")
+          throw redeliveryRefused(
+            "delivery_not_failed",
+            `The delivery's status is ${existing.status}. Only a delivery Marfa gave up on, with status dead_letter, can be redelivered.`,
           );
-        return reopened;
+        if (cutoff !== null && existing.created_at < cutoff)
+          throw redeliveryRefused(
+            "delivery_expired",
+            "The delivery is older than the instance's audit retention, so it can't be redelivered.",
+          );
+        throw redeliveryRefused(
+          "delivery_not_retained",
+          "Marfa no longer holds this delivery's event in a form it can send, so it can't be redelivered.",
+        );
       },
       {
         client_ip: c.get("clientIp") ?? null,

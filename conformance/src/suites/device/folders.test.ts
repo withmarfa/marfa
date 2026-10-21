@@ -3245,7 +3245,9 @@ describe("files and items", () => {
       `a push that could not reach the server failed rather than writing out what it holds: ${JSON.stringify(offline)}`,
     ).toBe(true);
     if (!offline.ok) return;
-    expect(offline.value.catch_up.failed).toMatch(/network/);
+    expect(offline.value.catch_up.failed).toMatch(
+      /^request to http:\/\/127\.0\.0\.1:\d+ failed: /,
+    );
     expect(
       offline.value.exit,
       "a push that could not catch up ended 0, so nothing told a script to try again",
@@ -3322,7 +3324,9 @@ describe("files and items", () => {
     await harness.server.online();
     expect(offline.ok, JSON.stringify(offline)).toBe(true);
     if (!offline.ok) return;
-    expect(offline.value.catch_up.failed).toMatch(/network/);
+    expect(offline.value.catch_up.failed).toMatch(
+      /^request to http:\/\/127\.0\.0\.1:\d+ failed: /,
+    );
     expect(offline.value.pull?.written).toBe(1);
     expect(offline.value.drain.answered).toBe(0);
     const waiting = await harness.folder.status();

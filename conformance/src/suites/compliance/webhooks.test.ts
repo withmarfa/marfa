@@ -131,6 +131,9 @@ describe("outbound webhooks", () => {
       const inactive = await client.rawRequest(path, { method: "POST" });
       expect(inactive.status).toBe(409);
       expect(inactive.error?.error.code).toBe("conflict");
+      expect(inactive.error?.error.details).toEqual({
+        reason: "webhook_inactive",
+      });
       const retained = await client.listWebhookDeliveries(created.data.id);
       expect(retained.data.data.find((d) => d.id === failed!.id)).toMatchObject(
         {
