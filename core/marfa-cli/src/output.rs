@@ -402,13 +402,19 @@ pub fn held_words(drain: &DrainReport) -> Option<String> {
     })
 }
 
-/// Every write the pass came to, but those `stopped` names, which says how
-/// many a refused credential parked.
-pub fn counts(drain: &DrainReport) -> String {
+/// What the server answered in a pass, then the writes it left held back.
+pub fn answered_and_held(drain: &DrainReport) -> String {
     let mut line = answered_words(drain);
     if let Some(held) = held_words(drain) {
         line.push_str(&format!("; {held}"));
     }
+    line
+}
+
+/// Every write the pass came to, but those `stopped` names, which says how
+/// many a refused credential parked.
+pub fn counts(drain: &DrainReport) -> String {
+    let mut line = answered_and_held(drain);
     if drain.unsent > 0 {
         line.push_str(&format!(", {} settled without being sent", drain.unsent));
     }
@@ -889,14 +895,14 @@ pub fn body_links(links: &marfa_core::BodyLinks) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::collections::HashMap;
 
     use super::{answered_words, counts, describe, edges_from, snippet_text};
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use serde_json::json;
 
-    fn verdict(kind: WriteKind, verdict: Option<Verdict>) -> DrainVerdict {
+    pub(crate) fn verdict(kind: WriteKind, verdict: Option<Verdict>) -> DrainVerdict {
         DrainVerdict {
             id: "write".into(),
             kind,
@@ -912,7 +918,7 @@ mod tests {
         }
     }
 
-    fn pass(answered: usize, held: usize, verdicts: Vec<DrainVerdict>) -> DrainReport {
+    pub(crate) fn pass(answered: usize, held: usize, verdicts: Vec<DrainVerdict>) -> DrainReport {
         DrainReport {
             answered,
             held,
