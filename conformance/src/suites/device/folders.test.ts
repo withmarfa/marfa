@@ -2905,6 +2905,112 @@ describe("files and items", () => {
         "a write was lost, or sent twice, after the rebuild failed",
       ).toEqual(["One", "Two"]);
     });
+
+    it("reports a placement refused where its own read meets the changed view, and does not send it again", async () => {
+      const edges = new EdgeDoor();
+      edges.placing = (edge) =>
+        edge.edge_type === "in-folder"
+          ? refusal(
+              403,
+              "edge_permission_denied",
+              "Write access to edge type denied",
+            )
+          : undefined;
+      // The read the refusal owes, to learn whether the edge was made, is
+      // refused, as the server does once the folder's key is replaced.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      harness = await folderHarness("folder-push-view-changed-refused-read", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099b1",
+                properties: { title: "Elsewhere", body: "made elsewhere\n" },
+              },
+            },
+          ],
+        },
+      });
+      scriptFolderWrites(harness, { edges });
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      // The witness: the refusal's own read was refused under the new view.
+      expect(changed).toBe(true);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(
+        pushed.value.drain.verdicts.map((entry) => [
+          entry.kind,
+          entry.verdict,
+          entry.refusal?.code,
+        ]),
+        "the refusal whose read met the changed view left the push's report",
+      ).toEqual([["create_edge", "refused", "edge_permission_denied"]]);
+      expect(placedPaths(edges)).toEqual([]);
+
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(postedEdges(harness), "a refused placement was sent again").toBe(
+        1,
+      );
+    });
+
+    it("pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads", async () => {
+      const edges = new EdgeDoor();
+      const one = "01a00000-0000-7000-8000-0000000099c1";
+      const two = "01a00000-0000-7000-8000-0000000099c2";
+      const three = "01a00000-0000-7000-8000-0000000099c3";
+      const notes: Array<{ item: WireItemOptions }> = [
+        { item: { id: one, properties: { title: "One", body: "one\n" } } },
+        { item: { id: two, properties: { title: "Two", body: "two\n" } } },
+      ];
+      harness = await folderHarness("folder-push-view-changed-pull-again", {
+        rows: { "core.note": notes },
+      });
+      const rows = scriptFolderWrites(harness, { edges });
+      // At the read of the first placement the pull queued, the view changes:
+      // the new key reads Three and no longer reads Two.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        const properties = { title: "Three", body: "three\n" };
+        notes.splice(1, 1, { item: { id: three, properties } });
+        const held = rows.get(two);
+        rows.delete(two);
+        if (held !== undefined) rows.set(three, { ...held, properties });
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(changed).toBe(true);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(
+        existsSync(join(harness.dir, "Three.md")),
+        "the push did not pull what the rebuilt copy holds",
+      ).toBe(true);
+      expect(placedPaths(edges)).toContain("Three.md");
+      expect(readFileSync(join(harness.dir, "Two.md"), "utf8")).toContain(
+        "two\n",
+      );
+
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(next.value.scan.lost).toBe(1);
+      expect(sentTitles(harness)).toEqual([]);
+      expect(readFileSync(join(harness.dir, "Two.md"), "utf8")).toContain(
+        "two\n",
+      );
+    });
   });
 
   describe("a copy that falls behind the log", () => {

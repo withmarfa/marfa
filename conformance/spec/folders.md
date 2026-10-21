@@ -3626,7 +3626,7 @@ When the person changes or moves a folder file whose row the copy no longer hold
 
 While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
 
-**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads`.
 
 ### `folders/lost-create-not-repeated`
 
@@ -3696,7 +3696,15 @@ When any drain of a folder push or a send-only run, the drain after the push's p
 
 **Reason:** A key that is replaced or narrowed changes the read view the copy was built under (`device/view-changed`), and a run that stopped there would leave every write behind it waiting for no cause the person can act on. The rebuild reads under the new view, so nothing the new key cannot read stays in the copy. A verdict the first drain settled is final in the queue, and a report without it would tell the person that a refused write was taken.
 
-**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`, `device/folders.test.ts › reports a refusal from before the view changed with the writes sent after the rebuild`, `device/folders.test.ts › builds the copy again where the drain after the pull meets the changed view, and finishes the push`.
+**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`, `device/folders.test.ts › reports a refusal from before the view changed with the writes sent after the rebuild`, `device/folders.test.ts › builds the copy again where the drain after the pull meets the changed view, and finishes the push`, `device/folders.test.ts › reports a placement refused where its own read meets the changed view, and does not send it again`.
+
+### `folders/view-changed-push-pulls-again`
+
+When the drain after a folder push's pull hydrates the copy again under `folders/view-changed-push-rebuilds`, a device MUST pull once more in the same run, and drain once more where that pull queued the placement of a file it wrote.
+
+**Reason:** The first pull wrote the directory out from the copy built under the old read view. Pulling from the rebuilt copy writes what the new view holds in the same push, rather than leaving it for the next one. A file bound to a row the new key cannot read is not removed by that pull; the next scan reports it as lost (`folders/lost-row-unchanged-held`).
+
+**Tests:** `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads`.
 
 ### `folders/view-changed-push-once`
 
