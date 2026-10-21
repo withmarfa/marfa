@@ -273,12 +273,12 @@ describe("createBlobLayer", () => {
       const folder = ctx.blobs.disk.locator;
       await uploadOne(ctx);
       await rm(folder, { recursive: true });
-      vi.spyOn(S3BlobStore.prototype, "attach").mockImplementation(
-        function (this: S3BlobStore) {
-          (this as unknown as { storeId: string }).storeId = "fixture-bucket";
-          return Promise.resolve();
-        },
-      );
+      vi.spyOn(S3BlobStore.prototype, "attach").mockImplementation(function (
+        this: S3BlobStore,
+      ) {
+        (this as unknown as { storeId: string }).storeId = "fixture-bucket";
+        return Promise.resolve();
+      });
 
       const layer = await createBlobLayer(ctx.storage, {
         ...(await sameFolder(ctx)),
