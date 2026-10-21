@@ -4104,6 +4104,14 @@ When a missing folder file could be in unreadable registered folders or several 
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
+### `folders/uncertain-move-no-replacement`
+
+While a missing folder file’s deletion is deferred under `folders/uncertain-move-deferred`, a device MUST NOT write the file again.
+
+**Reason:** the file may be in a folder that cannot be read or among the files elsewhere with its bytes. Written again here, the moved file would read as a copy there and become a new item. A full pass looks for the file again.
+
+**Tests:** `device/folders-one-mac.test.ts › writes no file back for a held delete when another device changes its item`.
+
 ### `folders/uncertain-move-not-text`
 
 When another registered folder holds a file whose bytes can be read but are not UTF-8, a device MUST treat that folder's inventory as complete.
@@ -4146,21 +4154,25 @@ When a file item's missing folder file has unambiguous bytes in a file that carr
 
 ### `folders/moved-binding-kept`
 
-While a missing folder file is found in another registered folder in a file that carries no ID, that folder’s lists take and it has not bound, and that folder has no file of the item, a device MUST keep the missing file’s binding.
+While a missing folder file is found in another registered folder in a file that carries no ID and that folder would take as the item, that folder’s lists take it, it has not bound it, and it has no file of the item, a device MUST keep the missing file’s binding.
 
-**Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folders/moved-arrival-bytes`, `folders/moved-arrival-text-note`). Released before that folder scans, the binding cannot name the item there, and a folder whose search still holds the item writes its file again, so the moved file becomes a new item.
+**Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folders/moved-arrival-bytes`, `folders/moved-arrival-text-note`). Released before that folder scans, the binding cannot name the item there, and a folder whose search still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line is a new item there (`folders/moved-arrival-markdown-new`), so its binding is not kept.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`.
 
 ### `folders/moved-awaiting-peer`
 
-When a folder item’s moved file is present in another folder but not bound there yet, a device MUST count the item as `elsewhere`.
+While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
+
+**Reason:** a pull runs at every pass of a watch, so it reads where a scan past the rename grace found the missing file instead of looking in the other folders itself. Within the grace, the item counts as any missing file does (`folders/delete-grace`, `folders/delete-remote-revives`). A quick pass keeps the last scan’s finding and a full pass looks again, so a watch releases the binding at its first full pass after the other folder binds the file.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`.
 
 ### `folders/moved-awaiting-peer-no-replacement`
 
-When a folder item’s moved file is present in another folder but not bound there yet, a device MUST NOT write a replacement file.
+While a scan keeps a missing folder file’s binding under `folders/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST NOT write a replacement file.
+
+**Reason:** written anew, the file would make the moved file read as a copy in the other folder. Within the rename grace, a device treats the missing file as any other (`folders/delete-remote-revives`, `folders/moved-awaiting-peer`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 

@@ -1807,6 +1807,67 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
+  it("writes no file back for a held delete when another device changes its item", async () => {
+    const held = {
+      id: "01a00000-0000-7000-8000-0000000038c1",
+      properties: { title: "Held", body: "h\n" },
+    };
+    const graced = {
+      id: "01a00000-0000-7000-8000-0000000038c2",
+      properties: { title: "Graced", body: "g\n" },
+    };
+    const { a, edges } = await onOneMac(
+      "held-no-write",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      { "core.note": [{ item: held }, { item: graced }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    writeFileSync(a.registry, "");
+    expect((await a.folder.push()).ok).toBe(true);
+    rmSync(join(a.dir, "Held.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const holding = await a.folder.push();
+    expect(holding.ok, JSON.stringify(holding)).toBe(true);
+    if (!holding.ok) return;
+    expect(holding.value.scan.unsure.map((file) => file.path)).toEqual([
+      "Held.md",
+    ]);
+
+    // Inside the grace, the same change writes its file back
+    // (`folders/delete-remote-revives`).
+    rmSync(join(a.dir, "Graced.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    for (const item of [held, graced]) {
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "item.updated",
+          wireItem({
+            ...item,
+            version: 2,
+            properties: { ...item.properties, body: "their edit\n" },
+          }),
+        ),
+      );
+    }
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(2);
+    const pulled = await a.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(read(a, "Graced.md")).toContain("their edit");
+    expect(pulled.value.scan.unsure.map((file) => file.path)).toEqual([
+      "Held.md",
+    ]);
+    expect(
+      existsSync(join(a.dir, "Held.md")),
+      "a file whose delete is held was written back, so a folder it may have moved to reads it as a copy",
+    ).toBe(false);
+    expect(deletesOf(a.server, held.id)).toBe(0);
+  });
+
   it("refuses a folder inside another, and walks past a folder inside it", async () => {
     harness = await folderHarness("nested-outer", {
       settings: {
