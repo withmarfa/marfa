@@ -2405,6 +2405,18 @@ mod tests {
         DOCUMENTS_READ.with(std::cell::Cell::get)
     }
 
+    thread_local! {
+        /// How many times this thread walked another folder's directory.
+        pub(super) static PEERS_WALKED: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
+
+    /// How many times this thread walked another folder's directory since
+    /// the last call.
+    fn peers_walked() -> usize {
+        PEERS_WALKED.with(|walked| walked.replace(0))
+    }
+
     /// A folder over a fresh directory, with a copy that holds its settings.
     fn scanned_folder() -> (ScannedDir, Folder) {
         scanned_folder_with(serde_json::json!({ "search": {} }), None)
@@ -2429,6 +2441,19 @@ mod tests {
     /// copy's catalog.
     fn scanned_folder_with(settings: Value, types: Option<Value>) -> (ScannedDir, Folder) {
         let (_, registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with("01a00000-0000-7000-8000-000000000001", settings, types);
+        (
+            ScannedDir {
+                dir,
+                _registry: registry,
+            },
+            folder,
+        )
+    }
+
+    /// A folder over a fresh directory, listed in the registry this thread
+    /// already has, whose copy holds the folder item `id` with `settings`.
+    fn folder_with(id: &str, settings: Value, types: Option<Value>) -> (tempfile::TempDir, Folder) {
         let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
         let state = dir.path().join(STATE_DIR);
         std::fs::create_dir_all(&state).unwrap();
@@ -2440,7 +2465,6 @@ mod tests {
                 .extend(serde_json::from_value::<Vec<crate::wire::WireType>>(types).unwrap());
             crate::store::replace_catalog(&core.conn().unwrap(), &catalog).unwrap();
         }
-        let id = "01a00000-0000-7000-8000-000000000001";
         crate::store::upsert_item(
             &core.conn().unwrap(),
             &crate::store::testing::wire_item(
@@ -2457,13 +2481,7 @@ mod tests {
         settings_file::bind(&core, id).unwrap();
         drop(core);
         let folder = Folder::open(dir.path(), None).unwrap();
-        (
-            ScannedDir {
-                dir,
-                _registry: registry,
-            },
-            folder,
-        )
+        (dir, folder)
     }
 
     #[test]
@@ -3437,5 +3455,152 @@ mod tests {
             let again = folder.scan().unwrap();
             assert_eq!(flagged_waiting(&again), [("a.md", "waiting")], "{keeping}");
         }
+    }
+
+    /// As if the copy had synced and the server had taken the folder's
+    /// create of the file's item, so a pull reaches it, and the item's id.
+    fn landed(folder: &Folder, path: &str) -> String {
+        use crate::store::{self, meta_set};
+        let conn = folder.core.conn().unwrap();
+        meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+        meta_set(&conn, crate::read_view::FENCE, crate::scripted::FENCE).unwrap();
+        meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+        meta_set(
+            &conn,
+            store::META_SLICE_TYPES,
+            "[\"core.note\",\"core.file\"]",
+        )
+        .unwrap();
+        meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        let item_id = state::bound_at(&conn, path).unwrap().unwrap().item_id;
+        conn.execute("UPDATE items SET version = 1 WHERE id = ?1", [&item_id])
+            .unwrap();
+        item_id
+    }
+
+    /// Moves the journaled delete at `path` past the grace.
+    fn past_the_grace(folder: &Folder, path: &str) {
+        let long_ago = crate::store::iso_at(
+            crate::clock::system_time() - RENAME_GRACE - Duration::from_secs(1),
+        );
+        let conn = folder.core.conn().unwrap();
+        let aged = conn
+            .execute(
+                "UPDATE folder_journal SET missing_since = ?2 WHERE path = ?1",
+                [path, long_ago.as_str()],
+            )
+            .unwrap();
+        assert_eq!(aged, 1, "{path} is not journaled");
+    }
+
+    fn kept(folder: &Folder, path: &str) -> Option<state::Kept> {
+        state::journaled(&folder.core.conn().unwrap())
+            .unwrap()
+            .into_iter()
+            .find(|row| row.path == path)
+            .and_then(|row| row.kept)
+    }
+
+    #[test]
+    fn a_file_kept_for_the_folder_it_moved_to_is_looked_for_there_once_a_full_pass() {
+        let (_, _registry) = registry::tests::own_registry();
+        let search = serde_json::json!({ "search": {} });
+        let (from, a) = folder_with("01a00000-0000-7000-8000-0000000000b1", search.clone(), None);
+        let (to, b) = folder_with("01a00000-0000-7000-8000-0000000000b2", search, None);
+        b.scan().unwrap();
+        std::fs::write(from.path().join("photo.bin"), [7, 7, 7]).unwrap();
+        assert_eq!(a.scan().unwrap().created, 1);
+        landed(&a, "photo.bin");
+        std::fs::rename(from.path().join("photo.bin"), to.path().join("photo.bin")).unwrap();
+        assert_eq!(a.scan().unwrap().missing, 1);
+        past_the_grace(&a, "photo.bin");
+        peers_walked();
+
+        // The witness: deciding walks the other folder, even in a quick pass.
+        let decided = a.scan_watching(false, QUICK).unwrap();
+        assert_eq!(peers_walked(), 1);
+        assert_eq!(decided.moved_away, 0, "{decided:?}");
+        assert_eq!(kept(&a, "photo.bin"), Some(state::Kept::Arriving));
+
+        let quick = a.scan_watching(false, QUICK).unwrap();
+        assert_eq!(
+            peers_walked(),
+            0,
+            "a quick pass walked the other folder for a file the last sweep kept"
+        );
+        assert!(quick.unsure.is_empty(), "{quick:?}");
+        let pulled = a.pull().unwrap();
+        assert_eq!(
+            peers_walked(),
+            0,
+            "a pull walked the other folder for a missing file"
+        );
+        assert_eq!(pulled.elsewhere, 1, "{pulled:?}");
+        assert!(!from.path().join("photo.bin").exists());
+
+        a.scan().unwrap();
+        assert_eq!(peers_walked(), 1, "a full pass did not look again");
+        assert_eq!(kept(&a, "photo.bin"), Some(state::Kept::Arriving));
+    }
+
+    #[test]
+    fn a_pull_writes_back_no_missing_file_the_sweep_holds_as_unsure() {
+        let (registry, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-0000000000c1",
+            serde_json::json!({ "search": {} }),
+            None,
+        );
+        for name in ["held.txt", "graced.txt"] {
+            std::fs::write(dir.path().join(name), "words\n").unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let ids = ["held.txt", "graced.txt"].map(|name| landed(&folder, name));
+        for name in ["held.txt", "graced.txt"] {
+            std::fs::remove_file(dir.path().join(name)).unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().missing, 2);
+        past_the_grace(&folder, "held.txt");
+        std::fs::write(registry.path(), "not a registry").unwrap();
+        let held = folder.scan().unwrap();
+        assert_eq!(
+            held.unsure
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            ["held.txt"],
+            "{held:?}"
+        );
+        assert!(matches!(
+            kept(&folder, "held.txt"),
+            Some(state::Kept::Unsure(_))
+        ));
+        let quick = folder.scan_watching(false, QUICK).unwrap();
+        assert_eq!(
+            quick.unsure, held.unsure,
+            "a quick pass forgot why it holds"
+        );
+        {
+            let conn = folder.core.conn().unwrap();
+            for id in &ids {
+                conn.execute(
+                    "UPDATE items SET version = 2,
+                       properties = json_set(properties, '$.body', 'changed elsewhere')
+                     WHERE id = ?1",
+                    [id],
+                )
+                .unwrap();
+            }
+        }
+
+        let pulled = folder.pull().unwrap();
+        // The witness: a missing file the sweep has not decided on yet is
+        // written back with the item's change, as before the grace ends.
+        assert!(dir.path().join("graced.txt").exists(), "{pulled:?}");
+        assert!(
+            !dir.path().join("held.txt").exists(),
+            "a missing file whose move cannot be told was written back"
+        );
+        assert_eq!(pulled.elsewhere, 0, "{pulled:?}");
     }
 }

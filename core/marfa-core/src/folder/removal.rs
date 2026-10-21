@@ -53,8 +53,8 @@ impl Folder {
             if self.exists(self.root.join(path)) {
                 continue;
             }
-            if let Some((_, item_id, _)) = journaled.iter().find(|(at, _, _)| at == path) {
-                match self.let_go_missing(path, item_id, &settings, &peers, &members)? {
+            if let Some(row) = journaled.iter().find(|row| &row.path == path) {
+                match self.let_go_missing(path, &row.item_id, &settings, &peers, &members)? {
                     Missing::Moved => confirmed.moved += 1,
                     Missing::Arriving => {}
                     Missing::Unsure(reason) => confirmed.unsure.push(Unsure {

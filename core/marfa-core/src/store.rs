@@ -6639,7 +6639,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "e50d03a09ffea311",
+            "c94119469ee5a4e4",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

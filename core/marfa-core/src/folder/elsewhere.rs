@@ -225,6 +225,8 @@ impl Peer {
 
     fn walked(&self) -> &Walked {
         self.walked.get_or_init(|| {
+            #[cfg(test)]
+            super::tests::PEERS_WALKED.with(|walked| walked.set(walked.get() + 1));
             let mut walked = super::Walked::default();
             let mut partial = if self
                 .folder

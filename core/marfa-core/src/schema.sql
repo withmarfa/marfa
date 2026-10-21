@@ -243,7 +243,12 @@ CREATE TABLE IF NOT EXISTS folder_stats (
 CREATE TABLE IF NOT EXISTS folder_journal (
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
-  missing_since TEXT NOT NULL
+  missing_since TEXT NOT NULL,
+  -- Why a sweep past the grace kept the file's binding: `arriving`, until the
+  -- folder the file moved to takes it, or `unsure`, with `reason`, until a
+  -- move can be told. A pull writes no file over either.
+  kept TEXT CHECK (kept IN ('arriving', 'unsure')),
+  reason TEXT
 ) WITHOUT ROWID;
 
 -- What each link and embed in a body written through this copy names: the

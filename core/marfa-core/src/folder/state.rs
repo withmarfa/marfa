@@ -512,11 +512,61 @@ pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result
     Ok(())
 }
 
-/// Every journaled delete: the path, the item and when it was first missing.
-pub fn journaled(conn: &Connection) -> Result<Vec<(String, String, String)>, CoreError> {
-    let mut statement =
-        conn.prepare("SELECT path, item_id, missing_since FROM folder_journal ORDER BY path")?;
-    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+/// Why a sweep past the grace kept a missing file's binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kept {
+    /// Moved to a folder that knows the file only by this binding, and that
+    /// has not taken it yet.
+    Arriving,
+    /// Whether it moved cannot be told yet, and why.
+    Unsure(String),
+}
+
+/// A journaled delete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Journaled {
+    pub path: String,
+    pub item_id: String,
+    pub missing_since: String,
+    /// What the last sweep that looked decided, where it kept the binding.
+    pub kept: Option<Kept>,
+}
+
+pub fn journal_keep(
+    conn: &Connection,
+    path: &str,
+    item_id: &str,
+    kept: &Kept,
+) -> Result<(), CoreError> {
+    let (kind, reason) = match kept {
+        Kept::Arriving => ("arriving", None),
+        Kept::Unsure(reason) => ("unsure", Some(reason.as_str())),
+    };
+    conn.execute(
+        "UPDATE folder_journal SET kept = ?3, reason = ?4 WHERE path = ?1 AND item_id = ?2",
+        params![path, item_id, kind, reason],
+    )?;
+    Ok(())
+}
+
+/// Every journaled delete, by path.
+pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT path, item_id, missing_since, kept, reason FROM folder_journal ORDER BY path",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let reason: Option<String> = row.get(4)?;
+        Ok(Journaled {
+            path: row.get(0)?,
+            item_id: row.get(1)?,
+            missing_since: row.get(2)?,
+            kept: match row.get::<_, Option<String>>(3)?.as_deref() {
+                Some("arriving") => Some(Kept::Arriving),
+                Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
+                None => None,
+            },
+        })
+    })?;
     let mut journaled = Vec::new();
     for row in rows {
         journaled.push(row?);

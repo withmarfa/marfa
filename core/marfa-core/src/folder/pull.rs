@@ -1,10 +1,9 @@
 use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
-    HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
-    Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
-    carries_frontmatter, cleaned, document, executable, fields, identity, landing, line_of,
-    name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state, suited,
-    transfer,
+    HashMap, HashSet, Item, ItemState, Lists, Mode, Names, OFlags, Path, Peers, Result, Serialize,
+    Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of, carries_frontmatter, cleaned,
+    document, executable, fields, identity, landing, line_of, name_of, names, path_of, placement,
+    plainly_inside, read_file, stat_metadata, state, suited, transfer,
 };
 
 /// Bounded, so a copy that keeps changing ends the pull with
@@ -36,7 +35,7 @@ struct Renaming<'a> {
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
     Ok(state::journaled(conn)?
         .iter()
-        .any(|(at, id, _)| at == path && id == item_id))
+        .any(|row| row.path == path && row.item_id == item_id))
 }
 
 struct Rendering<'a> {
@@ -387,6 +386,11 @@ impl Folder {
             .collect();
         report.unmatched = unmatched_ids.len();
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
+        // Read, not looked for in the other folders: a pull runs every pass.
+        let kept: HashMap<String, (String, state::Kept)> = state::journaled(&*self.core.conn()?)?
+            .into_iter()
+            .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
+            .collect();
         for (item, unmatched) in &work {
             // This device's own create, not yet landed: the id goes back
             // only once it has.
@@ -414,21 +418,20 @@ impl Folder {
             {
                 continue;
             }
+            // A missing file the sweep kept bound is another folder's to take,
+            // or a full pass's to tell; written anew it would read there as a
+            // copy.
+            if let Some(bound) = &bound
+                && let Some((kept_for, why)) = kept.get(&bound.path)
+                && *kept_for == item.id
+                && !self.exists(self.root.join(&bound.path))
+            {
+                report.elsewhere += usize::from(*why == state::Kept::Arriving);
+                continue;
+            }
             // Moved to another folder here and not yet taken there, written
-            // anew it would make the moved file read as a copy. A file that
-            // carries no id keeps its binding meanwhile, which is how that
-            // folder knows it.
-            let awaited = match &bound {
-                None => peers.arriving(&item.id),
-                Some(bound) => {
-                    !self.exists(self.root.join(&bound.path))
-                        && matches!(
-                            peers.moved_to(bound, true, bytes_of(item, &catalog).is_some()),
-                            Look::Arriving
-                        )
-                }
-            };
-            if awaited {
+            // anew it would make the moved file read as a copy.
+            if bound.is_none() && peers.arriving(&item.id) {
                 report.elsewhere += 1;
                 continue;
             }
