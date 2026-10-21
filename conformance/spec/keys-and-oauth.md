@@ -2791,7 +2791,7 @@ If the browser session asking `PATCH /owner/sign-ins/{id}` signed in more than f
 
 **Reason:** A key's label is changed under the same rule at `PATCH /keys/{id}`, and one rule holds for every sign-in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and renames nothing`.
+**Tests:** `compliance/owner-sign-ins.test.ts › refuses a browser that signed in more than five minutes ago 403, and renames nothing`, `› gives a key a new label`.
 
 ## A browser session's idle week
 

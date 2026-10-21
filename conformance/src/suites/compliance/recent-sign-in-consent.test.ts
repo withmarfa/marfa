@@ -26,10 +26,9 @@ import { TEST_OWNER } from "../../utils/target.js";
  * What a browser session that signed in more than five minutes ago may and
  * may not do to an app: approve it on either consent screen, revoke a key,
  * and revoke or narrow an app's grant. It also holds the other changes the
- * owner makes only with a recent sign-in: minting and changing a key, the
- * trash and type removal doors, and renaming or removing a passkey. A
- * session's age is the server's clock moved
- * forward, and the clock only goes forward, so each case signs the stale
+ * owner makes only with a recent sign-in: minting and changing a key, and
+ * the trash and type removal doors. A session's age is the server's clock
+ * moved forward, and the clock only goes forward, so each case signs the stale
  * session in first, lets six minutes pass, and signs the fresh one in after.
  * Each sign-in comes from an address of its own, so the per-address sign-in
  * limit never holds this file back.

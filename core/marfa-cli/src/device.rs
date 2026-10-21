@@ -222,8 +222,9 @@ pub enum DeviceCommand {
     /// A release sends a write again under a fresh idempotency key but on the
     /// version it already names. A write blocked `conflict_unresolved` is
     /// refused the same way each time, and one blocked `ancestor_unavailable`
-    /// until the key it is sent under may read the snapshot it names. The
-    /// writes held for the withdrawn write are refused unsent.
+    /// too, unless the credential it is sent with has come to read the
+    /// snapshot it names. The writes held for the withdrawn write are refused
+    /// unsent.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]

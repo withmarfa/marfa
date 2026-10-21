@@ -2948,7 +2948,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Take a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone` out of the queue, and put the copy back to what the server holds.
 
-A release sends a write again under a fresh idempotency key but on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` until the key it is sent under may read the snapshot it names. The writes held for the withdrawn write are refused unsent.
+A release sends a write again under a fresh idempotency key but on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused unsent.
 
 ```text
 marfa device withdraw [OPTIONS] <ID>

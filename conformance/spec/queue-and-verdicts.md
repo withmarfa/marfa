@@ -1300,7 +1300,7 @@ A caller can release a write that has stopped, withdraw one that can never be se
 
 When a caller releases a write that is `dead`, or `blocked` for a reason other than `awaiting_dependency`, a device MUST take it back to no verdict so the next drain sends it.
 
-**Reason:** a device does not judge what the server would now answer, so it releases a write blocked for any of these reasons. One the server refuses again is blocked again with the reason of that answer (`queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`).
+**Reason:** a device does not judge what the server would now answer, so it releases a write blocked for any of these reasons. One the server answers as before is blocked again for the reason of that answer (`queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`).
 
 **Tests:** `device/classification.test.ts › sends a released row again under a fresh key`, `› releases by reason the rows blocked for it, and never a dead one`, `device/stuck-write.test.ts › sends a write set aside again when it is released, under the streak counted afresh`, `› releases a write set aside by its reason`.
 
@@ -1398,7 +1398,7 @@ If a caller withdraws an id the queue does not hold, then a device MUST refuse i
 
 When a caller withdraws a write blocked `ancestor_unavailable`, `conflict_unresolved` or `failing_alone`, a device MUST take it out of the queue.
 
-**Reason:** a release sends a write again under a fresh idempotency key but on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way until the key it is sent under may read the snapshot it names. Meanwhile the write stays laid over its row and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go.
+**Reason:** a release sends a write again under a fresh idempotency key but on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its row and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go.
 
 **Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`.
 
