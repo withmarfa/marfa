@@ -718,6 +718,16 @@ fn record_cells(record: &Value) -> Vec<String> {
             run_note(record).to_string(),
         ];
     }
+    if record.get("webhook_id").is_some() && record.get("event_type").is_some() {
+        let attempts = record.get("attempt").and_then(Value::as_u64).unwrap_or(0);
+        return vec![
+            owned("id"),
+            owned("status"),
+            owned("event_type"),
+            format!("{attempts} attempt{}", if attempts == 1 { "" } else { "s" }),
+            delivery_answer(record),
+        ];
+    }
     if record.get("trashed_at").is_some() {
         return vec![
             owned("id"),
@@ -773,6 +783,25 @@ fn record_cells(record: &Value) -> Vec<String> {
             format!("[{state}]")
         },
     ]
+}
+
+/// What the receiver last said, for a delivery: its HTTP status, why the
+/// attempt failed, or that no attempt has recorded an answer.
+fn delivery_answer(delivery: &Value) -> String {
+    let status = delivery
+        .get("status_code")
+        .and_then(Value::as_u64)
+        .map(|code| format!("HTTP {code}"));
+    let error = delivery
+        .get("error")
+        .and_then(Value::as_str)
+        .filter(|error| Some(*error) != status.as_deref());
+    match (status, error) {
+        (Some(status), Some(error)) => format!("{status}: {error}"),
+        (Some(status), None) => status,
+        (None, Some(error)) => error.to_string(),
+        (None, None) => "no answer yet".to_string(),
+    }
 }
 
 fn run_note(run: &Value) -> &str {
@@ -1099,6 +1128,38 @@ mod tests {
             text,
             "c1  github  Issues   failed     2026-01-01T00:01:00Z  rate limited\n\
              c2  linear  Tickets  never run"
+        );
+    }
+
+    #[test]
+    fn a_delivery_shows_its_status_event_attempts_and_last_answer() {
+        use serde_json::Value;
+        let delivery = |id: &str, status: &str, code: Value, attempt: u64, error: Value| {
+            json!({
+                "id": id, "webhook_id": "w1", "event_type": "item.created",
+                "status": status, "status_code": code, "attempt": attempt,
+                "succeeded": status == "success", "error": error,
+                "created_at": "2026-01-01T00:00:00Z",
+            })
+        };
+        let text = describe(&json!({
+            "data": [
+                delivery("d1", "dead_letter", json!(503), 9, json!("Max attempts reached")),
+                delivery("d2", "dead_letter", json!(404), 1, json!("HTTP 404")),
+                delivery("d3", "dead_letter", Value::Null, 2, json!("The receiver could not be reached.")),
+                delivery("d4", "success", json!(204), 1, Value::Null),
+                delivery("d5", "pending", Value::Null, 0, Value::Null),
+            ],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "d1  dead_letter  item.created  9 attempts  HTTP 503: Max attempts reached\n\
+             d2  dead_letter  item.created  1 attempt   HTTP 404\n\
+             d3  dead_letter  item.created  2 attempts  The receiver could not be reached.\n\
+             d4  success      item.created  1 attempt   HTTP 204\n\
+             d5  pending      item.created  0 attempts  no answer yet"
         );
     }
 
