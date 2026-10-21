@@ -3381,32 +3381,7 @@ export interface components {
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         RegisteredType: components["schemas"]["TypeDefinition"] & {
-            /** @description Whether Marfa ships the type, and the sign-in that first registered it when known. */
-            provenance: {
-                /**
-                 * @description Where the type came from: shipped by Marfa, registered by a caller, or unknown.
-                 * @enum {string}
-                 */
-                origin: "platform" | "user" | "unknown";
-                /** @description The sign-in that first registered the type, or null when none is recorded. */
-                created_by: {
-                    /**
-                     * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-                     * @enum {string}
-                     */
-                    kind: "browser" | "app" | "key" | "local";
-                    /**
-                     * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                     * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
-                     */
-                    id: string;
-                    /**
-                     * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-                     * @example Safari on macOS
-                     */
-                    name: string;
-                } | null;
-            };
+            provenance: components["schemas"]["TypeProvenance"];
         };
         /**
          * @description A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.
@@ -3441,6 +3416,32 @@ export interface components {
             maxItems?: number;
         } & {
             [key: string]: unknown;
+        };
+        /** @description Whether Marfa ships the type, and the sign-in that first registered it when known. */
+        TypeProvenance: {
+            /**
+             * @description Where the type came from: shipped by Marfa, registered by a caller, or unknown.
+             * @enum {string}
+             */
+            origin: "platform" | "user" | "unknown";
+            /** @description The sign-in that first registered the type, or null when none is recorded. */
+            created_by: {
+                /**
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @enum {string}
+                 */
+                kind: "browser" | "app" | "key" | "local";
+                /**
+                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 */
+                id: string;
+                /**
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @example Safari on macOS
+                 */
+                name: string;
+            } | null;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
         TypeDefinition: {
@@ -3655,32 +3656,7 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
-            /** @description The recorded origin and creator, accepted when replacing a read response. This field cannot change either value. */
-            provenance?: {
-                /**
-                 * @description Where the type came from: shipped by Marfa, registered by a caller, or unknown.
-                 * @enum {string}
-                 */
-                origin: "platform" | "user" | "unknown";
-                /** @description The sign-in that first registered the type, or null when none is recorded. */
-                created_by: {
-                    /**
-                     * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-                     * @enum {string}
-                     */
-                    kind: "browser" | "app" | "key" | "local";
-                    /**
-                     * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                     * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
-                     */
-                    id: string;
-                    /**
-                     * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-                     * @example Safari on macOS
-                     */
-                    name: string;
-                } | null;
-            };
+            provenance?: components["schemas"]["TypeProvenance"] & unknown;
             /** @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing. */
             id?: string;
         };
