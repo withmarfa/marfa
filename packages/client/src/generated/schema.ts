@@ -4922,6 +4922,18 @@ export interface components {
             /** @description When the app last used its access, in UTC, or null if never used. */
             last_used_at: string | null;
         };
+        /**
+         * @description The app's narrowed access.
+         * @example {
+         *       "scopes": [
+         *         "core.note:read"
+         *       ]
+         *     }
+         */
+        NarrowedAppGrant: {
+            /** @description The resulting scope set. */
+            scopes: string[];
+        };
         /** @description An error response. */
         OauthGrantNotFoundRefusal: {
             /** @description What went wrong. */
@@ -4938,18 +4950,6 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
-        };
-        /**
-         * @description The app's narrowed access.
-         * @example {
-         *       "scopes": [
-         *         "core.note:read"
-         *       ]
-         *     }
-         */
-        NarrowedAppGrant: {
-            /** @description The resulting scope set. */
-            scopes: string[];
         };
         /** @description An OAuth client: its app metadata and the grants it uses. */
         OAuthClientRegistration: {
@@ -25259,6 +25259,21 @@ export interface operations {
                     "application/json": components["schemas"]["AppGrantList"];
                 };
             };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {
                 headers: {
@@ -25378,6 +25393,21 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
             401: {

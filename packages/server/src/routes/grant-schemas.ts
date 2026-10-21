@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { NextCursorSchema } from "./_schemas.js";
-import { directAuthorityOnly } from "../middleware/auth.js";
+import { directAuthorityOnly, standingPermission } from "../middleware/auth.js";
 import { makeErrorResponseSchema } from "../openapi.js";
 const error = (
   codes: Parameters<typeof makeErrorResponseSchema>[0],
@@ -65,6 +65,7 @@ export const listGrantsRoute = createRoute({
   operationId: "listAppGrants",
   tags: ["Access"],
   security,
+  middleware: standingPermission("grants.manage"),
   summary: "List app grants",
   description:
     "Returns every active app grant in one page. Requires `grants.manage` or direct authority.",
@@ -100,6 +101,7 @@ export const deleteGrantRoute = createRoute({
   operationId: "revokeAppGrant",
   tags: ["Access"],
   security,
+  middleware: standingPermission("grants.manage"),
   summary: "Revoke an app grant",
   description:
     "Revokes the app's tokens and consent. Requires `grants.manage` or direct authority; an owner browser needs a sign-in within five minutes.",

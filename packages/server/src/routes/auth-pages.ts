@@ -239,8 +239,6 @@ async function createUserAppGrant(
  */
 export function authRoutes(storage: Storage, auth?: MarfaAuth) {
   const router = createOpenAPIRouter<AppEnv>();
-  router.openAPIRegistry.registerPath(listGrantsRoute);
-  router.openAPIRegistry.registerPath(deleteGrantRoute);
 
   // Each lane counts every door before looking up a code, including successful
   // lookups: a sweep may try each code only once. Owner authority comes from
@@ -363,7 +361,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
   // under the grant.
   // -----------------------------------------------------------------------
 
-  router.get("/grants", async (c) => {
+  router.openapi(listGrantsRoute, async (c) => {
     // Listing every app the owner authorized, and revoking one, are
     // operations on other principals' access — the same standing as the key
     // management routes beside them.
@@ -374,7 +372,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     requirePermission(c, "grants.manage");
     const grants: {
       id: string;
-      kind: string;
+      kind: "app" | "web" | "cli";
       client_id: string;
       client_name: string | null;
       origins: string[];
@@ -405,7 +403,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
           typeof props.last_used_at === "string" ? props.last_used_at : null,
       });
     }
-    return c.json({ data: grants, next_cursor: null });
+    return c.json({ data: grants, next_cursor: null }, 200);
   });
 
   router.openapi(narrowGrantRoute, async (c) => {
@@ -428,7 +426,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth) {
     return c.json({ scopes: result }, 200);
   });
 
-  router.delete("/grants/:id", async (c) => {
+  router.openapi(deleteGrantRoute, async (c) => {
     // The same axis as `GET /grants`: `grants.manage` to act at all.
     requirePermission(c, "grants.manage");
     if (c.get("authority")?.kind === "owner")
