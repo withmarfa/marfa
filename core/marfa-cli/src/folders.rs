@@ -1095,7 +1095,7 @@ fn plan_line(plan: &FirstSync) -> String {
     );
     if plan.beside > 0 {
         line.push_str(&format!(
-            "; {} of those would be written at the path of a file that is being sent, so each gets a number added to its name and no file is written over",
+            "; {} of those would be written at the path of a file that is being sent, so one of the two gets a number added to its name and no file is written over",
             plan.beside
         ));
     }
@@ -1421,7 +1421,7 @@ mod tests {
         let beside = plan_line(&plan(2, 0));
         assert!(
             beside.contains(
-                "2 of those would be written at the path of a file that is being sent, so each gets a number added to its name and no file is written over"
+                "2 of those would be written at the path of a file that is being sent, so one of the two gets a number added to its name and no file is written over"
             ),
             "{beside}"
         );

@@ -512,8 +512,8 @@ impl Folder {
         if let Some(plan) = planning {
             // Every entry still unbound is a file the pull will write, but
             // where a file is at its path. A file the scan bound is sent
-            // before the pull, so it keeps the path and the item's file takes
-            // a number. A file the scan did not bind is the person's to mend,
+            // before the pull, so the two are both kept and one takes a
+            // number. A file the scan did not bind is the person's to mend,
             // and the pull writes nothing over it.
             let conn = self.core.conn()?;
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {

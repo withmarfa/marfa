@@ -17,8 +17,8 @@ pub struct FirstSync {
     /// the items they name.
     pub send: usize,
     /// Of the files it will write, those whose path a file it sends already
-    /// has. Both end up in the folder, and the one it writes takes a number
-    /// in its name; none is written over.
+    /// has. Both end up in the folder, and one of the two takes a number in
+    /// its name; none is written over.
     pub beside: usize,
     /// Items whose file it will not write, because a file it does not send
     /// is at the path: one it holds back, or one it takes no part in. That

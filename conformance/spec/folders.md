@@ -246,7 +246,7 @@ While a folder’s first sync waits for confirmation, a device MUST NOT send que
 
 When a waiting folder’s first-sync plan is read, a device MUST report the counts `write`, `send`, `beside` and `left` from the current copy and directory.
 
-**Reason:** `beside` counts a file written where a file the folder sends already is, which takes a number in its name. `left` counts an item whose file is not written because a file the folder does not send is at the path, which `folders/first-sync-plan-left` says. `write` counts neither of the files `left` counts.
+**Reason:** `beside` counts a file written where a file the folder sends already is, and one of the two takes a number in its name. `left` counts an item whose file is not written because a file the folder does not send is at the path, which `folders/first-sync-plan-left` says. `write` counts neither of the files `left` counts.
 
 **Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
 
