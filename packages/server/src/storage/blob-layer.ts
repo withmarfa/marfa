@@ -154,8 +154,9 @@ export async function within<T>(
  * a store can still carry out a write or a delete after its caller stops
  * waiting, and one landing after the lock was let go could remove a copy a
  * later run had made, or leave bytes in a store after a purge. Until it
- * settles, housekeeping skips the blob and an upload of its bytes is
- * refused with `blob_store_unavailable`.
+ * settles, housekeeping skips the blob and every request that takes its
+ * lock (an upload, a restore, a drop, an export's re-check) is refused with
+ * `blob_store_unavailable`.
  */
 export async function awaitStoreChange<T>(
   store: BlobStore,

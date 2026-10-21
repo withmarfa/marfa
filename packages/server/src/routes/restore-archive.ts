@@ -874,10 +874,10 @@ export function restoreArchiveRoutes(
       // Refused at once, as an upload is, while a store has not finished
       // an earlier write or delete of one of these blobs: the request would
       // otherwise wait on a store that may never answer.
-      const releaseBlobs = await holdBlobUploadLocks(
-        [...archive.blobs.map((blob) => blob.hash), ...archive.absent],
-        { refuseUnanswered: true },
-      );
+      const releaseBlobs = await holdBlobUploadLocks([
+        ...archive.blobs.map((blob) => blob.hash),
+        ...archive.absent,
+      ]);
       try {
         const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);

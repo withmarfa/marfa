@@ -27,9 +27,12 @@
  * straight to registering against what the first placed.
  *
  * **In-process, and a mutex rather than a lease.** An upload is a user action
- * that has to complete, so a caller waits its turn rather than being told to
- * go away. In-process is enough because there is one process: SQLite admits
- * one writer, and the server is it.
+ * that has to complete, so a caller waits its turn behind another live
+ * caller rather than being told to go away. A turn held past a store call
+ * its holder stopped waiting for is different: that call may never end, so
+ * every caller is refused at once until it has, and no request can hang on
+ * a store that does not answer. In-process is enough because there is one
+ * process: SQLite admits one writer, and the server is it.
  *
  * **Not a database transaction.** The step that has to be serialized is a
  * filesystem rename, which no transaction can hold or roll back, and the
@@ -50,35 +53,25 @@ const inFlight = new Map<string, Promise<void>>();
  */
 interface Turn {
   calls: Set<Promise<unknown>>;
-  /** The refusal for a caller that will not wait on those calls. */
+  /** The refusal for a caller that arrives while those calls are out. */
   refusal: (() => Error) | undefined;
 }
 
 const turns = new Map<string, Turn>();
 
-/** Callers queued on a hash that will not wait on an unanswered call. */
+/** Callers queued on a hash, refused if the turn ahead outlasts a call. */
 const refusing = new Map<string, Set<(error: Error) => void>>();
 
-export interface LockOptions {
-  /**
-   * Reject with the holder's refusal, rather than wait, while the hash is
-   * held past a store call its holder stopped waiting for. For a request,
-   * which should not hang on a store that does not answer.
-   */
-  refuseUnanswered?: boolean;
-}
-
 /**
- * Join the queue for one hash and wait for its turn, answering the release.
- * Published before the first await, so two synchronous callers queue in the
- * order they arrived rather than both finding an empty slot.
+ * Join the queue for one hash and wait for its turn, answering the release,
+ * or reject with the holder's refusal once the hash is held past a store
+ * call its holder stopped waiting for. Published before the first await, so
+ * two synchronous callers queue in the order they arrived rather than both
+ * finding an empty slot.
  */
-async function acquire(
-  hash: string,
-  options: LockOptions = {},
-): Promise<() => void> {
+async function acquire(hash: string): Promise<() => void> {
   const refusal = turns.get(hash)?.refusal;
-  if (options.refuseUnanswered && refusal) throw refusal();
+  if (refusal) throw refusal();
   const predecessor = inFlight.get(hash);
   let resolve!: () => void;
   const held = new Promise<void>((done) => {
@@ -90,7 +83,7 @@ async function acquire(
     resolve();
     if (inFlight.get(hash) === held) inFlight.delete(hash);
   };
-  if (predecessor && options.refuseUnanswered) {
+  if (predecessor) {
     let refuse!: (error: Error) => void;
     const refused = new Promise<Error>((done) => {
       refuse = done;
@@ -111,8 +104,6 @@ async function acquire(
       });
       throw outcome;
     }
-  } else if (predecessor) {
-    await predecessor;
   }
   const turn: Turn = { calls: new Set(), refusal: undefined };
   turns.set(hash, turn);
@@ -129,8 +120,8 @@ async function acquire(
  * Keep the turn on `hash`, which the caller holds, until `call` settles,
  * even after the caller releases it. For a store write or delete the caller
  * stopped waiting for: the store can still carry it out, so nothing else
- * may change the hash's copies until it has. A caller queued with
- * `refuseUnanswered` is refused with `refusal()` until then.
+ * may change the hash's copies until it has. Every caller, queued or new, is
+ * refused with `refusal()` until then.
  */
 export function outlastBlobUploadLock(
   hash: string,
@@ -152,14 +143,15 @@ export function outlastBlobUploadLock(
 /**
  * Run `fn` with exclusive access to one content hash. Waiters run in call
  * order, and a rejection from one caller does not strand the next: the queue
- * advances on settlement, not on success.
+ * advances on settlement, not on success. Rejects with the holder's refusal,
+ * without running `fn`, while the hash is held past a store call its holder
+ * stopped waiting for ({@link outlastBlobUploadLock}).
  */
 export async function withBlobUploadLock<T>(
   hash: string,
   fn: () => Promise<T>,
-  options: LockOptions = {},
 ): Promise<T> {
-  const release = await acquire(hash, options);
+  const release = await acquire(hash);
   try {
     return await fn();
   } finally {
@@ -191,17 +183,16 @@ export async function tryBlobUploadLock<T>(
  *
  * Taken one at a time in sorted order, so two callers holding several never
  * wait on each other in a cycle, and in a loop rather than by nesting, so a
- * request naming thousands of hashes takes them all. A refusal under
- * `refuseUnanswered` lets go the locks already taken.
+ * request naming thousands of hashes takes them all. A refusal, as
+ * {@link withBlobUploadLock} gives, lets go the locks already taken.
  */
 export async function holdBlobUploadLocks(
   hashes: readonly string[],
-  options: LockOptions = {},
 ): Promise<() => void> {
   const releases: (() => void)[] = [];
   try {
     for (const hash of [...new Set(hashes)].sort()) {
-      releases.push(await acquire(hash, options));
+      releases.push(await acquire(hash));
     }
   } catch (error) {
     for (const release of releases) release();

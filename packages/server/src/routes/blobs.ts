@@ -854,72 +854,68 @@ export function blobRoutes(
     // or delete that went unanswered is answered 503 at once: the request
     // would otherwise wait on a store it cannot see, and the caller still
     // has the bytes to send again.
-    const recorded = await withBlobUploadLock(
-      hash,
-      async () => {
-        try {
-          await finishCopyDeletion(storage, disk, hash);
-        } catch (error) {
-          // Before anything is placed. A disk that does not finish the
-          // deletion may still carry it out, over the bytes this would place.
-          if (error instanceof BlobStoreUnreachable) {
-            throw storeUnavailable(disk, hash, error);
+    const recorded = await withBlobUploadLock(hash, async () => {
+      try {
+        await finishCopyDeletion(storage, disk, hash);
+      } catch (error) {
+        // Before anything is placed. A disk that does not finish the
+        // deletion may still carry it out, over the bytes this would place.
+        if (error instanceof BlobStoreUnreachable) {
+          throw storeUnavailable(disk, hash, error);
+        }
+        throw error;
+      }
+      const present = (await disk.has(hash)) !== null;
+      if (present) {
+        await rm(spool, { force: true });
+      } else {
+        await disk.put(hash, { path: spool, size_bytes: sizeBytes });
+      }
+      try {
+        // The first upload fixes the type; a later one under another type
+        // is answered with the type the bytes are served with.
+        return await runAuditedTransaction(
+          storage,
+          async () => {
+            // The body took time to arrive; the credential is asked again as
+            // it stands now, and is the one the upload is credited to.
+            const uploader = requireBlobUpload(c);
+            await storage.blobs.register(hash, mimeType, sizeBytes);
+            await storage.blobs.recordLocation(hash, disk.id);
+            await storage.blobs.recordUploader(hash, uploader);
+            const row = await storage.blobs.get(hash);
+            if (!row) throw new Error(`blob ${hash} was not registered`);
+            return row.mime_type;
+          },
+          (recorded) => ({
+            client_ip: c.get("clientIp") ?? null,
+            key_id: authorityId(c),
+            action: "blob.upload",
+            resource_type: "blob",
+            resource_id: hash,
+            details: { mime_type: recorded, size_bytes: sizeBytes },
+          }),
+        );
+      } catch (err) {
+        // A file no row names is unreachable and nothing sweeps it. A failure
+        // to undo leaves bytes behind rather than failing the request a
+        // second time, so it is logged: the caller's error is the one worth
+        // surfacing.
+        if (!present) {
+          try {
+            if ((await storage.blobs.get(hash)) === null)
+              await disk.delete(hash);
+          } catch (cleanupErr) {
+            log("error", "blob.orphaned_after_refused_upload", {
+              hash,
+              size_bytes: sizeBytes,
+              error: errorMessage(cleanupErr),
+            });
           }
-          throw error;
         }
-        const present = (await disk.has(hash)) !== null;
-        if (present) {
-          await rm(spool, { force: true });
-        } else {
-          await disk.put(hash, { path: spool, size_bytes: sizeBytes });
-        }
-        try {
-          // The first upload fixes the type; a later one under another type
-          // is answered with the type the bytes are served with.
-          return await runAuditedTransaction(
-            storage,
-            async () => {
-              // The body took time to arrive; the credential is asked again as
-              // it stands now, and is the one the upload is credited to.
-              const uploader = requireBlobUpload(c);
-              await storage.blobs.register(hash, mimeType, sizeBytes);
-              await storage.blobs.recordLocation(hash, disk.id);
-              await storage.blobs.recordUploader(hash, uploader);
-              const row = await storage.blobs.get(hash);
-              if (!row) throw new Error(`blob ${hash} was not registered`);
-              return row.mime_type;
-            },
-            (recorded) => ({
-              client_ip: c.get("clientIp") ?? null,
-              key_id: authorityId(c),
-              action: "blob.upload",
-              resource_type: "blob",
-              resource_id: hash,
-              details: { mime_type: recorded, size_bytes: sizeBytes },
-            }),
-          );
-        } catch (err) {
-          // A file no row names is unreachable and nothing sweeps it. A failure
-          // to undo leaves bytes behind rather than failing the request a
-          // second time, so it is logged: the caller's error is the one worth
-          // surfacing.
-          if (!present) {
-            try {
-              if ((await storage.blobs.get(hash)) === null)
-                await disk.delete(hash);
-            } catch (cleanupErr) {
-              log("error", "blob.orphaned_after_refused_upload", {
-                hash,
-                size_bytes: sizeBytes,
-                error: errorMessage(cleanupErr),
-              });
-            }
-          }
-          throw err;
-        }
-      },
-      { refuseUnanswered: true },
-    ).finally(() => rm(spool, { force: true }));
+        throw err;
+      }
+    }).finally(() => rm(spool, { force: true }));
 
     // The other stores get their copies at replication's next run, which
     // this brings forward; a wake is a hint, so a scheduler that is not
