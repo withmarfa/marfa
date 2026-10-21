@@ -1,3 +1,4 @@
+pub mod apps;
 pub mod audit;
 pub mod blobs;
 pub mod config;

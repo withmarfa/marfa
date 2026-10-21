@@ -1895,7 +1895,7 @@ export interface OauthProviderStore {
    * that row still holds exactly `expectedScopes`. Returns true when the
    * write landed, false when there was no row or its scopes had moved on.
    *
-   * Exists for one caller: the silent re-authorization path in
+   * Used by owner narrowing and the silent re-authorization path in
    * `routes/auth-consent.ts`. The OAuth Provider plugin rewrites the
    * stored consent scopes to the *requested* set on every accept, so a
    * narrower request against a wider standing grant would silently shrink
@@ -1925,6 +1925,12 @@ export interface OauthProviderStore {
     scopes: readonly string[],
     expectedScopes: readonly string[],
   ): Promise<boolean>;
+  /** End token chains exceeding a reduced grant; the caller owns the audited transaction. */
+  revokeTokensBeyondScopes(
+    clientId: string,
+    authUserId: string,
+    scopes: readonly string[],
+  ): Promise<void>;
   /**
    * Write the plugin's consent row for `(clientId, authUserId)`: create it,
    * or replace its scopes if one exists.

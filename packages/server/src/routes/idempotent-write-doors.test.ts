@@ -99,6 +99,8 @@ const WRITERS: Record<string, string> = {
 
   // --- Routes writing a system item through a surface of their own ---
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",
+  "auth/grant-narrowing.ts":
+    "owner narrowing compares the complete expected scope set under the consent lock; a retry after a changed grant returns conflict, never restores access",
   "auth/grant-lifecycle.ts":
     "the revoke cascade's projection flip, moved out of auth-pages so the grant routes and the client-revoke hook share one writer; a convergent write (status revoked, revoked_at restamped) reached from a browser form, an admin route or the plugin's revoke endpoint rather than from a retried API write, and taken under the consent lock whenever both ids are known",
   "auth/sign-ins.ts":

@@ -301,6 +301,57 @@ marfa profile update [OPTIONS] <--name <NAME>|--avatar <AVATAR>|--clear-avatar>
 | `--avatar <AVATAR>` | An HTTP or HTTPS avatar URL. Marfa does not fetch it. |
 | `--clear-avatar` | Clear the avatar URL. |
 
+## apps
+
+List, narrow or disconnect approved apps.
+
+### marfa apps
+
+```text
+marfa apps [OPTIONS] <COMMAND>
+```
+
+### marfa apps list
+
+List approved apps. Requires grants.manage or private machine authority.
+
+```text
+marfa apps list [OPTIONS]
+```
+
+### marfa apps narrow
+
+Reduce an app's access. Ends tokens and refresh chains that exceed it. Requires private machine authority (--socket).
+
+```text
+marfa apps narrow [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The app grant's ID. |
+
+| Option | Description |
+| --- | --- |
+| `--scope <SCOPE>` | One scope to keep; repeat for the complete resulting set. |
+| `--clear` | Remove every scope. |
+
+### marfa apps disconnect
+
+End an app's grant. Requires grants.manage or private machine authority.
+
+```text
+marfa apps disconnect [OPTIONS] <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The app grant's ID. |
+
+| Option | Description |
+| --- | --- |
+| `--revoke-keys` | Also revoke keys the app minted. |
+
 ## sign-ins
 
 Sign-ins: every browser, app and key that can reach the server. A key or an app's token is refused; use --socket.

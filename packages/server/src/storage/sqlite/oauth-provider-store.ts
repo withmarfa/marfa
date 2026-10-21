@@ -3,6 +3,7 @@
  * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
+import { scopesAreNarrower } from "../consent-scopes.js";
 import { eq, and, desc, sql, type SQL } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
@@ -763,6 +764,33 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     );
     if (!Array.isArray(parsed)) return undefined;
     return parsed.filter((s): s is string => typeof s === "string");
+  }
+
+  async revokeTokensBeyondScopes(
+    clientId: string,
+    authUserId: string,
+    scopes: readonly string[],
+  ): Promise<void> {
+    // Removing a refresh row also removes its access tokens through the FK.
+    for (const table of [auth_oauth_refresh_token, auth_oauth_access_token]) {
+      const rows = await this.db
+        .select({ id: table.id, scopes: table.scopes })
+        .from(table)
+        .where(and(eq(table.clientId, clientId), eq(table.userId, authUserId)));
+      for (const row of rows) {
+        const held = safeJsonParse<unknown>(
+          row.scopes,
+          [],
+          "oauth token scopes",
+        );
+        if (
+          !Array.isArray(held) ||
+          !held.every((scope): scope is string => typeof scope === "string") ||
+          !scopesAreNarrower(scopes, held)
+        )
+          await this.db.delete(table).where(eq(table.id, row.id));
+      }
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ import type { Item } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { StoredApiKey, Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
+import { grantExpiresAt } from "./grant-expiry.js";
 import { withConsentLock } from "./consent-lock.js";
 import {
   listActiveAppGrants,
@@ -67,7 +68,11 @@ export function ownersLiveApp(
   return { clientId: props.client_id, authUserId: ownerId };
 }
 
-async function appSignIn(storage: Storage, item: Item): Promise<SignIn> {
+async function appSignIn(
+  storage: Storage,
+  item: Item,
+  inactivityDays: number,
+): Promise<SignIn> {
   const props = item.properties;
   return {
     id: item.id,
@@ -77,7 +82,17 @@ async function appSignIn(storage: Storage, item: Item): Promise<SignIn> {
       typeof props.granted_at === "string" ? props.granted_at : item.created_at,
     lastUsedAt:
       typeof props.last_used_at === "string" ? props.last_used_at : null,
-    expiresAt: null,
+    expiresAt: grantExpiresAt(
+      {
+        grantedAt:
+          typeof props.granted_at === "string"
+            ? props.granted_at
+            : item.created_at,
+        lastUsedAt:
+          typeof props.last_used_at === "string" ? props.last_used_at : null,
+      },
+      inactivityDays,
+    ),
     ipAddress: null,
     userAgent: null,
     mintedBy: null,
@@ -125,6 +140,7 @@ export async function listSignIns(
   auth: MarfaAuth,
   keys: KeysInReach,
   ownerId: string | null,
+  inactivityDays: number,
 ): Promise<SignIn[]> {
   const sessions = ownerId ? await auth.listBrowserSessions(ownerId) : [];
   const browsers: SignIn[] = sessions.map((session) => ({
@@ -142,7 +158,7 @@ export async function listSignIns(
     (item) => ownersLiveApp(item, ownerId) !== null,
   );
   const apps = await Promise.all(
-    grants.map((item) => appSignIn(storage, item)),
+    grants.map((item) => appSignIn(storage, item, inactivityDays)),
   );
   const appByClient = new Map(
     grants.map((item) => [item.properties.client_id as string, item.id]),
@@ -259,6 +275,7 @@ export async function renameSignIn(
   id: string,
   name: string,
   actor: SignInActor,
+  inactivityDays: number,
 ): Promise<SignIn | "browser" | null> {
   const seen = ownersLiveApp(await storage.items.get(id), ownerId);
   if (seen) {
@@ -290,7 +307,7 @@ export async function renameSignIn(
             : null,
       ),
     );
-    if (renamed) return appSignIn(storage, renamed);
+    if (renamed) return appSignIn(storage, renamed, inactivityDays);
   }
 
   const renamedKey = await runAuditedTransaction(

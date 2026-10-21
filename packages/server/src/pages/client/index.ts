@@ -1,4 +1,5 @@
 /** The one script every page loads. Each module finds its own markup and does nothing without it. */
+import { initAppAccess } from "./app-access.js";
 import { initAccess } from "./access.js";
 import { initAccount } from "./account.js";
 import { initConfirm } from "./confirm.js";
@@ -40,6 +41,7 @@ function start(): void {
   initSignOut();
   initKeys();
   initItems();
+  initAppAccess();
   initGeneral();
   initHealth();
   initSignIns();

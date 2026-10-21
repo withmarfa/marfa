@@ -1761,6 +1761,60 @@ When `GET /auth/grants` lists a grant, the server MUST give it `client_name`, th
 
 **Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the consent screen and in the grants listing`, `› reads the origin as scheme, host and port, whatever path, port or trailing slash the redirect URI carries`, `› allows no origin for a native app's redirect URI`.
 
+### `keys-and-oauth/grants-kind`
+
+When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` for a client registered for device authorization, otherwise `web` for a client with approved web origins, otherwise `app`.
+
+**Reason:** This classifies the registered app without changing its stored connection kind or its owner's sign-in category.
+
+**Tests:** `compliance/auth-grants.test.ts › classifies registered native, web and device apps`.
+
+### `keys-and-oauth/grant-narrow-authority`
+
+When a caller sends `PATCH /auth/grants/{id}`, the server MUST require a direct owner sign-in within five minutes or private machine authority.
+
+**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`.
+
+### `keys-and-oauth/grant-narrow-ceiling`
+
+When the owner sends `PATCH /auth/grants/{id}` with `scopes` and `expected_scopes`, the server MUST refuse `403 forbidden` if the resulting type, link, metadata, profile, permission or identity scope set exceeds the live grant's effective access.
+
+**Reason:** Removing an overriding entry can widen a wildcard, so the comparison is of effective access rather than literal membership.
+
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+
+### `keys-and-oauth/grant-narrow-stale`
+
+If `expected_scopes` at `PATCH /auth/grants/{id}` differs from the live consent or projected grant's scopes when the update commits, then the server MUST refuse `409 conflict` without changing access.
+
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+
+### `keys-and-oauth/grant-narrow-commit`
+
+When `PATCH /auth/grants/{id}` narrows a live grant, the server MUST commit its consent, projection, token withdrawal, pending code withdrawal and audit together under the grant's consent lock.
+
+**Tests:** `compliance/auth-grants.test.ts › rolls back narrowed access and tokens when its audit cannot be written`.
+
+### `keys-and-oauth/grant-narrow-tokens`
+
+When `PATCH /auth/grants/{id}` reduces a grant, the server MUST end access tokens and refresh chains whose scopes exceed the resulting grant, along with outstanding authorization and device codes.
+
+**Reason:** Covered token chains remain usable; a chain that ends must authorize again at the remaining access, and increasing it requires fresh approval.
+
+**Tests:** `compliance/auth-grants.test.ts › preserves covered token chains and withdraws overbroad chains and pending codes`, `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+
+### `keys-and-oauth/grant-narrow-answer`
+
+When `PATCH /auth/grants/{id}` succeeds, the server MUST answer `200` with the resulting `scopes`.
+
+**Tests:** `compliance/auth-grants.test.ts › narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access`.
+
+### `keys-and-oauth/grant-narrow-missing`
+
+If `PATCH /auth/grants/{id}` names no live app grant of the owner, then the server MUST answer `404 oauth_grant_not_found`.
+
+**Tests:** `compliance/auth-grants.test.ts › requires direct owner authority and reports an unknown grant`.
+
 ### `keys-and-oauth/grants-permission`
 
 If a caller without `grants.manage` lists or revokes grants, then the server MUST answer `403 forbidden` with `details.required_scope` naming `grants.manage`.
@@ -2426,6 +2480,14 @@ When the owner's browser session or the private local command asks `GET /owner/s
 When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `current`, `created_at`, `last_used_at`, `expires_at`, `ip_address`, `user_agent` and `minted_by`, and no other field.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner, marking the one that asks`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`.
+
+### `keys-and-oauth/sign-ins-app-expiry`
+
+When `GET /owner/sign-ins` lists an app, the server MUST give `expires_at` as its `last_used_at`, or `granted_at` if never used, plus `MARFA_GRANT_INACTIVITY_DAYS` days, or `null` when that setting is zero.
+
+**Reason:** This is the inactivity boundary; the retirement sweep ends the grant after the boundary is passed.
+
+**Tests:** `compliance/auth-grants.test.ts › reports the inactivity boundary from last use or approval on the app sign-in`.
 
 ### `keys-and-oauth/sign-ins-order`
 

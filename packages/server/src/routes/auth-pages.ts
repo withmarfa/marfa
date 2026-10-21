@@ -3,7 +3,14 @@ import { contentSecurityPolicy } from "./content-security-policy.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
-import { Hono } from "hono";
+import { createOpenAPIRouter } from "../openapi.js";
+import { appKindOf } from "../auth/connected-apps.js";
+import { narrowAppGrant } from "../auth/grant-narrowing.js";
+import {
+  listGrantsRoute,
+  deleteGrantRoute,
+  narrowGrantRoute,
+} from "./grant-schemas.js";
 import { readInstanceName } from "../instance-name.js";
 import {
   MarfaError,
@@ -230,8 +237,10 @@ async function createUserAppGrant(
  * @better-auth/oauth-provider plugin, with its own salt and signer wired
  * through `instance.ts`. Nothing here signs anything.
  */
-export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+export function authRoutes(storage: Storage, auth?: MarfaAuth) {
+  const router = createOpenAPIRouter<AppEnv>();
+  router.openAPIRegistry.registerPath(listGrantsRoute);
+  router.openAPIRegistry.registerPath(deleteGrantRoute);
 
   // Each lane counts every door before looking up a code, including successful
   // lookups: a sweep may try each code only once. Owner authority comes from
@@ -384,7 +393,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           : ((await storage.oauthProvider?.getClient(clientId)) ?? null);
       grants.push({
         id: item.id,
-        kind: "app",
+        kind: appKindOf(client).kind,
         client_id: clientId,
         client_name: client?.name ?? null,
         origins: client === null ? [] : webOriginsOf(client),
@@ -397,6 +406,26 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       });
     }
     return c.json({ data: grants, next_cursor: null });
+  });
+
+  router.openapi(narrowGrantRoute, async (c) => {
+    requireRecentOwnerAuthentication(c);
+    const { id } = c.req.valid("param");
+    const { scopes, expected_scopes } = c.req.valid("json");
+    const owner = await storage.owner?.find();
+    const result = await narrowAppGrant(
+      storage,
+      owner?.id ?? null,
+      id,
+      expected_scopes,
+      scopes,
+      {
+        keyId: authorityId(c),
+        clientIp: c.var.clientIp ?? null,
+        writer: requestWriter(c),
+      },
+    );
+    return c.json({ scopes: result }, 200);
   });
 
   router.delete("/grants/:id", async (c) => {

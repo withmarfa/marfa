@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -11,6 +12,7 @@ import {
   CALLBACK,
   codeFor,
   connect,
+  decide,
   issuerOrigin,
   itemsStatus,
   pkce,
@@ -103,6 +105,7 @@ async function approved(): Promise<{
     data: Grant[];
     next_cursor: null;
   };
+  await expectMatchesSchema("GET", "/auth/grants", 200, body);
   const grant = body.data.find((g) => g.client_id === app.clientId);
   expect(grant, "the approved app is not listed").toBeDefined();
   return {
@@ -127,6 +130,42 @@ async function mintedBy(
 }
 
 describe("GET /auth/grants", () => {
+  it("classifies registered native, web and device apps", async () => {
+    for (const kind of ["app", "web", "cli"] as const) {
+      const redirect =
+        kind === "web" ? "https://reader.example/callback" : CALLBACK;
+      const app = await registerApp(server, SCOPE, {
+        application_type: kind === "web" ? "web" : "native",
+        redirect_uris: [redirect],
+        grant_types: [
+          "authorization_code",
+          "refresh_token",
+          ...(kind === "cli"
+            ? ["urn:ietf:params:oauth:grant-type:device_code"]
+            : []),
+        ],
+      });
+      const consent = await sentTo(
+        server,
+        await authorize(
+          server,
+          authorizeQuery(app.clientId, SCOPE, pkce(), {
+            redirect_uri: redirect,
+          }),
+          cookie,
+        ),
+      );
+      expect(consent?.pathname).toBe("/auth/authorize");
+      await decide(server, origin, cookie, consent!, true, SCOPE.split(" "));
+      const listed = (await (await grants(server.managementKey)).json()) as {
+        data: Grant[];
+      };
+      expect(
+        listed.data.find((row) => row.client_id === app.clientId)?.kind,
+      ).toBe(kind);
+    }
+  });
+
   it("lists each app the person approved, with its client, scopes and status, in one page", async () => {
     const { clientId, grant } = await approved();
     expect(grant.kind).toBe("app");
@@ -244,5 +283,158 @@ describe("a code whose grant is revoked", () => {
     expect(exchanged.status).toBe(400);
     expect(exchanged.body.error).toBe("invalid_grant");
     expect(exchanged.body.access_token).toBeUndefined();
+  });
+});
+
+describe("PATCH /auth/grants/{id}", () => {
+  const narrow = (id: string, expected: string[], scopes: string[]) =>
+    fetch(`${server.apiUrl}/auth/grants/${id}`, {
+      method: "PATCH",
+      headers: { cookie, origin, "content-type": "application/json" },
+      body: JSON.stringify({ expected_scopes: expected, scopes }),
+    });
+
+  it("narrows access, ends overbroad tokens, refuses widening and stale choices, and asks before restoring access", async () => {
+    const { clientId, access, grant } = await approved();
+    expect(await itemsStatus(server, access)).toBe(200);
+    expect((await narrow(grant.id, grant.scopes, ["*:write"])).status).toBe(
+      403,
+    );
+    const scopes = ["core.note:read"];
+    const response = await narrow(grant.id, grant.scopes, scopes);
+    expect(response.status).toBe(200);
+    const result = await response.json();
+    expect(result).toEqual({ scopes });
+    await expectMatchesSchema("PATCH", "/auth/grants/{id}", 200, result);
+    expect(await itemsStatus(server, access)).toBe(401);
+    expect((await narrow(grant.id, grant.scopes, scopes)).status).toBe(409);
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(listed.data.find((row) => row.id === grant.id)?.scopes).toEqual(
+      scopes,
+    );
+    const wider = await sentTo(
+      server,
+      await authorize(server, authorizeQuery(clientId, SCOPE, pkce()), cookie),
+    );
+    expect(wider?.pathname).toBe("/auth/authorize");
+    const kept = await codeFor(
+      server,
+      origin,
+      cookie,
+      { clientId },
+      "core.note:read",
+    );
+    expect(kept.silent).toBe(true);
+  });
+
+  it("rolls back narrowed access and tokens when its audit cannot be written", async () => {
+    const { grant, access, clientId } = await approved();
+    await server.setFault("fail:audit=auth.grant.narrowed");
+    try {
+      expect((await narrow(grant.id, grant.scopes, [])).status).toBe(500);
+      expect(
+        (await server.faults()).find((f) => f.name === "fail:audit")?.fired,
+      ).toBe(1);
+    } finally {
+      await server.clearFault();
+    }
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    expect(listed.data.find((row) => row.id === grant.id)?.scopes).toEqual(
+      grant.scopes,
+    );
+    expect(await itemsStatus(server, access)).toBe(200);
+    expect(
+      (await codeFor(server, origin, cookie, { clientId }, SCOPE)).silent,
+    ).toBe(true);
+    expect((await narrow(grant.id, grant.scopes, [])).status).toBe(200);
+    expect(await itemsStatus(server, access)).toBe(401);
+  });
+
+  it("preserves covered token chains and withdraws overbroad chains and pending codes", async () => {
+    const broad = "core.note:write offline_access";
+    const kept = "core.note:read offline_access";
+    const app = await registerApp(server, broad);
+    const wide = await connect(server, origin, cookie, app, broad);
+    const read = await connect(server, origin, cookie, app, kept);
+    const code = await codeFor(server, origin, cookie, app, broad);
+    const listed = (await (await grants(server.managementKey)).json()) as {
+      data: Grant[];
+    };
+    const grant = listed.data.find((row) => row.client_id === app.clientId)!;
+    expect((await narrow(grant.id, grant.scopes, kept.split(" "))).status).toBe(
+      200,
+    );
+    expect(await itemsStatus(server, wide.access_token!)).toBe(401);
+    expect(await itemsStatus(server, read.access_token!)).toBe(200);
+    expect(
+      (
+        await token(server, {
+          grant_type: "refresh_token",
+          client_id: app.clientId,
+          refresh_token: wide.refresh_token!,
+        })
+      ).status,
+    ).toBe(400);
+    const renewed = await token(server, {
+      grant_type: "refresh_token",
+      client_id: app.clientId,
+      refresh_token: read.refresh_token!,
+    });
+    expect(renewed.status).toBe(200);
+    expect(await itemsStatus(server, renewed.body.access_token!)).toBe(200);
+    expect(
+      (
+        await token(server, {
+          grant_type: "authorization_code",
+          client_id: app.clientId,
+          code: code.code,
+          code_verifier: code.verifier,
+          redirect_uri: CALLBACK,
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("requires direct owner authority and reports an unknown grant", async () => {
+    const { grant } = await approved();
+    expect(
+      (
+        await fetch(`${server.apiUrl}/auth/grants/${grant.id}`, {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${server.managementKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ expected_scopes: grant.scopes, scopes: [] }),
+        })
+      ).status,
+    ).toBe(403);
+    expect((await narrow("missing-grant", [], [])).status).toBe(404);
+  });
+
+  it("reports the inactivity boundary from last use or approval on the app sign-in", async () => {
+    const { grant } = await approved();
+    const response = await fetch(`${server.apiUrl}/owner/sign-ins`, {
+      headers: { cookie },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      data: {
+        id: string;
+        created_at: string;
+        last_used_at: string | null;
+        expires_at: string | null;
+      }[];
+    };
+    const app = body.data.find((row) => row.id === grant.id)!;
+    expect(app.expires_at).toBe(
+      new Date(
+        Date.parse(app.last_used_at ?? app.created_at) + 365 * 86_400_000,
+      ).toISOString(),
+    );
   });
 });

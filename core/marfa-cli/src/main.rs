@@ -27,7 +27,7 @@ use std::process::ExitCode;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
+    apps, audit, blobs, config, connectors, docs, edge_types, edges, events, export, extensions,
     housekeeping, items, keys, login, logout, metadata, metrics, operations, owner, profile,
     restore, search, sign_ins, status, types, webhooks, whoami,
 };
@@ -115,6 +115,11 @@ enum Command {
     Profile {
         #[command(subcommand)]
         command: profile::ProfileCommand,
+    },
+    /// List, narrow or disconnect approved apps.
+    Apps {
+        #[command(subcommand)]
+        command: apps::AppsCommand,
     },
     /// Sign-ins: every browser, app and key that can reach the server. A key
     /// or an app's token is refused; use --socket.
@@ -467,6 +472,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
         Command::Profile { command } => profile::run(command, &remote()?, &out),
+        Command::Apps { command } => apps::run(command, &remote()?, &out),
         Command::SignIns { command } => sign_ins::run(command, &remote()?, &out),
         Command::Setup { command } => {
             let setup_remote = match &cli.socket {

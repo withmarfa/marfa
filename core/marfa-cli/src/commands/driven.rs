@@ -675,6 +675,8 @@ const MISSED: &[&str] = &[
     "removeOwnerPasskey",
     // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
     "updateOwner",
+    // `apps narrow` reads the grant before sending the guarded update.
+    "narrowAppGrant",
     // `setup claim`: secret input is driven by the child-process fixture above.
     "createOwner",
 ];

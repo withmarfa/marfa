@@ -98,6 +98,7 @@ const DATA_PLANE = [
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
+  "PATCH /auth/grants/:id": DIRECT,
   "GET /export": "reads some type, or owner browser session",
   "GET /items/stats": "reads some type, or owner browser session",
   "GET /folders/:id/status": "reads some type, or owner or local command",

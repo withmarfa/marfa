@@ -30,13 +30,15 @@ import {
   Row,
   RowGroup,
   SearchField,
+  SaveBar,
   Section,
   Select,
   Switch,
 } from "../pages/parts/index.js";
 import type { RegistryItem } from "../pages/registry.js";
 import { renderDocument } from "../pages/render.js";
-import { AccessView, type AccessViewProps } from "./access-view.js";
+import { AccessChoices, offersChoice } from "./access-choices.js";
+import type { AccessModel } from "./access-model.js";
 import { KEYS_HREF, KeyRows, type KeyListRow } from "./key-pages.js";
 
 export const APPS_HREF = "/auth/owner/apps";
@@ -238,8 +240,8 @@ export interface AppPageParams extends PageBase {
   id: string;
   name: string;
   details: readonly AppDetail[];
-  /** What the app holds, read-only. */
-  access: AccessViewProps;
+  scopes: readonly string[];
+  access: AccessModel;
   /** The keys the app made, in the rows the API keys list uses. */
   keys: readonly KeyListRow[];
   /** Apps to list in the picker beside the page. */
@@ -267,12 +269,27 @@ export function AppPage(props: AppPageParams) {
       items={{ apps: props.siblings }}
       currentItemHref={appHref(props.id)}
     >
-      <div class="stack-24">
+      <form
+        id="app-access-form"
+        class="stack-24"
+        method="post"
+        action={appHref(props.id)}
+        data-access
+        data-app-access
+        data-app-id={props.id}
+        data-loaded-scopes={JSON.stringify(props.scopes)}
+        data-confirm-why="Changing an app's access needs a recent sign-in."
+      >
         <PageHeader
           title={props.name}
-          lede="You can disconnect it at any time. It asks again the next time it needs access."
+          lede="You can give it less access here. It asks again if it needs more."
         />
         <Flash />
+        <div data-notice="problem" hidden>
+          <Notice tone="error">
+            <span data-notice-text></span>
+          </Notice>
+        </div>
         <Section id="details" title="Details">
           <RowGroup>
             {props.details.map((detail) => (
@@ -283,9 +300,10 @@ export function AppPage(props: AppPageParams) {
         <Section
           id="access"
           title="Access"
-          description="What it can read and change. To change it, disconnect it and approve it again."
+          description="Reducing access ends sign-ins that use more. The app may need to reconnect. Keys it made keep their access."
         >
-          <AccessView {...props.access} />
+          <AccessChoices model={props.access} />
+          {!offersChoice(props.access) && <EmptyState title="No access" />}
         </Section>
         <Section
           id="keys"
@@ -303,7 +321,8 @@ export function AppPage(props: AppPageParams) {
             )}
           </RowGroup>
         </Section>
-      </div>
+      </form>
+      <SaveBar form="app-access-form" />
       <DangerRow
         title={`Disconnect ${props.name}`}
         description={`${endWords(made)} It asks again the next time it needs access.`}

@@ -532,7 +532,10 @@ describe("every sign-in", () => {
       current: false,
       ip_address: null,
       user_agent: null,
-      expires_at: null,
+      expires_at: new Date(
+        Date.parse(appRow!.last_used_at ?? appRow!.created_at) +
+          365 * 86_400_000,
+      ).toISOString(),
     });
     expect(rows.some((row) => row.kind === "browser" && row.current)).toBe(
       true,
