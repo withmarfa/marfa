@@ -755,6 +755,8 @@ export interface ItemSummaryFilters {
   q?: string;
   limit?: number;
   cursor?: string;
+  /** Matching rows to skip for numbered console pages; not an API filter. */
+  offset?: number;
   source_filter?: SourceFilterSettings;
 }
 

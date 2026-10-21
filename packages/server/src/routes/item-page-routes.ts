@@ -98,32 +98,28 @@ export function itemPageRoutes(storage: Storage) {
       const page = query
         ? requestedPage
         : paginate(selected?.count ?? total, requestedPage, size).page;
-      let cursor: string | undefined;
-      let result;
-      for (let n = 1; n <= page; n++) {
-        result = await storage.items.listSummaries({
-          ...filters,
-          type,
-          q: query,
-          limit: size,
-          cursor,
-        });
-        if (n < page && result.next_cursor === null)
-          return c.redirect(itemsHref({ ...view, page: 1 }));
-        cursor = result.next_cursor ?? undefined;
-      }
-      rows = result?.data ?? [];
       const from = (page - 1) * size;
+      const result = await storage.items.listSummaries({
+        ...filters,
+        type,
+        q: query,
+        limit: size,
+        offset: from,
+      });
+      rows = result.data;
+      if (query && page > 1 && rows.length === 0)
+        return c.redirect(itemsHref({ ...view, page: 1 }));
+      const hasNext = result.next_cursor !== null;
       pagination = query
         ? {
             page,
             size,
             from,
             to: from + rows.length,
-            total: from + rows.length + (cursor ? 1 : 0),
-            last: page + (cursor ? 1 : 0),
+            total: from + rows.length + (hasNext ? 1 : 0),
+            last: page + (hasNext ? 1 : 0),
             hasPrevious: page > 1,
-            hasNext: Boolean(cursor),
+            hasNext,
           }
         : paginate(selected?.count ?? total, page, size);
     } else {

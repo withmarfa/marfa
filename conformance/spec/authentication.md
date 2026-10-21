@@ -212,7 +212,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/activity`, `/auth/owner/settings` and the pages under it (`/auth/owner/settings/{group}` and `/auth/owner/settings.json`), `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/connectors` and `/auth/owner/connectors/{id}`, `/auth/owner/export`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/activity`, `/auth/owner/settings` and the pages under it (`/auth/owner/settings/{group}` and `/auth/owner/settings.json`), `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/connectors` and `/auth/owner/connectors/{id}`, `/auth/owner/items` and `/auth/owner/types/{id}`, `/auth/owner/export`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 

@@ -1138,6 +1138,9 @@ export class SqliteItemStore implements ItemStore {
       Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
     );
     const query = (filters.q ?? "").trim().toLowerCase();
+    const offset = filters.offset ?? 0;
+    let skipMatches = query ? offset : 0;
+    const batchSize = query ? MAX_PAGE_LIMIT : limit + 1;
     const key = `item-summaries:${JSON.stringify([filters.type ?? null, query])}`;
     let after = filters.cursor
       ? decodeKeyedCursorNullable(filters.cursor, key)
@@ -1156,8 +1159,8 @@ export class SqliteItemStore implements ItemStore {
       conditions.push(eq(items.type, filters.type));
     const data: ItemSummary[] = [];
     const hints = new Map<string, ReturnType<typeof resolveTypeSchema>>();
-    // Name filtering precedes paging. Batches bound memory even when every
-    // item has a different name; the ordinary full-item projection is unused.
+    // Search skips matching names in one bounded scan. Unfiltered pages skip
+    // in SQL so late console pages never replay earlier pages or their names.
     for (;;) {
       const bound = after
         ? or(
@@ -1176,7 +1179,8 @@ export class SqliteItemStore implements ItemStore {
         .from(items)
         .where(and(...conditions, bound))
         .orderBy(desc(items.created_at), desc(items.id))
-        .limit(MAX_PAGE_LIMIT)
+        .limit(batchSize)
+        .offset(query ? 0 : offset)
         .all();
       for (const row of rows) {
         if (!hints.has(row.type))
@@ -1190,6 +1194,10 @@ export class SqliteItemStore implements ItemStore {
           hints.get(row.type)?.display_hints,
         );
         if (!name.toLowerCase().includes(query)) continue;
+        if (skipMatches > 0) {
+          skipMatches--;
+          continue;
+        }
         if (data.length === limit) {
           const last = data.at(-1);
           if (!last) throw new Error("Missing summary page boundary");
@@ -1205,7 +1213,7 @@ export class SqliteItemStore implements ItemStore {
           created_at: row.created_at,
         });
       }
-      if (rows.length < MAX_PAGE_LIMIT) return { data, next_cursor: null };
+      if (rows.length < batchSize) return { data, next_cursor: null };
       const last = rows.at(-1);
       if (!last) throw new Error("Missing summary scan boundary");
       after = { v: last.created_at, id: last.id };

@@ -154,6 +154,7 @@ it("returns only summaries, including on pages, while content doors and errors s
     "type=core.note&include=properties",
     "type=core.note&cursor=invalid",
     "type=core.note&limit=0",
+    "type=core.note&offset=1",
   ]) {
     const refused = await ctx.ownerRequest(`/items/summaries?${query}`);
     expect(refused.status, query).toBe(400);
