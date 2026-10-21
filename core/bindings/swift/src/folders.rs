@@ -5,7 +5,8 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use crate::{DrainReport, HydrateReport, MarfaError, Subscription, drained};
+use crate::renewal::Renewal;
+use crate::{CredentialRenewer, DrainReport, HydrateReport, MarfaError, Subscription, drained};
 
 /// A folder as the machine's registry lists it.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -350,14 +351,43 @@ pub trait FolderListener: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct Folders {
     server: Option<marfa_core::Server>,
+    renewal: Option<Arc<Renewal>>,
+}
+
+impl Folders {
+    fn renew(&self) -> Option<marfa_core::http::Renew> {
+        self.renewal.as_ref().map(Renewal::renew)
+    }
+
+    /// The server, with the newest token where a renewal answered one.
+    fn server(&self) -> Option<marfa_core::Server> {
+        sending(self.server.as_ref(), self.renewal.as_ref())
+    }
+}
+
+fn sending(
+    server: Option<&marfa_core::Server>,
+    renewal: Option<&Arc<Renewal>>,
+) -> Option<marfa_core::Server> {
+    match (server, renewal) {
+        (Some(server), Some(renewal)) => Some(renewal.sending(server)),
+        (server, _) => server.cloned(),
+    }
 }
 
 #[uniffi::export]
 impl Folders {
     /// `url` and `key` go together; without them only `list`, `status`,
     /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
-    #[uniffi::constructor]
-    pub fn new(url: Option<String>, key: Option<String>) -> Result<Arc<Self>, MarfaError> {
+    /// `renewer` renews `key` when the server refuses it, for every folder
+    /// these calls and watches work, as `CredentialRenewer` describes; it needs
+    /// `url` and `key`.
+    #[uniffi::constructor(default(renewer = None))]
+    pub fn new(
+        url: Option<String>,
+        key: Option<String>,
+        renewer: Option<Arc<dyn CredentialRenewer>>,
+    ) -> Result<Arc<Self>, MarfaError> {
         let server = match (url, key) {
             (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
             (None, None) => None,
@@ -367,7 +397,8 @@ impl Folders {
                 });
             }
         };
-        Ok(Arc::new(Folders { server }))
+        let renewal = Renewal::of(renewer, server.as_ref())?;
+        Ok(Arc::new(Folders { server, renewal }))
     }
 
     /// Makes `dir` a folder that follows the `system.folder` `folder`, and
@@ -380,7 +411,7 @@ impl Folders {
     /// go and waits up to 10 seconds, as every call that works a folder does:
     /// past that, it is refused with `ReadingHandle`, naming the folder.
     pub fn add(&self, dir: String, folder: String) -> Result<AddedFolder, MarfaError> {
-        let added = marfa_core::Folder::add(&dir, &folder, self.server.clone(), None)
+        let added = marfa_core::Folder::add(&dir, &folder, self.server(), self.renew())
             .map_err(asked(&dir))?;
         Ok(AddedFolder {
             dir: added.root().display().to_string(),
@@ -442,7 +473,7 @@ impl Folders {
     /// says what the sync will do. Asks a watch that holds the folder to let
     /// it go, as `add` does.
     pub fn sync(&self, dir: String) -> Result<FolderSyncOutcome, MarfaError> {
-        let synced = match working(&dir, self.server.clone())?.sync()? {
+        let synced = match working(&dir, self.server(), self.renewal.as_ref())?.sync()? {
             marfa_core::Synced::Done(synced) => *synced,
             marfa_core::Synced::Waiting(plan) => {
                 return Ok(FolderSyncOutcome::Waiting { plan: plan.into() });
@@ -467,7 +498,7 @@ impl Folders {
     /// whether it was waiting. A paused removal is not touched. Asks a watch
     /// that holds the folder to let it go, as `add` does.
     pub fn confirm_first_sync(&self, dir: String) -> Result<bool, MarfaError> {
-        Ok(working(&dir, None)?.confirm_first_sync()?)
+        Ok(working(&dir, None, None)?.confirm_first_sync()?)
     }
 
     /// Lets a paused large removal go: its deletes are queued, and files
@@ -475,7 +506,7 @@ impl Folders {
     /// sync waits. Asks a watch that holds the folder to let it go, as `add`
     /// does.
     pub fn confirm(&self, dir: String) -> Result<ConfirmedRemoval, MarfaError> {
-        let confirmed = working(&dir, None)?.confirm()?;
+        let confirmed = working(&dir, None, None)?.confirm()?;
         Ok(ConfirmedRemoval {
             deleted: confirmed.deleted as u64,
             moved: confirmed.moved as u64,
@@ -495,7 +526,7 @@ impl Folders {
     /// back, and items that left elsewhere are restored. Asks a watch that
     /// holds the folder to let it go, as `add` does.
     pub fn restore(&self, dir: String) -> Result<RestoredRemoval, MarfaError> {
-        let restored = working(&dir, self.server.clone())?.restore()?;
+        let restored = working(&dir, self.server(), self.renewal.as_ref())?.restore()?;
         Ok(RestoredRemoval {
             put_back: restored.put_back as u64,
             not_written_back: restored
@@ -539,19 +570,22 @@ impl Folders {
         dir: String,
         listener: Arc<dyn FolderListener>,
     ) -> Result<Arc<Subscription>, MarfaError> {
-        let folder = marfa_core::Folder::open(&dir, self.server.clone()).map_err(held(&dir))?;
+        let folder = marfa_core::Folder::open(&dir, self.server())
+            .map(|folder| renewing(folder, self.renewal.as_ref()))
+            .map_err(held(&dir))?;
         // Refused here rather than ended later, so the caller is told at once.
         if folder.awaiting_confirmation()? {
             return Err(marfa_core::CoreError::FirstSyncWaiting.into());
         }
         let server = self.server.clone();
+        let renewal = self.renewal.clone();
         let origin = server.as_ref().map(|server| server.url.clone());
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
             // Caught, so a listener waiting to be told the watch ended is told.
             let watched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                keep_in_step(folder, server, &flag, &*listener)
+                keep_in_step(folder, server, renewal, &flag, &*listener)
             }));
             // The folder is let go by now, before the listener is told: one
             // that works it again on being told must find it free.
@@ -571,8 +605,20 @@ impl Folders {
 fn working(
     dir: &str,
     server: Option<marfa_core::Server>,
+    renewal: Option<&Arc<Renewal>>,
 ) -> Result<marfa_core::Folder, MarfaError> {
-    marfa_core::Folder::open_asking(dir, server).map_err(asked(dir))
+    marfa_core::Folder::open_asking(dir, server)
+        .map(|folder| renewing(folder, renewal))
+        .map_err(asked(dir))
+}
+
+/// Opening a folder sends nothing, so a renewer set now is in place for its
+/// first request.
+fn renewing(folder: marfa_core::Folder, renewal: Option<&Arc<Renewal>>) -> marfa_core::Folder {
+    if let Some(renewal) = renewal {
+        folder.core().renew_credential_with(renewal.renew());
+    }
+    folder
 }
 
 /// A refusal after asking for the folder, naming the folder.
@@ -601,6 +647,7 @@ fn held(dir: &str) -> impl FnOnce(marfa_core::CoreError) -> MarfaError + '_ {
 fn keep_in_step(
     mut folder: marfa_core::Folder,
     server: Option<marfa_core::Server>,
+    renewal: Option<Arc<Renewal>>,
     stop: &AtomicBool,
     listener: &dyn FolderListener,
 ) -> Result<(), marfa_core::WatchError<MarfaError>> {
@@ -628,7 +675,10 @@ fn keep_in_step(
             &root,
             listed,
             stop,
-            || marfa_core::Folder::open(&root, server.clone()),
+            || {
+                marfa_core::Folder::open(&root, sending(server.as_ref(), renewal.as_ref()))
+                    .map(|folder| renewing(folder, renewal.as_ref()))
+            },
             || {
                 listener.told(FolderEvent::HeldElsewhere);
                 Ok::<(), MarfaError>(())
@@ -868,8 +918,8 @@ mod tests {
 
     #[test]
     fn a_url_without_a_key_is_refused() {
-        assert!(Folders::new(Some("http://127.0.0.1:9".into()), None).is_err());
-        assert!(Folders::new(None, None).is_ok());
+        assert!(Folders::new(Some("http://127.0.0.1:9".into()), None, None).is_err());
+        assert!(Folders::new(None, None, None).is_ok());
     }
 
     /// Lists every folder in a registry under a temporary directory, named
@@ -1003,9 +1053,28 @@ mod tests {
     /// A folder on the booted server whose first sync is done, and the watch
     /// of it when `watching` is set, told as it begins.
     fn fixture(tag: &str, watching: bool) -> (Arc<Folders>, String, Option<Watched>) {
+        let (url, key) = booted();
+        fixture_with(
+            tag,
+            watching,
+            Folders::new(Some(url), Some(key), None).unwrap(),
+        )
+    }
+
+    fn booted() -> (String, String) {
         registry();
-        let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
-        let key = std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key");
+        (
+            std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server"),
+            std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key"),
+        )
+    }
+
+    /// `fixture`, worked through `folders`.
+    fn fixture_with(
+        tag: &str,
+        watching: bool,
+        folders: Arc<Folders>,
+    ) -> (Arc<Folders>, String, Option<Watched>) {
         let seed = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/seed.sh");
         let made = std::process::Command::new(seed)
             .args([
@@ -1027,7 +1096,6 @@ mod tests {
             .unwrap()
             .keep();
         let path = dir.display().to_string();
-        let folders = Folders::new(Some(url), Some(key)).unwrap();
         folders.add(path.clone(), id).unwrap();
         folders.confirm_first_sync(path.clone()).unwrap();
         folders.sync(path.clone()).unwrap();
@@ -1262,5 +1330,44 @@ mod tests {
             "{error:?}"
         );
         folders.sync(path).expect("the watch let the folder go");
+    }
+
+    /// Answers every renewal with the booted server's key, and records the
+    /// token it was handed.
+    struct Renewing {
+        key: String,
+        refused: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl crate::CredentialRenewer for Renewing {
+        fn renew(&self, refused: String) -> Result<String, crate::RenewalError> {
+            self.refused.lock().unwrap().push(refused);
+            Ok(self.key.clone())
+        }
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn folders_renew_a_refused_token_through_the_app_once() {
+        let (url, key) = booted();
+        let renewer = Arc::new(Renewing {
+            key,
+            refused: std::sync::Mutex::default(),
+        });
+        let folders = Folders::new(
+            Some(url),
+            Some("marfa_refused_by_the_server".into()),
+            Some(renewer.clone()),
+        )
+        .unwrap();
+        let (folders, path, watched) = fixture_with("binding renewal", true, folders);
+        watched.unwrap().stop();
+        folders.sync(path).unwrap();
+        // Each call opened the folder again: the add, the sync, the watch and
+        // the last sync, and only the first was refused.
+        assert_eq!(
+            *renewer.refused.lock().unwrap(),
+            vec!["marfa_refused_by_the_server".to_string()]
+        );
     }
 }

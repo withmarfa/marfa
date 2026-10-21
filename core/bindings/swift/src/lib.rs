@@ -10,8 +10,10 @@ uniffi::setup_scaffolding!();
 mod folder_settings;
 mod folders;
 mod json;
+mod renewal;
 
 pub use json::{JsonMember, JsonObject, JsonValue};
+pub use renewal::{CredentialRenewer, RenewalError};
 
 /// The tier an item is in: `library` for lasting material, `feed` for an
 /// incoming stream.
@@ -1728,12 +1730,15 @@ impl Core {
     }
 
     /// Opens the file at `path`, creating it when absent. `url` and `key`
-    /// go together; without them only local reads work.
-    #[uniffi::constructor]
+    /// go together; without them only local reads work. `renewer` renews
+    /// `key` when the server refuses it, as an app signed in with OAuth
+    /// does with its refresh token; it needs `url` and `key`.
+    #[uniffi::constructor(default(renewer = None))]
     pub fn open(
         path: String,
         url: Option<String>,
         key: Option<String>,
+        renewer: Option<Arc<dyn CredentialRenewer>>,
     ) -> Result<Arc<Self>, MarfaError> {
         let server = match (url, key) {
             (Some(url), Some(key)) => Some(marfa_core::Server { url, key }),
@@ -1744,8 +1749,13 @@ impl Core {
                 });
             }
         };
+        let renewal = renewal::Renewal::of(renewer, server.as_ref())?;
+        let core = marfa_core::Core::open(path, server)?;
+        if let Some(renewal) = renewal {
+            core.renew_credential_with(renewal.renew());
+        }
         Ok(Arc::new(Core {
-            inner: Arc::new(marfa_core::Core::open(path, server)?),
+            inner: Arc::new(core),
         }))
     }
 
@@ -2827,7 +2837,7 @@ mod tests {
     fn an_attached_file_crosses_with_its_embed_and_reads_back_from_the_body() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         let host = core
             .create_item(Draft {
                 r#type: "core.note".into(),
@@ -2891,7 +2901,7 @@ mod tests {
     fn a_copy_that_never_reached_a_server_holds_the_types_marfa_ships() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         assert_eq!(core.status().unwrap().catalog_version, None);
         assert!(
             core.item_types()
@@ -2998,14 +3008,46 @@ mod tests {
         );
     }
 
+    /// A request the test server answered: method, path and `Authorization`.
+    type Sent = (String, String, Option<String>);
+
     struct Quiet {
         url: String,
         streams: Arc<std::sync::atomic::AtomicUsize>,
         expire: Arc<AtomicBool>,
+        /// Each bearer in it is refused with a `401`, as an expired one is.
+        refused: Arc<std::sync::Mutex<Vec<String>>>,
+        /// Each request's method, path and `Authorization` header.
+        seen: Arc<std::sync::Mutex<Vec<Sent>>>,
+    }
+
+    impl Quiet {
+        fn refuse(&self, bearer: &str) {
+            self.refused
+                .lock()
+                .unwrap()
+                .push(format!("Bearer {bearer}"));
+        }
+
+        fn sent_since(&self, from: usize) -> Vec<Sent> {
+            self.seen.lock().unwrap()[from..].to_vec()
+        }
+
+        /// The requests since `from` that carried a credential, as the
+        /// instance check before a drain carries none.
+        fn bearing_since(&self, from: usize) -> Vec<Sent> {
+            let mut sent = self.sent_since(from);
+            sent.retain(|(_, _, authorization)| authorization.is_some());
+            sent
+        }
+
+        fn asked(&self) -> usize {
+            self.seen.lock().unwrap().len()
+        }
     }
 
     fn quiet() -> Quiet {
-        use std::io::{BufRead, BufReader, Write};
+        use std::io::{BufRead, BufReader, Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let streams = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -3013,11 +3055,15 @@ mod tests {
         let expire = Arc::new(AtomicBool::new(false));
         let changed = Arc::clone(&expire);
         let replayed = Arc::new(AtomicBool::new(false));
+        let refused = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (refusing, seeing) = (Arc::clone(&refused), Arc::clone(&seen));
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
                 let counted = Arc::clone(&counted);
                 let changed = Arc::clone(&changed);
                 let replayed = Arc::clone(&replayed);
+                let (refusing, seeing) = (Arc::clone(&refusing), Arc::clone(&seeing));
                 std::thread::spawn(move || {
                     let mut reader = BufReader::new(stream.try_clone().unwrap());
                     let (mut head, mut line) = (String::new(), String::new());
@@ -3025,11 +3071,39 @@ mod tests {
                         head.push_str(&line);
                         line.clear();
                     }
+                    let header = |name: &str| {
+                        head.lines().find_map(|line| {
+                            let (key, value) = line.split_once(':')?;
+                            key.eq_ignore_ascii_case(name)
+                                .then(|| value.trim().to_string())
+                        })
+                    };
+                    // Read whole, so closing the connection cannot reset it
+                    // before the client reads the answer.
+                    let length = header("content-length")
+                        .and_then(|length| length.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let _ = reader.read_exact(&mut vec![0; length]);
+                    let method = head.split_whitespace().next().unwrap_or("GET").to_string();
                     let path = head.split_whitespace().nth(1).unwrap_or("/");
                     let path = path.split('?').next().unwrap_or("/").to_string();
+                    let authorization = header("authorization");
+                    seeing
+                        .lock()
+                        .unwrap()
+                        .push((method, path.clone(), authorization.clone()));
                     let resumed = head.to_ascii_lowercase().contains("last-event-id");
                     let mut stream = stream;
                     let contract = marfa_core::contract::CONTRACT_VERSION;
+                    if authorization.is_some_and(|sent| refusing.lock().unwrap().contains(&sent)) {
+                        let body =
+                            r#"{"error":{"code":"unauthorized","message":"the token expired"}}"#;
+                        let _ = stream.write_all(format!(
+                            "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {contract}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        ).as_bytes());
+                        return;
+                    }
                     let fence = "a".repeat(64);
                     let instance = "00000000-0000-7000-8000-000000000000";
                     let proof = if head.to_ascii_lowercase().contains("x-marfa-read-view:") {
@@ -3082,6 +3156,8 @@ mod tests {
             url,
             streams,
             expire,
+            refused,
+            seen,
         }
     }
 
@@ -3141,7 +3217,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into()), None).unwrap();
         let raised = || {
             let stop = Stop::new();
             stop.raise();
@@ -3169,6 +3245,195 @@ mod tests {
         core.drain(None).unwrap();
     }
 
+    /// Answers each renewal from its list in order, and records what it was
+    /// handed.
+    struct Renewing {
+        answers: std::sync::Mutex<Vec<Result<String, RenewalError>>>,
+        refused: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl Renewing {
+        fn answering(answers: Vec<Result<String, RenewalError>>) -> Arc<Renewing> {
+            Arc::new(Renewing {
+                answers: std::sync::Mutex::new(answers),
+                refused: std::sync::Mutex::default(),
+            })
+        }
+
+        fn asked(&self) -> Vec<String> {
+            self.refused.lock().unwrap().clone()
+        }
+    }
+
+    impl CredentialRenewer for Renewing {
+        fn renew(&self, refused: String) -> Result<String, RenewalError> {
+            self.refused.lock().unwrap().push(refused);
+            self.answers.lock().unwrap().remove(0)
+        }
+    }
+
+    fn renewing_copy(server: &Quiet, renewer: &Arc<Renewing>) -> (tempfile::TempDir, Arc<Core>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let renewer: Arc<dyn CredentialRenewer> = renewer.clone();
+        let core = Core::open(
+            path,
+            Some(server.url.clone()),
+            Some("stale".into()),
+            Some(renewer),
+        )
+        .unwrap();
+        (dir, core)
+    }
+
+    /// A hydrated copy with two creates queued, whose token the server
+    /// refuses from now on.
+    fn expired_with_writes(
+        server: &Quiet,
+        renewer: &Arc<Renewing>,
+    ) -> (tempfile::TempDir, Arc<Core>) {
+        let (dir, core) = renewing_copy(server, renewer);
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .unwrap();
+        for title in ["first", "later"] {
+            core.create_item(draft("core.note", &format!(r#"{{"title":"{title}"}}"#)))
+                .unwrap();
+        }
+        server.refuse("stale");
+        (dir, core)
+    }
+
+    #[test]
+    fn a_refused_token_is_renewed_through_the_app_and_the_new_one_sent() {
+        let server = quiet();
+        server.refuse("stale");
+        let renewer = Renewing::answering(vec![Ok("fresh".into())]);
+        let (_dir, core) = renewing_copy(&server, &renewer);
+
+        core.server_catalog(None).unwrap();
+        let sent: Vec<_> = server
+            .sent_since(0)
+            .into_iter()
+            .map(|(_, path, authorization)| (path, authorization))
+            .collect();
+        assert_eq!(
+            sent[..2],
+            [
+                ("/types".to_string(), Some("Bearer stale".to_string())),
+                ("/types".to_string(), Some("Bearer fresh".to_string())),
+            ]
+        );
+        assert_eq!(renewer.asked(), vec!["stale".to_string()]);
+
+        let from = server.asked();
+        core.server_catalog(None).unwrap();
+        assert!(
+            server
+                .sent_since(from)
+                .iter()
+                .all(|(_, _, authorization)| authorization.as_deref() == Some("Bearer fresh")),
+            "a later call did not send the renewed token"
+        );
+        assert_eq!(renewer.asked().len(), 1, "a token in use was renewed again");
+    }
+
+    #[test]
+    #[ignore = "needs a running server: MARFA_TEST_URL and MARFA_TEST_KEY"]
+    fn a_copy_renews_a_token_the_server_refuses_and_drains_under_the_new_one() {
+        let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
+        let key = std::env::var("MARFA_TEST_KEY").expect("MARFA_TEST_KEY holds a working key");
+        let renewer = Renewing::answering(vec![Ok(key)]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = Core::open(
+            path,
+            Some(url),
+            Some("marfa_refused_by_the_server".into()),
+            Some(renewer.clone() as Arc<dyn CredentialRenewer>),
+        )
+        .unwrap();
+        core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
+            .unwrap();
+        core.create_item(draft(
+            "core.note",
+            r#"{"title":"renewed","body":"sent under a renewed token"}"#,
+        ))
+        .unwrap();
+        let report = core.drain(None).unwrap();
+        assert_eq!((report.answered, report.undelivered), (1, 0), "{report:?}");
+        assert_eq!(
+            renewer.asked(),
+            vec!["marfa_refused_by_the_server".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_ended_sign_in_stops_the_drain_keeps_the_writes_and_is_not_renewed_again() {
+        let server = quiet();
+        let renewer = Renewing::answering(vec![
+            Err(RenewalError::Ended {
+                message: "invalid_grant".into(),
+            }),
+            Ok("fresh".into()),
+        ]);
+        let (_dir, core) = expired_with_writes(&server, &renewer);
+        let before = format!("{:?}", core.queue().unwrap());
+
+        for _ in 0..2 {
+            let from = server.asked();
+            let error = core.drain(None).unwrap_err();
+            assert!(
+                matches!(&error, MarfaError::SignedOut { origin, .. } if *origin == server.url),
+                "{error:?}"
+            );
+            assert_eq!(error.code(), "signed_out");
+            assert_eq!(
+                server.bearing_since(from).len(),
+                1,
+                "the drain sent more once the sign-in had ended"
+            );
+        }
+        assert_eq!(format!("{:?}", core.queue().unwrap()), before);
+        // The renewer still had a token to answer, and was not asked for it.
+        assert_eq!(renewer.asked(), vec!["stale".to_string()]);
+    }
+
+    #[test]
+    fn a_renewal_the_network_stopped_keeps_the_writes_queued_and_renews_later() {
+        let server = quiet();
+        let renewer = Renewing::answering(vec![
+            Err(RenewalError::Unavailable {
+                message: "the token endpoint did not answer".into(),
+            }),
+            Ok("fresh".into()),
+        ]);
+        let (_dir, core) = expired_with_writes(&server, &renewer);
+        let before = format!("{:?}", core.queue().unwrap());
+
+        let from = server.asked();
+        let report = core.drain(None).unwrap();
+        assert!(
+            report
+                .unavailable
+                .as_deref()
+                .is_some_and(|why| why.contains("the token endpoint did not answer")),
+            "{report:?}"
+        );
+        assert_eq!((report.answered, report.undelivered), (0, 2));
+        assert_eq!(server.bearing_since(from).len(), 1);
+        assert_eq!(format!("{:?}", core.queue().unwrap()), before);
+
+        core.server_catalog(None).unwrap();
+        assert_eq!(
+            renewer.asked(),
+            vec!["stale".to_string(), "stale".to_string()]
+        );
+        assert_eq!(
+            server.sent_since(from).last().unwrap().2.as_deref(),
+            Some("Bearer fresh")
+        );
+    }
+
     struct Heard {
         changes: std::sync::mpsc::Sender<Change>,
         ended: std::sync::mpsc::Sender<Option<MarfaError>>,
@@ -3188,7 +3453,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into()), None).unwrap();
         let (changes, _heard) = std::sync::mpsc::channel();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(
@@ -3226,7 +3491,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into()), None).unwrap();
         let (changes, _heard) = std::sync::mpsc::channel();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core)
@@ -3267,7 +3532,7 @@ mod tests {
     fn a_watch_of_a_reading_handle_tells_each_save_and_a_writer_with_no_server_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let writer = Core::open(path.clone(), None, None).unwrap();
+        let writer = Core::open(path.clone(), None, None, None).unwrap();
         let (changes, _heard) = std::sync::mpsc::channel();
         let (told, _ended) = std::sync::mpsc::channel();
         assert!(matches!(
@@ -3358,7 +3623,7 @@ mod tests {
     fn an_edit_crosses_with_its_move_and_its_whole_properties() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         let note = core
             .create_item(draft(
                 "core.note",
@@ -3447,7 +3712,7 @@ mod tests {
     fn an_edge_edit_crosses_with_the_one_end_it_moves() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         let note = |title: &str| {
             core.create_item(draft(
                 "core.note",
@@ -3515,7 +3780,7 @@ mod tests {
     fn an_item_crosses_with_the_title_and_body_its_type_names() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         let event = core
             .create_item(draft(
                 "core.event",
@@ -3547,7 +3812,7 @@ mod tests {
     fn copy_with_entries() -> (tempfile::TempDir, std::path::PathBuf, Arc<Core>) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
-        let core = Core::open(path.display().to_string(), None, None).unwrap();
+        let core = Core::open(path.display().to_string(), None, None, None).unwrap();
         core.declare_types(vec![parsed(
             r#"{"id":"app.test.entry","fields":{"title":{"type":"string"}}}"#,
         )])
@@ -4016,7 +4281,7 @@ mod tests {
     fn a_copy_declares_types_and_hands_them_back() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, None, None).unwrap();
+        let core = Core::open(path, None, None, None).unwrap();
         core.declare_types(vec![parsed(
             r#"{"id":"app.recipe.entry","fields":{"title":{"type":"string","required":true}}}"#,
         )])
@@ -4040,7 +4305,7 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(path, Some(server.url.clone()), Some("k".into()), None).unwrap();
         core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
@@ -4066,7 +4331,13 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(
+            path.clone(),
+            Some(server.url.clone()),
+            Some("k".into()),
+            None,
+        )
+        .unwrap();
         core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let reader = Core::open_reader(path).unwrap();
@@ -4103,7 +4374,7 @@ mod tests {
     impl ChangeListener for Reopens {
         fn changed(&self, _: Change) {}
         fn ended(&self, _: Option<MarfaError>) {
-            let reopened = Core::open(self.path.clone(), None, None).unwrap();
+            let reopened = Core::open(self.path.clone(), None, None, None).unwrap();
             let _ = self.handle.send(reopened.held_handle());
         }
     }
@@ -4113,7 +4384,13 @@ mod tests {
         let server = quiet();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let core = Core::open(path.clone(), Some(server.url.clone()), Some("k".into())).unwrap();
+        let core = Core::open(
+            path.clone(),
+            Some(server.url.clone()),
+            Some("k".into()),
+            None,
+        )
+        .unwrap();
         core.hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();
         let (handle, reopened) = std::sync::mpsc::channel();
@@ -4149,7 +4426,7 @@ mod tests {
 
         let server = quiet();
         let path = dir.path().join("core.sqlite").display().to_string();
-        let writer = Core::open(path.clone(), Some(server.url), Some("k".into())).unwrap();
+        let writer = Core::open(path.clone(), Some(server.url), Some("k".into()), None).unwrap();
         writer
             .hydrate(vec!["core.note".into()], SliceTier::Library, None)
             .unwrap();

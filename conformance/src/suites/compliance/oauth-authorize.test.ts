@@ -234,6 +234,63 @@ describe("the request an app sends", () => {
   });
 });
 
+describe("a native app's private-use redirect URI", () => {
+  const RETURN = "com.example.marfa-fixture:/callback";
+
+  it("sends the code to the private-use redirect URI the app registered, which the app exchanges there", async () => {
+    const app = await registerApp(server, NOTES, { redirect_uris: [RETURN] });
+    const proof = pkce();
+    const query = authorizeQuery(app.clientId, NOTES, proof, {
+      redirect_uri: RETURN,
+    });
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      await consentScreen(query),
+      true,
+      [NOTES],
+    );
+    expect(sent?.protocol).toBe("com.example.marfa-fixture:");
+    expect(sent?.pathname).toBe("/callback");
+    expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
+    const code = sent?.searchParams.get("code");
+    expect(code, String(sent)).toBeTruthy();
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: code!,
+      redirect_uri: RETURN,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.access_token).toMatch(/^marfa_at_/);
+  });
+
+  it("sends a request naming a private-use redirect URI the app did not register to the error page", async () => {
+    const app = await registerApp(server, NOTES, { redirect_uris: [RETURN] });
+    for (const unregistered of [
+      "com.example.marfa-fixture:/other",
+      "com.example.marfa-fixture:/callback/",
+      "com.example.elsewhere:/callback",
+    ]) {
+      const query = authorizeQuery(app.clientId, NOTES, pkce(), {
+        redirect_uri: unregistered,
+      });
+      const sent = await landing(query);
+      expect(sent?.origin, unregistered).toBe(new URL(server.apiUrl).origin);
+      expect(sent?.pathname, unregistered).toBe("/auth/error");
+      expect(sent?.searchParams.get("error"), unregistered).toBe(
+        "invalid_redirect",
+      );
+    }
+    // The witness: the registered one reaches the consent screen.
+    await consentScreen(
+      authorizeQuery(app.clientId, NOTES, pkce(), { redirect_uri: RETURN }),
+    );
+  });
+});
+
 describe("the code exchange", () => {
   it("refuses a code verifier that does not match the challenge 400 invalid_grant, and issues no token", async () => {
     const app = await registerApp(server, NOTES);
