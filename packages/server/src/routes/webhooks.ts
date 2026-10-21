@@ -880,7 +880,7 @@ export function webhookRoutes(
         if (!subscription.active)
           throw redeliveryRefused(
             "webhook_inactive",
-            "The webhook is turned off, so Marfa sends it nothing. Turn it on, then redeliver.",
+            "The webhook is turned off. Turn it on, then redeliver.",
           );
         if (!(await ownerCredential(storage, subscription.owner)))
           throw redeliveryRefused(
@@ -908,7 +908,7 @@ export function webhookRoutes(
         if (existing.status !== "dead_letter")
           throw redeliveryRefused(
             "delivery_not_failed",
-            `The delivery is ${existing.status}. Only a delivery that failed for good, as dead_letter, can be redelivered.`,
+            `The delivery's status is ${existing.status}. Only a delivery Marfa gave up on, with status dead_letter, can be redelivered.`,
           );
         if (cutoff !== null && existing.created_at < cutoff)
           throw redeliveryRefused(
