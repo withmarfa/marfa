@@ -243,7 +243,7 @@ impl Exit {
         match self {
             Exit::Done => "done",
             Exit::Refused => {
-                "the request was refused, by the server, by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
+                "the request was refused, by the server (a wrong or spent setup code included), by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it"
             }
             Exit::Usage => "the command line was wrong, or named no store or server",
             Exit::Environment => {
@@ -396,7 +396,8 @@ impl CliError {
             | CliError::ContractMismatch { .. }
             | CliError::Redirected { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
-            CliError::Refused { status, .. } => match status {
+            CliError::Refused { status, code, .. } => match status {
+                401 if code == "setup_proof_invalid" => Exit::Refused,
                 401 => Exit::Credential,
                 429 => Exit::Environment,
                 500.. => Exit::Environment,
@@ -638,6 +639,24 @@ mod tests {
             retry_after_seconds: None,
             details: None,
         }
+    }
+
+    #[test]
+    fn a_refused_setup_proof_is_a_refusal_and_not_a_credential_problem() {
+        let wrong_code = CliError::Refused {
+            status: 401,
+            code: "setup_proof_invalid".into(),
+            message: "Setup proof is invalid, expired, spent or replaced".into(),
+            retry_after_seconds: None,
+            details: None,
+        };
+        assert_eq!(wrong_code.exit(), Exit::Refused);
+        assert_eq!(wrong_code.envelope()["exit"], 1);
+        assert_eq!(
+            wrong_code.envelope()["error"]["server"]["code"],
+            "setup_proof_invalid"
+        );
+        assert_eq!(refused(401).exit(), Exit::Credential);
     }
 
     #[test]

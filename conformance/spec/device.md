@@ -1574,6 +1574,14 @@ If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST NOT se
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
 
+### `device/claim-refused-proof-exit`
+
+If the server answers `setup claim` `401 setup_proof_invalid`, then the CLI MUST exit `1`, with the server's code in the error's `server.code`.
+
+**Reason:** a wrong, spent or replaced setup code is a refusal that asking for a new code fixes, so the exit `5` for a missing or ended credential (`sign in again`) would send a person or an agent to the wrong remedy.
+
+**Tests:** `device/contract.test.ts › exits 1, not 5, when the server refuses the setup code`.
+
 ### `device/local-socket-exclusive`
 
 When `--socket PATH` is supplied, the CLI MUST reject ordinary URL or credential selection.

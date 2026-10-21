@@ -28,7 +28,7 @@ Every command accepts these.
 | Code | Meaning |
 | --- | --- |
 | 0 | Done. |
-| 1 | The request was refused, by the server, by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
+| 1 | The request was refused, by the server (a wrong or spent setup code included), by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
 | 2 | The command line was wrong, or named no store or server. |
 | 3 | The environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
 | 4 | The working copy or the queue refused under the device rules, or this system has no keychain. |
