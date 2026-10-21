@@ -20,6 +20,12 @@
  * without checksums, so the comparison is by position and, where the log no
  * longer holds the position, by page content.
  *
+ * Transaction IDs count within one replica's history only, so the record is
+ * compared with a replica only when it was made replicating to that replica.
+ * The entrypoint names the replica it starts replicating to in a file beside
+ * the database, `<name>-replica`, and a record whose file names another
+ * replica is no record of this one.
+ *
  * Nothing here writes: the volume and the bucket are left as they were.
  */
 import {
@@ -28,6 +34,7 @@ import {
   fstatSync,
   openSync,
   readSync,
+  readFileSync,
   readdirSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -54,6 +61,14 @@ export interface LtxHeader {
   walSalt2: number;
 }
 
+/** A replica as Litestream reaches it: `<prefix>/db` in `bucket` at `endpoint`. */
+export interface ReplicaName {
+  /** `S3_ENDPOINT` as the entrypoint hands it to Litestream, empty for AWS. */
+  endpoint: string;
+  bucket: string;
+  prefix: string;
+}
+
 export type ReplicaVerdict =
   | { start: true }
   | {
@@ -61,11 +76,14 @@ export type ReplicaVerdict =
       /**
        * `behind`: the volume's record ends before the replica does.
        * `unrecorded`: the volume holds no record of replicating.
+       * `elsewhere`: the volume's record is of replicating to another replica.
        * `replaced`: the database is not the one the record describes.
        */
-      reason: "behind" | "unrecorded" | "replaced";
+      reason: "behind" | "unrecorded" | "elsewhere" | "replaced";
       /** The last transaction this volume replicated, when it has a record. */
       local?: bigint;
+      /** For `elsewhere`, the replica the record is of, when its file is readable. */
+      recordedFor?: ReplicaName;
       replica: bigint;
     };
 
@@ -147,6 +165,39 @@ export function parseLtxHeader(buffer: Buffer): LtxHeader {
     walSize: Number(buffer.readBigInt64BE(56)),
     walSalt1: buffer.readUInt32BE(64),
     walSalt2: buffer.readUInt32BE(68),
+  };
+}
+
+/** The file beside `sqlitePath` that names the replica its record is of. */
+export function replicaMarkerPath(sqlitePath: string): string {
+  return `${sqlitePath}-replica`;
+}
+
+/**
+ * The marker file's contents for `name`, byte for byte as
+ * `deploy/entrypoint.sh` writes them.
+ */
+export function replicaMarker(name: ReplicaName): string {
+  return `endpoint=${name.endpoint}\nbucket=${name.bucket}\nprefix=${name.prefix}\n`;
+}
+
+/**
+ * The replica the marker beside `sqlitePath` names: `undefined` when there
+ * is no marker, `unreadable` when it is not one `replicaMarker` writes.
+ */
+export function readReplicaMarker(
+  sqlitePath: string,
+): ReplicaName | "unreadable" | undefined {
+  const path = replicaMarkerPath(sqlitePath);
+  if (!existsSync(path)) return undefined;
+  const match = /^endpoint=([^\n]*)\nbucket=([^\n]*)\nprefix=([^\n]*)\n$/.exec(
+    readFileSync(path, "utf8"),
+  );
+  if (!match) return "unreadable";
+  return {
+    endpoint: match[1] ?? "",
+    bucket: match[2] ?? "",
+    prefix: match[3] ?? "",
   };
 }
 
@@ -424,8 +475,12 @@ function holdsLtxPages(
 }
 
 /**
- * Whether the database at `sqlitePath` may be replicated to a replica whose
- * newest transaction is `replica`.
+ * Whether the database at `sqlitePath` may be replicated to the replica
+ * `target`, whose newest transaction is `replica`.
+ *
+ * A record with no marker beside it is taken to be of `target`, so that a
+ * volume replicated before the entrypoint wrote markers still starts; the
+ * entrypoint then writes the marker.
  *
  * A log that continues from the recorded position answers before the
  * database file is read, so an older database file put in place beside the
@@ -436,8 +491,16 @@ function holdsLtxPages(
 export function checkReplica(
   sqlitePath: string,
   replica: bigint,
+  target: ReplicaName,
 ): ReplicaVerdict {
   if (replica === 0n) return { start: true };
+  const marker = readReplicaMarker(sqlitePath);
+  if (marker === "unreadable") {
+    return { start: false, reason: "elsewhere", replica };
+  }
+  if (marker !== undefined && replicaMarker(marker) !== replicaMarker(target)) {
+    return { start: false, reason: "elsewhere", recordedFor: marker, replica };
+  }
   const newest = newestLocalLtx(sqlitePath);
   if (newest === undefined)
     return { start: false, reason: "unrecorded", replica };
@@ -458,15 +521,34 @@ export function checkReplica(
 const GUIDE =
   "https://github.com/withmarfa/marfa/blob/main/deploy/README.md#start-a-backup-under-a-new-prefix";
 
+/** A replica as a message names it, with its endpoint when that is what tells two apart. */
+function describeReplica(name: ReplicaName, withEndpoint: boolean): string {
+  const at = `the replica at ${name.prefix}/db in the bucket ${name.bucket}`;
+  if (!withEndpoint) return at;
+  return name.endpoint === ""
+    ? `${at} with no S3_ENDPOINT`
+    : `${at} at ${name.endpoint}`;
+}
+
 /** What the entrypoint prints when it does not start replication. */
 export function refusalMessage(
   verdict: Extract<ReplicaVerdict, { start: false }>,
-  where: { sqlitePath: string; bucket: string; prefix: string },
+  where: { sqlitePath: string } & ReplicaName,
 ): string {
-  const replica = `the replica at ${where.prefix}/db in the bucket ${where.bucket}`;
+  const other = verdict.recordedFor;
+  const endpointDiffers =
+    other !== undefined &&
+    other.endpoint !== where.endpoint &&
+    other.bucket === where.bucket &&
+    other.prefix === where.prefix;
+  const replica = describeReplica(where, endpointDiffers);
   const finding = {
     behind: `The database at ${where.sqlitePath} is older than ${replica}: this volume last replicated transaction ${String(verdict.local)}, and the replica holds transactions up to ${String(verdict.replica)}.`,
     unrecorded: `The database at ${where.sqlitePath} has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, so it may be older than the replica.`,
+    elsewhere:
+      other === undefined
+        ? `The database at ${where.sqlitePath} has a record of replicating, but ${replicaMarkerPath(where.sqlitePath)}, which names the replica that record is of, cannot be read. So it has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, and it may be older than the replica.`
+        : `The database at ${where.sqlitePath} last replicated to ${describeReplica(other, endpointDiffers)}, not to ${replica}. So it has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, and it may be older than the replica.`,
     replaced: `The database at ${where.sqlitePath} is not the one this volume last replicated to ${replica}, at transaction ${String(verdict.local)}: it was replaced, restored or lost writes since, so it may be older than the replica, which holds transactions up to ${String(verdict.replica)}.`,
   }[verdict.reason];
   return [

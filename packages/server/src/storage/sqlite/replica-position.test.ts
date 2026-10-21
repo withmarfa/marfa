@@ -17,8 +17,12 @@ import {
   checkReplica,
   localLtxDir,
   lz4Decompress,
+  readReplicaMarker,
   refusalMessage,
+  replicaMarker,
+  replicaMarkerPath,
   replicaTxid,
+  type ReplicaName,
 } from "./replica-position.js";
 
 /**
@@ -30,6 +34,13 @@ import {
  * Every log here is one SQLite wrote. The LTX files are written by the test
  * in Litestream 0.5's layout, with each page an LZ4 block of literals.
  */
+
+/** The replica each check is against, unless a test names another. */
+const TARGET: ReplicaName = {
+  endpoint: "http://127.0.0.1:3900",
+  bucket: "a-bucket",
+  prefix: "blobs",
+};
 
 const roots: string[] = [];
 
@@ -251,12 +262,14 @@ describe("lz4Decompress", () => {
 describe("checkReplica", () => {
   it("starts on any database when the replica is empty, whatever the volume records", async () => {
     const volume = await volumeWith(3);
-    expect(checkReplica(volume.sqlitePath, 0n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 0n, TARGET)).toEqual({
+      start: true,
+    });
   });
 
   it("refuses a database with no record of replicating when the replica holds transactions", async () => {
     const volume = await volumeWith(3);
-    expect(checkReplica(volume.sqlitePath, 4n)).toEqual({
+    expect(checkReplica(volume.sqlitePath, 4n, TARGET)).toEqual({
       start: false,
       reason: "unrecorded",
       replica: 4n,
@@ -266,17 +279,23 @@ describe("checkReplica", () => {
   it("starts when the record reaches the replica's newest transaction and the log continues from it", async () => {
     const volume = await volumeWith(3);
     writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
     // A record ahead of the replica is a sync the bucket has not yet had.
-    expect(checkReplica(volume.sqlitePath, 4n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 4n, TARGET)).toEqual({
+      start: true,
+    });
   });
 
   it("refuses when the record ends before the replica's newest transaction", async () => {
     const volume = await volumeWith(3);
     writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
     // The witness: the same volume against a replica it reaches.
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
-    expect(checkReplica(volume.sqlitePath, 6n)).toEqual({
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
+    expect(checkReplica(volume.sqlitePath, 6n, TARGET)).toEqual({
       start: false,
       reason: "behind",
       local: 5n,
@@ -292,20 +311,24 @@ describe("checkReplica", () => {
       salt1: (ltx.salt1 - 1) >>> 0,
       salt2: 7,
     });
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
   });
 
   it("refuses when the log of the recorded generation no longer reaches the recorded position", async () => {
     const volume = await volumeWith(6);
     writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
 
     // A copy of this volume taken before its last write: the same log, shorter.
     truncateSync(
       volume.walPath,
       statSync(volume.walPath).size - (volume.pageSize + 24),
     );
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
       start: false,
       reason: "replaced",
       local: 5n,
@@ -316,12 +339,14 @@ describe("checkReplica", () => {
   it("refuses when a frame of the recorded log was overwritten", async () => {
     const volume = await volumeWith(3);
     writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
 
     const wal = readFileSync(volume.walPath);
     wal[32 + 24 + 100] = (wal[32 + 24 + 100] ?? 0) ^ 0xff;
     writeFileSync(volume.walPath, wal);
-    expect(checkReplica(volume.sqlitePath, 5n)).toMatchObject({
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toMatchObject({
       start: false,
       reason: "replaced",
     });
@@ -334,10 +359,14 @@ describe("checkReplica", () => {
     const state = await pagesOf(volume);
     writeFileSync(volume.sqlitePath, Buffer.concat(state));
     rmSync(volume.walPath);
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
 
     writeFileSync(volume.walPath, "");
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
   });
 
   it("refuses without a log when the database is an older state put in its place", async () => {
@@ -351,8 +380,8 @@ describe("checkReplica", () => {
       rmSync(volume.walPath);
     }
     // The witness: the record's own database passes.
-    expect(checkReplica(newer.sqlitePath, 5n)).toEqual({ start: true });
-    expect(checkReplica(older.sqlitePath, 5n)).toEqual({
+    expect(checkReplica(newer.sqlitePath, 5n, TARGET)).toEqual({ start: true });
+    expect(checkReplica(older.sqlitePath, 5n, TARGET)).toEqual({
       start: false,
       reason: "replaced",
       local: 5n,
@@ -366,7 +395,7 @@ describe("checkReplica", () => {
     writeLtx(volume.sqlitePath, { ...ltx, commit: ltx.commit + 1 });
     writeFileSync(volume.sqlitePath, Buffer.concat(await pagesOf(volume)));
     rmSync(volume.walPath);
-    expect(checkReplica(volume.sqlitePath, 5n)).toMatchObject({
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toMatchObject({
       start: false,
       reason: "replaced",
     });
@@ -384,12 +413,93 @@ describe("checkReplica", () => {
       salt1: 0,
       salt2: 0,
     });
-    expect(checkReplica(volume.sqlitePath, 5n)).toEqual({ start: true });
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
 
     truncateSync(volume.walPath, 0);
-    expect(checkReplica(volume.sqlitePath, 5n)).toMatchObject({
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toMatchObject({
       start: false,
       reason: "replaced",
+    });
+  });
+});
+
+describe("the replica marker", () => {
+  it("reads back what it writes, and nothing else", async () => {
+    const volume = await volumeWith(1);
+    expect(readReplicaMarker(volume.sqlitePath)).toBeUndefined();
+    for (const name of [TARGET, { ...TARGET, endpoint: "" }]) {
+      writeFileSync(replicaMarkerPath(volume.sqlitePath), replicaMarker(name));
+      expect(readReplicaMarker(volume.sqlitePath)).toEqual(name);
+    }
+    for (const text of [
+      "",
+      "bucket=a-bucket\nprefix=blobs\n",
+      replicaMarker(TARGET).trimEnd(),
+      `${replicaMarker(TARGET)}extra=1\n`,
+    ]) {
+      writeFileSync(replicaMarkerPath(volume.sqlitePath), text);
+      expect(readReplicaMarker(volume.sqlitePath), text).toBe("unreadable");
+    }
+  });
+
+  it("checks a record whose marker names the replica as it checks one with no marker", async () => {
+    const volume = await volumeWith(3);
+    writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
+    writeFileSync(replicaMarkerPath(volume.sqlitePath), replicaMarker(TARGET));
+    expect(checkReplica(volume.sqlitePath, 5n, TARGET)).toEqual({
+      start: true,
+    });
+    expect(checkReplica(volume.sqlitePath, 6n, TARGET)).toMatchObject({
+      start: false,
+      reason: "behind",
+    });
+  });
+
+  it("refuses a record whose marker names another replica, however far it reaches", async () => {
+    const volume = await volumeWith(3);
+    writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
+    // The witness: with no marker, the record passes against this replica.
+    expect(checkReplica(volume.sqlitePath, 2n, TARGET)).toEqual({
+      start: true,
+    });
+    for (const other of [
+      { ...TARGET, prefix: "restored/blobs" },
+      { ...TARGET, bucket: "another-bucket" },
+      { ...TARGET, endpoint: "http://127.0.0.1:3901" },
+      { ...TARGET, endpoint: "" },
+    ]) {
+      writeFileSync(replicaMarkerPath(volume.sqlitePath), replicaMarker(other));
+      expect(checkReplica(volume.sqlitePath, 2n, TARGET)).toEqual({
+        start: false,
+        reason: "elsewhere",
+        recordedFor: other,
+        replica: 2n,
+      });
+    }
+  });
+
+  it("refuses a record whose marker cannot be read", async () => {
+    const volume = await volumeWith(3);
+    writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
+    writeFileSync(replicaMarkerPath(volume.sqlitePath), "prefix=blobs\n");
+    expect(checkReplica(volume.sqlitePath, 2n, TARGET)).toEqual({
+      start: false,
+      reason: "elsewhere",
+      replica: 2n,
+    });
+  });
+
+  it("starts on an empty replica whatever the marker names", async () => {
+    const volume = await volumeWith(3);
+    writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
+    writeFileSync(
+      replicaMarkerPath(volume.sqlitePath),
+      replicaMarker({ ...TARGET, prefix: "other" }),
+    );
+    expect(checkReplica(volume.sqlitePath, 0n, TARGET)).toEqual({
+      start: true,
     });
   });
 });
@@ -398,7 +508,7 @@ describe("refusalMessage", () => {
   it("names the new-prefix procedure, the restore and the override, and says the bucket is unchanged", () => {
     const message = refusalMessage(
       { start: false, reason: "behind", local: 5n, replica: 9n },
-      { sqlitePath: "/data/marfa.db", bucket: "a-bucket", prefix: "blobs" },
+      { sqlitePath: "/data/marfa.db", ...TARGET },
     );
     expect(message).toContain("blobs/db in the bucket a-bucket");
     expect(message).toContain("transaction 5");
@@ -407,5 +517,43 @@ describe("refusalMessage", () => {
     expect(message).toContain('"Start a backup under a new prefix"');
     expect(message).toContain("#start-a-backup-under-a-new-prefix");
     expect(message).toContain("MARFA_REPLACE_NEWER_REPLICA=true");
+  });
+
+  it("names the replica a record is of when it is another, with the endpoint only when that is the difference", () => {
+    const where = { sqlitePath: "/data/marfa.db", ...TARGET };
+    const prefix = refusalMessage(
+      {
+        start: false,
+        reason: "elsewhere",
+        recordedFor: { ...TARGET, prefix: "restored/blobs" },
+        replica: 9n,
+      },
+      where,
+    );
+    expect(prefix).toContain(
+      "last replicated to the replica at restored/blobs/db in the bucket a-bucket, not to the replica at blobs/db in the bucket a-bucket.",
+    );
+    expect(prefix).toContain("up to 9");
+    expect(prefix).toContain("MARFA_REPLACE_NEWER_REPLICA=true");
+
+    const endpoint = refusalMessage(
+      {
+        start: false,
+        reason: "elsewhere",
+        recordedFor: { ...TARGET, endpoint: "" },
+        replica: 9n,
+      },
+      where,
+    );
+    expect(endpoint).toContain(
+      "last replicated to the replica at blobs/db in the bucket a-bucket with no S3_ENDPOINT, not to the replica at blobs/db in the bucket a-bucket at http://127.0.0.1:3900.",
+    );
+
+    const unreadable = refusalMessage(
+      { start: false, reason: "elsewhere", replica: 9n },
+      where,
+    );
+    expect(unreadable).toContain("/data/marfa.db-replica");
+    expect(unreadable).toContain("cannot be read");
   });
 });

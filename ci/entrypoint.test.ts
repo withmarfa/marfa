@@ -22,12 +22,21 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../packages/server/src/config.js";
+import { replicaMarker } from "../packages/server/src/storage/sqlite/replica-position.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRYPOINT = join(ROOT, "deploy/entrypoint.sh");
 const REFUSED = 78;
 /** Litestream's record beside `data/marfa.db`, relative to a run's folder. */
 const RECORD = "data/.marfa.db-litestream";
+/** The file naming the replica that record is of, relative to a run's folder. */
+const MARKER = "data/marfa.db-replica";
+/** A marker the tests' start does not write. */
+const OTHER_MARKER = replicaMarker({
+  endpoint: "",
+  bucket: "a-bucket",
+  prefix: "elsewhere",
+});
 
 const dirs: string[] = [];
 const running: ChildProcess[] = [];
@@ -63,7 +72,8 @@ const LISTING =
  * `litestream ltx` prints `listing`, or fails when it is `null`. With
  * `database`, the volume holds a database before the entrypoint starts;
  * with `restored`, `litestream restore` writes one; with `record`, the
- * volume holds Litestream's record beside it.
+ * volume holds Litestream's record beside it, and with `marker`, the file
+ * naming the replica that record is of.
  */
 function start(options: {
   body: string;
@@ -71,6 +81,7 @@ function start(options: {
   database?: boolean;
   restored?: boolean;
   record?: boolean;
+  marker?: string;
   check?: string;
   listing?: string | null;
   env?: Record<string, string>;
@@ -99,6 +110,9 @@ function start(options: {
       join(dir, RECORD, "ltx/0/0000000000000007-0000000000000007.ltx"),
       "",
     );
+  }
+  if (options.marker !== undefined) {
+    writeFileSync(join(dir, MARKER), options.marker);
   }
   // `node`, run by the entrypoint or by Litestream's `-exec`, is the stand-in
   // too; `litestream restore` does nothing.
@@ -387,13 +401,13 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
       bucket: true,
       database: true,
       listing: LISTING,
-      env: { S3_PREFIX: "trial/blobs" },
+      env: { S3_PREFIX: "trial/blobs", S3_ENDPOINT: "http://127.0.0.1:3900" },
       body: SERVER_STARTED,
     });
 
     expect(await run.exited).toBe(0);
     expect(readFileSync(join(run.dir, "check-args"), "utf8")).toBe(
-      `${join(run.dir, "data/marfa.db")}\na-bucket\ntrial/blobs\n`,
+      `${join(run.dir, "data/marfa.db")}\na-bucket\ntrial/blobs\nhttp://127.0.0.1:3900\n`,
     );
     expect(readFileSync(join(run.dir, "check-input"), "utf8")).toBe(LISTING);
     expect(commands(run)).toEqual(["restore", "ltx", "replicate"]);
@@ -562,19 +576,87 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
     expect(commands(run)).toEqual(["restore", "replicate"]);
   });
 
-  it("keeps Litestream's record when the restore writes the database", async () => {
+  it("removes Litestream's record when the restore writes the database, which the record does not describe", async () => {
     const run = start({
       bucket: true,
       record: true,
+      marker: OTHER_MARKER,
       restored: true,
       body: SERVER_STARTED,
     });
 
     expect(await run.exited).toBe(0);
     expect(existsSync(join(run.dir, "data/marfa.db"))).toBe(true);
-    expect(existsSync(join(run.dir, RECORD))).toBe(true);
-    expect(run.output()).not.toContain("Removing Litestream's record");
+    expect(existsSync(join(run.dir, RECORD))).toBe(false);
+    expect(run.output()).toContain("Removing Litestream's record");
+    expect(readFileSync(join(run.dir, MARKER), "utf8")).toBe(
+      replicaMarker({ endpoint: "", bucket: "a-bucket", prefix: "blobs" }),
+    );
     expect(commands(run)).toEqual(["restore", "replicate"]);
+  });
+
+  it("writes the marker naming the replica, as the check reads it, before replicating", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      listing: LISTING,
+      env: { S3_PREFIX: "/trial/blobs/", S3_ENDPOINT: "http://127.0.0.1:3900" },
+      body: `test -e "$marker/${MARKER}" && : > "$marker/marked"\n${SERVER_STARTED}`,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, "marked"))).toBe(true);
+    expect(readFileSync(join(run.dir, MARKER), "utf8")).toBe(
+      replicaMarker({
+        endpoint: "http://127.0.0.1:3900",
+        bucket: "a-bucket",
+        prefix: "trial/blobs",
+      }),
+    );
+    expect(existsSync(join(run.dir, RECORD))).toBe(true);
+  });
+
+  it("replaces a marker that names another replica when the check finds the replica empty and the record is removed", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      marker: OTHER_MARKER,
+      listing: "[]",
+      check: "cat > /dev/null\necho empty",
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, RECORD))).toBe(false);
+    expect(readFileSync(join(run.dir, MARKER), "utf8")).toBe(
+      replicaMarker({ endpoint: "", bucket: "a-bucket", prefix: "blobs" }),
+    );
+  });
+
+  it("leaves the marker and the record as they were when the check refuses", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      record: true,
+      marker: OTHER_MARKER,
+      listing: LISTING,
+      check: "cat > /dev/null\nexit 1",
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(1);
+    expect(existsSync(join(run.dir, RECORD))).toBe(true);
+    expect(readFileSync(join(run.dir, MARKER), "utf8")).toBe(OTHER_MARKER);
+  });
+
+  it("writes no marker without a bucket", async () => {
+    const run = start({ database: true, body: SERVER_STARTED });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, "started"))).toBe(true);
+    expect(existsSync(join(run.dir, MARKER))).toBe(false);
   });
 
   it("refuses a MARFA_REPLACE_NEWER_REPLICA that is not a flag word, before anything runs", async () => {

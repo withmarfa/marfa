@@ -13,6 +13,7 @@ import {
   cpSync,
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -91,6 +92,42 @@ async function replicaPast(path: string, txid: bigint): Promise<void> {
       throw new Error(`the replica at ${path} did not pass ${String(txid)}`);
     await pause(250);
   }
+}
+
+/**
+ * Waits until Litestream on `volume` has recorded every write made so far,
+ * which it does within a second, and the replica under `path` holds them.
+ */
+async function caughtUp(volume: string, path: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  for (;;) {
+    const recorded = recordedTxid(volume);
+    await pause(1_500);
+    if (
+      recordedTxid(volume) === recorded &&
+      newestTxid(await keysUnder(`${path}/`)) >= recorded
+    ) {
+      return;
+    }
+    if (Date.now() > deadline)
+      throw new Error(
+        `the replica at ${path} did not catch up with the volume`,
+      );
+  }
+}
+
+/** Writes rows on the instance running on `volume` until its record passes `txid`. */
+async function writePast(volume: string, txid: bigint): Promise<void> {
+  for (let i = 0; recordedTxid(volume) <= txid; i++) {
+    if (i === 20)
+      throw new Error(`the record did not pass ${String(txid)} in 20 writes`);
+    await write(volume, `past-${String(i)}`);
+  }
+}
+
+/** The rows the stand-in server wrote on `volume`, one per start, in order. */
+function starts(volume: string): string[] {
+  return query(volume, "SELECT name FROM starts ORDER BY rowid;").split("\n");
 }
 
 /**
@@ -201,9 +238,7 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
     const restored = await boot(fresh, "fresh", prefix);
     expect(restored.bootedAs).toBe("first");
     expect(await restored.stop()).toBe(0);
-    expect(
-      query(fresh, "SELECT name FROM starts ORDER BY rowid;").split("\n"),
-    ).toEqual(["first", "second", "fresh"]);
+    expect(starts(fresh)).toEqual(["first", "second", "fresh"]);
   });
 
   it("refuses a volume copied before the replica's newest transaction, and leaves the bucket unchanged", async () => {
@@ -271,8 +306,100 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
     expect(replaced.bootedAs).toBe("first");
     await replicaAt(`${prefix}/db/0000`, before);
     await write(copy, "after-override");
-    await replicaPast(`${prefix}/db/0000`, recordedTxid(copy) - 1n);
+    await caughtUp(copy, `${prefix}/db`);
     expect(await replaced.stop()).toBe(0);
     expect(replaced.output()).toContain("MARFA_REPLACE_NEWER_REPLICA is set");
+
+    // The older database is now the replica's newest state: the second
+    // start's row is gone from it, and the rows after the override are there.
+    const fresh = newVolume();
+    const restored = await boot(fresh, "fresh", prefix);
+    expect(restored.bootedAs).toBe("first");
+    expect(await restored.stop()).toBe(0);
+    expect(starts(fresh)).toEqual([
+      "first",
+      "replaced",
+      "after-override",
+      "fresh",
+    ]);
+  });
+
+  it("starts a volume replicated before the entrypoint named the replica beside the database, and names it", async () => {
+    const prefix = `${run}/upgraded`;
+    const { volume } = await startedTwice(prefix);
+    const marker = `${sqlitePath(volume)}-replica`;
+    // A volume an earlier image replicated holds the record and no marker.
+    rmSync(marker, { force: true });
+    const before = await keysUnder(`${prefix}/db/`);
+
+    const again = await boot(volume, "third", prefix);
+    expect(again.bootedAs).toBe("first");
+    await replicaPast(`${prefix}/db/0000`, newestTxid(before));
+    expect(await again.stop()).toBe(0);
+    expect(readFileSync(marker, "utf8")).toBe(
+      `endpoint=${process.env.S3_ENDPOINT ?? ""}\nbucket=${process.env.S3_BUCKET ?? ""}\nprefix=${prefix}\n`,
+    );
+  });
+
+  it("refuses an older copy that replicated under another prefix until its record passed this replica, and leaves the bucket unchanged", async () => {
+    const prefix = `${run}/switch-back`;
+    const other = `${run}/switch-back-other`;
+    const { copy } = await startedTwice(prefix);
+    const newest = newestTxid(await keysUnder(`${prefix}/db/`));
+
+    const moved = await boot(copy, "moved", other);
+    await replicaAt(`${other}/db/0000`);
+    await writePast(copy, newest);
+    await caughtUp(copy, `${other}/db`);
+    expect(await moved.stop()).toBe(0);
+
+    await expectRefused(
+      copy,
+      prefix,
+      `last replicated to the replica at ${other}/db`,
+    );
+  });
+
+  it("restores the replica onto a volume whose database was deleted after it replicated another prefix further, and replicates its writes", async () => {
+    const prefix = `${run}/restore-here`;
+    const other = `${run}/restore-other`;
+    const source = newVolume();
+    const first = await boot(source, "first", prefix);
+    await replicaAt(`${prefix}/db`);
+    expect(await first.stop()).toBe(0);
+    const newest = newestTxid(await keysUnder(`${prefix}/db/`));
+
+    const volume = newVolume();
+    const elsewhere = await boot(volume, "elsewhere", other);
+    await replicaAt(`${other}/db/0000`);
+    // Far enough past that the file after this replica's newest transaction
+    // is one Litestream's retention removed from the record.
+    await writePast(volume, newest + 2n);
+    expect(await elsewhere.stop()).toBe(0);
+    keepNewestLocalLtx(volume);
+    const path = sqlitePath(volume);
+    for (const file of [path, `${path}-wal`, `${path}-shm`]) {
+      rmSync(file, { force: true });
+    }
+    const before = await keysUnder(`${prefix}/db/`);
+
+    const restored = await boot(volume, "restored", prefix);
+    expect(restored.bootedAs).toBe("first");
+    await replicaAt(`${prefix}/db/0000`, before);
+    await write(volume, "after-restore");
+    await caughtUp(volume, `${prefix}/db`);
+    expect(await restored.stop()).toBe(0);
+
+    const fresh = newVolume();
+    const again = await boot(fresh, "fresh", prefix);
+    expect(again.bootedAs).toBe("first");
+    expect(await again.stop()).toBe(0);
+    expect(starts(fresh)).toEqual([
+      "first",
+      "restored",
+      "after-restore",
+      "fresh",
+    ]);
+    expect(restored.output()).toContain("Removing Litestream's record");
   });
 });
