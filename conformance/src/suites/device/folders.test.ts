@@ -2747,6 +2747,67 @@ describe("files and items", () => {
       ).toEqual(["validation_error"]);
     });
 
+    it("builds the copy again where the drain after the pull meets the changed view, and finishes the push", async () => {
+      const edges = new EdgeDoor();
+      harness = await folderHarness("folder-push-view-changed-after-pull", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099a1",
+                properties: { title: "One", body: "made elsewhere\n" },
+              },
+            },
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099a2",
+                properties: { title: "Two", body: "made elsewhere\n" },
+              },
+            },
+          ],
+        },
+      });
+      // The read of the first placement the pull queued is refused, as the
+      // server does once the folder's key is replaced.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      scriptFolderWrites(harness, { edges });
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(changed).toBe(true);
+      expect(pushed.value.pull?.written).toBe(2);
+      expect(
+        hydrations(harness) - before,
+        "the push did not build the copy again after the pull",
+      ).toBe(1);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(pushed.value.drain.undelivered).toBe(0);
+      expect(placedPaths(edges)).toEqual(["One.md", "Two.md"]);
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/edges",
+        ),
+        "a placement was sent twice across the rebuild",
+      ).toHaveLength(2);
+
+      const again = await harness.folder.push();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      if (!again.ok) return;
+      expect(again.value.exit).toBe(0);
+      expect(again.value.rebuilt).toBeNull();
+      expect([again.value.drain.answered, again.value.pull?.written]).toEqual([
+        0, 0,
+      ]);
+    });
+
     it("builds the copy again while watching and delivers every waiting write, still watching", async () => {
       const made = await rekeyed("folder-watch-view-changed");
       harness = made.harness;

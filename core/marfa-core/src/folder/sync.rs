@@ -166,7 +166,7 @@ impl Folder {
                 .as_ref()
                 .is_some_and(|pulled| pulled.placed + pulled.ended > 0)
         {
-            drain.absorb(self.drain()?);
+            drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
         }
         Ok(SyncReport {
             hydrated,

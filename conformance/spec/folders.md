@@ -3692,15 +3692,15 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 ### `folders/view-changed-push-rebuilds`
 
-When a folder push's drain or a send-only run's drain ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and drain once more in the same run, sending each write still waiting once.
+When any drain of a folder push or a send-only run, the drain after the push's pull included, ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and drain once more in the same run, sending each write still waiting once and reporting the verdict of every write that either drain settled.
 
-**Reason:** A key that is replaced or narrowed changes the read view the copy was built under (`device/view-changed`), and a run that stopped there would leave every write behind it waiting for no cause the person can act on. The rebuild reads under the new view, so nothing the new key cannot read stays in the copy.
+**Reason:** A key that is replaced or narrowed changes the read view the copy was built under (`device/view-changed`), and a run that stopped there would leave every write behind it waiting for no cause the person can act on. The rebuild reads under the new view, so nothing the new key cannot read stays in the copy. A verdict the first drain settled is final in the queue, and a report without it would tell the person that a refused write was taken.
 
-**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`.
+**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`, `device/folders.test.ts › reports a refusal from before the view changed with the writes sent after the rebuild`, `device/folders.test.ts › builds the copy again where the drain after the pull meets the changed view, and finishes the push`.
 
 ### `folders/view-changed-push-once`
 
-If the drain after a folder push's rebuild for a changed read view also ends `copy_expired` with the reason `read_view_changed`, then a device MUST end the run `copy_expired` without hydrating again, keeping the writes still waiting.
+If a drain of a folder push or a send-only run that has already rebuilt its copy for a changed read view also ends `copy_expired` with the reason `read_view_changed`, then a device MUST end the run `copy_expired` without hydrating again, keeping the writes still waiting.
 
 **Reason:** A view that changes again at once is changing under the run, and rebuilding without end would spend the key's rate limit and never finish.
 

@@ -275,6 +275,9 @@ export class EdgeDoor {
   /** An answer standing in for the server's to a listing of an item's
    *  edges, a refusal say; the door answers where it gives `undefined`. */
   listing?: (source: string) => Answer | undefined;
+  /** The same, for the read of one edge by id: a refusal under a read view
+   *  that changed, say. */
+  reading?: (id: string) => Answer | undefined;
   /** Edges an item's listing serves as they were, once each: a read answered
    *  before a change the copy has since taken (`device.md`, What the real
    *  server cannot be made to produce). */
@@ -381,7 +384,10 @@ export class EdgeDoor {
         this.failListings -= 1;
         return refusal(503, "unavailable", "Try again");
       }
-      const edge = this.edges.get(request.pathname.split("/").at(-1) ?? "");
+      const id = request.pathname.split("/").at(-1) ?? "";
+      const standIn = this.reading?.(id);
+      if (standIn !== undefined) return standIn;
+      const edge = this.edges.get(id);
       return edge === undefined
         ? refusal(404, "edge_not_found", "No such edge")
         : writeAnswers.edge(edge, 200);
