@@ -103,6 +103,8 @@ fn bound_by_path(snapshot: &[state::Bound]) -> HashMap<&str, &state::Bound> {
 
 pub(super) enum Missing {
     Moved,
+    /// Still bound and journaled, until the folder it went to binds it.
+    Arriving,
     Unsure(String),
     Deleted,
     Gone,
@@ -1773,6 +1775,7 @@ impl Folder {
             }
             match self.let_go_missing(&path, &item_id, settings, peers, &members)? {
                 Missing::Moved => report.moved_away += 1,
+                Missing::Arriving => {}
                 Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
                 Missing::Deleted => {
                     report.deleted += 1;
@@ -1819,6 +1822,9 @@ impl Folder {
                     leaves = !holds;
                     Missing::Moved
                 }
+                // That folder knows the file as the item only by this
+                // binding, so it stays, and a pull writes no file over it.
+                Look::Arriving => return Ok(Missing::Arriving),
                 // Held as a delete is while offline, until it can be told.
                 Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
                 Look::Nowhere => {

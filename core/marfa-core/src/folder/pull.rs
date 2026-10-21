@@ -1,9 +1,10 @@
 use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
-    HashMap, HashSet, Item, ItemState, Lists, Mode, Names, OFlags, Path, Peers, Result, Serialize,
-    Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of, carries_frontmatter, cleaned,
-    document, executable, fields, identity, landing, line_of, name_of, names, path_of, placement,
-    plainly_inside, read_file, stat_metadata, state, suited, transfer,
+    HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
+    Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
+    carries_frontmatter, cleaned, document, executable, fields, identity, landing, line_of,
+    name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state, suited,
+    transfer,
 };
 
 /// Bounded, so a copy that keeps changing ends the pull with
@@ -414,8 +415,20 @@ impl Folder {
                 continue;
             }
             // Moved to another folder here and not yet taken there, written
-            // anew it would make the moved file read as a copy.
-            if bound.is_none() && peers.arriving(&item.id) {
+            // anew it would make the moved file read as a copy. A file that
+            // carries no id keeps its binding meanwhile, which is how that
+            // folder knows it.
+            let awaited = match &bound {
+                None => peers.arriving(&item.id),
+                Some(bound) => {
+                    !self.exists(self.root.join(&bound.path))
+                        && matches!(
+                            peers.moved_to(bound, true, bytes_of(item, &catalog).is_some()),
+                            Look::Arriving
+                        )
+                }
+            };
+            if awaited {
                 report.elsewhere += 1;
                 continue;
             }

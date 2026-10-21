@@ -1990,7 +1990,22 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       [moved, loose].map((id) => deletesOf(a.server, id)),
       "a file moved by copy and delete was trashed: its id or its bytes were not looked for",
     ).toEqual([0, 0]);
-    expect(swept.value.scan.moved_away).toBe(2);
+    // The note's copy carries its id line. The text file's carries nothing,
+    // so the other folder knows it only by the binding kept here.
+    const from = b.server.requests.length;
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(
+      createsSince(b.server, from),
+      "a file moved by copy and delete became a new item where it went",
+    ).toEqual([]);
+    expect(idIn(b, "Moved.md")).toBe(moved);
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(swept.value.pull?.elsewhere).toBe(2);
+    const released = await a.folder.push();
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    if (!released.ok) return;
+    expect(released.value.scan.moved_away).toBe(1);
+    expect([moved, loose].map((id) => deletesOf(a.server, id))).toEqual([0, 0]);
   });
 
   it("takes a file moved in by copy and delete by the bytes the folder it left bound", async () => {
@@ -2095,6 +2110,124 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, files.gone[0])).toBe(1);
     expect(swept.value.scan.trashed).toEqual([files.gone[1]]);
   });
+
+  it.each(["leaving", "arriving"])(
+    "keeps one item when a file item both folders hold moves between them and the %s folder scans first",
+    async (first) => {
+      // File items carry nothing that names their item, so only the
+      // binding the folder they left keeps tells the other folder which
+      // item each is. `skip.dat` goes where the other folder ignores it.
+      const files = {
+        photo: ["01a00000-0000-7000-8000-0000000043a1", "photo.bin"],
+        notes: ["01a00000-0000-7000-8000-0000000043a2", "notes.md"],
+        skipped: ["01a00000-0000-7000-8000-0000000043a3", "skip.dat"],
+        gone: ["01a00000-0000-7000-8000-0000000043a4", "gone.bin"],
+      } as const;
+      const taken = [files.photo, files.notes];
+      // A note carries its id line, so it is followed by that line.
+      const plan = "01a00000-0000-7000-8000-0000000043a5";
+      const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+      const both = { types: ["core.file", "core.note"] };
+      const { a, b, edges } = await onOneMac(
+        `both-hold-${first}`,
+        { search: both },
+        { search: both, ignore: ["*.dat"] },
+        {
+          "core.file": Object.values(files).map(([id, name]) => ({
+            item: {
+              id,
+              type: "core.file",
+              properties: { title: name, blob_ref: hashOf(bytesOf(name)) },
+            },
+          })),
+          "core.note": [
+            { item: { id: plan, properties: { title: "Plan", body: "p\n" } } },
+          ],
+        },
+      );
+      for (const [, name] of Object.values(files)) {
+        scriptBlob(a.server, bytesOf(name));
+      }
+      acceptUploads(a.server);
+      expect((await a.folder.pull()).ok).toBe(true);
+      for (const name of ["photo.bin", "notes.md", "Plan.md", "skip.dat"]) {
+        renameSync(join(a.dir, name), join(b.dir, name));
+      }
+      rmSync(join(a.dir, files.gone[1]));
+
+      const leaving = async () => {
+        expect((await a.folder.push()).ok).toBe(true);
+        await pastTheGrace();
+        const swept = await a.folder.push();
+        expect(swept.ok, JSON.stringify(swept)).toBe(true);
+        if (!swept.ok) return;
+        // The witness that the sweep sends deletes: the file found nowhere.
+        expect(swept.value.scan.trashed).toEqual([files.gone[1]]);
+        if (first === "arriving") {
+          expect(swept.value.scan.moved_away).toBe(4);
+          return;
+        }
+        // Not yet taken there, the file items keep their bindings here, and
+        // nothing is written over them; the note is followed by its id.
+        expect(swept.value.scan.moved_away).toBe(2);
+        expect(swept.value.pull?.elsewhere).toBe(3);
+        for (const name of ["photo.bin", "notes.md", "Plan.md"]) {
+          expect(
+            existsSync(join(a.dir, name)),
+            `${name} was written again before the other folder took it`,
+          ).toBe(false);
+        }
+        // A file the other folder does not take is written again here.
+        expect(readFileSync(join(a.dir, "skip.dat"))).toEqual(
+          bytesOf("skip.dat"),
+        );
+      };
+      const arriving = async () => {
+        const pushed = await b.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      };
+      if (first === "leaving") {
+        await leaving();
+        await arriving();
+      } else {
+        await arriving();
+        await leaving();
+      }
+      // Once taken there, the folder it left lets the bindings go and, as
+      // its search still holds the items, writes their files again.
+      const settled = await a.folder.push();
+      expect(settled.ok, JSON.stringify(settled)).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+
+      expect(
+        sentCreates(a).map(
+          (sent) => (sent.properties as { title?: string }).title,
+        ),
+        "a file item moved between two folders that both hold it became a new item",
+      ).toEqual([]);
+      expect(
+        [files.photo, files.notes, files.skipped].map(([id]) =>
+          deletesOf(a.server, id),
+        ),
+        "a file item moved between two folders that both hold it was trashed",
+      ).toEqual([0, 0, 0]);
+      expect(deletesOf(a.server, files.gone[0])).toBe(1);
+      expect(deletesOf(a.server, plan)).toBe(0);
+      const placements = edges.placements(b.settings.id);
+      for (const [id, name] of taken) {
+        expect(placements.get(id), `${name} is not its item's file`).toBe(name);
+        expect(readFileSync(join(b.dir, name))).toEqual(bytesOf(name));
+        expect(readFileSync(join(a.dir, name))).toEqual(bytesOf(name));
+      }
+      expect(placements.get(plan)).toBe("Plan.md");
+      expect(idIn(b, "Plan.md")).toBe(plan);
+      expect(idIn(a, "Plan.md")).toBe(plan);
+      expect(
+        readdirSync(b.dir).filter((name) => name.includes(" (2)")),
+        "the item's file was written beside a new item's",
+      ).toEqual([]);
+    },
+  );
 
   it("gives a fresh id to a moved file whose item the server will not show, and pins one it shows", async () => {
     const shown = "01a00000-0000-7000-8000-0000000039d1";

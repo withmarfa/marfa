@@ -198,6 +198,25 @@ impl Peer {
         })
     }
 
+    /// Whether its next scan takes `file`, which carries no id and which it
+    /// has not bound, as `item_id` by the missing file's binding: it holds no
+    /// file of the item already, and its lists take the file. Only that
+    /// binding names the item to it (`left_behind`).
+    fn awaits(&self, file: &OnDisk, item_id: &str, file_item: bool) -> bool {
+        let Some(folder) = &self.folder else {
+            return false;
+        };
+        let bound = self.bound();
+        file.id.is_none()
+            && (file_item || !carries_frontmatter(&file.path))
+            && !bound.contains_key(&file.key)
+            && !bound.values().any(|(bound, _)| bound == item_id)
+            && folder
+                .settings()
+                .and_then(|settings| settings.lists())
+                .is_ok_and(|lists| lists.takes(&file.key))
+    }
+
     fn present(&self, key: &str) -> bool {
         self.root_dir.as_ref().is_some_and(|root| {
             plainly_inside(root, key) && root.entry_metadata(Path::new(key)).is_ok()
@@ -397,6 +416,9 @@ fn wide_line(
 
 pub(super) enum Look {
     Moved,
+    /// Moved to a folder whose next scan takes the file by the missing
+    /// file's binding, which that folder has not read yet.
+    Arriving,
     Nowhere,
     Unsure(String),
 }
@@ -567,13 +589,22 @@ impl<'a> Peers<'a> {
         }
         let peers = self.all();
         let item = lost.item_id.as_str();
+        let arrival = |peer: &Peer, file: &OnDisk| {
+            if peer.awaits(file, item, file_item) {
+                Look::Arriving
+            } else {
+                Look::Moved
+            }
+        };
         if lost.identity.is_some()
-            && peers
-                .iter()
-                .flat_map(|peer| peer.files())
-                .any(|file| file.mark == lost.identity)
+            && let Some((peer, file)) = peers.iter().find_map(|peer| {
+                peer.files()
+                    .iter()
+                    .find(|file| file.mark == lost.identity)
+                    .map(|file| (peer, file))
+            })
         {
-            return Look::Moved;
+            return arrival(peer, file);
         }
         if let Some(why) = peers.iter().find_map(|peer| peer.walked().partial.clone()) {
             return Look::Unsure(why);
@@ -597,6 +628,7 @@ impl<'a> Peers<'a> {
             return if found { Look::Moved } else { Look::Nowhere };
         }
         let mut matches = 0;
+        let mut last = None;
         for peer in peers {
             let bound = peer.bound();
             // Bytes that folder already knows as another item are that item's.
@@ -626,12 +658,15 @@ impl<'a> Peers<'a> {
                         }
                     },
                 };
-                matches += usize::from(same);
+                if same {
+                    matches += 1;
+                    last = Some((peer, file));
+                }
             }
         }
-        match matches {
-            0 => Look::Nowhere,
-            1 => Look::Moved,
+        match (matches, last) {
+            (1, Some((peer, file))) => arrival(peer, file),
+            (0, _) => Look::Nowhere,
             _ => Look::Unsure(format!(
                 "{} files in other folders have its bytes, and which it became cannot be told",
                 matches
