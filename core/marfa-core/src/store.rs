@@ -6137,6 +6137,24 @@ mod tests {
         assert_eq!(held.properties["title"], "edited");
         assert_eq!(held.properties["body"], "server body");
 
+        // Queued after the take, so not laid over the held row: a refused
+        // take must leave it so.
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateItem,
+                item_id: Some("n1"),
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"title":"edited again"},"version":2}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
         let mut older = server.clone();
         older.version = 1;
         older.updated_at = "2026-01-01T00:00:00.000Z".into();
@@ -6176,6 +6194,24 @@ mod tests {
         assert_eq!(held.properties["weight"], 2);
         assert_eq!(held.properties["note"], "server");
 
+        // Queued after the take, so not laid over the held edge: a refused
+        // take must leave it so.
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateEdge,
+                item_id: Some("a"),
+                target_id: Some("b"),
+                edge_id: Some("e1"),
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"weight":3}}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
         let mut older = server.clone();
         older.version = 1;
         older.updated_at = "2026-01-01T00:00:00Z".into();
