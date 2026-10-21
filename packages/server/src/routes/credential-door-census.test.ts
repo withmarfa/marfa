@@ -223,8 +223,6 @@ const OPEN_DOORS: Record<string, string> = {
 const CREDENTIAL_IN_HANDLER: Record<string, string> = {
   "GET /events":
     "the event stream registers a schema but retains its credential and type-read checks in the plain handler",
-  "GET /auth/grants": "lists the apps the owner authorized",
-  "DELETE /auth/grants/:id": "revokes one",
 };
 
 function concrete(path: string): string {
