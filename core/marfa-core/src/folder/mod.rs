@@ -7285,4 +7285,297 @@ mod tests {
         assert!(!matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
         assert!(!matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
     }
+
+    /// A folder holding one bound note per name, scanned until the notes are
+    /// at rest: the first scan binds each and writes its id line, the second
+    /// takes in what the first wrote and records each file's size and time.
+    fn settled_notes(names: &[&str]) -> (ScannedDir, Folder) {
+        let (dir, folder) = scanned_folder();
+        for name in names {
+            std::fs::write(
+                dir.path().join(name),
+                format!("---\ntitle: {name}\n---\nbody\n"),
+            )
+            .unwrap();
+        }
+        assert_eq!(folder.scan().unwrap().created, names.len());
+        folder.scan().unwrap();
+        (dir, folder)
+    }
+
+    /// Changes `body` to `edit` in the note at `path`, in place, so its size,
+    /// time and identity are what the last read recorded. Only a pass that
+    /// reads the file sees it.
+    fn edit_unseen(path: &Path, edit: &str) {
+        let before = std::fs::metadata(path).unwrap().modified().unwrap();
+        let text = std::fs::read_to_string(path).unwrap();
+        assert_eq!(edit.len(), "body".len());
+        let text = text.replace("body", edit);
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        std::io::Write::write_all(&mut &file, text.as_bytes()).unwrap();
+        file.set_modified(before).unwrap();
+    }
+
+    fn body_of(folder: &Folder, path: &str) -> String {
+        let item_id = state::bound_at(&folder.core.conn().unwrap(), path)
+            .unwrap()
+            .unwrap()
+            .item_id;
+        let item = folder.core.get(&item_id).unwrap().unwrap();
+        item.properties
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string()
+    }
+
+    // No server answers in these tests, so a bound note whose write is still
+    // unanswered is counted `waiting` and not `unchanged`.
+    const QUICK: Duration = Duration::from_secs(3600);
+
+    #[test]
+    fn a_quick_pass_does_not_reread_an_unchanged_bound_document() {
+        let (dir, folder) = settled_notes(&["a.md", "b.md"]);
+        edit_unseen(&dir.path().join("a.md"), "bad1");
+        let report = folder.scan_watching(false, QUICK).unwrap();
+        assert_eq!(report.waiting, 2, "{report:?}");
+        assert_eq!(report.updated + report.created + report.renamed, 0);
+        assert!(body_of(&folder, "a.md").starts_with("body"));
+
+        // The witness: a full pass over the same state reads the file and
+        // takes the edit.
+        let report = folder.scan_watching(true, QUICK).unwrap();
+        assert_eq!(report.updated, 1, "{report:?}");
+        assert!(body_of(&folder, "a.md").starts_with("bad1"));
+
+        // So does a plain scan.
+        edit_unseen(&dir.path().join("b.md"), "bad2");
+        let report = folder.scan().unwrap();
+        assert_eq!(report.updated, 1, "{report:?}");
+        assert!(body_of(&folder, "b.md").starts_with("bad2"));
+    }
+
+    #[test]
+    fn a_quick_pass_reads_a_file_whose_size_or_time_changed() {
+        let (dir, folder) = settled_notes(&["a.md", "b.md", "c.md", "d.md"]);
+        let path = |name: &str| dir.path().join(name);
+        // a: another size.
+        let mut text = std::fs::read_to_string(path("a.md")).unwrap();
+        text.push_str("more\n");
+        std::fs::write(path("a.md"), text).unwrap();
+        // b: the same size and new bytes, with another time.
+        edit_unseen(&path("b.md"), "bad1");
+        let earlier =
+            std::fs::metadata(path("b.md")).unwrap().modified().unwrap() - Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(path("b.md"))
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+        // c: unseen, as in the witness.
+        edit_unseen(&path("c.md"), "bad2");
+        let report = folder.scan_watching(false, QUICK).unwrap();
+        assert_eq!(report.updated, 2, "{report:?}");
+        assert_eq!(report.waiting, 2, "{report:?}");
+        assert!(body_of(&folder, "a.md").contains("more"));
+        assert!(body_of(&folder, "b.md").starts_with("bad1"));
+        assert!(body_of(&folder, "c.md").starts_with("body"));
+        assert!(body_of(&folder, "d.md").starts_with("body"));
+    }
+
+    #[test]
+    fn a_quick_pass_finds_a_copy_of_a_bound_file_and_rereads_the_original() {
+        let (dir, folder) = settled_notes(&["a.md", "b.md"]);
+        let path = |name: &str| dir.path().join(name);
+        // The copy names the item the original is bound to.
+        let item_id = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap()
+            .item_id;
+        std::fs::write(
+            path("copy.md"),
+            format!("---\nmarfa_id: {item_id}\ntitle: a.md\n---\nbody\n"),
+        )
+        .unwrap();
+        // Neither original changed in size or time, so only a read sees these.
+        edit_unseen(&path("a.md"), "bad1");
+        edit_unseen(&path("b.md"), "bad2");
+        let report = folder.scan_watching(false, QUICK).unwrap();
+        assert!(body_of(&folder, "b.md").starts_with("body"), "{report:?}");
+        // The original was read: its edit was taken, and the copy was too.
+        assert!(body_of(&folder, "a.md").starts_with("bad1"), "{report:?}");
+        assert!(
+            state::bound_at(&folder.core.conn().unwrap(), "copy.md")
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            (
+                report.created,
+                report.updated,
+                report.renamed,
+                report.waiting
+            ),
+            (1, 1, 0, 1),
+            "{report:?}"
+        );
+    }
+
+    /// A note a pull moved from `a.md` to `moved.md`, and an editor's save of
+    /// its old buffer, with another body, at `a.md` in a new file.
+    fn moved_note_with_a_stale_save() -> (ScannedDir, Folder, String) {
+        let (dir, folder) = settled_notes(&["a.md"]);
+        let item_id = state::bound_at(&folder.core.conn().unwrap(), "a.md")
+            .unwrap()
+            .unwrap()
+            .item_id;
+        std::fs::rename(dir.path().join("a.md"), dir.path().join("moved.md")).unwrap();
+        {
+            let conn = folder.core.conn().unwrap();
+            let bound = state::bound_at(&conn, "a.md").unwrap().unwrap();
+            state::unbind(&conn, "a.md").unwrap();
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: "moved.md".into(),
+                    ..bound
+                },
+            )
+            .unwrap();
+            state::set_moved_from(
+                &conn,
+                &item_id,
+                &state::MovedFrom {
+                    path: "a.md".into(),
+                    version: 5,
+                },
+            )
+            .unwrap();
+        }
+        std::fs::write(
+            dir.path().join("a.md"),
+            format!("---\nmarfa_id: {item_id}\nmarfa_version: 3\ntitle: a.md\n---\nstal\n"),
+        )
+        .unwrap();
+        (dir, folder, item_id)
+    }
+
+    fn flagged_waiting(report: &ScanReport) -> Vec<(&str, &str)> {
+        report
+            .flagged
+            .iter()
+            .map(|flagged| (flagged.path.as_str(), flagged.flag))
+            .collect()
+    }
+
+    fn read(dir: &Path, name: &str) -> Option<String> {
+        std::fs::read_to_string(dir.join(name)).ok()
+    }
+
+    #[test]
+    fn a_scan_that_writes_files_takes_a_save_at_the_path_a_file_was_moved_from() {
+        let (dir, folder, item_id) = moved_note_with_a_stale_save();
+        let save = read(dir.path(), "a.md").unwrap();
+        let report = folder.scan().unwrap();
+        assert_eq!((report.created, report.updated), (0, 1), "{report:?}");
+        assert!(report.flagged.is_empty(), "{report:?}");
+        // The save took the moved file's place; no file is left at the old path.
+        assert_eq!(read(dir.path(), "a.md"), None);
+        assert_eq!(read(dir.path(), "moved.md"), Some(save));
+        let conn = folder.core.conn().unwrap();
+        let bound: Vec<_> = state::every_bound(&conn)
+            .unwrap()
+            .into_iter()
+            .map(|bound| (bound.path, bound.item_id))
+            .collect();
+        assert_eq!(bound, [("moved.md".to_string(), item_id.clone())]);
+        // An old buffer taken is no edit of the moved file: the record stays.
+        assert!(state::moved_from(&conn).unwrap().contains_key(&item_id));
+        assert!(state::stale_waits(&conn).unwrap().is_empty());
+        drop(conn);
+        assert!(body_of(&folder, "moved.md").starts_with("stal"));
+        assert_eq!(folder.scan().unwrap().missing, 0);
+    }
+
+    #[test]
+    fn a_scan_that_keeps_files_leaves_a_save_at_the_old_path_for_the_scan_that_writes() {
+        let (dir, folder, item_id) = moved_note_with_a_stale_save();
+        let save = read(dir.path(), "a.md").unwrap();
+        let moved = read(dir.path(), "moved.md").unwrap();
+        let report = folder.scan_keeping_files().unwrap();
+        assert_eq!(
+            flagged_waiting(&report),
+            [("a.md", "waiting")],
+            "{report:?}"
+        );
+        assert_eq!(
+            report.flagged[0].reason,
+            "it is an old copy of moved.md, which a push that writes files takes"
+        );
+        assert_eq!((report.created, report.updated), (0, 0), "{report:?}");
+        assert_eq!(read(dir.path(), "a.md"), Some(save.clone()));
+        assert_eq!(read(dir.path(), "moved.md"), Some(moved));
+        let conn = folder.core.conn().unwrap();
+        // Held in this pass alone: no record keeps it, and no item is made.
+        assert!(state::stale_waits(&conn).unwrap().is_empty());
+        assert!(state::bound_at(&conn, "a.md").unwrap().is_none());
+        assert!(state::moved_from(&conn).unwrap().contains_key(&item_id));
+        drop(conn);
+        assert!(body_of(&folder, "moved.md").starts_with("body"));
+
+        // The witness: the scan that writes files takes the same save.
+        let report = folder.scan().unwrap();
+        assert!(report.flagged.is_empty(), "{report:?}");
+        assert_eq!(read(dir.path(), "a.md"), None);
+        assert_eq!(read(dir.path(), "moved.md"), Some(save));
+    }
+
+    #[test]
+    fn a_save_is_held_while_the_moved_file_holds_an_edit_of_its_own() {
+        for keeping in [false, true] {
+            let (dir, folder, item_id) = moved_note_with_a_stale_save();
+            let save = read(dir.path(), "a.md").unwrap();
+            edit_unseen(&dir.path().join("moved.md"), "edit");
+            let report = if keeping {
+                folder.scan_keeping_files()
+            } else {
+                folder.scan()
+            }
+            .unwrap();
+            let reason = "it is an old copy of moved.md, which holds an edit of its own; keep one of the two";
+            assert_eq!(
+                flagged_waiting(&report),
+                [("a.md", "waiting")],
+                "{keeping}: {report:?}"
+            );
+            assert_eq!(report.flagged[0].reason, reason, "{keeping}");
+            assert_eq!(read(dir.path(), "a.md"), Some(save.clone()), "{keeping}");
+            let conn = folder.core.conn().unwrap();
+            let waits = state::stale_waits(&conn).unwrap();
+            assert_eq!(waits.len(), 1, "{keeping}");
+            assert_eq!(waits["a.md"].reason, reason);
+            assert_eq!(waits["a.md"].hash, state::hash(save.as_bytes()));
+            assert!(state::bound_at(&conn, "a.md").unwrap().is_none());
+            drop(conn);
+            // The moved file's own edit is not the save's to lose.
+            assert!(
+                read(dir.path(), "moved.md").unwrap().contains("edit"),
+                "{keeping}"
+            );
+            // Either mode sends it: keeping files withholds only file writes.
+            let kept = body_of(&folder, "moved.md");
+            assert!(kept.starts_with("edit"), "{keeping}: {kept}");
+            // Held until the save changes, though the edit has ended the
+            // record of the move.
+            assert!(
+                !state::moved_from(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .contains_key(&item_id),
+                "{keeping}"
+            );
+            let again = folder.scan().unwrap();
+            assert_eq!(flagged_waiting(&again), [("a.md", "waiting")], "{keeping}");
+        }
+    }
 }
