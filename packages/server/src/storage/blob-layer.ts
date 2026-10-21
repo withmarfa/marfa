@@ -1,5 +1,9 @@
 import type { AppConfig } from "../config.js";
-import { DiskBlobStore, type BlobStore } from "./blob-store.js";
+import {
+  BlobStoreUnreachable,
+  DiskBlobStore,
+  type BlobStore,
+} from "./blob-store.js";
 import { S3BlobStore } from "./blob-s3.js";
 import type { Storage } from "./interface.js";
 import { runAuditedTransaction } from "./audited-transaction.js";
@@ -7,6 +11,7 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import { withBlobFaults } from "./blob-faults.js";
+import { faultsArmed, storeCheckDeadlineFault } from "../control/faults.js";
 
 /**
  * The stores this instance has attached, built in one place so that every
@@ -43,9 +48,20 @@ export async function recordedStores(
 /**
  * How a page of blobs has its copies checked: a few checks at a time, and
  * each given up after a bound, so a slow or hanging store answers a refusal
- * in time rather than holding back the answer.
+ * in time rather than holding back the answer. Read the bound through
+ * {@link storeCheckTimeoutMs}.
  */
 export const storeChecks = { concurrency: 16, timeoutMs: 15_000 };
+
+/** How long one question to a store may go unanswered: the bound in
+ *  {@link storeChecks}, or the shorter one a `store-check-deadline` fault
+ *  sets on a server with test hooks. */
+export function storeCheckTimeoutMs(): number {
+  return (
+    (faultsArmed() ? storeCheckDeadlineFault() : undefined) ??
+    storeChecks.timeoutMs
+  );
+}
 
 /** The refusal for a store that failed or did not answer, which proves
  *  nothing about the copy it was asked for. */
@@ -71,7 +87,10 @@ export function storeUnavailable(
  * `work`, or a rejection once `ms` have passed without it settling or once
  * `signal` aborts. Either way the signal `work` was handed aborts, so the
  * store gives the request up, and an answer that comes after all is handed
- * to `late`, so a stream it opened is not left open.
+ * to `late`, so a stream it opened is not left open. Past `ms` the rejection
+ * is a {@link BlobStoreUnreachable}, whatever the store's own rejection to
+ * the abort says: a store that does not answer is one that cannot be
+ * reached, not one that holds no copy.
  */
 export async function within<T>(
   work: (signal: AbortSignal) => Promise<T>,
@@ -85,8 +104,9 @@ export async function within<T>(
   };
   if (outer?.aborted) stop();
   else outer?.addEventListener("abort", stop, { once: true });
+  const silent = new BlobStoreUnreachable(`no answer within ${String(ms)} ms`);
   const timer = setTimeout(() => {
-    controller.abort(new Error(`no answer within ${String(ms)} ms`));
+    controller.abort(silent);
   }, ms);
   const running = work(controller.signal);
   try {
@@ -102,6 +122,7 @@ export async function within<T>(
     ]);
   } catch (error) {
     running.then(late ?? (() => undefined), () => undefined);
+    if (controller.signal.reason === silent) throw silent;
     throw error;
   } finally {
     clearTimeout(timer);
@@ -163,7 +184,7 @@ export async function wholeCopies(
       try {
         held = await within(
           (cancel) => store.has(hash, cancel),
-          storeChecks.timeoutMs,
+          storeCheckTimeoutMs(),
           { signal: decided.signal },
         );
       } catch (error) {

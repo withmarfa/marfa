@@ -10,6 +10,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { BlobStore } from "../storage/blob-store.js";
+import { storeChecks } from "../storage/blob-layer.js";
 import { BlobReplicator } from "./blob-replicate.js";
 
 let ctx: TestContext | undefined;
@@ -30,6 +31,34 @@ async function upload(c: TestContext, content: string): Promise<string> {
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { hash: string }).hash;
+}
+
+/** `work`'s value, or a rejection once `ms` pass without it settling. */
+async function settlesWithin<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`still running after ${String(ms)} ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** `work` with the process's log lines held back. */
+async function quietly<T>(work: () => Promise<T>): Promise<T> {
+  const write = process.stdout.write.bind(process.stdout);
+  process.stdout.write = () => true;
+  try {
+    return await work();
+  } finally {
+    process.stdout.write = write;
+  }
 }
 
 async function bytesOf(store: BlobStore, hash: string): Promise<string> {
@@ -149,6 +178,101 @@ describe("BlobReplicator.runOnce", () => {
     }
     expect(await bytesOf(ctx.blobs.disk, onSecond)).toBe(content);
     expect(await second.has(onDisk)).toBeNull();
+  });
+
+  it("gives up on a target that does not answer in time, copies nothing into it, and copies it once the store answers", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const hash = await upload(ctx, "a hanging store lacks this");
+    const has = second.has.bind(second);
+    let open = 0;
+    second.has = (_hash, signal) => {
+      open++;
+      return new Promise<never>((_, reject) => {
+        signal?.addEventListener("abort", () => {
+          open--;
+          reject(new Error("request aborted"));
+        });
+      });
+    };
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(
+        await quietly(() => settlesWithin(replicator.runOnce(), 5_000)),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+    } finally {
+      second.has = has;
+      storeChecks.timeoutMs = timeout;
+    }
+    expect(open).toBe(0);
+    expect(await second.has(hash)).toBeNull();
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    // The lock is free and nothing stands in the way of the copy.
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+    expect(await bytesOf(second, hash)).toBe("a hanging store lacks this");
+  });
+
+  it("gives up on a source that does not answer in time, and closes the read it opens after all", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const content = "only a hanging store has this";
+    const hash = `sha256:${createHash("sha256").update(content).digest("hex")}`;
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await ctx.storage.blobs.register(hash, "text/plain", content.length);
+    await ctx.storage.blobs.recordLocation(hash, second.id);
+    const get = second.get.bind(second);
+    let late: Readable | undefined;
+    let opened!: () => void;
+    const openedLate = new Promise<void>((resolve) => {
+      opened = resolve;
+    });
+    // A store that ignores the call-off and answers after the bound.
+    second.get = async (wanted, range) => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      const read = await get(wanted, range);
+      late = read?.stream;
+      opened();
+      return read;
+    };
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(
+        await quietly(() =>
+          settlesWithin(
+            new BlobReplicator(ctx!.storage, stores, {
+              maxBlobs: 100,
+              maxBytes: 1024 * 1024,
+            }).runOnce(),
+            5_000,
+          ),
+        ),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+      await openedLate;
+      // The late answer reaches its handler after the store hands it back.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      second.get = get;
+      storeChecks.timeoutMs = timeout;
+    }
+    expect(late?.destroyed).toBe(true);
+    expect(await ctx.blobs.disk.has(hash)).toBeNull();
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([second.id]);
   });
 
   it("stops at its bounds and says how many remain", async () => {

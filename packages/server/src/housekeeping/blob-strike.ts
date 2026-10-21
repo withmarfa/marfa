@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { addAbortSignal } from "node:stream";
 import type { BlobStore } from "../storage/blob-store.js";
-import { storeChecks, within } from "../storage/blob-layer.js";
+import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
@@ -72,7 +72,7 @@ export async function copyIntact(
 ): Promise<boolean> {
   const read = await within(
     (cancel) => store.get(hash, undefined, cancel),
-    storeChecks.timeoutMs,
+    storeCheckTimeoutMs(),
     { signal, late: (gone) => gone?.stream.destroy() },
   );
   if (!read) return false;

@@ -13,6 +13,7 @@ import { createTestContext, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { BlobStore } from "../storage/blob-store.js";
 import { storeChecks } from "../storage/blob-layer.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { BlobIntegrityChecker } from "./blob-integrity.js";
 import { BlobReplicator } from "./blob-replicate.js";
 
@@ -34,6 +35,23 @@ async function upload(c: TestContext, content: string): Promise<string> {
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { hash: string }).hash;
+}
+
+/** `work`'s value, or a rejection once `ms` pass without it settling. */
+async function settlesWithin<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`still running after ${String(ms)} ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Where a disk store keeps one hash: four hex characters of directory,
@@ -442,10 +460,97 @@ describe("BlobIntegrityChecker.runOnce", () => {
       silenced.restore();
       storeChecks.timeoutMs = timeout;
     }
-    expect(result).toMatchObject({ verified: 0, struck: 0 });
+    expect(result).toMatchObject({ verified: 0, struck: 0, unreachable: 1 });
     expect(open).toBe(0);
     const [location] = await ctx.storage.blobs.listLocations(hash);
     expect(location?.verified_at).toBeNull();
+  });
+
+  it("counts an object store that does not answer in time as unreachable, strikes nothing, and lets every lock go", async () => {
+    ctx = await createTestContext();
+    const held = [
+      await upload(ctx, "first copy a hanging object store holds"),
+      await upload(ctx, "second copy a hanging object store holds"),
+    ];
+    let asked = 0;
+    let open = 0;
+    const deleted: string[] = [];
+    const stub: BlobStore = {
+      id: "hanging-object-store",
+      kind: "s3",
+      locator: "s3://hanging/blobs",
+      attach: () => Promise.resolve(),
+      put: () => Promise.resolve(),
+      get: () => Promise.reject(new Error("the check never reads")),
+      has: (_hash, signal) => {
+        asked++;
+        open++;
+        return new Promise<never>((_, reject) => {
+          signal?.addEventListener("abort", () => {
+            open--;
+            reject(new Error("request aborted"));
+          });
+        });
+      },
+      delete: (hash) => {
+        deleted.push(hash);
+        return Promise.resolve();
+      },
+    };
+    await ctx.storage.blobs.attachStore({
+      id: stub.id,
+      kind: stub.kind,
+      locator: stub.locator,
+    });
+    for (const hash of held) {
+      await ctx.storage.blobs.recordLocation(hash, stub.id);
+    }
+    const all = [ctx.blobs.disk, stub];
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    const silenced = quiet();
+    let result;
+    try {
+      result = await settlesWithin(
+        new BlobIntegrityChecker(
+          ctx.storage,
+          { stores: all, byId: (id) => all.find((s) => s.id === id) },
+          { maxRows: 100, maxBytes: 1024 * 1024 },
+        ).runOnce(),
+        5_000,
+      );
+    } finally {
+      silenced.restore();
+      storeChecks.timeoutMs = timeout;
+    }
+    // The disk's two copies stamped; the hanging store asked once, its
+    // request called off, and named unreachable rather than missing.
+    expect(result).toMatchObject({ verified: 2, struck: 0, unreachable: 1 });
+    expect(asked).toBe(1);
+    expect(open).toBe(0);
+    expect(deleted).toEqual([]);
+    expect(
+      silenced
+        .lines()
+        .filter((line) => line.message === "blob.store_unreachable")
+        .map((line) => line.store_id),
+    ).toEqual([stub.id]);
+    expect(
+      silenced.lines().filter((line) => line.message === "blob.copy_struck"),
+    ).toEqual([]);
+    for (const hash of held) {
+      const locations = await ctx.storage.blobs.listLocations(hash);
+      expect(locations.find((l) => l.store_id === stub.id)?.verified_at).toBe(
+        null,
+      );
+      // The lock the check took for the copy is free again.
+      expect(
+        await settlesWithin(
+          withBlobUploadLock(hash, () => Promise.resolve("free")),
+          1_000,
+        ),
+      ).toBe("free");
+    }
   });
 
   it("counts no strike for a row dropped between the listing and the check", async () => {

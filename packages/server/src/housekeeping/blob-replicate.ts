@@ -9,6 +9,7 @@ import {
 } from "./blob-delete.js";
 import type { Stores } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
+import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
 
 export interface ReplicationBounds {
   /** Most blobs one run copies. */
@@ -113,10 +114,19 @@ export class BlobReplicator {
   private async copy(hash: string, target: BlobStore): Promise<boolean> {
     if (!(await this.storage.blobs.get(hash))) return false;
     await finishCopyDeletion(this.storage, target, hash);
-    const present = (await reaching(() => target.has(hash))) !== null;
+    const present =
+      (await reaching(() =>
+        within((cancel) => target.has(hash, cancel), storeCheckTimeoutMs()),
+      )) !== null;
     const source = await this.sourceFor(hash, target.id);
     if (!source) return false;
-    const read = await reaching(() => source.get(hash));
+    const read = await reaching(() =>
+      within(
+        (cancel) => source.get(hash, undefined, cancel),
+        storeCheckTimeoutMs(),
+        { late: (gone) => gone?.stream.destroy() },
+      ),
+    );
     if (!read) {
       // The log names a copy the store no longer has. The integrity
       // check is what strikes it; the next run finds another source.

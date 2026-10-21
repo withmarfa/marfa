@@ -52,7 +52,7 @@ import type { Storage, ItemFilters, LoadedType } from "../storage/interface.js";
 import {
   answeringFirst,
   recordedStores,
-  storeChecks,
+  storeCheckTimeoutMs,
   storeUnavailable,
   wholeCopies,
   within,
@@ -156,7 +156,7 @@ async function readWhole(
     try {
       read = await within(
         (cancel) => store.get(hash, undefined, cancel),
-        storeChecks.timeoutMs,
+        storeCheckTimeoutMs(),
         { signal, late: (gone) => gone?.stream.destroy() },
       );
     } catch (error) {
