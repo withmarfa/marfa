@@ -1468,9 +1468,9 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folders/file-item-doc-name-replaced`
 
-When a file that names a note's item ID replaces the file of a file item at a document name (`.md`, `.markdown` or `.txt`, in any letter case), a device MUST keep the file bound to that note.
+When a file that names a note's item ID replaces the file of a file item at a document name (`.md`, `.markdown` or `.txt`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
 
-**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note.
+**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's.
 
 **Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name`.
 
@@ -5700,9 +5700,9 @@ When a new folder document is not UTF-8, a device MUST report its status as `hel
 
 ### `folders/status-file-item-doc-name`
 
-When a device reads a folder's status and a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is the file of a file item, a device MUST NOT report it as `held` for what its bytes hold.
+When a device reads a folder's status and a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is the file of a file item and names no note's item ID, a device MUST NOT report it as `held` for what its bytes hold.
 
-**Reason:** the status says what the next scan does, and the scan sends a file item's bytes whatever they hold (`folders/file-item-doc-name-sent`). The file is the file item's when it is bound to one, or when the scan would bind it to one by its file identity, before any scan has followed a rename. A new document that is not UTF-8 is still reported by `folders/status-encoding`.
+**Reason:** the status says what the next scan does, and the scan sends a file item's bytes whatever they hold (`folders/file-item-doc-name-sent`). The file is the file item's when it is bound to one, or when the scan would bind it to one by its file identity, before any scan has followed a rename. A new document that is not UTF-8 is still reported by `folders/status-encoding`. A file that names a note's item ID is read as that note's file, because the status does not settle which of two files wins a note; the scan does.
 
 **Tests:** `device/folders-placement.test.ts › reports a file item at a document name by its item, not by its bytes`.
 
