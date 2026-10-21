@@ -5382,7 +5382,7 @@ mod tests {
         for (cannot, says) in [
             (crate::scripted::refusal(503, "unavailable"), "503"),
             (crate::scripted::refusal(429, "rate_limited"), "429"),
-            (crate::scripted::Answer::Stall, "network"),
+            (crate::scripted::Answer::Stall, "request to http://127.0.0.1:"),
         ] {
             let server = crate::scripted::Scripted::start();
             let rows = ["a", "b", "c"];
@@ -5394,7 +5394,7 @@ mod tests {
                 );
             }
             let (_dir, core) = deleting(&server, &rows);
-            if says == "network" {
+            if says.starts_with("request to") {
                 // Gone rather than waited out: a refused connection.
                 drop(server);
                 let report = core.drain().unwrap();

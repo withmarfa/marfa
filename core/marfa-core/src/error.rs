@@ -31,7 +31,9 @@ pub enum CoreError {
     },
     #[error("{0}")]
     Io(String),
-    #[error("network: {0}")]
+    /// The words are the whole message and do not repeat the code `network`,
+    /// which a surface that prints a code beside a message would show twice.
+    #[error("{0}")]
     Network(String),
     /// The server names its contract on every answer, so one naming none is
     /// taken as from something in front of it. Environmental, whatever its

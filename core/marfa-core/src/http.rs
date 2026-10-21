@@ -629,6 +629,16 @@ impl Http {
         origin_of_base(&self.base)
     }
 
+    /// A transport failure, naming the server by scheme, host and port only:
+    /// a gateway's path prefix, a key or a token is never in what a person
+    /// is shown.
+    fn unreached(&self, cause: impl std::fmt::Display) -> CoreError {
+        CoreError::Network(format!(
+            "request to {} failed: {cause}",
+            self.base.origin().ascii_serialization()
+        ))
+    }
+
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
         let page: WirePage<WireType> = self.get_json(&["types"], &[])?;
         self.whole_catalog(page.next_cursor, "type")?;
@@ -805,7 +815,7 @@ impl Http {
             .max_redirects(0)
             .build()
             .call()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+            .map_err(|error| self.unreached(error))?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
         let named = header(&response, CONTRACT_HEADER).is_some();
@@ -813,7 +823,7 @@ impl Http {
         let body = response
             .into_body()
             .read_to_string()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+            .map_err(|error| self.unreached(error))?;
         if !(200..300).contains(&status) {
             return Err(if named {
                 refusal(status, &body, retry_after)
@@ -1049,7 +1059,7 @@ impl Http {
             })?;
             self.agent
                 .run(request)
-                .map_err(|error| CoreError::Network(error.to_string()))
+                .map_err(|error| self.unreached(error))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, true)?;
@@ -1061,7 +1071,7 @@ impl Http {
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
         // A body that will not read is a transport failure, not an answer.
-        let body = whole(response.into_body())?;
+        let body = self.whole(response.into_body())?;
         let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
             Ok(envelope) => envelope.error.code,
             Err(_) => String::new(),
@@ -1145,9 +1155,7 @@ impl Http {
                     request = request.header("X-Marfa-Read-View", view);
                 }
             }
-            request
-                .call()
-                .map_err(|error| CoreError::Network(error.to_string()))
+            request.call().map_err(|error| self.unreached(error))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
@@ -1178,7 +1186,7 @@ impl Http {
                 let mut text = String::new();
                 reader
                     .read_to_string(&mut text)
-                    .map_err(|error| CoreError::Network(error.to_string()))?;
+                    .map_err(|error| self.unreached(error))?;
                 text
             }
         };
@@ -1243,7 +1251,7 @@ impl Http {
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
-        let network = |error: ureq::Error| CoreError::Network(error.to_string());
+        let network = |error: ureq::Error| self.unreached(error);
         let send = |authorization: Option<&str>, text: Option<&str>| {
             let builder = builder(authorization);
             match text {
@@ -1317,7 +1325,7 @@ impl Http {
         let body = if call.stream && (200..300).contains(&status) {
             ReplyBody::Stream(Box::new(response.into_body().into_reader()))
         } else {
-            ReplyBody::Text(whole(response.into_body())?)
+            ReplyBody::Text(self.whole(response.into_body())?)
         };
         Ok(Reply {
             status,
@@ -1469,7 +1477,7 @@ impl Http {
                     request.send(body)
                 }
             };
-            sent.map_err(|error| CoreError::Network(error.to_string()))
+            sent.map_err(|error| self.unreached(error))
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
@@ -1482,7 +1490,7 @@ impl Http {
             .collect::<Vec<_>>();
         let certified = conditional
             .is_none_or(|expected| proof.len() == 1 && proof[0].to_str().ok() == Some(expected));
-        let text = whole(response.into_body())?;
+        let text = self.whole(response.into_body())?;
         if !(200..300).contains(&status) {
             let error = self.refused(status, named, &text, retry_after);
             if conditional.is_some() && named && matches!(status, 403 | 404) && !certified {
@@ -1525,17 +1533,19 @@ impl Http {
     }
 }
 
-/// An answer read whole, past ureq's default 10 MiB, which a page of 200
-/// rows, a bulk read of 100 or an export can pass. A text answer that is not
-/// UTF-8, such as a proxy's page, is read with its bad bytes replaced, so its
-/// status still reaches the caller; JSON is read strictly. The body budget
-/// still bounds how long the read may take.
-fn whole(body: ureq::Body) -> Result<String, CoreError> {
-    body.into_with_config()
-        .limit(u64::MAX)
-        .lossy_utf8(true)
-        .read_to_string()
-        .map_err(|error| CoreError::Network(error.to_string()))
+impl Http {
+    /// An answer read whole, past ureq's default 10 MiB, which a page of 200
+    /// rows, a bulk read of 100 or an export can pass. A text answer that is
+    /// not UTF-8, such as a proxy's page, is read with its bad bytes
+    /// replaced, so its status still reaches the caller; JSON is read
+    /// strictly. The body budget still bounds how long the read may take.
+    fn whole(&self, body: ureq::Body) -> Result<String, CoreError> {
+        body.into_with_config()
+            .limit(u64::MAX)
+            .lossy_utf8(true)
+            .read_to_string()
+            .map_err(|error| self.unreached(error))
+    }
 }
 
 fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {

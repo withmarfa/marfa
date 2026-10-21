@@ -173,13 +173,21 @@ describe("the exit codes", () => {
   it("leaves by 3 when the server cannot be reached", async () => {
     const unreachable = await c.cli.refused([
       "--url",
-      "http://127.0.0.1:1",
+      "http://127.0.0.1:1/gateway?token=marfa_t_secret",
+      "--key",
+      "marfa_k1_secret",
       "status",
     ]);
     expect(unreachable.code).toBe(3);
     expect(unreachable.envelope.exit).toBe(3);
     expect(unreachable.envelope.error.code).toBe("network");
     expect(unreachable.envelope.error.server).toBeNull();
+    const message = unreachable.envelope.error.message;
+    expect(message).toContain("http://127.0.0.1:1");
+    for (const kept_out of ["gateway", "token", "secret"]) {
+      expect(message).not.toContain(kept_out);
+    }
+    expect(message.startsWith("network")).toBe(false);
   });
 
   it("leaves by 4 when the working copy refuses under the device rules", async () => {

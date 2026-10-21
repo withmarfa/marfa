@@ -1484,6 +1484,14 @@ If a refusal names no contract, then the CLI MUST report it `unnamed_answer` wit
 
 **Tests:** `device/contract.test.ts › hands on a refusal that names no contract, as a proxy's would`.
 
+### `device/command-unreachable-origin`
+
+If the CLI cannot reach the server it was sent to, then it MUST report it `network` with exit 3, whose message names the server by scheme, host and port, and by no path, query, key or token, and does not begin with the word `network`.
+
+**Reason:** a person with several servers needs to know which one did not answer, and a gateway's path or a credential in the address must not reach a terminal or a log. A surface that prints the code beside the message would show `network` twice.
+
+**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
+
 ### `device/command-redirect`
 
 If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
