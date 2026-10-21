@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 
 use super::edge_types::EdgeTypes;
 use crate::catalog::Catalog;
+use crate::error::CoreError;
 use crate::model::{Item, ItemState, Tier};
 
 pub const ID_FIELD: &str = "marfa_id";
@@ -129,6 +130,16 @@ pub struct Read {
     pub properties: Map<String, Value>,
 }
 
+/// Whether a `type` value is a type identifier the grammar takes. Any other
+/// value, such as another app's `type: reference`, can never be a Marfa type,
+/// so a file carries it as the property `type` and the item keeps its own.
+pub fn names_type(value: &Value) -> Result<bool, CoreError> {
+    match value {
+        Value::String(named) => crate::hydrate::type_id(named.trim()),
+        _ => Ok(false),
+    }
+}
+
 /// Lines naming the item, its version or an edge are neither own fields nor
 /// properties.
 pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, String> {
@@ -136,11 +147,10 @@ pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, 
     for (name, value) in front {
         match name.as_str() {
             TYPE_FIELD => {
-                read.lines.r#type = match value {
-                    Value::String(named) if !named.trim().is_empty() => {
-                        Some(named.trim().to_string())
-                    }
-                    _ => return Err(format!("{TYPE_FIELD} names no type: {value}")),
+                if names_type(value).map_err(|error| error.to_string())? {
+                    read.lines.r#type = value.as_str().map(|named| named.trim().to_string());
+                } else {
+                    read.properties.insert(name.clone(), value.clone());
                 }
             }
             TIER_FIELD => {
@@ -218,9 +228,26 @@ fn tags_of(value: &Value) -> Result<Vec<String>, String> {
 /// The item's own fields as frontmatter lines: the type and tier always,
 /// the tags where it has any, the state where it is archived and the time
 /// where it is not the moment the item was made.
-pub fn lines_of(item: &Item) -> Map<String, Value> {
+///
+/// The type line shows a `type` property that names no type in place of the
+/// item's type, and an empty type line in `file` stays empty, so a file
+/// another app typed is written back as it was.
+pub fn lines_of(
+    item: &Item,
+    file: Option<&Map<String, Value>>,
+) -> Result<Map<String, Value>, CoreError> {
     let mut lines = Map::new();
-    lines.insert(TYPE_FIELD.into(), Value::String(item.r#type.clone()));
+    let shown = match item.properties.get(TYPE_FIELD) {
+        Some(value) if !names_type(value)? => value.clone(),
+        _ if file
+            .and_then(|front| front.get(TYPE_FIELD))
+            .is_some_and(Value::is_null) =>
+        {
+            Value::Null
+        }
+        _ => Value::String(item.r#type.clone()),
+    };
+    lines.insert(TYPE_FIELD.into(), shown);
     if let Some(tier) = item.tier {
         lines.insert(TIER_FIELD.into(), Value::String(tier.as_str().into()));
     }
@@ -241,7 +268,14 @@ pub fn lines_of(item: &Item) -> Map<String, Value> {
             Value::String(item.occurred_at.clone()),
         );
     }
-    lines
+    Ok(lines)
+}
+
+/// Whether a file carries this item property: one under a name the file
+/// keeps for something else is carried only where it is a `type` that names
+/// no type, which the type line shows.
+pub fn carried(name: &str, value: &Value, edge_types: &EdgeTypes) -> Result<bool, CoreError> {
+    Ok(!reserved(name, edge_types) || (name == TYPE_FIELD && !names_type(value)?))
 }
 
 pub fn body_field<'a>(catalog: &'a Catalog, r#type: &str) -> &'a str {
@@ -290,7 +324,10 @@ pub(super) fn presentation(
     let mut normalized = front.clone();
     for (name, value) in front {
         let replacement = match name.as_str() {
-            TYPE_FIELD => value.as_str().map(|s| Value::String(s.trim().into())),
+            // A value that names no type is a property, which is compared as written.
+            TYPE_FIELD if matches!(names_type(value), Ok(true)) => {
+                value.as_str().map(|s| Value::String(s.trim().into()))
+            }
             VERSION_FIELD => super::version_named(value).map(Value::from),
             OCCURRED_AT_FIELD => value
                 .as_str()
@@ -395,6 +432,7 @@ mod tests {
                 json!({"marfa_version": 3, "count": 1}),
             ),
             (json!({"marfa_version": 3.0}), json!({"marfa_version": 3})),
+            (json!({"type": " core.note "}), json!({"type": "core.note"})),
             (json!({"cites": "[[One]]"}), json!({"cites": ["[[One]]"]})),
             (
                 json!({"cites": ["[[Two]]", "[[One]]"]}),
@@ -528,9 +566,17 @@ mod tests {
     #[test]
     fn a_time_is_written_only_where_it_is_not_the_moment_the_item_was_made() {
         let made = "2026-09-01T10:00:00.000Z";
-        assert!(!lines_of(&item(made, made)).contains_key("occurred_at"));
-        assert!(!lines_of(&item("2026-09-01T10:00:00Z", made)).contains_key("occurred_at"));
-        let set = lines_of(&item("2026-10-06T00:00:00.000Z", made));
+        assert!(
+            !lines_of(&item(made, made), None)
+                .unwrap()
+                .contains_key("occurred_at")
+        );
+        assert!(
+            !lines_of(&item("2026-09-01T10:00:00Z", made), None)
+                .unwrap()
+                .contains_key("occurred_at")
+        );
+        let set = lines_of(&item("2026-10-06T00:00:00.000Z", made), None).unwrap();
         assert_eq!(set["occurred_at"], "2026-10-06T00:00:00.000Z");
     }
 
@@ -543,8 +589,6 @@ mod tests {
             json!({ "occurred_at": 20261006 }),
             json!({ "occurred_at": ["2026-10-06"] }),
             json!({ "occurred_at": "" }),
-            json!({ "type": 3 }),
-            json!({ "type": " " }),
             json!({ "tier": "attic" }),
             json!({ "tags": { "a": 1 } }),
             json!({ "tags": [1] }),
@@ -552,5 +596,63 @@ mod tests {
         ] {
             assert!(read(&front(bad.clone()), &edge_types()).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_type_line_that_names_no_type_is_compared_as_written() {
+        let mut wanted = front(json!({"type": "  "}));
+        keep_equivalent(&mut wanted, &front(json!({"type": ""})), &edge_types());
+        assert_eq!(wanted["type"], "  ");
+    }
+
+    #[test]
+    fn a_type_line_that_names_no_type_is_a_property_shown_back_as_it_was() {
+        let named = read(&front(json!({ "type": " core.task " })), &edge_types()).unwrap();
+        assert_eq!(named.lines.r#type.as_deref(), Some("core.task"));
+        assert!(named.properties.is_empty());
+        for foreign in [
+            json!("reference"),
+            json!("Core.Note"),
+            json!("a."),
+            json!(".b"),
+            json!("core.*"),
+            json!("app.example"),
+            json!("schema.thing"),
+            json!(""),
+            json!(" "),
+            json!(3),
+            json!(["a", "b"]),
+            json!(null),
+        ] {
+            let read = read(&front(json!({ "type": foreign })), &edge_types()).unwrap();
+            assert_eq!(read.lines.r#type, None, "{foreign}");
+            assert_eq!(read.properties.get("type"), Some(&foreign), "{foreign}");
+            let mut held = item("2026-09-01T10:00:00.000Z", "2026-09-01T10:00:00.000Z");
+            held.properties.insert("type".into(), foreign.clone());
+            assert_eq!(lines_of(&held, None).unwrap()["type"], foreign, "{foreign}");
+            assert!(
+                carried("type", &foreign, &edge_types()).unwrap(),
+                "{foreign}"
+            );
+        }
+        let mut held = item("2026-09-01T10:00:00.000Z", "2026-09-01T10:00:00.000Z");
+        held.properties.insert("type".into(), json!("core.task"));
+        assert_eq!(
+            lines_of(&held, None).unwrap()["type"],
+            "core.note",
+            "a type property that names a type was shown over the item's type"
+        );
+        assert!(!carried("type", &json!("core.task"), &edge_types()).unwrap());
+        held.properties.clear();
+        assert_eq!(
+            lines_of(&held, Some(&front(json!({ "type": null })))).unwrap()["type"],
+            Value::Null,
+            "an empty type line was filled in"
+        );
+        assert_eq!(
+            lines_of(&held, Some(&front(json!({ "type": "reference" })))).unwrap()["type"],
+            "core.note",
+            "a word the item no longer holds was kept over its type"
+        );
     }
 }

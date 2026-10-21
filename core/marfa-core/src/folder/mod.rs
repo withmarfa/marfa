@@ -1903,7 +1903,7 @@ impl Folder {
             .filter_map(|shown| shown.item)
             .collect();
         let (names, typed, recorded) = lines;
-        let mut front = fields::lines_of(item);
+        let mut front = fields::lines_of(item, typed.map(|document| &document.front))?;
         // A file that already says when the item happened goes on saying it,
         // and a blank line stays blank where there is no time to show.
         match typed.and_then(|document| document.front.get(fields::OCCURRED_AT_FIELD)) {

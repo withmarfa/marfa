@@ -223,7 +223,7 @@ pub(crate) fn declaration(
         return Err(invalid("a type to declare names its id".into()));
     };
     let root = id.split('.').next().unwrap_or_default();
-    if id.ends_with(".*") || !crate::hydrate::type_pattern(id)? {
+    if !crate::hydrate::type_id(id)? {
         return Err(invalid(format!(
             "not a type to declare: {id:?}; {}",
             crate::hydrate::GRAMMAR

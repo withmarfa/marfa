@@ -420,9 +420,9 @@ When a settings-file edit names a search the device cannot answer, a device MUST
 
 ### `folders/default-document-type`
 
-When a new document has no `type` line, a device MUST choose its type from the defaults, then the search's first non-file type, then `core.note`.
+When a new document has no `type` line, or one holding no type identifier (`folders/foreign-type-property`), a device MUST choose its type from the defaults, then the search's first non-file type, then `core.note`.
 
-**Tests:** `device/folders.test.ts › makes a new document the search's first type that is not a file type`, `device/folders.test.ts › takes every type, and any default type, where its search names no type`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
+**Tests:** `device/folders.test.ts › makes a new document the search's first type that is not a file type`, `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `device/folders.test.ts › takes every type, and any default type, where its search names no type`, `device/folders-contract-a.test.ts › uses core.note without a type default and preserves explicit empty tags and titles`.
 
 ### `folders/default-document-tier`
 
@@ -882,7 +882,7 @@ When a folder document’s accepted type is outside the folder’s search, a dev
 
 ### `folders/own-field-lines`
 
-When a device reads a Markdown file, a device MUST interpret `type`, `tier`, `tags`, `state`, and `occurred_at` as the item's own fields rather than properties.
+When a device reads a Markdown file, a device MUST interpret a `type` line holding a type identifier (`types/id-grammar`), and the `tier`, `tags`, `state`, and `occurred_at` lines, as the item's own fields rather than properties.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads type, tags, tier and state as the item's own`, `device/folders-frontmatter.test.ts › sets a new item's own time, from a date or from a date and time`.
 
@@ -918,9 +918,11 @@ When a held type declares properties reserved for document own fields, metadata,
 
 ### `folders/uncarried-preserve`
 
-When a document is edited, a device MUST preserve item properties that cannot be carried as document properties.
+When a document is edited, a device MUST preserve item properties that cannot be carried as document properties, except a `type` property that the document's `type` line replaces with a value that is not a type identifier (`folders/foreign-type-property`).
 
-**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`.
+**Reason:** an app can set a `type` property that names a type, which no file can show, but a word the person writes on the line is their edit of it and wins.
+
+**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`, `device/folders-frontmatter.test.ts › replaces an app's type property with the word the person writes on the line`.
 
 ### `folders/write-own-fields`
 
@@ -1074,7 +1076,7 @@ If a non-null `occurred_at` value in a document not bound to a file item is not 
 
 ### `folders/own-field-validation`
 
-If the frontmatter of a document not bound to a file item names an empty or non-text type, a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
+If the frontmatter of a document not bound to a file item names a tier other than feed or library, a non-null state other than active or archived, or a malformed tag value, then a device MUST flag the file `unreadable`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads own-field lines in each form a file can hold them`, `device/folders-frontmatter.test.ts › holds a file whose frontmatter does not parse`.
 
@@ -1216,7 +1218,7 @@ When a device rewrites a Markdown document that opened with a byte-order mark, a
 
 When a current document changes its `type` line to another document type, a device MUST send the item edit with the new type and `retype: true`.
 
-**Tests:** `device/folders-frontmatter.test.ts › retypes an item whose frontmatter changes its type`.
+**Tests:** `device/folders-frontmatter.test.ts › retypes an item whose frontmatter changes its type`, `device/folders-frontmatter.test.ts › retypes the item when the line comes to name a type, and drops the property`.
 
 ### `folders/retype-new-body`
 
@@ -1232,9 +1234,35 @@ When retyping a document changes its body property, a device MUST preserve the o
 
 ### `folders/retype-unsuited`
 
-If a document names an unknown type, a `system.*` type or a file type, then a device MUST refuse its creation or retype locally.
+If a document's `type` line holds a type identifier the copy does not hold, a `system.*` type or a file type, then a device MUST refuse its creation or retype locally.
 
-**Tests:** `device/folders-frontmatter.test.ts › refuses a type no document can be, before sending anything`.
+**Reason:** an identifier is a type someone meant, such as a mistyped `core.notes`, so making the document another type would hide the mistake.
+
+**Tests:** `device/folders-frontmatter.test.ts › refuses a type no document can be, before sending anything`, `device/folders-frontmatter.test.ts › reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
+
+### `folders/foreign-type-property`
+
+When a document's `type` line holds a value that is not a type identifier (`types/id-grammar`), a device MUST carry that value as the item property `type` and leave the item's type unchanged.
+
+**Reason:** other note apps write their own words in a `type` line, such as `type: reference`. No such value can ever name a Marfa type, so holding the file would hold every note those apps made, and dropping the value would lose what the person wrote. The value replaces a `type` property an app set (`folders/uncarried-preserve`).
+
+**Tests:** `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `› changes only the property when the line comes to hold another word`, `› replaces an app's type property with the word the person writes on the line`, `› clears the property and keeps the type when the line is taken out`, `› reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
+
+### `folders/foreign-type-write`
+
+When a device writes a document whose item carries a `type` property that is not a type identifier (`types/id-grammar`), a device MUST write that property's value as the `type` line in place of the item's type.
+
+**Reason:** the file reads back as the person wrote it on every machine, and the next scan finds no edit in it.
+
+**Tests:** `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `› sends nothing on the scan after the file is written back`, `› writes the same file on a second machine`, `› reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
+
+### `folders/foreign-type-empty`
+
+When a device writes a document whose `type` line is empty and whose item carries no `type` property, a device MUST keep the line empty.
+
+**Reason:** a save that replaces every property drops a null one (`items/update-null-replace`), so the empty line can have nothing on the item to be written back from, and filling it in would change a file the person did not edit.
+
+**Tests:** `device/folders-frontmatter.test.ts › reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
 
 ### `folders/refused-edit-kept`
 
