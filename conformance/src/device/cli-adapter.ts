@@ -1076,8 +1076,9 @@ export interface ScanReport {
    *  trashed (`folders/moved-file-count`). */
   moved_away: number;
   skipped: number;
-  /** Files that are not documents a watch left for a later pass, still
-   *  changing (`folders/binary-waits-for-settle`). */
+  /** Files whose bytes a watch left for a later pass, still changing: files
+   *  that are not documents (`folders/binary-waits-for-settle`) and file
+   *  items at a document name (`folders/file-item-doc-name-settle`). */
   settling: string[];
   /** Files bound to a row the copy lost, queued again because they changed
    *  or moved (`folders/lost-row-edit-retried`). Counted in `created` too. */

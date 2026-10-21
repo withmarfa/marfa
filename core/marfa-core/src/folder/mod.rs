@@ -205,7 +205,8 @@ pub struct ScanReport {
     pub unsure: Vec<Unsure>,
     pub registry: Option<String>,
     pub skipped: usize,
-    /// Files that are not documents left for a later pass, still changing.
+    /// Files whose bytes a watch left for a later pass, still changing:
+    /// files that are not documents, and file items at a document name.
     pub settling: Vec<String>,
     /// Counted in `created` too.
     pub requeued: usize,
