@@ -143,7 +143,12 @@ import { isPrimaryKeyViolation } from "./pk-violation.js";
 import { isFileType, stampedFileSize } from "./file-size.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
-import { rowToItem, rowWriter, writerColumns } from "./helpers.js";
+import {
+  type ItemRow,
+  rowToItem,
+  rowWriter,
+  writerColumns,
+} from "./helpers.js";
 import type { WriterColumns } from "./helpers.js";
 import * as clock from "../../clock.js";
 
@@ -1375,92 +1380,29 @@ export class SqliteItemStore implements ItemStore {
         // not this write's.
         await writeVersion(currentProps);
 
-        let merged = mergeUpdateProperties(
+        const merged = mergeUpdateProperties(
           currentProps,
           incomingProps,
           input.properties_mode ?? "merge",
         );
         judgeResult(input, row.type, merged);
-        const newVersion = row.version + 1;
-        const newTier = input.tier ?? row.tier;
-
-        const setClause: Record<string, unknown> = {
-          properties: sql`jsonb(${JSON.stringify(merged)})`,
-          // Unconditional, so a patch that removes `starts_at` nulls the
-          // column rather than leaving the last value behind.
-          ...instantColumnValues(merged),
-          version: newVersion,
-          updated_at: now,
-          ...writerColumns(input.writer ?? null),
-          ...(input.tier !== undefined && { tier: input.tier }),
-          ...(input.occurred_at !== undefined && {
-            occurred_at: input.occurred_at,
-          }),
-          ...(input.source_id !== undefined && {
-            source_id: input.source_id,
-          }),
-          // Only where a caller explicitly asked to re-type. Every other
-          // door refuses a type that disagrees with the row rather than
-          // passing one down here.
-          ...(input.type !== undefined && { type: input.type }),
-        };
-
-        try {
-          const written = await tx
-            .update(items)
-            .set(setClause)
-            .where(whereClause)
-            .run();
-          if (
-            written.rowsAffected > 0 &&
-            input.type !== undefined &&
-            input.type !== row.type
-          )
-            markStructuralReadChange();
-        } catch (err) {
-          if (isSourceDedupViolation(err)) {
-            throw new MarfaError(
-              ErrorCode.SOURCE_ID_CONFLICT,
-              `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
-              { source: row.source, source_id: input.source_id },
-            );
-          }
-          throw err;
-        }
-        await this.keepKeysInStep(
-          tx,
-          { id, type: input.type ?? row.type, properties: merged },
-          row,
-          input.source_id,
-          input.blob_proof ?? null,
-          digestsIn(incomingProps ?? {}),
-          input.refuse_unproven_file === true,
-        );
-        merged = await keepFileSize(tx, {
+        return await this.persistUpdate(tx, row, {
           id,
-          type: input.type ?? row.type,
+          input,
+          now,
           properties: merged,
-        });
-
-        await this.searchStore.index(id, merged, input.type ?? row.type);
-
-        return rowToItem({
-          ...row,
-          properties: JSON.stringify(merged),
-          version: newVersion,
-          updated_at: now,
-          tier: newTier,
-          ...(input.occurred_at !== undefined && {
-            occurred_at: input.occurred_at,
-          }),
-          ...(input.source_id !== undefined && {
-            source_id: input.source_id,
-          }),
-          // Carried onto the response as well as into the row: built from
-          // the pre-update snapshot alone, the response would report the
-          // type the item had stopped being, and a re-type would read as
-          // having silently done nothing.
-          ...(input.type !== undefined && { type: input.type }),
+          fields: {
+            ...(input.tier !== undefined && { tier: input.tier }),
+            ...(input.occurred_at !== undefined && {
+              occurred_at: input.occurred_at,
+            }),
+            ...(input.source_id !== undefined && {
+              source_id: input.source_id,
+            }),
+          },
+          answeredOccurredAt: input.occurred_at,
+          keysSourceId: input.source_id,
+          carried: digestsIn(incomingProps ?? {}),
         });
       }
 
@@ -1680,92 +1622,125 @@ export class SqliteItemStore implements ItemStore {
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.
       await writeVersion(currentProps);
-      const newVersion = row.version + 1;
-      const newTier = resolvedFields.tier ?? row.tier;
-
-      const mergeSet: Record<string, unknown> = {
-        properties: sql`jsonb(${JSON.stringify(resolvedProperties)})`,
-        ...instantColumnValues(resolvedProperties),
-        version: newVersion,
-        updated_at: now,
-        ...writerColumns(input.writer ?? null),
-        ...(resolvedFields.tier !== undefined && { tier: resolvedFields.tier }),
-        ...(resolvedFields.occurred_at !== undefined && {
-          occurred_at: resolvedFields.occurred_at,
-        }),
-        ...(resolvedFields.source_id !== undefined && {
-          source_id: resolvedFields.source_id,
-        }),
-        // A move is applied at a stale version as at the current one, the
-        // merged properties having been held to the destination above.
-        ...(input.type !== undefined && { type: input.type }),
-      };
-
-      try {
-        const written = await tx
-          .update(items)
-          .set(mergeSet)
-          .where(whereClause)
-          .run();
-        if (
-          written.rowsAffected > 0 &&
-          input.type !== undefined &&
-          input.type !== row.type
-        )
-          markStructuralReadChange();
-      } catch (err) {
-        if (isSourceDedupViolation(err)) {
-          throw new MarfaError(
-            ErrorCode.SOURCE_ID_CONFLICT,
-            `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
-            { source: row.source, source_id: input.source_id },
-          );
-        }
-        throw err;
-      }
-      await this.keepKeysInStep(
-        tx,
-        { id, type: input.type ?? row.type, properties: resolvedProperties },
-        row,
-        resolvedFields.source_id ?? undefined,
-        input.blob_proof ?? null,
-        staleCarried,
-        input.refuse_unproven_file === true,
-      );
-      resolvedProperties = await keepFileSize(tx, {
+      const persisted = await this.persistUpdate(tx, row, {
         id,
-        type: input.type ?? row.type,
+        input,
+        now,
         properties: resolvedProperties,
+        fields: resolvedFields,
+        // An item's own time is never null on the row, so a resolved
+        // value of null is a field the write did not settle rather than
+        // one it cleared.
+        answeredOccurredAt: resolvedFields.occurred_at ?? undefined,
+        keysSourceId: resolvedFields.source_id ?? undefined,
+        carried: staleCarried,
       });
-
-      await this.searchStore.index(
-        id,
-        resolvedProperties,
-        input.type ?? row.type,
-      );
-
       return attachResolution(
-        rowToItem({
-          ...row,
-          properties: JSON.stringify(resolvedProperties),
-          version: newVersion,
-          updated_at: now,
-          tier: newTier,
-          ...(input.type !== undefined && { type: input.type }),
-          // An item's own time is never null on the row, so a resolved
-          // value of null is a field the write did not settle rather than
-          // one it cleared.
-          ...(resolvedFields.occurred_at != null && {
-            occurred_at: resolvedFields.occurred_at,
-          }),
-          ...(resolvedFields.source_id !== undefined && {
-            source_id: resolvedFields.source_id,
-          }),
-        }),
+        persisted,
         resolution,
         sibling?.sibling,
         sibling?.edges,
       );
+    });
+  }
+
+  /** The write both update paths end on: the row, the keys kept in step with
+   *  it, the search index and the answer, inside the caller's transaction.
+   *  `fields` are the item fields the row takes; `answeredOccurredAt` and
+   *  `keysSourceId` are what the answer and the key sync read, which the two
+   *  paths settle differently. */
+  private async persistUpdate(
+    tx: SqliteTx,
+    row: ItemRow,
+    write: {
+      id: string;
+      input: StoredUpdateItemInput;
+      now: string;
+      properties: Record<string, unknown>;
+      fields: ItemFieldValues;
+      answeredOccurredAt: string | undefined;
+      keysSourceId: string | undefined;
+      carried: ReadonlySet<string>;
+    },
+  ): Promise<Item> {
+    const { id, input, now, fields } = write;
+    const newVersion = row.version + 1;
+    const newTier = fields.tier ?? row.tier;
+    const type = input.type ?? row.type;
+
+    const setClause: Record<string, unknown> = {
+      properties: sql`jsonb(${JSON.stringify(write.properties)})`,
+      // Unconditional, so a patch that removes `starts_at` nulls the
+      // column rather than leaving the last value behind.
+      ...instantColumnValues(write.properties),
+      version: newVersion,
+      updated_at: now,
+      ...writerColumns(input.writer ?? null),
+      ...(fields.tier !== undefined && { tier: fields.tier }),
+      ...(fields.occurred_at !== undefined && {
+        occurred_at: fields.occurred_at,
+      }),
+      ...(fields.source_id !== undefined && { source_id: fields.source_id }),
+      // Only where a caller explicitly asked to re-type. Every other door
+      // refuses a type that disagrees with the row rather than passing one
+      // down here.
+      ...(input.type !== undefined && { type: input.type }),
+    };
+
+    try {
+      const written = await tx
+        .update(items)
+        .set(setClause)
+        .where(eq(items.id, id))
+        .run();
+      if (
+        written.rowsAffected > 0 &&
+        input.type !== undefined &&
+        input.type !== row.type
+      )
+        markStructuralReadChange();
+    } catch (err) {
+      if (isSourceDedupViolation(err)) {
+        throw new MarfaError(
+          ErrorCode.SOURCE_ID_CONFLICT,
+          `source_id "${String(input.source_id)}" is already in use under source "${row.source ?? MISSING_SOURCE}"`,
+          { source: row.source, source_id: input.source_id },
+        );
+      }
+      throw err;
+    }
+    await this.keepKeysInStep(
+      tx,
+      { id, type, properties: write.properties },
+      row,
+      write.keysSourceId,
+      input.blob_proof ?? null,
+      write.carried,
+      input.refuse_unproven_file === true,
+    );
+    const properties = await keepFileSize(tx, {
+      id,
+      type,
+      properties: write.properties,
+    });
+
+    await this.searchStore.index(id, properties, type);
+
+    return rowToItem({
+      ...row,
+      properties: JSON.stringify(properties),
+      version: newVersion,
+      updated_at: now,
+      tier: newTier,
+      ...(write.answeredOccurredAt !== undefined && {
+        occurred_at: write.answeredOccurredAt,
+      }),
+      ...(fields.source_id !== undefined && { source_id: fields.source_id }),
+      // Carried onto the response as well as into the row: built from the
+      // pre-update snapshot alone, the response would report the type the
+      // item had stopped being, and a re-type would read as having silently
+      // done nothing.
+      ...(input.type !== undefined && { type: input.type }),
     });
   }
 
