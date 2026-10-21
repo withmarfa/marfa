@@ -362,10 +362,18 @@ fn usage(
     Some(CliError::Usage(message))
 }
 
-/// What `--socket` refuses about a command before anything is sent: the
-/// commands that have no use for it. A command whose operation needs a key
-/// is sent, and the server's `401` says so.
+/// What `--socket` refuses before anything is sent: commands that have no
+/// use for it, including folder commands that resolve their own server.
+/// Folder inventory is the one folder command that uses the private socket.
 fn socket_refusal(command: &Command) -> Option<CliError> {
+    if matches!(
+        command,
+        Command::Folders {
+            command: folders::FoldersCommand::Inventory { .. }
+        }
+    ) {
+        return None;
+    }
     if matches!(
         command,
         Command::Login(_)
@@ -482,7 +490,9 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             owner::setup(command, &setup_remote, &out)
         }
         Command::Device(args) => return device::run(args, &named, cli.json),
-        Command::Folders { command } => return folders::run(command, &named, cli.json),
+        Command::Folders { command } => {
+            return folders::run(command, &named, cli.socket.as_deref(), cli.json);
+        }
         Command::Status => status::run(&remote()?, &out),
         Command::Metrics => metrics::run(&remote()?, &out),
         Command::Whoami => whoami::run(&remote()?, &out),
@@ -562,6 +572,8 @@ mod tests {
             &["logout"],
             &["device", "status"],
             &["folders", "list"],
+            &["folders", "health", "folder-id"],
+            &["folders", "create", "--title", "Test"],
             &["docs", "topics"],
             &["types", "scaffold", "user.recipe"],
         ] {
@@ -578,6 +590,7 @@ mod tests {
             &["connectors", "deliveries", "body", "id", "delivery"],
             &["blobs", "download", "sha256:abc"],
             &["connectors", "list"],
+            &["folders", "inventory"],
         ] {
             assert!(socket_refusal(&command(words)).is_none(), "{words:?}");
         }

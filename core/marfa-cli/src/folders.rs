@@ -199,7 +199,12 @@ fn sync_exit(drain: &marfa_core::DrainReport, caught_up: bool) -> Exit {
     }
 }
 
-pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<Exit, CliError> {
+pub fn run(
+    command: FoldersCommand,
+    named: &Named,
+    socket: Option<&Path>,
+    json: bool,
+) -> Result<Exit, CliError> {
     let mut exit = Exit::Done;
     let done = match command {
         FoldersCommand::Add { dir, folder, yes } => {
@@ -259,7 +264,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<Exit, C
             let request = crate::remote::request::Request::get(&["folders"])
                 .query_opt("limit", limit.map(|n| n.to_string()))
                 .query_opt("cursor", cursor);
-            Printer { json }.value(&Remote::resolve(named)?.json(&request)?)
+            let remote = match socket {
+                Some(path) => Remote::local(path)?,
+                None => Remote::resolve(named)?,
+            };
+            Printer { json }.value(&remote.json(&request)?)
         }
         FoldersCommand::List => {
             let listed = match Registry::located() {

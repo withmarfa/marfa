@@ -118,7 +118,7 @@ export function renderFolderList(
       <div class="stack-24">
         <PageHeader
           title="Folders"
-          lede="Folders kept in step with Marfa. Add a folder with the marfa command line on the machine that holds it."
+          lede="Create folder settings with marfa folders create, then add a copy with marfa folders add on the machine that holds it."
         />
         <RowGroup oneLine>
           {props.rows.length ? (
@@ -202,7 +202,7 @@ export function renderFolderDetail(
               <RowGroup>
                 <EmptyState
                   title="No reports yet"
-                  description="A copy's reports appear here after it syncs and reports to Marfa."
+                  description="A copy's reports appear here after it sends a report to Marfa."
                 />
               </RowGroup>
             ) : (
