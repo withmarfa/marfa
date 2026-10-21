@@ -372,9 +372,7 @@ fn take(
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     if applied {
         for edge in &brought {
-            if store::put_server_edge(&tx, edge)? {
-                store::lay_waiting_edge_writes_over(&tx, &edge.id)?;
-            }
+            store::take_server_edge(&tx, edge)?;
         }
     }
     // The last id applied, never the highest seen: where an event is not
@@ -1319,8 +1317,7 @@ fn apply(
                     .metadata
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
-                store::put_server_item(tx, item, tags, catalog)?;
-                store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
+                store::take_server_item(tx, item, tags, catalog)?;
                 Ok(true)
             } else {
                 store::evict_item(tx, &item.id, &slice.whole)
@@ -1339,8 +1336,7 @@ fn apply(
                 || slice.whole.contains(&edge.edge_type)
                 || store::edge_write_waits(tx, &edge.id)?
             {
-                store::put_server_edge(tx, edge)?;
-                store::lay_waiting_edge_writes_over(tx, &edge.id)?;
+                store::take_server_edge(tx, edge)?;
                 Ok(true)
             } else {
                 // An edge moved to a source the copy does not hold leaves it.

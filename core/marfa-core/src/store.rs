@@ -565,7 +565,7 @@ pub fn instant_of(stamp: &str) -> Option<i128> {
 /// follow on the same core can have brought while the row was being read;
 /// answers whether it wrote. Either way the copy now holds a row the server
 /// wrote, so a read-back owed for it is settled.
-pub fn put_server_item(
+pub(crate) fn put_server_item(
     conn: &Connection,
     item: &WireItem,
     tags: Option<&[String]>,
@@ -596,7 +596,7 @@ pub fn put_server_item(
 }
 
 /// `put_server_item` for an edge.
-pub fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
+pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
     settle_read_back(conn, Subject::Edge, &edge.id)?;
     if holds_later(
         conn,
@@ -3693,6 +3693,34 @@ fn forget_row(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Takes the server's row into the copy and, only where that wrote, lays the
+/// writes still waiting over it, so the copy keeps showing them. A row refused
+/// for a later one held leaves the writes laid over that one. Answers whether
+/// the row went in. The contract is `queue-and-verdicts/waiting-over-answer`,
+/// `queue-and-verdicts/waiting-over-event`, `device/pin-waiting-write` and
+/// `device/catch-up-edge-own-write`.
+pub fn take_server_item(
+    conn: &Connection,
+    item: &WireItem,
+    tags: Option<&[String]>,
+    catalog: &crate::catalog::Catalog,
+) -> Result<bool, CoreError> {
+    if !put_server_item(conn, item, tags, catalog)? {
+        return Ok(false);
+    }
+    lay_waiting_writes_over(conn, &item.id, &|laid| catalog.indexing(laid))?;
+    Ok(true)
+}
+
+/// `take_server_item` for an edge.
+pub fn take_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
+    if !put_server_edge(conn, edge)? {
+        return Ok(false);
+    }
+    lay_waiting_edge_writes_over(conn, &edge.id)?;
+    Ok(true)
+}
+
 /// Call after anything puts the server's row into the copy. The row is
 /// indexed as the type it is laid over as, since a waiting retype moves it.
 pub fn lay_waiting_writes_over(
@@ -6074,6 +6102,122 @@ mod tests {
         stale.updated_at = "2026-03-01T00:00:00Z".into();
         assert!(!put_server_edge(&conn, &stale).unwrap());
         assert_eq!(edge_by_id(&conn, "link").unwrap().unwrap().version, 2);
+    }
+
+    #[test]
+    fn taking_a_server_item_lays_the_waiting_writes_over_it_unless_the_copy_holds_a_later_one() {
+        let conn = conn();
+        let catalog = crate::catalog::Catalog::empty();
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateItem,
+                item_id: Some("n1"),
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"title":"edited"},"version":1}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        let mut server = note(
+            "n1",
+            "from the server",
+            "server body",
+            "2026-01-01T00:00:00Z",
+        );
+        server.version = 2;
+        server.updated_at = "2026-01-02T00:00:00.000Z".into();
+        assert!(take_server_item(&conn, &server, Some(&[]), &catalog).unwrap());
+        let held = item_by_id(&conn, "n1").unwrap().unwrap();
+        assert_eq!(held.properties["title"], "edited");
+        assert_eq!(held.properties["body"], "server body");
+
+        // Queued after the take, so not laid over the held row: a refused
+        // take must leave it so.
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateItem,
+                item_id: Some("n1"),
+                target_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"title":"edited again"},"version":2}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        let mut older = server.clone();
+        older.version = 1;
+        older.updated_at = "2026-01-01T00:00:00.000Z".into();
+        older.properties.insert("title".into(), "older".into());
+        assert!(!take_server_item(&conn, &older, Some(&[]), &catalog).unwrap());
+        assert_eq!(item_by_id(&conn, "n1").unwrap().unwrap(), held);
+    }
+
+    #[test]
+    fn taking_a_server_edge_lays_the_waiting_writes_over_it_unless_the_copy_holds_a_later_one() {
+        let conn = conn();
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateEdge,
+                item_id: Some("a"),
+                target_id: Some("b"),
+                edge_id: Some("e1"),
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"weight":2}}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        let mut server = wire_edge("e1", "a", "b", "references");
+        server.version = 2;
+        server.updated_at = "2026-01-02T00:00:00Z".into();
+        server.properties.insert("weight".into(), Value::from(1));
+        server
+            .properties
+            .insert("note".into(), Value::from("server"));
+        assert!(take_server_edge(&conn, &server).unwrap());
+        let held = edge_by_id(&conn, "e1").unwrap().unwrap();
+        assert_eq!(held.properties["weight"], 2);
+        assert_eq!(held.properties["note"], "server");
+
+        // Queued after the take, so not laid over the held edge: a refused
+        // take must leave it so.
+        enqueue(
+            &conn,
+            &NewWrite {
+                kind: WriteKind::UpdateEdge,
+                item_id: Some("a"),
+                target_id: Some("b"),
+                edge_id: Some("e1"),
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: r#"{"properties":{"weight":3}}"#,
+                depends_on: &[],
+            },
+        )
+        .unwrap();
+        let mut older = server.clone();
+        older.version = 1;
+        older.updated_at = "2026-01-01T00:00:00Z".into();
+        older.properties.insert("note".into(), Value::from("older"));
+        assert!(!take_server_edge(&conn, &older).unwrap());
+        assert_eq!(edge_by_id(&conn, "e1").unwrap().unwrap(), held);
     }
 
     #[test]
