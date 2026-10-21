@@ -64,6 +64,7 @@ use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
 use crate::drain::Cut;
 use crate::error::CoreError;
+use crate::http::REQUEST_LIMIT;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 use std::io::{Read, Seek};
@@ -92,10 +93,6 @@ pub const STATE_DIR: &str = ".marfa";
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 pub const SETTINGS_FILE: &str = "folder.yaml";
-
-/// The server's cap on a request's body unless its instance names another,
-/// past which it answers `413 request_too_large`.
-pub const REQUEST_LIMIT: usize = 1_048_576;
 
 pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
 

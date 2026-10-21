@@ -24,6 +24,11 @@ pub const PAGE_LIMIT: u32 = 200;
 /// (`items/bulk-get-cap`).
 pub const BULK_GET_LIMIT: usize = 100;
 
+/// The server's cap on a request's body unless its instance names another,
+/// past which it answers `413 request_too_large`. An instance does not say
+/// what it set, so a device holds every request to the default.
+pub const REQUEST_LIMIT: usize = 1_048_576;
+
 /// The most values `POST /items/lookup` takes in one request
 /// (`search-and-filters/lookup-values-cap`).
 pub const LOOKUP_LIMIT: usize = 500;
@@ -922,6 +927,18 @@ impl Http {
         &self,
         ids: &[String],
     ) -> Result<Vec<WireItemWithMetadata>, CoreError> {
+        Ok(self
+            .items_by_id_whole(ids)?
+            .into_iter()
+            .map(|(row, _)| row)
+            .collect())
+    }
+
+    /// `items_by_id`, with each item as the server wrote it beside it.
+    pub(crate) fn items_by_id_whole(
+        &self,
+        ids: &[String],
+    ) -> Result<Vec<(WireItemWithMetadata, serde_json::Value)>, CoreError> {
         #[derive(serde::Deserialize)]
         struct Metadata {
             item_id: String,
@@ -930,7 +947,7 @@ impl Http {
         }
         #[derive(serde::Deserialize)]
         struct Answer {
-            items: Vec<WireItem>,
+            items: Vec<serde_json::Value>,
             metadata: Vec<Metadata>,
             #[serde(default)]
             listed: Option<Vec<bool>>,
@@ -966,8 +983,10 @@ impl Http {
         };
         let mut seen = std::collections::HashSet::new();
         let mut rows = Vec::with_capacity(answered);
-        for ((item, metadata), listed) in answer.items.into_iter().zip(answer.metadata).zip(listed)
+        for ((whole, metadata), listed) in answer.items.into_iter().zip(answer.metadata).zip(listed)
         {
+            let item = serde_json::from_value::<WireItem>(whole.clone())
+                .map_err(|error| unreadable(&error.to_string()))?;
             if !ids.contains(&item.id) || !seen.insert(item.id.clone()) {
                 return Err(unreadable(
                     "an item the request did not name, or named twice",
@@ -976,13 +995,16 @@ impl Http {
             if metadata.item_id != item.id {
                 return Err(unreadable("the metadata does not pair with the items"));
             }
-            rows.push(WireItemWithMetadata {
-                listed,
-                item,
-                metadata: WireMetadata {
-                    tags: metadata.tags,
+            rows.push((
+                WireItemWithMetadata {
+                    listed,
+                    item,
+                    metadata: WireMetadata {
+                        tags: metadata.tags,
+                    },
                 },
-            });
+                whole,
+            ));
         }
         Ok(rows)
     }
@@ -1033,6 +1055,25 @@ impl Http {
     /// responses retain their status and code together for the drain to
     /// classify; `refusal()` drops the status.
     pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
+        self.write(outgoing, Some(outgoing.idempotency_key))
+    }
+
+    /// A page of writes to a bulk door, which takes no `Idempotency-Key`
+    /// (`items/idempotency-operations`), answered as `send` answers one.
+    pub(crate) fn send_page(&self, segments: &[&str], body: &str) -> Result<Answer, CoreError> {
+        self.write(
+            &Outgoing {
+                method: Method::Post,
+                segments: segments.iter().map(|segment| segment.to_string()).collect(),
+                params: Vec::new(),
+                body,
+                idempotency_key: "",
+            },
+            None,
+        )
+    }
+
+    fn write(&self, outgoing: &Outgoing<'_>, key: Option<&str>) -> Result<Answer, CoreError> {
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing
             .params
@@ -1049,8 +1090,10 @@ impl Http {
                 .uri(url.as_str())
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
-                .header("Idempotency-Key", outgoing.idempotency_key)
                 .header("Authorization", authorization);
+            if let Some(key) = key {
+                request = request.header("Idempotency-Key", key);
+            }
             if let Some(instance) = &self.instance {
                 request = request.header(INSTANCE_HEADER, instance);
             }

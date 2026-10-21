@@ -34,7 +34,7 @@ When the process that queued a write ends before the write is answered, a device
 
 When a drain sends more than one queued write, a device MUST send them in the order they were queued.
 
-**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it.
+**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it. Creates sent in a page are the other exception: a page goes before the writes it does not carry, so it carries only creates with no other unanswered write queued ahead of them (`queue-and-verdicts/create-pages`).
 
 **Tests:** `device/queue.test.ts › sends queued writes in the order they were queued`, `› drains in order on reconnect`.
 
@@ -147,6 +147,90 @@ When the server answers a write with `Idempotency-Replayed: true`, or with `ackn
 **Reason:** a caller can then tell a write that landed now from one that had already landed.
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `› sends an edit of its own create on the version that create made where the server answers a repeat of it`.
+
+## Creates sent in pages
+
+A first sync of a folder, or an import, queues thousands of creates. Sent one at a time, each create and its read-back is two requests against the server's request limit; sent in pages, a page of up to a thousand is one request and its read-back a request for each hundred.
+
+### `queue-and-verdicts/create-pages`
+
+When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same row or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the server takes in a single request, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
+
+**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one behind a write that is not a create would jump that write; one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same row, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. An instance does not say what it set `MARFA_MAX_REQUEST_BYTES` to, so a device holds every create to the default, 1048576 bytes; on an instance that lowers it, a create between its cap and the default can still go in a page.
+
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `› sends no create in a page ahead of a write queued before it that is not a create`, `› pages no edge whose end the page it went in did not create`, `› sends its files and their placements in pages, in one push`, `› sends a file larger than a single request may carry on its own door, and the rest in pages`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
+
+### `queue-and-verdicts/page-never-sent`
+
+A device MUST NOT put in a page a write it has sent before.
+
+**Reason:** a write sent and not answered may have landed, and only its own door, under its idempotency key, answers it from the server's record (`queue-and-verdicts/key-kept-on-retry`). A page carries no idempotency key, so the server keeps no answer for it: a page whose answer was lost is answered, write by write, on the server's state when each is sent again, not on an answer kept from the first attempt.
+
+**Tests:** `device/pages.test.ts › sends a page whose answer was lost again one write at a time, under each write's key`.
+
+### `queue-and-verdicts/page-entry-alone`
+
+When a page answers an entry with anything but `created` under the id it was queued with, a device MUST send that write on its own door, under its idempotency key, in the same drain.
+
+**Reason:** the page's answer for one entry is not a verdict on the write; its own door gives the answer every other write gets, including a replay of a write an earlier page took.
+
+**Tests:** `device/pages.test.ts › sends an entry the page does not create under its own id on its own door, under its key, in the same drain`.
+
+### `queue-and-verdicts/page-limited`
+
+When the server answers a page with `429`, a device MUST leave every write in the page unanswered, uncounted and unsent.
+
+**Reason:** a limited request was not taken, so the next drain can send the same writes in a page again rather than one at a time.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server limits unanswered, unsent and uncounted`.
+
+### `queue-and-verdicts/page-not-authorized`
+
+If the server answers a page with `401` and the device cannot renew its credential, then a device MUST leave every write in the page uncounted and unsent.
+
+**Reason:** a request refused for its credential was not taken, so once the device can sign in the same writes go in a page again rather than one at a time under keys the server never saw.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
+
+### `queue-and-verdicts/page-credential-blocks-queue`
+
+When the server answers a page `401` naming its contract, a device MUST block every write with no verdict `credential_refused`.
+
+**Reason:** the page's `401` is the refusal `queue-and-verdicts/credential-blocks-queue` says of a write: every queued write carries the same credential.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
+
+### `queue-and-verdicts/page-credential-stops-drain`
+
+When the server answers a page `401` naming its contract, a device MUST send no write after it in that drain.
+
+**Reason:** a write of the page sent on its own door would meet the same refusal under a key the server never saw, and a write sent before goes in no later page (`queue-and-verdicts/page-never-sent`).
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
+
+### `queue-and-verdicts/page-read-back`
+
+When a page creates a write, a device MUST read it back through `POST /items/bulk-get`, at most 100 ids to a request, and settle it on that read as `queue-and-verdicts/success-read-again` says.
+
+**Reason:** a read for each created row would spend the request limit the page saved; the server takes at most 100 ids to a request (`items/bulk-get-cap`).
+
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed read view, with no write answered`, `› sends an edge the read of its source does not hold on its own door, under its key, answered as a repeat`.
+
+### `queue-and-verdicts/page-read-back-failed`
+
+If the read back of writes a page created meets an environmental failure, then a device MUST record each of those writes accepted and send none of them again.
+
+**Reason:** the server took the page, so each write landed; sent again it would be a second attempt that only its own door may make (`queue-and-verdicts/page-never-sent`), so the device keeps the page's answer as the verdict and reads the rows back before the next drain sends anything (`queue-and-verdicts/owed-read-first`).
+
+**Tests:** `device/pages.test.ts › keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again`, `› settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more`.
+
+### `queue-and-verdicts/page-owed-read-refused`
+
+If the server refuses the read that writes a page created owe, other than by an environmental failure or a refusal that ends the drain, then a device MUST keep each write's verdict and its read owed, and go on with the drain.
+
+**Reason:** a read owed by a write on its own door is kept the same way: the refusal is of the read, not of the writes the server took, and a write sent again would be a second attempt (`queue-and-verdicts/page-never-sent`).
+
+**Tests:** `device/pages.test.ts › keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue`, `› keeps the read of an edge owed where the server refuses it, and sends the rest of the queue`.
 
 ## The version a write carries
 
@@ -1620,7 +1704,7 @@ An edit is queued against the version the copy holds, and an edit waiting in the
 
 ### `queue-and-verdicts/own-create-edit-on-answer`
 
-When this device's create of a row or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over` or `queue-and-verdicts/create-repeat-edit-on-one` says otherwise.
+When this device's create of a row or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-on-one` or `queue-and-verdicts/page-create-edit-on-one` says otherwise.
 
 **Reason:** a row or edge of this device's own unanswered create is at version 0, which the server never mints (`versions/create-claim-none`), so sent as it stands the edit names a snapshot no server holds and is blocked `ancestor_unavailable`.
 
@@ -1649,6 +1733,14 @@ When the server answers this device's create of a row or an edge as a repeat it 
 **Reason:** a repeat is answered with the row or edge as it stands, whoever has written it since (`items/create-repeat` and `edges/id-repeat`); version 1 is the one that create made, and the server merges an item's edit against it, or refuses an edge's edit as stale wherever the edge has moved on.
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the version that create made where the server answers a repeat of it`.
+
+### `queue-and-verdicts/page-create-edit-on-one`
+
+When a create a page made is settled on a read that finds the row or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
+
+**Reason:** a page create makes version 1, and the read that settles it can come a drain later (`queue-and-verdicts/page-read-back-failed`), after another device has written the row or edge; on version 1 the server merges or conflicts on the edit as the type's policy says, rather than taking it over a write it never read.
+
+**Tests:** `device/pages.test.ts › sends an edit queued behind a page's create on the version the page made, so another device's edit since meets a conflict`.
 
 ### `queue-and-verdicts/edit-on-answer`
 

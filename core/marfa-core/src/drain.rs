@@ -17,6 +17,8 @@ use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWri
 use crate::{Core, Result};
 use crate::{read_view, store};
 
+mod pages;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainReport {
     /// Writes the server answered this pass, whatever it answered.
@@ -1111,8 +1113,32 @@ fn send_queue(
     let mut tested: HashSet<String> = HashSet::new();
     let mut cursor = 0;
 
+    if report.unavailable.is_none() && !pass.changed() {
+        pages::send(
+            &pages::Sender {
+                core,
+                http,
+                generation,
+                stop,
+            },
+            pass,
+            report,
+            &mut pages::Standing {
+                all: &all,
+                rows: &rows,
+                answers: &mut answers,
+                landing: &landing,
+            },
+            &mut confirm,
+        )?;
+    }
+
     loop {
         crate::catch_up::refuse_if_stopped(stop)?;
+        // A page refused for its credential parked the queue.
+        if report.stopped.is_some() {
+            break;
+        }
         // The pass ended before the suspect was sent again.
         if report.unavailable.is_some()
             && let Some(stuck) = suspect.take()
@@ -1297,11 +1323,7 @@ fn send_queue(
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(payload) => payload,
             Err(CoreError::Unauthorized { .. }) => {
-                let conn = core.conn()?;
-                let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
-                report.stopped = Some(format!(
-                    "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
-                ));
+                park_for_credential(core, report)?;
                 break;
             }
             Err(error) => {
@@ -1626,11 +1648,7 @@ fn send_queue(
             carry_on = true;
         }
         if stop {
-            let conn = core.conn()?;
-            let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
-            report.stopped = Some(format!(
-                "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
-            ));
+            park_for_credential(core, report)?;
             break;
         }
         if settled.unavailable.is_some() && !carry_on {
@@ -1657,6 +1675,16 @@ fn send_queue(
     }
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;
+    Ok(())
+}
+
+/// Parks every unanswered write until the credential is replaced, and says
+/// so: the rest of the pass would meet the same refusal.
+fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
+    let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
+    report.stopped = Some(format!(
+        "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
+    ));
     Ok(())
 }
 
@@ -2028,12 +2056,17 @@ fn unavailable_by(error: &CoreError) -> Option<String> {
 struct AnsweredAt<'a> {
     version: i64,
     item: Option<&'a WireItem>,
+    /// The version the create made, where the answer is a later read of the
+    /// row rather than the create's own answer.
+    made: Option<i64>,
 }
 
 /// Behind a create, only edits based on 0 move: the placeholder an
 /// unanswered create holds, which the server never mints. A create
 /// acknowledged as a repeat answers the row as it stands now, so the edits
-/// behind it go on 1, the version that create made.
+/// behind it go on 1, the version that create made. So does a create a page
+/// made, which a later read answers, unless the row as read holds what the
+/// edit read.
 fn move_edits_behind(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
@@ -2052,6 +2085,18 @@ fn move_edits_behind(
                 }
                 match row.base_version {
                     _ if acknowledged => 1,
+                    // Another device can have changed the row since the
+                    // create, and an edit that read none of it must not
+                    // overwrite it.
+                    _ if let Some(made) = at.made
+                        && version > made =>
+                    {
+                        if holds(conn, &id, at)? {
+                            version
+                        } else {
+                            made
+                        }
+                    }
                     Some(created_on) if created_on > 0 && version > created_on + 1 => {
                         if holds(conn, &id, at)? {
                             version
@@ -2356,6 +2401,8 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
+/// `read` is a page's read of what its create made at version 1, made
+/// before the answer was settled; the row can have moved past 1 since.
 fn settle_success(
     core: &Core,
     row: &QueuedWrite,
@@ -2363,6 +2410,7 @@ fn settle_success(
     shape: Shape,
     pass: &mut ViewChange,
     answered_now: bool,
+    read: Option<ReadBack>,
 ) -> Result<Settled> {
     let item = if shape == Shape::Item {
         serde_json::from_str::<WireWriteAnswer>(&answer.body).ok()
@@ -2427,7 +2475,10 @@ fn settle_success(
         if let (Some(owed), Some(edge)) = (&mut owed, &edge) {
             owed.id = edge.edge.id.clone();
         }
-        if store::meta_get(&tx, &receipt_key(&row.id))?.is_none() {
+        // A receipt kept from an earlier pass holds the verdict and says how
+        // the answer it settles on reads.
+        let kept = store::meta_get(&tx, &receipt_key(&row.id))?.is_some();
+        if !kept {
             store::record_verdict(
                 &tx,
                 &row.id,
@@ -2441,15 +2492,17 @@ fn settle_success(
         }
         if let Some(owed) = &owed {
             store::owe_read_back(&tx, owed)?;
-            store::meta_set(
-                &tx,
-                &receipt_key(&row.id),
-                match shape {
-                    Shape::Item => "item",
-                    Shape::Edge => "edge",
-                    _ => "plain",
-                },
-            )?;
+            if !kept {
+                store::meta_set(
+                    &tx,
+                    &receipt_key(&row.id),
+                    match shape {
+                        Shape::Item => "item",
+                        Shape::Edge => "edge",
+                        _ => "plain",
+                    },
+                )?;
+            }
         }
         tx.commit()?;
         owed
@@ -2457,13 +2510,16 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
-    let read = match read_owed(
-        core,
-        &owed,
-        Bin::Held,
-        pass,
-        answered_now && moves_source(row),
-    ) {
+    let made = read.is_some().then_some(1);
+    let read = match read.map(Ok).unwrap_or_else(|| {
+        read_owed(
+            core,
+            &owed,
+            Bin::Held,
+            pass,
+            answered_now && moves_source(row),
+        )
+    }) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
@@ -2494,6 +2550,7 @@ fn settle_success(
             &AnsweredAt {
                 version: parsed.item.version,
                 item: Some(&parsed.item),
+                made,
             },
         )?;
         if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
@@ -2516,6 +2573,7 @@ fn settle_success(
             &AnsweredAt {
                 version: parsed.edge.version,
                 item: None,
+                made,
             },
         )?;
     }
@@ -2549,6 +2607,7 @@ fn settle(
             shape,
             pass,
             true,
+            None,
         ),
         Classified::Environmental => Ok(Settled {
             retry_after_seconds: answer
@@ -2734,7 +2793,7 @@ fn settle_delivered(
         replayed: true,
         contract_named: true,
     };
-    settle_success(core, row, &answer, shape, pass, true)
+    settle_success(core, row, &answer, shape, pass, true, None)
 }
 
 /// A natural-key receipt settles independently of the current read authority.
@@ -2927,6 +2986,12 @@ fn read_owed_backs(
         .iter()
         .filter_map(|(_, shape)| shape.strip_prefix("land:").map(str::to_owned))
         .collect();
+    let (paged, pending): (Vec<_>, Vec<_>) = pending
+        .into_iter()
+        .partition(|(_, shape)| pages::owed_by_a_page(shape));
+    if let Some(unread) = pages::settle_owed(core, stop, pass, &paged)? {
+        return Ok(Some(unread));
+    }
     for (row, shape) in pending {
         crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
@@ -2959,7 +3024,7 @@ fn read_owed_backs(
                 "edge" => Shape::Edge,
                 _ => Shape::Plain,
             };
-            settle_success(core, &row, &answer, shape, pass, false)?
+            settle_success(core, &row, &answer, shape, pass, false, None)?
         };
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {
@@ -3341,6 +3406,7 @@ mod tests {
         AnsweredAt {
             version,
             item: None,
+            made: None,
         }
     }
 
@@ -3365,6 +3431,7 @@ mod tests {
         let answer = AnsweredAt {
             version: 5,
             item: Some(&answered),
+            made: None,
         };
         move_edits_behind(&conn, &first, Verdict::Accepted, false, "mine", &answer).unwrap();
         assert_eq!(based_on(&conn, &read.id), (Some(5), Some(5)));
@@ -3435,6 +3502,7 @@ mod tests {
             let at = AnsweredAt {
                 version: 5,
                 item: Some(&item),
+                made: None,
             };
             assert_eq!(
                 holds(&conn, &edit.id, &at).unwrap(),

@@ -237,6 +237,21 @@ export function scriptFolderWrites(
     ],
     extensions: [{ kind: "json", status: 200, body: {} }],
   });
+  harness.server.answer("POST", "/items/bulk", (request) =>
+    options.creating === undefined
+      ? pageOf(
+          (JSON.parse(request.body) as { items: DoorCreate[] }).items.map(
+            (entry) => {
+              const { answer } = door.create(entry);
+              edges.logItem("item.created", answer);
+              return answer;
+            },
+          ),
+        )
+      : // A fixture standing in for the create door means each create to
+        // meet it, so the page is refused whole and each goes on its own.
+        refusal(400, "validation_error", "Not a page this fixture answers"),
+  );
   harness.server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
     door.rows.delete(request.pathname.split("/").at(-1) ?? "");
     return { kind: "json", status: 204, body: {} };
@@ -249,6 +264,36 @@ export function scriptFolderWrites(
   );
   edges.script(harness.server);
   return door.rows;
+}
+
+/**
+ * A page of creates answered entry by entry from what each entry's own door
+ * answered (`items/bulk-answer`, `edges/bulk-answer`): a create as
+ * `created`, a repeat as `skipped` and anything else as `errored`.
+ */
+function pageOf(answered: Answer[]): Answer {
+  const results = answered.map((answer, index) => {
+    const body = (answer.kind === "json" ? answer.body : {}) as {
+      item?: { id?: string };
+      edge?: { id?: string };
+      acknowledged?: boolean;
+      error?: { code: string; message: string };
+    };
+    const id = body.item?.id ?? body.edge?.id;
+    if (answer.kind === "json" && answer.status === 201)
+      return { index, outcome: "created", id };
+    if (body.acknowledged === true)
+      return { index, outcome: "skipped", id, reason: "duplicate_id" };
+    return {
+      index,
+      outcome: "errored",
+      error: body.error ?? { code: "internal_error", message: "Not created" },
+    };
+  });
+  const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
+  for (const result of results)
+    counts[result.outcome as keyof typeof counts] += 1;
+  return { kind: "json", status: 200, body: { counts, results } };
 }
 
 /**
@@ -296,42 +341,57 @@ export class EdgeDoor {
     return this;
   }
 
-  script(server: ScriptedServer): void {
-    server.answer("POST", "/edges", (request) => {
-      const body = JSON.parse(request.body) as WireEdgeOptions;
-      const standIn = this.placing?.(body);
-      if (standIn !== undefined) return standIn;
-      const held = [...this.edges.values()].some(
+  /** A create, as `POST /edges` decides it. */
+  create(body: WireEdgeOptions): Answer {
+    const standIn = this.placing?.(body);
+    if (standIn !== undefined) return standIn;
+    // The id of an edge the door holds is a repeat of the create that made
+    // it (`edges/id-repeat`).
+    const repeated = this.edges.get(body.id);
+    if (repeated !== undefined) return writeAnswers.edgeRepeated(repeated);
+    const held = [...this.edges.values()].some(
+      (edge) =>
+        edge.source_id === body.source_id &&
+        edge.target_id === body.target_id &&
+        edge.edge_type === body.edge_type,
+    );
+    if (held) {
+      return answers.edgeDuplicate({
+        source_id: body.source_id,
+        target_id: body.target_id,
+        edge_type: body.edge_type ?? "references",
+      });
+    }
+    // One parent a child, as the server refuses a second (`edges/card-target-held`).
+    if (
+      body.edge_type === "parent-of" &&
+      [...this.edges.values()].some(
         (edge) =>
-          edge.source_id === body.source_id &&
-          edge.target_id === body.target_id &&
-          edge.edge_type === body.edge_type,
-      );
-      if (held) {
-        return answers.edgeDuplicate({
-          source_id: body.source_id,
-          target_id: body.target_id,
-          edge_type: body.edge_type ?? "references",
-        });
-      }
-      // One parent a child, as the server refuses a second (`edges/card-target-held`).
-      if (
-        body.edge_type === "parent-of" &&
-        [...this.edges.values()].some(
-          (edge) =>
-            edge.edge_type === "parent-of" && edge.target_id === body.target_id,
-        )
-      ) {
-        return answers.edgeCardinality({
-          target_id: body.target_id,
-          edge_type: "parent-of",
-        });
-      }
-      const edge = { ...body, version: 1, created_at: this.stamp() };
-      this.edges.set(edge.id, edge);
-      this.log("edge.created", edge);
-      return writeAnswers.edge(edge, 201);
-    });
+          edge.edge_type === "parent-of" && edge.target_id === body.target_id,
+      )
+    ) {
+      return answers.edgeCardinality({
+        target_id: body.target_id,
+        edge_type: "parent-of",
+      });
+    }
+    const edge = { ...body, version: 1, created_at: this.stamp() };
+    this.edges.set(edge.id, edge);
+    this.log("edge.created", edge);
+    return writeAnswers.edge(edge, 201);
+  }
+
+  script(server: ScriptedServer): void {
+    server.answer("POST", "/edges", (request) =>
+      this.create(JSON.parse(request.body) as WireEdgeOptions),
+    );
+    server.answer("POST", "/edges/bulk", (request) =>
+      pageOf(
+        (JSON.parse(request.body) as { edges: WireEdgeOptions[] }).edges.map(
+          (edge) => this.create(edge),
+        ),
+      ),
+    );
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
       const held = this.edges.get(request.pathname.split("/").at(-1) ?? "");
       const body = JSON.parse(request.body) as {
@@ -535,18 +595,23 @@ export function moveRefusal(
   );
 }
 
-/** What the folder sent to the items door, parsed. */
+/** The creates the folder sent, on the items door or in pages, parsed. */
 export function sentCreates(
   harness: FolderHarness,
 ): Array<Record<string, unknown>> {
-  return harness.server.requests
-    .filter(
-      (request) => request.method === "POST" && request.pathname === "/items",
-    )
-    .map((request) => JSON.parse(request.body) as Record<string, unknown>);
+  return harness.server.requests.flatMap((request) => {
+    if (request.method !== "POST") return [];
+    if (request.pathname === "/items")
+      return [JSON.parse(request.body) as Record<string, unknown>];
+    if (request.pathname === "/items/bulk")
+      return (JSON.parse(request.body) as { items: Record<string, unknown>[] })
+        .items;
+    return [];
+  });
 }
 
-/** The titles the folder's creates carried, in the order sent. */
+/** The titles the folder's creates carried, in the order sent, on their
+ *  own doors or in pages. */
 export function sentTitles(harness: FolderHarness): string[] {
   return sentCreates(harness).map((sent) =>
     String((sent.properties as Record<string, unknown>).title),
@@ -610,11 +675,20 @@ export function heldEdges(door: EdgeDoor): string[] {
 /** The edge writes the folder sent, placements aside, in order. */
 export function sentEdgeWrites(harness: FolderHarness): string[] {
   return harness.server.requests.flatMap((request) => {
-    if (request.method === "POST" && request.pathname === "/edges") {
-      const edge = JSON.parse(request.body) as WireEdgeOptions;
-      return edge.edge_type === "in-folder"
-        ? []
-        : [`create ${edge.source_id} ${edge.edge_type} ${edge.target_id}`];
+    if (
+      request.method === "POST" &&
+      (request.pathname === "/edges" || request.pathname === "/edges/bulk")
+    ) {
+      const edges =
+        request.pathname === "/edges"
+          ? [JSON.parse(request.body) as WireEdgeOptions]
+          : (JSON.parse(request.body) as { edges: WireEdgeOptions[] }).edges;
+      return edges
+        .filter((edge) => edge.edge_type !== "in-folder")
+        .map(
+          (edge) =>
+            `create ${edge.source_id} ${edge.edge_type} ${edge.target_id}`,
+        );
     }
     if (request.method === "DELETE" && request.pathname.startsWith("/edges/")) {
       return [`delete ${request.pathname.split("/").at(-1) ?? ""}`];
