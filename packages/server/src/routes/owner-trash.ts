@@ -75,7 +75,7 @@ const listRoute = createRoute({
   method: "get",
   path: "/trash",
   operationId: "listTrash",
-  tags: ["Items"],
+  tags: ["Trash"],
   summary: "List the trash",
   description:
     "Returns a page of trash summaries, newest creation first, without item content. Only the owner or a local command can use this operation.",
@@ -186,7 +186,7 @@ const trashRoute = createRoute({
   method: "post",
   path: "/items/summaries/{id}/trash",
   operationId: "trashItemSummary",
-  tags: ["Items"],
+  tags: ["Trash"],
   summary: "Move an item to the trash",
   description:
     "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.",
@@ -199,7 +199,7 @@ const restoreRoute = createRoute({
   method: "post",
   path: "/items/summaries/{id}/restore",
   operationId: "restoreItemSummary",
-  tags: ["Items"],
+  tags: ["Trash"],
   summary: "Restore an item from the trash",
   description:
     "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.",
@@ -212,7 +212,7 @@ const purgeRoute = createRoute({
   method: "post",
   path: "/items/summaries/{id}/purge",
   operationId: "purgeItemSummary",
-  tags: ["Items"],
+  tags: ["Trash"],
   summary: "Purge a trashed item",
   description:
     "Deletes one item permanently if it is still in the trash at the listed version. Returns only a summary.",
@@ -225,7 +225,7 @@ const emptyRoute = createRoute({
   method: "post",
   path: "/trash/empty",
   operationId: "emptyTrash",
-  tags: ["Items"],
+  tags: ["Trash"],
   summary: "Empty a page of the trash",
   description:
     "Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",

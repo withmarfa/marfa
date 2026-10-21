@@ -1,7 +1,11 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { buildPublishedOpenAPISpec } from "./openapi-published.js";
-import { CHAIN_REFUSALS, finalizeOpenAPISpec } from "./openapi-finalize.js";
+import {
+  CHAIN_REFUSALS,
+  finalizeOpenAPISpec,
+  PUBLIC_TAGS,
+} from "./openapi-finalize.js";
 import { makeErrorResponseSchema } from "./openapi.js";
 import { createTestContext, inlineOpenApiRefs, request } from "./test-utils.js";
 
@@ -213,17 +217,48 @@ describe("published OpenAPI spec", () => {
     }
   });
 
-  it("keeps the generator's top-level tags", () => {
-    const tags = [
-      { name: "Supplied", description: "Tags declared by the generator." },
-    ];
-    const document = {
+  it("publishes each group with its operations in order", () => {
+    const probe = finalizeOpenAPISpec({
       openapi: "3.1.0",
       info: { title: "probe", version: "0" },
-      tags,
+      tags: [{ name: "Supplied", description: "Tags the caller declared." }],
       paths: {},
-    };
-    expect(finalizeOpenAPISpec(document).tags).toBe(tags);
+    });
+    expect(probe.tags).toEqual(
+      PUBLIC_TAGS.map(({ name, description, operations }) => ({
+        name,
+        description,
+        "x-operation-order": operations,
+      })),
+    );
+    expect(PUBLIC_TAGS.map(({ name }) => name)).not.toContain("Supplied");
+  });
+
+  it("orders paths by the first appearance of their operations", () => {
+    const operation = (operationId: string) => ({
+      operationId,
+      responses: { "200": { description: "x" } },
+    });
+    const ordered = finalizeOpenAPISpec({
+      openapi: "3.1.0",
+      info: { title: "probe", version: "0" },
+      paths: {
+        "/unlisted": { get: operation("nothingListsThis") },
+        "/keys": { post: operation("createKey") },
+        // One path in two groups stands where its earliest operation does.
+        "/mixed": {
+          get: operation("getItemMetadata"),
+          post: operation("createItem"),
+        },
+        "/search": { get: operation("searchItems") },
+      },
+    });
+    expect(Object.keys(ordered.paths)).toEqual([
+      "/mixed",
+      "/search",
+      "/keys",
+      "/unlisted",
+    ]);
   });
 
   it("gives every published operation an operationId", () => {

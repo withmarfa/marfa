@@ -16,7 +16,6 @@ import { createApp } from "./app.js";
 import {
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
-  PUBLIC_TAGS,
   SERVERS,
 } from "./openapi-finalize.js";
 import type { AppConfig } from "./config.js";
@@ -94,7 +93,6 @@ export async function buildPublishedOpenAPISpec(): Promise<
         app.getOpenAPI31Document({
           openapi: "3.1.0",
           info: OPENAPI_DOCUMENT_INFO,
-          tags: PUBLIC_TAGS,
         }),
       ),
       servers: SERVERS,

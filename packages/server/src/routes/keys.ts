@@ -197,7 +197,7 @@ const createKeyRoute = createRoute({
   operationId: "createKey",
   method: "post",
   path: "/",
-  tags: ["Access"],
+  tags: ["API keys"],
   summary: "Create an API key",
   description:
     "Creates an API key and returns it with its plaintext `key`, shown only here. If the body names none of `permissions`, the five permission maps and `sources`, the key gets everything you hold; if it names any, the key holds only what it names.",
@@ -319,7 +319,7 @@ const listKeysRoute = createRoute({
   operationId: "listKeys",
   method: "get",
   path: "/",
-  tags: ["Access"],
+  tags: ["API keys"],
   summary: "List API keys",
   description:
     "Returns key metadata without plaintext. `keys.manage` and direct owner or local authority list all keys; `keys.mint` lists keys within the caller's current reach. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",
@@ -358,7 +358,7 @@ const currentKeyRoute = createRoute({
   operationId: "getCurrentKey",
   method: "get",
   path: "/current",
-  tags: ["Access"],
+  tags: ["API keys"],
   summary: "Get the current key",
   description:
     "Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
@@ -393,7 +393,7 @@ const revokeKeyRoute = createRoute({
   operationId: "revokeKey",
   method: "delete",
   path: "/{id}",
-  tags: ["Access"],
+  tags: ["API keys"],
   summary: "Revoke an API key",
   description:
     "Revokes a key, ending its event streams and queued bulk actions. `keys.manage` or direct owner or local authority can revoke any key. A caller with only `keys.mint` can revoke keys within its current reach.",
@@ -510,7 +510,7 @@ const updateKeyRoute = createRoute({
   operationId: "updateKey",
   method: "patch",
   path: "/{id}",
-  tags: ["Access"],
+  tags: ["API keys"],
   summary: "Update an API key",
   description:
     "Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or direct owner or local authority.",

@@ -13,7 +13,7 @@ const route = createRoute({
   method: "get",
   path: "/",
   operationId: "listAttention",
-  tags: ["Instance"],
+  tags: ["Health and maintenance"],
   summary: "List attention items",
   description:
     "Returns current concerns for the owner or a private local command. Failed or timed-out checks appear as unavailable items alongside known concerns. An empty list means every check completed without a concern.",

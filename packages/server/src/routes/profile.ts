@@ -24,7 +24,7 @@ const updateProfileRoute = createRoute({
   operationId: "updateProfile",
   method: "patch",
   path: "/",
-  tags: ["Access"],
+  tags: ["Owner"],
   summary: "Update the profile",
   description:
     "Updates the owner's name or avatar and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",

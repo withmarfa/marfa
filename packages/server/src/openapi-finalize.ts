@@ -84,76 +84,282 @@ export const SERVERS = [
   },
 ];
 
+export interface PublicTag {
+  /** The group's heading in the reference. */
+  readonly name: string;
+  readonly description: string;
+  /**
+   * The group's operations in the order a developer meets them: create or
+   * register, get, list, update, replace, delete, then the group's other
+   * actions. Each is an `operationId`, or, for a request Marfa sends, the
+   * name the top-level `webhooks` gives it.
+   */
+  readonly operations: readonly string[];
+}
+
 /**
- * The reference's groups, in sidebar order.
+ * The reference's groups, in sidebar order, each with its operations in
+ * reading order.
  *
- * Every name here must be carried by at least one published operation. A tag
+ * Every group must be carried by at least one published operation. A tag
  * describing a surface no operation belongs to reads as a surface the server
  * has and is withholding, which is the same defect as advertising a feature
- * with no door behind it.
+ * with no door behind it. Every published operation is listed once, under its
+ * own tag: `openapi-operation-order.test.ts` holds the lists to the document.
  */
-export const PUBLIC_TAGS = [
-  { name: "Items", description: "The records Marfa stores, each of a type." },
+export const PUBLIC_TAGS: readonly PublicTag[] = [
+  {
+    name: "Items",
+    description:
+      "The records Marfa stores, each of a type, and the ways to read and change them.",
+    operations: [
+      "createItem",
+      "getItem",
+      "listItems",
+      "updateItem",
+      "deleteItem",
+      "restoreItem",
+      "purgeItem",
+      "transitionItem",
+      "listItemVersions",
+      "lookupItems",
+      "bulkGetItems",
+      "bulkUpsertItems",
+      "getItemStats",
+      "listItemSummaries",
+      "listOccurrences",
+      "settleTombstones",
+    ],
+  },
+  {
+    name: "Trash",
+    description:
+      "Items in the trash: list them, move an item in, and restore, purge or empty them.",
+    operations: [
+      "listTrash",
+      "trashItemSummary",
+      "restoreItemSummary",
+      "purgeItemSummary",
+      "emptyTrash",
+    ],
+  },
   {
     name: "Bulk actions",
     description:
       "One change applied to every item a filter matches, run as a job you can follow and cancel.",
+    operations: ["applyBulkAction", "getBulkActionJob", "cancelBulkActionJob"],
   },
-  { name: "Metadata", description: "An item's tags, and the tags in use." },
+  {
+    name: "Metadata",
+    description: "An item's tags and extensions together, and the tags in use.",
+    operations: [
+      "getItemMetadata",
+      "replaceItemMetadata",
+      "updateItemMetadata",
+      "addItemTags",
+      "removeItemTag",
+      "listTags",
+    ],
+  },
   {
     name: "Extensions",
     description: "JSON objects attached to an item, one per namespace.",
+    operations: [
+      "getItemExtension",
+      "listItemExtensions",
+      "replaceItemExtension",
+      "deleteItemExtension",
+    ],
   },
   {
     name: "Edges",
     description: "Typed, directed relationships between items.",
+    operations: [
+      "createEdge",
+      "getEdge",
+      "listEdges",
+      "updateEdge",
+      "deleteEdge",
+      "bulkUpsertEdges",
+      "listItemEdges",
+      "listItemBackrefs",
+    ],
+  },
+  {
+    name: "Search",
+    description: "Full-text search across items.",
+    operations: ["searchItems"],
   },
   {
     name: "Types",
     description:
       "The types items can have: those Marfa ships and those registered on this instance.",
+    operations: [
+      "registerType",
+      "getType",
+      "listTypes",
+      "replaceType",
+      "deleteType",
+      "normalizeType",
+    ],
   },
   {
     name: "Edge types",
     description:
       "The types edges can have, each with its cardinality and cascade rule.",
+    operations: ["registerEdgeType", "listEdgeTypes", "deleteEdgeType"],
   },
   {
     name: "Blobs",
     description: "Bytes stored by content hash, and the stores that hold them.",
+    operations: [
+      "uploadBlob",
+      "downloadBlob",
+      "getBlobUrl",
+      "listBlobLocations",
+      "deleteBlobLocation",
+      "listBlobStores",
+      "listBlobOrphans",
+    ],
   },
-  {
-    name: "Folders",
-    description: "A folder's settings, held as a `system.folder` item.",
-  },
-  { name: "Search", description: "Full-text search across items." },
   {
     name: "Event stream",
     description: "Changes to items and edges, streamed as they happen.",
+    operations: ["streamEvents"],
   },
   {
     name: "Webhooks",
     description:
       "Changes sent to a URL you choose, and each delivery's record.",
+    operations: [
+      "createWebhook",
+      "getWebhook",
+      "listWebhooks",
+      "updateWebhook",
+      "deleteWebhook",
+      "listWebhookDeliveries",
+      "redeliverWebhookDelivery",
+      "event",
+    ],
+  },
+  {
+    name: "Folders",
+    description: "A folder's settings, held as a `system.folder` item.",
+    operations: [
+      "createFolder",
+      "listFolders",
+      "updateFolder",
+      "revokeFolder",
+      "reportFolderStatus",
+      "getFolderStatus",
+    ],
   },
   {
     name: "Connectors",
     description:
-      "Processes outside the server that read and write on your behalf, and what the instance keeps for them.",
+      "Processes outside the server that read and write on your behalf, with their heartbeats and runs.",
+    operations: [
+      "registerConnector",
+      "getConnector",
+      "listConnectors",
+      "deleteConnector",
+      "heartbeatConnector",
+      "reportConnectorRun",
+      "listConnectorRuns",
+    ],
   },
   {
-    name: "Access",
+    name: "Connector state",
     description:
-      "API keys, the instance's owner and OAuth client registration.",
+      "What the instance keeps for a connector's source: its hold, its state document and its agreements.",
+    operations: [
+      "holdConnector",
+      "releaseConnectorHold",
+      "getConnectorState",
+      "replaceConnectorState",
+      "deleteConnectorState",
+      "writeConnectorAgreements",
+      "listConnectorAgreements",
+      "lookupConnectorAgreements",
+    ],
+  },
+  {
+    name: "Inbound webhooks",
+    description:
+      "Addresses where a service sends requests to a connector, and the deliveries Marfa stores for it.",
+    operations: [
+      "createInboundEndpoint",
+      "listInboundEndpoints",
+      "retireInboundEndpoint",
+      "listInboundDeliveries",
+      "getInboundDeliveryBody",
+      "markInboundDeliveriesHandled",
+    ],
+  },
+  {
+    name: "API keys",
+    description:
+      "The keys that sign requests to this instance, and the permissions each holds.",
+    operations: [
+      "createKey",
+      "getCurrentKey",
+      "listKeys",
+      "updateKey",
+      "revokeKey",
+    ],
+  },
+  {
+    name: "Apps",
+    description:
+      "Apps that register as OAuth clients, and the access you grant them.",
+    operations: [
+      "registerOAuthClient",
+      "listAppGrants",
+      "narrowAppGrant",
+      "revokeAppGrant",
+    ],
+  },
+  {
+    name: "Owner",
+    description: "The instance's owner and their profile.",
+    operations: ["createOwner", "getOwner", "updateOwner", "updateProfile"],
+  },
+  {
+    name: "Sign-ins and passkeys",
+    description:
+      "The browsers, apps and keys that can reach the instance, and the owner's passkeys.",
+    operations: [
+      "listSignIns",
+      "updateSignIn",
+      "endSignIn",
+      "listOwnerPasskeys",
+      "updateOwnerPasskey",
+      "removeOwnerPasskey",
+    ],
   },
   {
     name: "Instance",
+    description: "The instance itself: what it is and how it's configured.",
+    operations: ["getInstance", "getConfig", "updateConfig", "replaceConfig"],
+  },
+  {
+    name: "Health and maintenance",
     description:
-      "The instance itself: what it is, its configuration, its housekeeping jobs and its audit log.",
+      "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and the platform types this build no longer ships.",
+    operations: [
+      "listAttention",
+      "getServerMetrics",
+      "listAuditLog",
+      "listHousekeeping",
+      "runHousekeeping",
+      "listPlatformTypeDrift",
+      "deletePlatformType",
+    ],
   },
   {
     name: "Export and restore",
     description: "Export the instance's data, and restore it from an archive.",
+    operations: ["exportData", "restoreArchive"],
   },
 ];
 
@@ -994,6 +1200,52 @@ export const STREAM_EXAMPLE = [
   "",
 ].join("\n");
 
+/**
+ * Where each operation stands in the reference: the groups in order, each
+ * group's operations in order.
+ */
+const OPERATION_RANK: ReadonlyMap<string, number> = (() => {
+  const rank = new Map<string, number>();
+  for (const { operations } of PUBLIC_TAGS) {
+    for (const id of operations) {
+      if (!rank.has(id)) rank.set(id, rank.size);
+    }
+  }
+  return rank;
+})();
+
+/**
+ * Order `paths` by the first appearance of any of a path's operations in
+ * `PUBLIC_TAGS`. A path whose methods fall in two groups stands where its
+ * earliest operation does. A path with no listed operation goes last, in the
+ * order it was registered, and the test that holds the lists to the document
+ * fails for it.
+ *
+ * Route mounts in `app.ts` stay as they are: Hono matches in registration
+ * order, and a static route such as `/items/stats` shares a prefix with a
+ * parameter route.
+ */
+function orderPaths(
+  paths: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const rankOf = (methods: Record<string, unknown>): number => {
+    let first = Number.POSITIVE_INFINITY;
+    for (const operation of Object.values(methods)) {
+      const id = (operation as { operationId?: unknown } | null)?.operationId;
+      const rank = typeof id === "string" ? OPERATION_RANK.get(id) : undefined;
+      if (rank !== undefined && rank < first) first = rank;
+    }
+    return first;
+  };
+  const ranked = Object.entries(paths).map(([key, methods]) => ({
+    key,
+    methods,
+    rank: rankOf(methods),
+  }));
+  ranked.sort((a, b) => (a.rank === b.rank ? 0 : a.rank < b.rank ? -1 : 1));
+  return Object.fromEntries(ranked.map(({ key, methods }) => [key, methods]));
+}
+
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   // Keep the document the caller supplied separate from the additions.
@@ -1132,7 +1384,12 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
     schemas,
   };
 
-  spec.paths = nextPaths;
+  spec.paths = orderPaths(nextPaths);
   spec.webhooks = webhookRequests();
+  spec.tags = PUBLIC_TAGS.map(({ name, description, operations }) => ({
+    name,
+    description,
+    "x-operation-order": [...operations],
+  }));
   return spec;
 }

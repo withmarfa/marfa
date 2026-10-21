@@ -122,7 +122,7 @@ const listHousekeepingRoute = createRoute({
   operationId: "listHousekeeping",
   method: "get",
   path: "/",
-  tags: ["Instance"],
+  tags: ["Health and maintenance"],
   summary: "List housekeeping jobs",
   description:
     "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires instance.read.",
@@ -149,7 +149,7 @@ const runHousekeepingRoute = createRoute({
   operationId: "runHousekeeping",
   method: "post",
   path: "/{name}/run",
-  tags: ["Instance"],
+  tags: ["Health and maintenance"],
   summary: "Run a housekeeping job",
   description:
     "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.",
