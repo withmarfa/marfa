@@ -12,6 +12,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use url::Url;
 
+use marfa_core::CoreError;
+
 use crate::cleartext;
 use crate::credentials::{self, Kept};
 use crate::error::CliError;
@@ -19,6 +21,12 @@ use crate::remote::Remote;
 use crate::remote::request::Request;
 
 pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
+
+/// The `software_id` (RFC 7591 section 2) every copy of this binary registers
+/// under, which is how the server tells the command line from another program
+/// that signs in with the device grant. The server's
+/// `keys-and-oauth/grants-kind` names the same value.
+const SOFTWARE_ID: &str = "so.marfa.cli";
 
 const OWNER_SCOPES: [&str; 22] = [
     "openid",
@@ -204,6 +212,7 @@ pub fn register(discovery: &Discovery, name: Option<&str>) -> Result<String, Cli
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
         "client_name": name,
+        "software_id": SOFTWARE_ID,
         "application_type": "native",
         "grant_types": [DEVICE_CODE_GRANT, "refresh_token"],
         "response_types": [],
@@ -240,7 +249,22 @@ pub enum Poll {
     SlowDown,
     /// The token door's own limiter answered; the code is still good.
     RateLimited(Option<u64>),
+    /// The server could not be reached or answered 5xx: RFC 8628 section 3.5
+    /// asks the client to poll on, more slowly, until the code expires.
+    Unavailable(CliError),
     Token(TokenSet),
+}
+
+/// A failure that asking again can clear, as far as a device poll is
+/// concerned: no connection, or a server error.
+fn is_blip(error: &CliError) -> bool {
+    match error {
+        CliError::Core(CoreError::Network(_)) => true,
+        CliError::Refused { status, .. } | CliError::Core(CoreError::Unnamed { status, .. }) => {
+            *status >= 500
+        }
+        _ => false,
+    }
 }
 
 pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result<Poll, CliError> {
@@ -260,6 +284,7 @@ pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result
             retry_after_seconds,
             ..
         }) => Ok(Poll::RateLimited(retry_after_seconds)),
+        Err(error) if is_blip(&error) => Ok(Poll::Unavailable(error)),
         Err(error) => Err(error),
     }
 }
@@ -269,23 +294,41 @@ pub fn wait_for_decision(
     client_id: &str,
     code: &DeviceCode,
 ) -> Result<TokenSet, CliError> {
+    wait_with(discovery, client_id, code, sleep)
+}
+
+/// What a code that ran out ends the sign-in with: the failure the last poll
+/// met where it was one, since the code may have been approved unseen, and
+/// otherwise the expiry.
+fn code_ended(last_blip: Option<CliError>) -> CliError {
+    last_blip.unwrap_or_else(|| CliError::Refused {
+        status: 400,
+        code: "expired_token".to_string(),
+        message: "the code expired before the person decided; run marfa login again".to_string(),
+        retry_after_seconds: None,
+        details: None,
+    })
+}
+
+/// `wait_for_decision` with the pause between polls made by `pause_for`.
+fn wait_with(
+    discovery: &Discovery,
+    client_id: &str,
+    code: &DeviceCode,
+    mut pause_for: impl FnMut(Duration),
+) -> Result<TokenSet, CliError> {
     let deadline = now_seconds().saturating_add(code.expires_in);
     let mut interval = code.interval.max(1);
     let mut pause = interval;
+    let mut last_blip = None;
     loop {
         let remaining = deadline.saturating_sub(now_seconds());
         if remaining == 0 {
-            return Err(CliError::Refused {
-                status: 400,
-                code: "expired_token".to_string(),
-                message: "the code expired before the person decided; run marfa login again"
-                    .to_string(),
-                retry_after_seconds: None,
-                details: None,
-            });
+            return Err(code_ended(last_blip));
         }
-        sleep(Duration::from_secs(pause.min(remaining)));
+        pause_for(Duration::from_secs(pause.min(remaining)));
         pause = interval;
+        last_blip = None;
         match poll(discovery, client_id, &code.device_code)? {
             Poll::Token(token) => return Ok(token),
             Poll::Pending => {}
@@ -294,6 +337,11 @@ pub fn wait_for_decision(
                 pause = interval;
             }
             Poll::RateLimited(wait) => pause = interval.max(wait.unwrap_or(0)),
+            Poll::Unavailable(error) => {
+                interval = interval.saturating_add(5);
+                pause = interval;
+                last_blip = Some(error);
+            }
         }
     }
 }
@@ -628,6 +676,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_registration_names_the_command_line_by_its_software_id() {
+        let door =
+            Door::open_at(|_| vec![Answer::json("201 Created", r#"{"client_id":"issued"}"#)]);
+        let discovery = waiting_discovery(&door.url);
+        assert_eq!(register(&discovery, Some("studio")).unwrap(), "issued");
+        let sent = door.received();
+        let body: Value = serde_json::from_str(&sent[0].body).unwrap();
+        assert_eq!(body["software_id"], "so.marfa.cli");
+        assert_eq!(body["client_name"], "studio");
+        assert_eq!(body["grant_types"][0], DEVICE_CODE_GRANT);
+    }
+
     #[cfg(unix)]
     #[test]
     fn credential_fingerprint_preserves_the_sha256_digest() {
@@ -752,16 +813,83 @@ mod tests {
         assert_eq!(door.received().len(), 3);
     }
 
+    fn approval() -> Answer {
+        Answer::json(
+            "200 OK",
+            r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+        )
+    }
+
+    #[test]
+    fn a_login_rides_out_a_dropped_connection_and_a_5xx_and_slows_down_each_time() {
+        let down = r#"{"error":{"code":"unavailable","message":"try again"}}"#;
+        let door = Door::open_at(|_| {
+            vec![
+                Answer::hung_up(),
+                Answer::json("503 Service Unavailable", down),
+                approval(),
+            ]
+        });
+        let discovery = waiting_discovery(&door.url);
+        let mut pauses = Vec::new();
+        let token = wait_with(&discovery, "client", &a_code(600), |pause| {
+            pauses.push(pause.as_secs());
+        })
+        .unwrap();
+        assert_eq!(token.access_token, "marfa_at_new");
+        assert_eq!(door.received().len(), 3);
+        assert_eq!(
+            pauses,
+            [1, 6, 11],
+            "the interval, then 5 s more after each failure (RFC 8628 section 3.5)"
+        );
+    }
+
+    #[test]
+    fn a_login_treats_a_gateways_5xx_with_no_contract_as_a_blip_too() {
+        let door = Door::open_at(|_| {
+            vec![
+                Answer::json("502 Bad Gateway", "<html>bad gateway</html>").on_contract(None),
+                approval(),
+            ]
+        });
+        let discovery = waiting_discovery(&door.url);
+        let token = wait_with(&discovery, "client", &a_code(600), |_| {}).unwrap();
+        assert_eq!(token.access_token, "marfa_at_new");
+        assert_eq!(door.received().len(), 2);
+    }
+
+    #[test]
+    fn a_code_that_ends_during_an_outage_names_the_outage_and_otherwise_the_expiry() {
+        let outage = CliError::Refused {
+            status: 503,
+            code: "unavailable".into(),
+            message: "try again".into(),
+            retry_after_seconds: None,
+            details: None,
+        };
+        match code_ended(Some(outage)) {
+            CliError::Refused { status, .. } => assert_eq!(status, 503),
+            other => panic!("{other:?}"),
+        }
+        match code_ended(None) {
+            CliError::Refused { code, .. } => assert_eq!(code, "expired_token"),
+            other => panic!("{other:?}"),
+        }
+    }
+
     #[test]
     fn a_login_ends_on_a_refusal_that_is_not_a_wait() {
-        let denied = r#"{"error":{"code":"access_denied","message":"denied"}}"#;
-        let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", denied)]);
-        let discovery = waiting_discovery(&door.url);
-        match wait_for_decision(&discovery, "client", &a_code(600)) {
-            Err(CliError::Refused { code, .. }) => assert_eq!(code, "access_denied"),
-            other => panic!("{:?}", other.map(|_| ())),
+        for refusal in ["access_denied", "expired_token"] {
+            let body = format!(r#"{{"error":{{"code":"{refusal}","message":"no"}}}}"#);
+            let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", &body)]);
+            let discovery = waiting_discovery(&door.url);
+            match wait_with(&discovery, "client", &a_code(600), |_| {}) {
+                Err(CliError::Refused { code, .. }) => assert_eq!(code, refusal),
+                other => panic!("{:?}", other.map(|_| ())),
+            }
+            assert_eq!(door.received().len(), 1, "{refusal} is not polled again");
         }
-        assert_eq!(door.received().len(), 1);
     }
 
     #[test]

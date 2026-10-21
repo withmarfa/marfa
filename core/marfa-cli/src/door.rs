@@ -38,6 +38,17 @@ pub struct Answer {
 }
 
 impl Answer {
+    /// A connection that is read and then dropped, as a server that falls
+    /// over mid-request does. An empty status is how the door knows.
+    pub fn hung_up() -> Answer {
+        Answer {
+            status: "",
+            content_type: "",
+            body: String::new(),
+            headers: Vec::new(),
+        }
+    }
+
     pub fn with_header(mut self, name: &'static str, value: impl Into<String>) -> Answer {
         self.headers.push((name, value.into()));
         self
@@ -93,6 +104,9 @@ impl Door {
             for answer in answers {
                 let (mut stream, _) = listener.accept().unwrap();
                 received.push(read_request(&mut stream));
+                if answer.status.is_empty() {
+                    continue;
+                }
                 let extra: String = answer
                     .headers
                     .iter()
