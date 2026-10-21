@@ -6,7 +6,7 @@ const AvatarSchema = z
   .max(2048)
   .nullable()
   .describe(
-    "HTTP or HTTPS avatar URL, at most 2048 characters. null clears it. Marfa does not fetch the URL.",
+    "The owner's picture URL. Use HTTP or HTTPS. Set `avatar` to `null` to clear it, or omit it to leave it unchanged. Marfa does not fetch the URL.",
   );
 
 export const OwnerUpdateSchema = z

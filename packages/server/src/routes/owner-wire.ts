@@ -9,7 +9,7 @@ export const OwnerSchema = z
     avatar: z
       .string()
       .nullable()
-      .describe("HTTP or HTTPS avatar URL, or null when no picture is set."),
+      .describe("The owner's picture URL, or `null` when none is set."),
     created_at: z.string().describe("When the owner was created, in UTC."),
   })
   .describe("The single owner of the instance.")

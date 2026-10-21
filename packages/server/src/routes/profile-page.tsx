@@ -1,10 +1,5 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
-/**
- * Profile: the owner's name, email, and picture, each changed in a dialog. The change
- * itself is made by the browser module `client/account.ts` through
- * `PATCH /owner`, which checks the values and asks for a recent sign-in.
- */
 import { renderDocument } from "../pages/render.js";
 import {
   Button,
@@ -135,9 +130,7 @@ export function ProfilePage(props: ProfilePageParams) {
           <Row
             id="profile-avatar"
             title="Picture"
-            description={
-              props.owner.avatar ?? "Your initial, until you add one"
-            }
+            description={props.owner.avatar ?? "No picture address set"}
             buttons={
               <>
                 <span class="tile" aria-hidden="true">
@@ -173,7 +166,7 @@ export function ProfilePage(props: ProfilePageParams) {
         <ChangeDialog
           kind="avatar"
           title="Change picture"
-          description="The address of an image on the web. Leave it empty to use your initial."
+          description="The address of an image on the web. Leave it empty to clear the picture address."
           label="Picture address"
           value={props.owner.avatar ?? ""}
         />

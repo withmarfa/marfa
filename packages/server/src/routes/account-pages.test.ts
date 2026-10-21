@@ -53,7 +53,7 @@ describe("the Profile page", () => {
     expect(text).toContain(
       "You sign in with this email. Marfa sends no email, so there's nothing to confirm.",
     );
-    expect(text).toContain("Your initial, until you add one");
+    expect(text).toContain("No picture address set");
     expect(text).toContain("Picture address");
   });
 
