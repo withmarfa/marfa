@@ -1807,6 +1807,67 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     }
   });
 
+  it("writes no file back for a held delete when another device changes its item", async () => {
+    const held = {
+      id: "01a00000-0000-7000-8000-0000000038c1",
+      properties: { title: "Held", body: "h\n" },
+    };
+    const graced = {
+      id: "01a00000-0000-7000-8000-0000000038c2",
+      properties: { title: "Graced", body: "g\n" },
+    };
+    const { a, edges } = await onOneMac(
+      "held-no-write",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] } },
+      { "core.note": [{ item: held }, { item: graced }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    writeFileSync(a.registry, "");
+    expect((await a.folder.push()).ok).toBe(true);
+    rmSync(join(a.dir, "Held.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const holding = await a.folder.push();
+    expect(holding.ok, JSON.stringify(holding)).toBe(true);
+    if (!holding.ok) return;
+    expect(holding.value.scan.unsure.map((file) => file.path)).toEqual([
+      "Held.md",
+    ]);
+
+    // Inside the grace, the same change writes its file back
+    // (`folders/delete-remote-revives`).
+    rmSync(join(a.dir, "Graced.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    for (const item of [held, graced]) {
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "item.updated",
+          wireItem({
+            ...item,
+            version: 2,
+            properties: { ...item.properties, body: "their edit\n" },
+          }),
+        ),
+      );
+    }
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(2);
+    const pulled = await a.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(read(a, "Graced.md")).toContain("their edit");
+    expect(pulled.value.scan.unsure.map((file) => file.path)).toEqual([
+      "Held.md",
+    ]);
+    expect(
+      existsSync(join(a.dir, "Held.md")),
+      "a file whose delete is held was written back, so a folder it may have moved to reads it as a copy",
+    ).toBe(false);
+    expect(deletesOf(a.server, held.id)).toBe(0);
+  });
+
   it("refuses a folder inside another, and walks past a folder inside it", async () => {
     harness = await folderHarness("nested-outer", {
       settings: {
@@ -1990,7 +2051,22 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       [moved, loose].map((id) => deletesOf(a.server, id)),
       "a file moved by copy and delete was trashed: its id or its bytes were not looked for",
     ).toEqual([0, 0]);
-    expect(swept.value.scan.moved_away).toBe(2);
+    // The note's copy carries its id line. The text file's carries nothing,
+    // so the other folder knows it only by the binding kept here.
+    const from = b.server.requests.length;
+    expect((await b.folder.push()).ok).toBe(true);
+    expect(
+      createsSince(b.server, from),
+      "a file moved by copy and delete became a new item where it went",
+    ).toEqual([]);
+    expect(idIn(b, "Moved.md")).toBe(moved);
+    expect(swept.value.scan.moved_away).toBe(1);
+    expect(swept.value.pull?.elsewhere).toBe(2);
+    const released = await a.folder.push();
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    if (!released.ok) return;
+    expect(released.value.scan.moved_away).toBe(1);
+    expect([moved, loose].map((id) => deletesOf(a.server, id))).toEqual([0, 0]);
   });
 
   it("takes a file moved in by copy and delete by the bytes the folder it left bound", async () => {
@@ -2095,6 +2171,124 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, files.gone[0])).toBe(1);
     expect(swept.value.scan.trashed).toEqual([files.gone[1]]);
   });
+
+  it.each(["leaving", "arriving"])(
+    "keeps one item when a file item both folders hold moves between them and the %s folder scans first",
+    async (first) => {
+      // File items carry nothing that names their item, so only the
+      // binding the folder they left keeps tells the other folder which
+      // item each is. `skip.dat` goes where the other folder ignores it.
+      const files = {
+        photo: ["01a00000-0000-7000-8000-0000000043a1", "photo.bin"],
+        notes: ["01a00000-0000-7000-8000-0000000043a2", "notes.md"],
+        skipped: ["01a00000-0000-7000-8000-0000000043a3", "skip.dat"],
+        gone: ["01a00000-0000-7000-8000-0000000043a4", "gone.bin"],
+      } as const;
+      const taken = [files.photo, files.notes];
+      // A note carries its id line, so it is followed by that line.
+      const plan = "01a00000-0000-7000-8000-0000000043a5";
+      const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+      const both = { types: ["core.file", "core.note"] };
+      const { a, b, edges } = await onOneMac(
+        `both-hold-${first}`,
+        { search: both },
+        { search: both, ignore: ["*.dat"] },
+        {
+          "core.file": Object.values(files).map(([id, name]) => ({
+            item: {
+              id,
+              type: "core.file",
+              properties: { title: name, blob_ref: hashOf(bytesOf(name)) },
+            },
+          })),
+          "core.note": [
+            { item: { id: plan, properties: { title: "Plan", body: "p\n" } } },
+          ],
+        },
+      );
+      for (const [, name] of Object.values(files)) {
+        scriptBlob(a.server, bytesOf(name));
+      }
+      acceptUploads(a.server);
+      expect((await a.folder.pull()).ok).toBe(true);
+      for (const name of ["photo.bin", "notes.md", "Plan.md", "skip.dat"]) {
+        renameSync(join(a.dir, name), join(b.dir, name));
+      }
+      rmSync(join(a.dir, files.gone[1]));
+
+      const leaving = async () => {
+        expect((await a.folder.push()).ok).toBe(true);
+        await pastTheGrace();
+        const swept = await a.folder.push();
+        expect(swept.ok, JSON.stringify(swept)).toBe(true);
+        if (!swept.ok) return;
+        // The witness that the sweep sends deletes: the file found nowhere.
+        expect(swept.value.scan.trashed).toEqual([files.gone[1]]);
+        if (first === "arriving") {
+          expect(swept.value.scan.moved_away).toBe(4);
+          return;
+        }
+        // Not yet taken there, the file items keep their bindings here, and
+        // nothing is written over them; the note is followed by its id.
+        expect(swept.value.scan.moved_away).toBe(2);
+        expect(swept.value.pull?.elsewhere).toBe(3);
+        for (const name of ["photo.bin", "notes.md", "Plan.md"]) {
+          expect(
+            existsSync(join(a.dir, name)),
+            `${name} was written again before the other folder took it`,
+          ).toBe(false);
+        }
+        // A file the other folder does not take is written again here.
+        expect(readFileSync(join(a.dir, "skip.dat"))).toEqual(
+          bytesOf("skip.dat"),
+        );
+      };
+      const arriving = async () => {
+        const pushed = await b.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      };
+      if (first === "leaving") {
+        await leaving();
+        await arriving();
+      } else {
+        await arriving();
+        await leaving();
+      }
+      // Once taken there, the folder it left lets the bindings go and, as
+      // its search still holds the items, writes their files again.
+      const settled = await a.folder.push();
+      expect(settled.ok, JSON.stringify(settled)).toBe(true);
+      expect((await b.folder.push()).ok).toBe(true);
+
+      expect(
+        sentCreates(a).map(
+          (sent) => (sent.properties as { title?: string }).title,
+        ),
+        "a file item moved between two folders that both hold it became a new item",
+      ).toEqual([]);
+      expect(
+        [files.photo, files.notes, files.skipped].map(([id]) =>
+          deletesOf(a.server, id),
+        ),
+        "a file item moved between two folders that both hold it was trashed",
+      ).toEqual([0, 0, 0]);
+      expect(deletesOf(a.server, files.gone[0])).toBe(1);
+      expect(deletesOf(a.server, plan)).toBe(0);
+      const placements = edges.placements(b.settings.id);
+      for (const [id, name] of taken) {
+        expect(placements.get(id), `${name} is not its item's file`).toBe(name);
+        expect(readFileSync(join(b.dir, name))).toEqual(bytesOf(name));
+        expect(readFileSync(join(a.dir, name))).toEqual(bytesOf(name));
+      }
+      expect(placements.get(plan)).toBe("Plan.md");
+      expect(idIn(b, "Plan.md")).toBe(plan);
+      expect(idIn(a, "Plan.md")).toBe(plan);
+      expect(
+        readdirSync(b.dir).filter((name) => name.includes(" (2)")),
+        "the item's file was written beside a new item's",
+      ).toEqual([]);
+    },
+  );
 
   it("gives a fresh id to a moved file whose item the server will not show, and pins one it shows", async () => {
     const shown = "01a00000-0000-7000-8000-0000000039d1";

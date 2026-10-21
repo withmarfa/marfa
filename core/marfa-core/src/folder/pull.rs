@@ -35,7 +35,7 @@ struct Renaming<'a> {
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
     Ok(state::journaled(conn)?
         .iter()
-        .any(|(at, id, _)| at == path && id == item_id))
+        .any(|row| row.path == path && row.item_id == item_id))
 }
 
 struct Rendering<'a> {
@@ -386,6 +386,11 @@ impl Folder {
             .collect();
         report.unmatched = unmatched_ids.len();
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
+        // Read, not looked for in the other folders: a pull runs every pass.
+        let kept: HashMap<String, (String, state::Kept)> = state::journaled(&*self.core.conn()?)?
+            .into_iter()
+            .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
+            .collect();
         for (item, unmatched) in &work {
             // This device's own create, not yet landed: the id goes back
             // only once it has.
@@ -411,6 +416,17 @@ impl Folder {
                     .as_ref()
                     .is_some_and(|bound| !self.exists(self.root.join(&bound.path)))
             {
+                continue;
+            }
+            // A missing file the sweep kept bound is another folder's to take,
+            // or a full pass's to tell; written anew it would read there as a
+            // copy.
+            if let Some(bound) = &bound
+                && let Some((kept_for, why)) = kept.get(&bound.path)
+                && *kept_for == item.id
+                && !self.exists(self.root.join(&bound.path))
+            {
+                report.elsewhere += usize::from(*why == state::Kept::Arriving);
                 continue;
             }
             // Moved to another folder here and not yet taken there, written

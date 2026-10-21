@@ -1072,8 +1072,8 @@ export interface ScanReport {
   unsure: Array<{ path: string; reason: string }>;
   /** Why the registry could not be read, where it could not. */
   registry: string | null;
-  /** Journaled files found in another folder on the machine, so nothing was
-   *  trashed (`folders/moved-file-count`). */
+  /** Journaled files found in another folder on the machine and let go here,
+   *  so nothing was trashed (`folders/moved-file-count`). */
   moved_away: number;
   skipped: number;
   /** Files whose bytes a watch left for a later pass, still changing: files

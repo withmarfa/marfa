@@ -103,6 +103,8 @@ fn bound_by_path(snapshot: &[state::Bound]) -> HashMap<&str, &state::Bound> {
 
 pub(super) enum Missing {
     Moved,
+    /// Still bound and journaled, until the folder it went to binds it.
+    Arriving,
     Unsure(String),
     Deleted,
     Gone,
@@ -1047,7 +1049,7 @@ impl Folder {
             let conn = self.core.conn()?;
             state::journaled(&conn)?
                 .into_iter()
-                .map(|(path, item_id, _)| (path, item_id))
+                .map(|row| (row.path, row.item_id))
                 .collect()
         };
         for row in bound {
@@ -1087,7 +1089,7 @@ impl Folder {
             report.missing += 1;
         }
         if !incomplete && self.root_gone().is_none() {
-            self.sweep_journal(settings, peers, report)?;
+            self.sweep_journal(settings, peers, scan.full, report)?;
         }
         Ok(ControlFlow::Continue(()))
     }
@@ -1746,10 +1748,14 @@ impl Folder {
         Ok(())
     }
 
+    /// Past the grace, a file whose binding the last sweep kept is looked for
+    /// in the other folders again only by a full pass, so a watch walks them
+    /// at most once every full pass for it.
     fn sweep_journal(
         &self,
         settings: &Settings,
         peers: &Peers<'_>,
+        full: bool,
         report: &mut ScanReport,
     ) -> Result<()> {
         let (journaled, of) = {
@@ -1759,7 +1765,7 @@ impl Folder {
         // Counted over every missing file, not only those past the grace, so
         // files a watch meets a pass apart are one removal.
         if settings.removal_threshold.exceeded(journaled.len(), of) {
-            let paths: Vec<String> = journaled.into_iter().map(|(path, _, _)| path).collect();
+            let paths: Vec<String> = journaled.into_iter().map(|row| row.path).collect();
             state::set_paused(&*self.core.conn()?, state::Removal::Disk, &paths)?;
             report.paused = paths.len();
             return Ok(());
@@ -1767,12 +1773,27 @@ impl Folder {
         state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
         let now = crate::store::iso_at(crate::clock::system_time());
         let members = OnceCell::new();
-        for (path, item_id, missing_since) in journaled {
+        for state::Journaled {
+            path,
+            item_id,
+            missing_since,
+            kept,
+        } in journaled
+        {
             if !elapsed_past(&missing_since, &now, RENAME_GRACE) {
                 continue;
             }
+            match kept {
+                Some(state::Kept::Unsure(reason)) if !full => {
+                    report.unsure.push(Unsure { path, reason });
+                    continue;
+                }
+                Some(state::Kept::Arriving) if !full => continue,
+                _ => {}
+            }
             match self.let_go_missing(&path, &item_id, settings, peers, &members)? {
                 Missing::Moved => report.moved_away += 1,
+                Missing::Arriving => {}
                 Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
                 Missing::Deleted => {
                     report.deleted += 1;
@@ -1819,8 +1840,23 @@ impl Folder {
                     leaves = !holds;
                     Missing::Moved
                 }
+                // That folder knows the file as the item only by this
+                // binding, so it stays, and a pull writes no file over it.
+                Look::Arriving => {
+                    state::journal_keep(
+                        &*self.core.conn()?,
+                        path,
+                        item_id,
+                        &state::Kept::Arriving,
+                    )?;
+                    return Ok(Missing::Arriving);
+                }
                 // Held as a delete is while offline, until it can be told.
-                Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
+                Look::Unsure(reason) => {
+                    let kept = state::Kept::Unsure(reason.clone());
+                    state::journal_keep(&*self.core.conn()?, path, item_id, &kept)?;
+                    return Ok(Missing::Unsure(reason));
+                }
                 Look::Nowhere => {
                     self.core.delete_item(item_id)?;
                     Missing::Deleted
