@@ -1,5 +1,5 @@
 import { Readable } from "node:stream";
-import { failAt } from "../control/faults.js";
+import { failAt, holdArmed, holdAt } from "../control/faults.js";
 import type { BlobRead, BlobStore } from "./blob-store.js";
 
 /** The error the operating system raises for a write to a volume with no room. */
@@ -39,21 +39,30 @@ function endingShort(read: BlobRead): BlobRead {
 }
 
 /**
- * Makes `store` fail where the `blob-read`, `blob-read-short`, `blob-write`
- * and `blob-delete` points of `control/faults.ts` say. Applied once to each
- * attached store under `MARFA_TEST_HOOKS` and to no store otherwise, so the
- * disk store and the object store fail the same way. A read fails before it
- * opens the bytes, or ends short after it opens them, a write fails before
- * it stores any, and a delete before it removes any.
+ * Makes `store` fail or hang where the `blob-read`, `blob-read-short`,
+ * `blob-has`, `blob-write` and `blob-delete` points of `control/faults.ts`
+ * say. Applied once to each attached store under `MARFA_TEST_HOOKS` and to
+ * no store otherwise, so the disk store and the object store fail the same
+ * way. A read fails or is held before it opens the bytes, or ends short
+ * after it opens them, a question of presence is held before it is asked, a
+ * write fails before it stores any, and a delete before it removes any. A
+ * held read or question gives up when its caller's signal aborts, as a store
+ * that honors the signal does.
  */
 export function withBlobFaults<S extends BlobStore>(store: S): S {
   const get = store.get.bind(store);
   const put = store.put.bind(store);
   const remove = store.delete.bind(store);
+  const has = store.has.bind(store);
   store.get = async (hash, range, signal) => {
     if (failAt("blob-read")) throw unreadable("read");
+    if (holdArmed("blob-read")) await holdAt("blob-read", undefined, signal);
     const read = await get(hash, range, signal);
     return read && failAt("blob-read-short") ? endingShort(read) : read;
+  };
+  store.has = async (hash, signal) => {
+    if (holdArmed("blob-has")) await holdAt("blob-has", undefined, signal);
+    return has(hash, signal);
   };
   store.put = (hash, source) =>
     failAt("blob-write") ? Promise.reject(noRoom()) : put(hash, source);
