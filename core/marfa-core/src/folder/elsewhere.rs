@@ -1,6 +1,6 @@
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
@@ -326,32 +326,46 @@ fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
         if line.trim_end() == "---" {
             return Ok(None);
         }
-        if let Some(id) = line.strip_prefix("marfa_id:") {
-            let id = id.trim().trim_matches(['"', '\'']);
-            return Ok((!id.is_empty()).then(|| id.to_string()));
+        if let Some(value) = line.strip_prefix("marfa_id:") {
+            return Ok(super::document::id_value(value.as_bytes()));
         }
     }
     Ok(None)
 }
 
+/// The most code units of a line kept. A longer line is neither a fence nor
+/// an id line, so the rest of it is read past, and a file that is not text
+/// is never held whole.
+const LINE_LIMIT: usize = 4096;
+
+/// A line, or an empty one in place of a line past `LINE_LIMIT`.
 fn narrow_line(reader: &mut impl BufRead) -> std::io::Result<Option<String>> {
     let mut line = Vec::new();
-    if reader.read_until(b'\n', &mut line)? == 0 {
+    if (&mut *reader)
+        .take(LINE_LIMIT as u64)
+        .read_until(b'\n', &mut line)?
+        == 0
+    {
         return Ok(None);
+    }
+    if line.len() == LINE_LIMIT && line.last() != Some(&b'\n') {
+        reader.skip_until(b'\n')?;
+        return Ok(Some(String::new()));
     }
     let line = String::from_utf8_lossy(&line);
     Ok(Some(line.trim_end_matches(['\n', '\r']).to_string()))
 }
 
-/// A line of UTF-16 code units, each read by `unit`; a byte left over at the
-/// end is no code unit and is dropped.
+/// A line of UTF-16 code units, each read by `unit`, or an empty one in place
+/// of a line past `LINE_LIMIT`; a byte left over at the end is no code unit
+/// and is dropped.
 fn wide_line(
     reader: &mut impl BufRead,
     unit: fn([u8; 2]) -> u16,
 ) -> std::io::Result<Option<String>> {
     let mut units = Vec::new();
     let mut pair = [0u8; 2];
-    let mut ended = false;
+    let (mut ended, mut long) = (false, false);
     loop {
         match reader.read_exact(&mut pair) {
             Ok(()) => {}
@@ -365,10 +379,17 @@ fn wide_line(
         if read == u16::from(b'\n') {
             break;
         }
-        units.push(read);
+        if units.len() == LINE_LIMIT {
+            long = true;
+        } else {
+            units.push(read);
+        }
     }
     if ended && units.is_empty() {
         return Ok(None);
+    }
+    if long {
+        return Ok(Some(String::new()));
     }
     let line = String::from_utf16_lossy(&units);
     Ok(Some(line.trim_end_matches('\r').to_string()))
@@ -876,6 +897,34 @@ mod tests {
             partial.is_some(),
             "the witness: a file that cannot be read at all is doubt"
         );
+    }
+
+    #[test]
+    fn a_line_past_the_limit_is_read_past_and_names_no_id() {
+        let long = "x".repeat(LINE_LIMIT * 4);
+        let id = |text: String| {
+            let wide: Vec<u8> = std::iter::once(0xfeff)
+                .chain(text.encode_utf16())
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            let narrow = id_of_reader(text.as_bytes()).unwrap();
+            assert_eq!(id_of_reader(wide.as_slice()).unwrap(), narrow, "{text:.40}");
+            narrow
+        };
+        // The witness: the id line after a long line is still read.
+        assert_eq!(
+            id(format!("---\nnote: {long}\nmarfa_id: n1\n---\n")).as_deref(),
+            Some("n1")
+        );
+        assert_eq!(id(format!("---{long}\nmarfa_id: n1\n---\n")), None);
+        assert_eq!(id(format!("---\nmarfa_id: {long}\n---\n")), None);
+        // A value the folder's own scan takes for no id is none here either.
+        let past = "a".repeat(300);
+        assert_eq!(
+            super::super::document::id_line(&format!("---\nmarfa_id: {past}\n---\n")),
+            None
+        );
+        assert_eq!(id(format!("---\nmarfa_id: {past}\n---\n")), None);
     }
 
     #[test]

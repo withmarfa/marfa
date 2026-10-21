@@ -4,7 +4,10 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::edge_types::EdgeTypes;
-use super::{Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state};
+use super::{
+    Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document, id_named,
+    identity, is_document, named_by_its_file, near_limit, one_per_name, state, text_of,
+};
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
@@ -134,6 +137,15 @@ impl Folder {
             .iter()
             .map(|row| (row.path.as_str(), row))
             .collect();
+        let marks = captured_identities(&paths, &walked);
+        let rows = Rows {
+            by_path: &by_path,
+            by_mark: snapshot
+                .iter()
+                .filter_map(|row| Some((row.identity.as_deref()?, row)))
+                .collect(),
+            marked: marks.values().map(identity::Identity::key).collect(),
+        };
         let mut seen: HashSet<String> = HashSet::new();
         let mut files: Vec<FileStatus> = Vec::new();
         for held in named.flagged {
@@ -150,6 +162,17 @@ impl Folder {
                 .opened
                 .get(path)
                 .and_then(|captured| captured.read().ok());
+            let file_item = match bytes.as_deref() {
+                Some(bytes) if is_document(path) => self.file_item_at(
+                    path,
+                    key,
+                    bytes,
+                    marks.get(path).map(identity::Identity::key),
+                    &rows,
+                    &catalog,
+                )?,
+                _ => false,
+            };
             let mut entry = match by_path.get(key.as_str()) {
                 Some(bound) => self.bound_status(
                     bound,
@@ -162,12 +185,16 @@ impl Folder {
                     key,
                     path,
                     bytes.as_deref(),
+                    file_item,
                     (&settings, &catalog, &edge_types),
                 ),
             };
+            // As the scan measures: the text it sends, which a file item's
+            // bytes are not.
             entry.warning = bytes
                 .as_deref()
-                .and_then(|bytes| near_limit(key, &String::from_utf8_lossy(bytes)))
+                .filter(|_| !file_item)
+                .and_then(|bytes| near_limit(key, text_of(bytes).ok()?))
                 .map(|flagged| flagged.reason);
             files.push(entry);
         }
@@ -324,6 +351,7 @@ impl Folder {
         key: &str,
         path: &Path,
         bytes: Option<&[u8]>,
+        file_item: bool,
         (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
     ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
@@ -332,6 +360,7 @@ impl Folder {
         }
         // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
+            && !file_item
             && let Some(held) =
                 self.held_document(key, path, bytes, (settings, catalog, edge_types))
         {
@@ -344,6 +373,48 @@ impl Folder {
             "search",
             "the search holds no type this file would be, so it is left alone",
         )
+    }
+
+    /// Whether the scan sends a file at a document name as a file item's
+    /// bytes. A status runs no claim, so this follows the one a file meets:
+    /// one naming a note's id is that note's, and any other is the item its
+    /// identity is bound to, or else the item bound at its path where no
+    /// other file's identity names that binding.
+    fn file_item_at(
+        &self,
+        path: &Path,
+        key: &str,
+        bytes: &[u8],
+        mark: Option<String>,
+        rows: &Rows<'_>,
+        catalog: &Catalog,
+    ) -> Result<bool> {
+        let bound = match mark.as_deref().and_then(|mark| rows.by_mark.get(mark)) {
+            Some(bound) => Some(*bound),
+            None => rows.by_path.get(key).copied().filter(|bound| {
+                bound
+                    .identity
+                    .as_deref()
+                    .is_none_or(|identity| !rows.marked.contains(identity))
+            }),
+        };
+        let Some(bound) = bound else {
+            return Ok(false);
+        };
+        if !self.file_item(&bound.item_id, catalog)? {
+            return Ok(false);
+        }
+        let read = text_of(bytes)
+            .ok()
+            .filter(|_| carries_frontmatter(path))
+            .map(document::read);
+        let Some(id) = id_named(path, bytes, read.as_ref()) else {
+            return Ok(true);
+        };
+        Ok(!self
+            .core
+            .get(&id)?
+            .is_some_and(|item| named_by_its_file(&item, catalog)))
     }
 
     /// Why the scan holds a document it has not bound, where it does: its
@@ -410,6 +481,14 @@ impl StatusReport {
             .iter()
             .any(|entry| matches!(entry.flag, "unreadable" | "gone"))
     }
+}
+
+/// The bindings a status reads a file's item from.
+struct Rows<'a> {
+    by_path: &'a HashMap<&'a str, &'a state::Bound>,
+    by_mark: HashMap<&'a str, &'a state::Bound>,
+    /// Every walked file's identity.
+    marked: HashSet<String>,
 }
 
 fn waits(entry: FileStatus, named: Vec<&'static str>) -> FileStatus {

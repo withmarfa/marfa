@@ -114,6 +114,44 @@ fn text_of(bytes: &[u8]) -> std::result::Result<&str, &'static str> {
     Ok(text)
 }
 
+/// The item id a file names for the claim, with `read` its document where
+/// its text is readable. A document whose text is not still names its id by
+/// its id line, which is ASCII.
+fn id_named(path: &Path, bytes: &[u8], read: Option<&document::Document>) -> Option<String> {
+    if !carries_frontmatter(path) {
+        return None;
+    }
+    match read {
+        Some(read) if read.unreadable.is_none() => read
+            .front
+            .get(ID_FIELD)
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        _ => document::id_line_of(bytes),
+    }
+}
+
+/// Whether a file naming the item's id is its file: a file item's file is
+/// its bytes, never a document naming it, and no `system.*` row is a file's
+/// item.
+fn named_by_its_file(item: &Item, catalog: &Catalog) -> bool {
+    bytes_of(item, catalog).is_none() && !item.r#type.starts_with("system.")
+}
+
+/// Each file's identity, where no other of `paths` shares it.
+fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, identity::Identity> {
+    identity::resolve(paths.iter().map(|path| {
+        (
+            path,
+            walked
+                .opened
+                .get(path)
+                .and_then(|capture| identity::of(&capture.metadata.borrow()))
+                .or_else(|| walked.unread.get(path).copied()),
+        )
+    }))
+}
+
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
 /// outside the request.
 fn near_limit(key: &str, text: &str) -> Option<Flagged> {
@@ -2799,6 +2837,9 @@ mod tests {
                     .scan_watching(true, Duration::from_secs(3600))
                     .unwrap();
                 missing += report.missing;
+                // A note is sent as soon as it is read, however new its file.
+                assert!(report.settling.is_empty(), "{report:?}");
+                assert_eq!(bound("notes.md").unwrap().item_id, note_item, "{report:?}");
             }
             let report = folder.scan().unwrap();
             missing += report.missing;
@@ -2822,6 +2863,210 @@ mod tests {
                 Some("a note\n"),
                 "watching {watching}: the note lost its body"
             );
+        }
+    }
+
+    /// Settings whose default type takes a note of 200 KB, so a note past the
+    /// size warning is created and warned of.
+    fn large_text_folder() -> (ScannedDir, Folder) {
+        scanned_folder_with(
+            serde_json::json!({ "search": {}, "defaults": { "type": "user.large_text" } }),
+            Some(serde_json::json!([
+                {
+                    "id": "user.large_text",
+                    "display_hints": { "title_field": "title", "body_field": "body" },
+                    "fields": {
+                        "title": { "type": "string" },
+                        "body": { "type": "string", "maxLength": 1_000_000 },
+                    },
+                },
+            ])),
+        )
+    }
+
+    #[test]
+    fn status_reads_a_file_item_at_a_document_name_as_its_item() {
+        // Lone continuation bytes, none of them UTF-8.
+        let binary: Vec<u8> = (0..4096).map(|at| 0x80 | (at % 64) as u8).collect();
+        // 200 KB of control characters, each sent as six: past the warning.
+        let large = "\u{1}".repeat(200_000);
+        let mut latin1 = b"caf".to_vec();
+        latin1.extend([0xe9, b'\n']);
+        for ext in ["md", "markdown", "txt"] {
+            let (dir, folder) = large_text_folder();
+            let path = |name: &str| dir.path().join(name);
+            std::fs::write(path("archive.bin"), &binary).unwrap();
+            std::fs::write(path("large.bin"), &large).unwrap();
+            assert_eq!(folder.scan().unwrap().created, 2, "{ext}");
+            let (archive, big) = (format!("archive.{ext}"), format!("large.{ext}"));
+            std::fs::rename(path("archive.bin"), path(&archive)).unwrap();
+            std::fs::rename(path("large.bin"), path(&big)).unwrap();
+            // The witnesses: a new document that is not UTF-8 is held, and a
+            // new note this size is warned of.
+            let cafe = format!("cafe.{ext}");
+            std::fs::write(path(&cafe), &latin1).unwrap();
+            std::fs::write(path("note.md"), &large).unwrap();
+
+            // Before the scan that follows the renames, and after it.
+            for when in ["renamed", "scanned"] {
+                let status = folder.status().unwrap();
+                let of = |name: &str| {
+                    status
+                        .files
+                        .iter()
+                        .find(|file| file.path == name)
+                        .unwrap_or_else(|| panic!("{ext} {when}: no status for {name}"))
+                        .clone()
+                };
+                for name in [&archive, &big] {
+                    let file = of(name);
+                    assert_ne!(file.status, "held", "{ext} {when}: {file:?}");
+                    assert_eq!(file.flag, None, "{ext} {when}: {file:?}");
+                    assert_eq!(file.warning, None, "{ext} {when}: {file:?}");
+                }
+                let held = of(&cafe);
+                assert_eq!(
+                    (held.status, held.flag),
+                    ("held", Some("encoding")),
+                    "{ext} {when}"
+                );
+                assert!(of("note.md").warning.is_some(), "{ext} {when}");
+                if when == "renamed" {
+                    let report = folder.scan().unwrap();
+                    assert_eq!(report.renamed, 2, "{ext}: {report:?}");
+                    let flagged: Vec<&str> =
+                        report.flagged.iter().map(|f| f.path.as_str()).collect();
+                    assert_eq!(flagged, [cafe.as_str()], "{ext}: {report:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_file_item_at_a_document_name_waits_for_the_settle_window() {
+        let settle = Duration::from_secs(3600);
+        for name in ["notes.md", "notes.markdown", "notes.txt"] {
+            let (dir, folder) = scanned_folder();
+            let bytes = vec![0x85; 4096];
+            std::fs::write(dir.path().join("archive.bin"), &bytes).unwrap();
+            assert_eq!(folder.scan().unwrap().created, 1, "{name}");
+            std::fs::rename(dir.path().join("archive.bin"), dir.path().join(name)).unwrap();
+            assert_eq!(folder.scan().unwrap().renamed, 1, "{name}");
+            let bound = |folder: &Folder| {
+                state::bound_at(&folder.core.conn().unwrap(), name)
+                    .unwrap()
+                    .unwrap_or_else(|| panic!("{name} is not bound"))
+            };
+            let before = bound(&folder);
+
+            // Still being written, in place. The witness: a file that is no
+            // document, changed beside it, waits too.
+            let edited = [bytes.as_slice(), b"."].concat();
+            std::fs::write(dir.path().join(name), &edited).unwrap();
+            std::fs::write(dir.path().join("witness.bin"), [7, 7, 6]).unwrap();
+            let report = folder.scan_watching(true, settle).unwrap();
+            let mut settling = report.settling.clone();
+            settling.sort();
+            assert_eq!(settling, [name, "witness.bin"], "{name}: {report:?}");
+            assert_eq!(report.updated, 0, "{name}: {report:?}");
+            let waiting = bound(&folder);
+            assert_eq!(waiting.item_id, before.item_id, "{name}");
+            assert_eq!(waiting.content_hash, before.content_hash, "{name}");
+
+            // Settled, the next quick pass reads it.
+            let report = folder.scan_watching(false, Duration::ZERO).unwrap();
+            assert_eq!(report.updated, 1, "{name}: {report:?}");
+            assert_eq!(bound(&folder).content_hash, state::hash(&edited), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_new_note_where_a_moved_file_item_was_does_not_wait_for_the_settle_window() {
+        let (dir, folder, file_item) = note_where_a_file_item_was("---\ntitle: Fresh\n---\nbody\n");
+        let report = folder
+            .scan_watching(true, Duration::from_secs(3600))
+            .unwrap();
+        assert!(
+            !report.settling.iter().any(|path| path == "notes.md"),
+            "{report:?}"
+        );
+        assert_eq!(report.created, 1, "{report:?}");
+        let fresh = state::bound_at(&folder.core.conn().unwrap(), "notes.md")
+            .unwrap()
+            .expect("the new note is not bound");
+        assert_ne!(fresh.item_id, file_item);
+        assert_eq!(
+            fresh.content_hash,
+            state::hash(&std::fs::read(dir.path().join("notes.md")).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_file_items_bytes_at_a_document_name_embed_nothing() {
+        for name in ["notes.md", "notes.markdown"] {
+            let (dir, folder) = scanned_folder_with(
+                serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
+                None,
+            );
+            let path = |file: &str| dir.path().join(file);
+            std::fs::write(path("archive.mp3"), "![[x.png]]\n").unwrap();
+            std::fs::write(path("x.png"), [7, 7, 7]).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.created, 1, "{name}: {report:?}");
+            std::fs::rename(path("archive.mp3"), path(name)).unwrap();
+            // The witness: a note's embed in the same scan is followed.
+            std::fs::write(path("note.md"), "a note\n![[y.png]]\n").unwrap();
+            std::fs::write(path("y.png"), [7, 7, 8]).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(report.renamed, 1, "{name}: {report:?}");
+            let bound = |file: &str| state::bound_at(&folder.core.conn().unwrap(), file).unwrap();
+            assert!(bound("y.png").is_some(), "{name}: {report:?}");
+            assert!(
+                bound("x.png").is_none(),
+                "{name}: an embed in a file item's bytes was followed"
+            );
+            assert_eq!(report.created, 2, "{name}: {report:?}");
+            assert!(report.embeds.is_empty(), "{name}: {:?}", report.embeds);
+            let item = folder
+                .core
+                .get(&bound(name).unwrap().item_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(item.r#type, "core.file.audio", "{name}");
+        }
+    }
+
+    #[test]
+    fn a_file_item_moved_from_a_document_name_is_followed_whatever_the_search_says() {
+        // The witness first: from a name that is no document, the move is
+        // followed though the search holds no type for `archive.bin`.
+        for via in [None, Some("notes.md"), Some("notes.markdown")] {
+            let (dir, folder) = scanned_folder_with(
+                serde_json::json!({ "search": { "types": ["core.note", "core.file.audio"] } }),
+                None,
+            );
+            let path = |file: &str| dir.path().join(file);
+            std::fs::write(path("archive.mp3"), [7, 7, 7]).unwrap();
+            assert_eq!(folder.scan().unwrap().created, 1, "{via:?}");
+            let mut at = "archive.mp3";
+            if let Some(via) = via {
+                std::fs::rename(path(at), path(via)).unwrap();
+                assert_eq!(folder.scan().unwrap().renamed, 1, "{via:?}");
+                at = via;
+            }
+            let item_id = state::bound_at(&folder.core.conn().unwrap(), at)
+                .unwrap()
+                .unwrap()
+                .item_id;
+            std::fs::rename(path(at), path("archive.bin")).unwrap();
+            let report = folder.scan().unwrap();
+            assert_eq!(
+                (report.renamed, report.missing),
+                (1, 0),
+                "{via:?}: {report:?}"
+            );
+            let bound = state::bound_at(&folder.core.conn().unwrap(), "archive.bin").unwrap();
+            assert_eq!(bound.map(|bound| bound.item_id), Some(item_id), "{via:?}");
         }
     }
 
