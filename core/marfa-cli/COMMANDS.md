@@ -3367,6 +3367,19 @@ List the folders on this machine, as its registry holds them. The registry is th
 marfa folders list [OPTIONS]
 ```
 
+### marfa folders inventory
+
+List active folders in Marfa, using the owner's private local socket.
+
+```text
+marfa folders inventory [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--limit <LIMIT>` | Maximum number of folders on this page. |
+| `--cursor <CURSOR>` | Continue from the previous page's next_cursor. |
+
 ### marfa folders remove
 
 Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the folder's own, the folder is only taken off the list and nothing is deleted.

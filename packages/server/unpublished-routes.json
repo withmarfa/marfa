@@ -32,6 +32,8 @@
   "GET /auth/owner/trash": "owner trash summaries page",
   "GET /auth/owner/types/{id}": "owner page describing one item type",
   "GET /auth/owner/export": "owner page for export and restore",
+  "GET /auth/owner/folders": "owner folder list",
+  "GET /auth/owner/folders/{id}": "owner folder detail",
   "GET /auth/owner/connectors": "owner connectors list",
   "GET /auth/owner/connectors/{id}": "owner page for one connector",
   "GET /auth/owner/profile": "owner profile page",

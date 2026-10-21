@@ -9,6 +9,7 @@ import { appRoutes } from "./app-routes.js";
 import { browserRoutes } from "./browser-routes.js";
 import type { ConsoleHealth } from "./console-health.js";
 import { activityRoutes } from "./activity-routes.js";
+import { folderPageRoutes } from "./folder-page-routes.js";
 import { connectorRoutes } from "./connector-routes.js";
 import { consoleGate } from "./console-gate.js";
 import { exportPage } from "./export-routes.js";
@@ -43,6 +44,7 @@ export function ownerPages(
   router.route("/", activityRoutes(storage, view.config));
   router.route("/", settingsRoutes(storage, view.config));
   router.route("/", connectorRoutes(storage));
+  router.route("/", folderPageRoutes(storage));
   router.route("/", exportPage(storage));
   return router;
 }

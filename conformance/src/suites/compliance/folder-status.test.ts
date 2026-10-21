@@ -158,6 +158,60 @@ describe("folder sync reports", () => {
     expect(bytes.toString("utf8")).toContain(id);
     expect(bytes.toString("utf8")).not.toContain(folder_store_id);
   });
+  it("lists active folder summaries for the owner and local command with bounded pages", async () => {
+    const firstId = await folder();
+    const secondId = await folder();
+    const cookie = await signIn(server, origin);
+    const ids = new Set<string>();
+    let cursor: string | null = null;
+    do {
+      const response = await call(
+        "GET",
+        `/folders?limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        undefined,
+        "",
+        cookie,
+      );
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as {
+        data: { id: string; title: string; created_at: string }[];
+        next_cursor: string | null;
+      };
+      await expectMatchesSchema("GET", "/folders", 200, page);
+      expect(page.data.length).toBeLessThanOrEqual(1);
+      for (const row of page.data) {
+        expect(Object.keys(row).sort()).toEqual(["created_at", "id", "title"]);
+        expect(ids.has(row.id)).toBe(false);
+        ids.add(row.id);
+      }
+      cursor = page.next_cursor;
+    } while (cursor);
+    expect(ids.has(firstId)).toBe(true);
+    expect(ids.has(secondId)).toBe(true);
+    expect((await call("GET", "/folders")).status).toBe(403);
+    expect((await fetch(`${server.apiUrl}/folders`)).status).toBe(401);
+    expect(
+      (await call("GET", "/folders?limit=0", undefined, "", cookie)).status,
+    ).toBe(400);
+    expect(
+      (await call("GET", "/folders?extra=1", undefined, "", cookie)).status,
+    ).toBe(400);
+    expect(
+      (await call("GET", "/folders?cursor=broken", undefined, "", cookie))
+        .status,
+    ).toBe(400);
+    expect((await call("POST", `/folders/${secondId}/revoke`)).status).toBe(
+      200,
+    );
+    const local = await controlRequest(
+      server.controlSocket,
+      "/folders?limit=200",
+    );
+    expect(local.status).toBe(200);
+    const active = (local.body.data as { id: string }[]).map((row) => row.id);
+    expect(active).toContain(firstId);
+    expect(active).not.toContain(secondId);
+  });
   it("allows a local command to read but refuses a report without a sign-in", async () => {
     const id = await folder();
     await put(id);

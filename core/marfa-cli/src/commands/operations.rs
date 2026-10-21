@@ -121,6 +121,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("writeConnectorAgreements", "connectors agreements write"),
     reached("lookupConnectorAgreements", "connectors agreements lookup"),
     reached("listConnectorAgreements", "connectors agreements list"),
+    reached("listFolders", "folders inventory"),
     reached("createFolder", "folders create"),
     reached("updateFolder", "folders change"),
     reached("revokeFolder", "folders revoke"),

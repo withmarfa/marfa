@@ -183,18 +183,19 @@ describe("one envelope for every list and search", () => {
       siblings: ["window", "scan"],
     },
     { template: "/auth/grants", path: () => "/auth/grants", owner: true },
+    { template: "/folders", path: () => "/folders", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names twenty-nine doors, every one the document publishes as a page", async () => {
+  it("names thirty doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(29);
+    expect(doors).toHaveLength(30);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );

@@ -42,6 +42,15 @@ pub enum FoldersCommand {
     /// identifies the directory the folder opened: compare it for equality
     /// and do not parse it.
     List,
+    /// List active folders in Marfa, using the owner's private local socket.
+    Inventory {
+        /// Maximum number of folders on this page.
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Continue from the previous page's next_cursor.
+        #[arg(long)]
+        cursor: Option<String>,
+    },
     /// Take a folder off this machine: its own state under `.marfa` goes,
     /// and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
@@ -245,6 +254,12 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<Exit, C
                     lines.join("\n")
                 },
             )
+        }
+        FoldersCommand::Inventory { limit, cursor } => {
+            let request = crate::remote::request::Request::get(&["folders"])
+                .query_opt("limit", limit.map(|n| n.to_string()))
+                .query_opt("cursor", cursor);
+            Printer { json }.value(&Remote::resolve(named)?.json(&request)?)
         }
         FoldersCommand::List => {
             let listed = match Registry::located() {

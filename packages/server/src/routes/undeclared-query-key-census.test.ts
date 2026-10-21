@@ -62,6 +62,8 @@ const OTHER_PARTIES_QUERY: Record<string, string> = {
     "saves the instance name, authenticated by the owner session cookie and origin",
   "GET /auth/owner/export":
     "Export and restore page authenticated by direct owner session",
+  "GET /auth/owner/folders": "owner folder list",
+  "GET /auth/owner/folders/:id": "owner folder detail",
   "GET /auth/owner/connectors":
     "connectors list authenticated by direct owner session",
   "GET /auth/owner/connectors/:id":

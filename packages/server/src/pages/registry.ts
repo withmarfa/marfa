@@ -252,7 +252,8 @@ export const HOME_GROUPS: readonly GroupDefinition[] = [
       {
         id: "folders",
         title: "Folders",
-        description: "Folders kept in step with Marfa on your Macs",
+        description:
+          "Folders kept in step with Marfa, and their reported copies",
       },
     ],
   },
