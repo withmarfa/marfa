@@ -10,7 +10,7 @@ You need a Railway account with permission to deploy services, volumes, and buck
 2. Choose your workspace and create a project for this instance.
 3. Review the resources: one Marfa server with a volume mounted at `/data`, and one private backup bucket belonging to this instance. Check that the server's image is a version tag, such as `ghcr.io/withmarfa/marfa-server:0.0.20`, and not `latest`. Deploy the resources together.
 4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
-5. Note the release that is running. `GET /` on your instance's public address answers it as `release`. You need it to [update the server](#update-the-server) or go back to this build.
+5. Note the release that is running. Run `curl https://<your-address>/`; the JSON answer names it as `release`. (A browser shows the page instead.) You need it to [update the server](#update-the-server) or go back to this build.
 
 The template generates separate random values for `API_KEY_SALT` and `MARFA_AUTH_SECRET` for each deployment. It also references the new bucket's credentials and sets `MARFA_AUTH_BASE_URL` to the server's public HTTPS address. You should not need to enter bucket credentials or generate secrets yourself. Railway documents these mechanisms under [template variable functions](https://docs.railway.com/templates/create#template-variable-functions) and [variable references](https://docs.railway.com/variables#reference-variables).
 
@@ -82,13 +82,15 @@ Railway does not update this instance for you, and you should not let it. A Marf
 
 - **Template updates do not apply.** Railway [template updates](https://docs.railway.com/templates/updates) work only for services that come from a GitHub repository, and its documentation says there is no mechanism to check for updates to Docker images. Railway does not tell you that the template now names a newer version.
 - **Leave image auto updates off.** Railway can [update an image automatically](https://docs.railway.com/deployments/image-auto-updates) inside a maintenance window. An automatic update redeploys the service with a newer image, and a build that refuses your database leaves the instance unhealthy until you go back.
-- **Keep the tag pinned.** Railway redeploys an unpinned tag such as `latest` to pull the newest image, so a restart or redeploy could change the build. A version tag never moves; the release workflow does not retag a version once published.
+- **Keep the tag pinned.** A tag such as `latest` moves to each new release, so a redeploy or an image auto update can change the build under your database. A version tag does not move: the release workflow does not retag a version once published.
 
 To move to a newer release, follow the upgrade procedure:
 
-1. Export with the running build, and note its release from `GET /`. Its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag.
-2. Start the new release on a fresh volume with a new `S3_PREFIX` or a new bucket. The simplest way on Railway is to deploy the template again in a new project. If the template names an older release than the one you want, change the server's image tag in the service's **Settings** under **Source** before the first deployment, then review and deploy the staged change.
-3. Claim the new instance and restore the archive. Keep the old instance and the export until the restore succeeds.
+1. Sign in to the old instance as its owner, open **Export and restore** (`/auth/owner/export`), and download the archive. Note the old release from `GET /`. Its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag.
+2. Start the new release on a fresh volume with a new `S3_PREFIX` or a new bucket. The simplest way on Railway is to deploy the template again in a new project, which uses the release the template names. Change the image tag only before the first deployment of that project. Once a server has started on the volume, its database belongs to that release, and changing the tag afterwards is an upgrade in place.
+3. Claim the new instance, sign in as its owner, and restore the archive on **Export and restore**. Keep the old instance and the archive until the restore succeeds.
+
+Before the first public release, an archive is read only by the build that wrote it, so the restore in step 3 can refuse an archive from another release. If it does, keep running the old release; your data is still there.
 
 Do not upgrade by changing the image tag on the existing service. If you already did and the server refuses the database, set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so only the build that wrote your database is sure to read it.
 
@@ -116,7 +118,7 @@ These settings describe the saved template and its container defaults.
 | `BLOB_PATH`                 | `/data/blobs`                                                                 |
 | `NODE_ENV`                  | `production` (set by the container)                                           |
 | Runtime UID                 | `RAILWAY_RUN_UID=0`                                                           |
-| Control socket              | `/run/marfa/control.sock`                                                     |
+| Control socket              | `/data/control/marfa.sock` (`MARFA_CONTROL_SOCKET`, set by the image)         |
 | Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`                                      |
 | Client address header       | `TRUSTED_PROXY_HEADER=x-real-ip`                                              |
 | Volume backup schedule      | Daily                                                                         |
