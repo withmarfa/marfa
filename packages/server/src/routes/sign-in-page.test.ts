@@ -1006,7 +1006,7 @@ describe("signing in with no app waiting", () => {
     expect(page.headers.get("cache-control")).toContain("no-store");
     const text = visibleText(await page.text());
     expect(text).toContain("Sign out");
-    expect(text).toContain("Older management page");
+    expect(text).toContain("Export and restore");
 
     // Witness: the same address with no session is the page that says
     // nobody is, and a program is still given the JSON whoever it is.

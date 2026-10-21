@@ -52,9 +52,12 @@ it("shows changed names on later browser requests without creating HTML from the
     await page.goto(origin);
     expect(await page.locator("h1").textContent()).toBe(name);
     expect(await page.title()).toBe(name);
-    await page.goto(`${origin}/auth/owner/manage`);
-    expect(await page.locator("h1").textContent()).toBe(`Manage ${name}`);
-    expect(await page.title()).toBe(`Manage ${name}`);
+    await page.goto(`${origin}/auth/owner/export`);
+    expect(await page.locator("h1").textContent()).toBe("Export and restore");
+    await page
+      .getByRole("navigation", { name: "Breadcrumb" })
+      .getByRole("link", { name })
+      .waitFor();
     expect(await page.locator("img").count()).toBe(0);
     await page.goto(`${origin}/auth/owner/passkeys`);
     await page

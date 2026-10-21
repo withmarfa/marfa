@@ -18,8 +18,6 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "runs cross-user socket access only on the hosted CI runner",
   "pages/browser/setup.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
-  "routes/management-pages.test.ts":
-    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "enrichment/ocr.real.test.ts":
     "opts into downloading the real OCR model, a test's own switch",
   "enrichment/extract.test.ts":

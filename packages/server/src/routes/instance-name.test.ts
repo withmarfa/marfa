@@ -155,7 +155,7 @@ describe("the instance display name", () => {
     expect((await put({ name: "🌱".repeat(200) })).status).toBe(200);
     expect((await put({ name: "🌱".repeat(201) })).status).toBe(400);
   });
-  it("escapes the live name on root, sign-in, setup and management pages", async () => {
+  it("escapes the live name on root, sign-in, setup and console pages", async () => {
     const name = '<img src=x onerror="throw 1"> & Library';
     expect((await put({ name })).status).toBe(200);
     for (const path of ["/", "/auth/sign-in", "/setup"]) {
@@ -169,7 +169,7 @@ describe("the instance display name", () => {
       );
       expect(html, path).not.toContain(name);
     }
-    const managed = await ctx.ownerRequest("/auth/owner/manage");
+    const managed = await ctx.ownerRequest("/auth/owner/export");
     expect(managed.status).toBe(200);
     expect(await managed.text()).toContain(
       "&lt;img src=x onerror=&quot;throw 1&quot;&gt; &amp; Library",

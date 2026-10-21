@@ -276,7 +276,7 @@ describe("owner and setup routes", () => {
       ).status,
     ).toBe(403);
     const page = await app.request(
-      `${origin}/auth/sign-in?prompt=login&return_to=/auth/owner/restore`,
+      `${origin}/auth/sign-in?prompt=login&return_to=/auth/owner/export`,
       { headers: { cookie } },
     );
     expect(await page.text()).toContain('type="password"');

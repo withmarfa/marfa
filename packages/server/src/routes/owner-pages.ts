@@ -9,11 +9,12 @@ import { appRoutes } from "./app-routes.js";
 import { browserRoutes } from "./browser-routes.js";
 import type { ConsoleHealth } from "./console-health.js";
 import { activityRoutes } from "./activity-routes.js";
+import { connectorRoutes } from "./connector-routes.js";
 import { consoleGate } from "./console-gate.js";
+import { exportPage } from "./export-routes.js";
 import { generalRoutes } from "./general-routes.js";
 import { healthPageRoutes } from "./health-page-routes.js";
 import { keyRoutes } from "./key-routes.js";
-import { managementPages } from "./management-pages.js";
 import { setNoStore } from "./no-store.js";
 import { settingsRoutes } from "./settings-routes.js";
 
@@ -35,8 +36,9 @@ export function ownerPages(
   router.route("/", browserRoutes(storage, auth));
   router.route("/", generalRoutes(storage, view.config));
   router.route("/", healthPageRoutes(storage, view.health));
-  router.route("/", managementPages(storage));
   router.route("/", activityRoutes(storage, view.config));
   router.route("/", settingsRoutes(storage, view.config));
+  router.route("/", connectorRoutes(storage));
+  router.route("/", exportPage(storage));
   return router;
 }

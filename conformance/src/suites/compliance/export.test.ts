@@ -616,6 +616,43 @@ describe("the archive's contents", () => {
     expect(Number.isNaN(Date.parse(String(manifest.created_at)))).toBe(false);
   });
 
+  it("leaves out the bytes of files and names them under missing_blobs when it names files=false", async () => {
+    const { writer, source } = await writerOfItsOwn("without-files");
+    const bytes = new Uint8Array(Buffer.from(`without files ${ctx.runId}`));
+    const upload = await writer.uploadBlob(bytes, "text/plain");
+    expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
+    const note = await noteIn(writer, source, {
+      properties: { body: `![bytes](${upload.data.hash})` },
+    });
+
+    // The witness: the same selection carries the file without the parameter.
+    const whole = await archiveOf(source);
+    expect(listTarGzEntries(whole).map((e) => e.name)).toContain(
+      `blobs/${upload.data.hash}`,
+    );
+
+    const res = await client.exportArchive({ source, files: "false" });
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    const manifest = JSON.parse(
+      readTarGzEntry(res.data, "manifest.json") ?? "{}",
+    ) as Record<string, unknown>;
+    expect(manifest).toMatchObject({
+      item_count: 1,
+      blob_count: 0,
+      blobs: {},
+      missing_blobs: {
+        [upload.data.hash]: {
+          mime_type: "text/plain",
+          size_bytes: bytes.length,
+        },
+      },
+    });
+    expect(
+      listTarGzEntries(res.data).filter((e) => e.name.startsWith("blobs/")),
+    ).toEqual([]);
+    expect(archiveItemIds(res.data)).toEqual([note]);
+  });
+
   it("holds nothing in an archive but its manifest, items, edges, types and blobs", async () => {
     // A key, a webhook, a configuration and a tombstone all exist, so what
     // the archive does not carry is a choice it made.

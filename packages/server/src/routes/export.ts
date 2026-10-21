@@ -93,7 +93,13 @@ const exportRoute = createRoute({
         .enum(["ndjson", "archive"])
         .optional()
         .describe(
-          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists in `missing_blobs` each blob no store could read, which the archive doesn't hold.",
+          "`ndjson` for lines of JSON, or `archive` for a `.tar.gz` file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold.",
+        ),
+      files: z
+        .enum(["true", "false"])
+        .optional()
+        .describe(
+          "With `format=archive`, `false` leaves out the bytes of files, which the manifest then names in `missing_blobs`. Defaults to `true`. `format=ndjson` carries no file bytes either way.",
         ),
     }),
   },
@@ -263,6 +269,7 @@ export function exportRoutes(
         authority,
         reserve,
         maxRowBytes,
+        query.files !== "false",
       );
     }
 

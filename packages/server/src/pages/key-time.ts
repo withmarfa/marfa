@@ -1,5 +1,6 @@
 /**
- * The words the key pages use for when a key was made, last used and ends.
+ * The words the key and connector pages use for when something happened: a
+ * key made, last used and ending, a connector heard from.
  *
  * Every function takes the time it measures from, so a test names it and the
  * page reads it once. Dates are written in UTC: a page is made on the server,
@@ -76,19 +77,23 @@ export function endingTitle(
   return `Key ${label} ends ${whenWords(expiresAt, now)}`;
 }
 
+/** How long ago a time was: "just now", "3 hours ago", "yesterday", "on March 2". */
+export function agoWords(at: number, now: number): string {
+  const ago = now - at;
+  if (ago < MINUTE_MS) return "just now";
+  if (ago < HOUR_MS)
+    return `${count(Math.floor(ago / MINUTE_MS), "minute")} ago`;
+  if (ago < DAY_MS) return `${count(Math.floor(ago / HOUR_MS), "hour")} ago`;
+  const days = daysBetween(at, now);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${count(days, "day")} ago`;
+  return `on ${dateWords(at, now)}`;
+}
+
 /** The right end of a key's row: "Never used", "Used 3 hours ago", "Used on March 2". */
 export function usedWords(lastUsedAt: number | null, now: number): string {
   if (lastUsedAt === null) return "Never used";
-  const ago = now - lastUsedAt;
-  if (ago < MINUTE_MS) return "Used just now";
-  if (ago < HOUR_MS)
-    return `Used ${count(Math.floor(ago / MINUTE_MS), "minute")} ago`;
-  if (ago < DAY_MS)
-    return `Used ${count(Math.floor(ago / HOUR_MS), "hour")} ago`;
-  const days = daysBetween(lastUsedAt, now);
-  if (days === 1) return "Used yesterday";
-  if (days < 30) return `Used ${count(days, "day")} ago`;
-  return `Used on ${dateWords(lastUsedAt, now)}`;
+  return `Used ${agoWords(lastUsedAt, now)}`;
 }
 
 /** The last-used row on a key's own page: the same, without the leading "Used". */

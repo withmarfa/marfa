@@ -334,6 +334,9 @@ inBrowser("The confirmation's password field", () => {
 });
 
 inBrowser("Restore, with a sign-in older than five minutes", () => {
+  const restoreButton = (page: Page) =>
+    page.getByRole("button", { name: "Restore", exact: true });
+
   async function archiveFile() {
     const exported = await ctx.ownerRequest("/export?format=archive");
     expect(exported.status).toBe(200);
@@ -359,16 +362,16 @@ inBrowser("Restore, with a sign-in older than five minutes", () => {
     try {
       const archive = await archiveFile();
       clock.advanceClock(6 * MINUTE);
-      await page.goto(`${origin}/auth/owner/restore`);
+      await page.goto(`${origin}/auth/owner/export`);
       const uploads = countUploads(page);
-      await page.setInputFiles("#archive", archive);
-      await page.click("#restore button");
+      await page.setInputFiles("[data-restore-input]", archive);
+      await restoreButton(page).click();
       expect(await dialogOf(page).innerText()).toContain(
         "Restoring adds to your data.",
       );
       expect(uploads()).toBe(0);
       await confirmWithPassword(page);
-      await page.locator("#result").filter({ hasText: "Restored" }).waitFor();
+      await page.getByText("Restore finished").waitFor();
       expect(uploads()).toBe(1);
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
@@ -382,17 +385,18 @@ inBrowser("Restore, with a sign-in older than five minutes", () => {
     try {
       const archive = await archiveFile();
       clock.advanceClock(6 * MINUTE);
-      await page.goto(`${origin}/auth/owner/restore`);
+      await page.goto(`${origin}/auth/owner/export`);
       const uploads = countUploads(page);
-      await page.setInputFiles("#archive", archive);
-      await page.click("#restore button");
+      await page.setInputFiles("[data-restore-input]", archive);
+      await restoreButton(page).click();
       await dialogOf(page).waitFor();
       await page.keyboard.press("Escape");
-      await page
-        .locator("#result")
-        .filter({ hasText: "Nothing was restored" })
-        .waitFor();
+      await dialogOf(page).waitFor({ state: "hidden" });
       expect(uploads()).toBe(0);
+      // Witness: the button works again, so the page was not left waiting.
+      expect(
+        await restoreButton(page).getAttribute("aria-disabled"),
+      ).toBeNull();
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
       clock.advanceClock(16 * MINUTE);
@@ -404,18 +408,45 @@ inBrowser("Restore, with a sign-in older than five minutes", () => {
     const { context, page } = await signedIn();
     try {
       const archive = await archiveFile();
-      await page.goto(`${origin}/auth/owner/restore`);
+      await page.goto(`${origin}/auth/owner/export`);
       const uploads = countUploads(page);
       // Only the server's clock moves, so the page has no way to know.
       clock.advanceClock(6 * MINUTE);
-      await page.setInputFiles("#archive", archive);
-      await page.click("#restore button");
+      await page.setInputFiles("[data-restore-input]", archive);
+      await restoreButton(page).click();
       await confirmWithPassword(page);
-      await page.locator("#result").filter({ hasText: "Restored" }).waitFor();
+      await page.getByText("Restore finished").waitFor();
       expect(uploads()).toBe(2);
     } finally {
       // Past the window a sign-in address is counted over, so the next case starts clear.
       clock.advanceClock(16 * MINUTE);
+      await context.close();
+    }
+  });
+});
+
+inBrowser("Export, from its form", () => {
+  it("asks for everything with no type and leaves files out only when the switch is off", async () => {
+    const { context, page } = await signedIn();
+    try {
+      await page.goto(`${origin}/auth/owner/export`);
+      const exportRequest = async () => {
+        const [sent] = await Promise.all([
+          page.waitForRequest((r) => r.url().startsWith(`${origin}/export`)),
+          page.getByRole("button", { name: "Export", exact: true }).click(),
+        ]);
+        return new URL(sent.url()).searchParams;
+      };
+      const on = await exportRequest();
+      expect([...on.keys()]).toEqual(["format"]);
+      await page.goto(`${origin}/auth/owner/export`);
+      await page.locator("#export-files").click();
+      const off = await exportRequest();
+      expect(off.get("files")).toBe("false");
+      expect(off.has("type")).toBe(false);
+      // Witness: the select is not left disabled after an Everything export.
+      expect(await page.locator("#export-type").isEnabled()).toBe(true);
+    } finally {
       await context.close();
     }
   });

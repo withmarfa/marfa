@@ -1180,6 +1180,14 @@ If `GET /export` names a `format` other than `ndjson` or `archive`, then the ser
 
 **Tests:** `compliance/export.test.ts › refuses a format outside the two it offers`.
 
+### `search-and-filters/export-without-files`
+
+When `GET /export?format=archive` names `files=false`, the server MUST carry no `blobs/<hash>` entry, list no blob in `blobs`, count none in `blob_count`, and name in `missing_blobs` each blob the archive would otherwise have carried.
+
+**Reason:** a person who wants a copy of their rows, and not the often far larger files they name, can take one, and a restore of it reports in `blobs_missing` the files the instance it restores into does not hold.
+
+**Tests:** `compliance/export.test.ts › leaves out the bytes of files and names them under missing_blobs when it names files=false`.
+
 ### `search-and-filters/export-state-default`
 
 When `GET /export` names no `state`, the server MUST carry the rows of every state but `trashed`.

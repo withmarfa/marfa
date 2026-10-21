@@ -283,6 +283,8 @@ export async function handleArchiveExport(
   /** The largest properties this instance's write doors, and so its
    *  restore, take. */
   maxRowBytes: number,
+  /** Whether the archive carries the bytes of the files it names. */
+  withFiles: boolean,
 ): Promise<Response> {
   const active = beginArchiveExport(storage, c.req.raw.signal);
   try {
@@ -296,6 +298,7 @@ export async function handleArchiveExport(
       authority,
       reserve,
       maxRowBytes,
+      withFiles,
       active.signal,
     );
     void finished.then(
@@ -323,6 +326,7 @@ async function prepareArchiveExport(
   authority: ExportAuthority,
   reserve: DiskReserve,
   maxRowBytes: number,
+  withFiles: boolean,
   clientGone: AbortSignal,
 ): Promise<{ response: Response; finished: Promise<unknown> }> {
   clientGone.throwIfAborted();
@@ -353,6 +357,7 @@ async function prepareArchiveExport(
           selected.blobRecords,
           clientGone,
           unanswered,
+          withFiles,
         )),
       };
       head = JSON.stringify({
@@ -879,6 +884,7 @@ async function collectBlobs(
   records: TextSpool,
   signal: AbortSignal,
   unanswered: Set<string>,
+  withFiles: boolean,
 ): Promise<BlobSelection> {
   const blobEntries = await spool.text();
   const missingEntries = await spool.text();
@@ -892,10 +898,11 @@ async function collectBlobs(
     for (const record of page) {
       if (record.size_bytes !== null) sizes.set(record.hash, record.size_bytes);
     }
-    const copies = await wholeCopies(storage, blobs, sizes, {
-      signal,
-      unanswered,
-    });
+    // Without files no copy is asked for, so every blob is named as one the
+    // archive lacks.
+    const copies = withFiles
+      ? await wholeCopies(storage, blobs, sizes, { signal, unanswered })
+      : new Map<string, BlobStore | null>();
     const present: string[] = [];
     const missing: string[] = [];
     const listed: string[] = [];

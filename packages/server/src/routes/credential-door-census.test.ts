@@ -138,10 +138,12 @@ const OPEN_DOORS: Record<string, string> = {
     "the owner's setup steps, authenticated by the owner session cookie, which send a browser without one to sign in",
   "POST /setup/name":
     "saves the instance name, authenticated by the owner session cookie and origin",
-  "GET /auth/owner/manage":
-    "management page authenticated by direct owner session",
-  "GET /auth/owner/restore":
-    "restore form authenticated by direct owner session",
+  "GET /auth/owner/export":
+    "Export and restore page authenticated by direct owner session",
+  "GET /auth/owner/connectors":
+    "connectors list authenticated by direct owner session",
+  "GET /auth/owner/connectors/:id":
+    "one connector's page authenticated by direct owner session",
   "GET /auth/owner/general":
     "general settings page authenticated by direct owner session",
   "GET /auth/owner/health": "health page authenticated by direct owner session",

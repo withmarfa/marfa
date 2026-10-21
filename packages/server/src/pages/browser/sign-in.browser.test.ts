@@ -357,7 +357,7 @@ describe("signing in", () => {
           .getByRole("button", { name: "Sign in", exact: true })
           .click();
         await page.waitForURL(`${main.origin}/`);
-        await page.getByText("Older management page").waitFor();
+        await page.getByRole("link", { name: /Export and restore/ }).waitFor();
       } finally {
         await context.close();
       }

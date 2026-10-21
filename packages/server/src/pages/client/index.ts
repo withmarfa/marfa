@@ -2,10 +2,12 @@
 import { initAccess } from "./access.js";
 import { initAccount } from "./account.js";
 import { initConfirm } from "./confirm.js";
+import { initConnectors } from "./connectors.js";
 import { initCommandSearch } from "./command-search.js";
 import { initCopy } from "./copy.js";
 import { initDeviceCode } from "./device-code.js";
 import { initDialogs } from "./dialog.js";
+import { initExport } from "./export.js";
 import { initForms } from "./form.js";
 import { initGeneral } from "./general.js";
 import { initHealth } from "./health.js";
@@ -39,6 +41,8 @@ function start(): void {
   initGeneral();
   initHealth();
   initSignIns();
+  initConnectors();
+  initExport();
 }
 
 if (document.readyState === "loading")

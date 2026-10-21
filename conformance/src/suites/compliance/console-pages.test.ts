@@ -29,11 +29,13 @@ const BROWSER = {
 };
 /** The console pages a browser can open, each served at its own address. */
 const CONSOLE_PAGES = [
-  "/auth/owner/manage",
   "/auth/owner/activity",
   "/auth/owner/settings",
   "/auth/owner/settings/file-storage",
   "/auth/owner/settings.json",
+  "/auth/owner/export",
+  "/auth/owner/connectors",
+  "/auth/owner/connectors/00000000-0000-4000-8000-000000000000",
   "/auth/owner/keys",
   "/auth/owner/keys/new",
   "/auth/owner/keys/00000000-0000-4000-8000-000000000000",
@@ -41,7 +43,6 @@ const CONSOLE_PAGES = [
   "/auth/owner/apps",
   "/auth/owner/apps/00000000-0000-4000-8000-000000000000",
   "/auth/owner/browsers",
-  "/auth/owner/restore",
   "/auth/owner/general",
   "/auth/owner/health",
   "/auth/owner/profile",
@@ -105,10 +106,7 @@ function get(path: string, headers: Record<string, string> = {}) {
 
 describe("a console page asked for by a browser that is not signed in", () => {
   it("goes to sign in, carrying the page's path and query as where to return", async () => {
-    for (const path of [
-      ...CONSOLE_PAGES,
-      "/auth/owner/manage?tab=keys&x=%20y",
-    ]) {
+    for (const path of [...CONSOLE_PAGES, "/auth/owner/keys?tab=keys&x=%20y"]) {
       const res = await get(path, BROWSER);
       expect(res.status, path).toBe(302);
       expect(res.headers.get("location"), path).toBe(
@@ -117,7 +115,7 @@ describe("a console page asked for by a browser that is not signed in", () => {
     }
     // Witness: the same page, with the owner's session, is the page itself.
     const cookie = await signedInCookie();
-    const page = await get("/auth/owner/manage", { ...BROWSER, cookie });
+    const page = await get("/auth/owner/keys", { ...BROWSER, cookie });
     expect(page.status).toBe(200);
     expect(page.headers.get("content-type")).toContain("text/html");
   });
@@ -150,7 +148,7 @@ describe("a console page asked for by a browser that is not signed in", () => {
   });
 
   it("goes to sign in with no way back for an address too long to carry", async () => {
-    const base = "/auth/owner/manage?x=";
+    const base = "/auth/owner/keys?x=";
     const fits = `${base}${"a".repeat(2048 - base.length)}`;
     expect(fits).toHaveLength(2048);
     // Witness: the longest address that fits is carried whole.
@@ -164,7 +162,7 @@ describe("a console page asked for by a browser that is not signed in", () => {
   });
 
   it("is sent back to the page once it has signed in", async () => {
-    const wanted = "/auth/owner/manage?tab=keys";
+    const wanted = "/auth/owner/keys?tab=keys";
     const res = await fetch(`${server!.apiUrl}/auth/sign-in`, {
       method: "POST",
       headers: {
@@ -180,14 +178,14 @@ describe("a console page asked for by a browser that is not signed in", () => {
   });
 
   it("is not given a redirect that a cache could hand to somebody else", async () => {
-    const res = await get("/auth/owner/manage", BROWSER);
+    const res = await get("/auth/owner/keys", BROWSER);
     expect(res.status).toBe(302);
     expect(res.headers.get("cache-control")).toContain("no-store");
   });
 
   it("is sent to sign in again when its session has ended", async () => {
     const cookie = await signedInCookie();
-    const open = await get("/auth/owner/manage", { ...BROWSER, cookie });
+    const open = await get("/auth/owner/keys", { ...BROWSER, cookie });
     expect(open.status).toBe(200);
     const out = await fetch(`${server!.apiUrl}/auth/sign-out`, {
       method: "POST",
@@ -195,10 +193,10 @@ describe("a console page asked for by a browser that is not signed in", () => {
       body: "{}",
     });
     expect(out.ok).toBe(true);
-    const next = await get("/auth/owner/manage", { ...BROWSER, cookie });
+    const next = await get("/auth/owner/keys", { ...BROWSER, cookie });
     expect(next.status).toBe(302);
     expect(next.headers.get("location")).toBe(
-      `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/manage")}`,
+      `/auth/sign-in?return_to=${encodeURIComponent("/auth/owner/keys")}`,
     );
   });
 });
