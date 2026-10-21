@@ -1,6 +1,6 @@
 # Create a personal Marfa instance on Railway
 
-Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server, a persistent data volume, and a private backup bucket in your Railway project.
+Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server, a persistent data volume, and a private backup bucket in your Railway project. The server runs a released build: the published image `ghcr.io/withmarfa/marfa-server`, pinned to one version. Railway pulls that image and builds nothing from source.
 
 ## Deploy the template
 
@@ -8,8 +8,9 @@ You need a Railway account with permission to deploy services, volumes, and buck
 
 1. Open the [Marfa Railway template](https://railway.com/new/template/5z9-Ja).
 2. Choose your workspace and create a project for this instance.
-3. Review the resources: one Marfa server with a volume mounted at `/data`, and one private backup bucket belonging to this instance. Deploy them together.
+3. Review the resources: one Marfa server with a volume mounted at `/data`, and one private backup bucket belonging to this instance. Check that the server's image is a version tag, such as `ghcr.io/withmarfa/marfa-server:0.0.20`, and not `latest`. Deploy the resources together.
 4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
+5. Note the release that is running. `GET /` on your instance's public address answers it as `release`. You need it to [update the server](#update-the-server) or go back to this build.
 
 The template generates separate random values for `API_KEY_SALT` and `MARFA_AUTH_SECRET` for each deployment. It also references the new bucket's credentials and sets `MARFA_AUTH_BASE_URL` to the server's public HTTPS address. You should not need to enter bucket credentials or generate secrets yourself. Railway documents these mechanisms under [template variable functions](https://docs.railway.com/templates/create#template-variable-functions) and [variable references](https://docs.railway.com/variables#reference-variables).
 
@@ -49,7 +50,7 @@ The volume is the working copy; the bucket is a separate recovery copy. Replicat
 
 Preserve **`API_KEY_SALT` and `MARFA_AUTH_SECRET`** across restarts, redeployments, and restores. Keep a secure recovery copy outside the project. These values are not stored in the data volume or bucket: changing the salt invalidates existing API keys and app tokens, and losing the authentication secret ends existing browser sessions. If you seal Railway variables, save their recovery copies first, because [sealed values cannot be retrieved](https://docs.railway.com/variables#sealed-variables).
 
-To recover a lost data volume, use the same container revision, backup bucket, current `S3_PREFIX`, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
+To recover a lost data volume, use the same image version, backup bucket, current `S3_PREFIX`, and secrets with a new volume. The container restores the database when none exists on the volume; Marfa can retrieve replicated blobs from the bucket and rebuild their disk copies. Follow [the deployment recovery instructions](README.md#restoring-by-hand). Keep the bucket while the instance or its recovery copy is needed. Railway does not currently provide automatic bucket snapshots; see [Storage Buckets](https://docs.railway.com/storage-buckets).
 
 ## Restore a volume backup
 
@@ -77,13 +78,23 @@ Recovery ends existing browser sessions and preserves app access. It uses the sa
 
 ## Update the server
 
-Railway [template updates](https://docs.railway.com/templates/updates) are opt-in. Review an update before applying it. Record the running container revision before an update. A redeploy preserves the volume, but a new build can refuse a database whose schema differs from its own. Before the first public release, cross-build archive compatibility is also not guaranteed.
+Railway does not update this instance for you, and you should not let it. A Marfa build can refuse a database that an earlier build wrote, and before the first public release nothing upgrades a database in place; see [the deployment upgrade procedure](README.md#upgrading).
 
-Follow [the deployment upgrade procedure](README.md#upgrading): export with the running build, start the new build on a fresh volume with a new `S3_PREFIX` or a new bucket, then restore the archive. Keep the old instance and export until the restore succeeds. Railway's rollback changes the deployment, not the database contents, so retain the build that can read your existing database.
+- **Template updates do not apply.** Railway [template updates](https://docs.railway.com/templates/updates) work only for services that come from a GitHub repository, and its documentation says there is no mechanism to check for updates to Docker images. Railway does not tell you that the template now names a newer version.
+- **Leave image auto updates off.** Railway can [update an image automatically](https://docs.railway.com/deployments/image-auto-updates) inside a maintenance window. An automatic update redeploys the service with a newer image, and a build that refuses your database leaves the instance unhealthy until you go back.
+- **Keep the tag pinned.** Railway redeploys an unpinned tag such as `latest` to pull the newest image, so a restart or redeploy could change the build. A version tag never moves; the release workflow does not retag a version once published.
+
+To move to a newer release, follow the upgrade procedure:
+
+1. Export with the running build, and note its release from `GET /`. Its image, `ghcr.io/withmarfa/marfa-server:<release>`, stays available under that tag.
+2. Start the new release on a fresh volume with a new `S3_PREFIX` or a new bucket. The simplest way on Railway is to deploy the template again in a new project. If the template names an older release than the one you want, change the server's image tag in the service's **Settings** under **Source** before the first deployment, then review and deploy the staged change.
+3. Claim the new instance and restore the archive. Keep the old instance and the export until the restore succeeds.
+
+Do not upgrade by changing the image tag on the existing service. If you already did and the server refuses the database, set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so only the build that wrote your database is sure to read it.
 
 ## Remove your instance
 
-Before removal, export any data you want to keep and verify that the archive unpacks. Keep the running build and instance secrets if you need to restore it later; see [the deployment upgrade procedure](README.md#upgrading).
+Before removal, export any data you want to keep and verify that the archive unpacks. Keep the running build's release and instance secrets if you need to restore it later; see [the deployment upgrade procedure](README.md#upgrading).
 
 For a project created only for this instance:
 
@@ -97,37 +108,36 @@ To keep the backup bucket for recovery, keep its project and delete only the Mar
 
 These settings describe the saved template and its container defaults.
 
-| Setting                     | Value                                                |
-| --------------------------- | ---------------------------------------------------- |
-| Server source               | `withmarfa/marfa`, default branch                    |
-| Volume mount                | `/data`                                              |
-| `SQLITE_PATH`               | `/data/marfa.db`                                     |
-| `BLOB_PATH`                 | `/data/blobs`                                        |
-| `NODE_ENV`                  | `production` (set by the container)                  |
-| Dockerfile                  | `deploy/Dockerfile` via `RAILWAY_DOCKERFILE_PATH`    |
-| Build revision              | `RAILWAY_GIT_COMMIT_SHA` Docker build argument       |
-| Runtime UID                 | `RAILWAY_RUN_UID=0`                                  |
-| Control socket              | `/run/marfa/control.sock`                            |
-| Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`             |
-| Client address header       | `TRUSTED_PROXY_HEADER=x-real-ip`                     |
-| Volume backup schedule      | Daily                                                |
-| HTTP port and domain target | `8600`                                               |
-| Health check                | `/health`                                            |
-| Replicas                    | `1`                                                  |
-| Serverless                  | Disabled                                             |
-| `API_KEY_SALT`              | `${{secret(64, "abcdef0123456789")}}`                |
-| `MARFA_AUTH_SECRET`         | `${{secret(64, "abcdef0123456789")}}`                |
-| `MARFA_AUTH_BASE_URL`       | `https://${{RAILWAY_PUBLIC_DOMAIN}}`                 |
-| `S3_BUCKET`                 | Reference to the backup bucket's `BUCKET`            |
-| `S3_REGION`                 | Reference to the backup bucket's `REGION`            |
-| `S3_ENDPOINT`               | Reference to the backup bucket's `ENDPOINT`          |
-| `S3_ACCESS_KEY_ID`          | Reference to the backup bucket's `ACCESS_KEY_ID`     |
-| `S3_SECRET_ACCESS_KEY`      | Reference to the backup bucket's `SECRET_ACCESS_KEY` |
-| `S3_FORCE_PATH_STYLE`       | `false` for newly created Railway buckets            |
-| `S3_PREFIX`                 | `blobs`                                              |
+| Setting                     | Value                                                                         |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| Server source               | Docker image `ghcr.io/withmarfa/marfa-server:<version>`, a pinned release tag |
+| Volume mount                | `/data`                                                                       |
+| `SQLITE_PATH`               | `/data/marfa.db`                                                              |
+| `BLOB_PATH`                 | `/data/blobs`                                                                 |
+| `NODE_ENV`                  | `production` (set by the container)                                           |
+| Runtime UID                 | `RAILWAY_RUN_UID=0`                                                           |
+| Control socket              | `/run/marfa/control.sock`                                                     |
+| Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`                                      |
+| Client address header       | `TRUSTED_PROXY_HEADER=x-real-ip`                                              |
+| Volume backup schedule      | Daily                                                                         |
+| HTTP port and domain target | `8600`                                                                        |
+| Health check                | `/health`                                                                     |
+| Replicas                    | `1`                                                                           |
+| Serverless                  | Disabled                                                                      |
+| Image auto updates          | Off                                                                           |
+| `API_KEY_SALT`              | `${{secret(64, "abcdef0123456789")}}`                                         |
+| `MARFA_AUTH_SECRET`         | `${{secret(64, "abcdef0123456789")}}`                                         |
+| `MARFA_AUTH_BASE_URL`       | `https://${{RAILWAY_PUBLIC_DOMAIN}}`                                          |
+| `S3_BUCKET`                 | Reference to the backup bucket's `BUCKET`                                     |
+| `S3_REGION`                 | Reference to the backup bucket's `REGION`                                     |
+| `S3_ENDPOINT`               | Reference to the backup bucket's `ENDPOINT`                                   |
+| `S3_ACCESS_KEY_ID`          | Reference to the backup bucket's `ACCESS_KEY_ID`                              |
+| `S3_SECRET_ACCESS_KEY`      | Reference to the backup bucket's `SECRET_ACCESS_KEY`                          |
+| `S3_FORCE_PATH_STYLE`       | `false` for newly created Railway buckets                                     |
+| `S3_PREFIX`                 | `blobs`                                                                       |
 
 Railway's [bucket reference variables](https://docs.railway.com/storage-buckets#railway-provided-variables) use `BUCKET` for the S3 name; the display name is different. New buckets use virtual-hosted URLs. Older buckets may require path-style URLs, as shown in their Credentials tab. Each instance needs its own bucket, including separate instances created from the same template. The one exception is the new build in an upgrade, which can share the old instance's bucket under a new `S3_PREFIX`.
 
-The container uses Railway's Git build argument when `VERSION_SHA` is empty or unset. An explicit `VERSION_SHA` takes precedence for other build workflows. The resulting revision appears in `/health`; see [Dockerfile build variables](https://docs.railway.com/builds/dockerfiles#using-variables-at-build-time).
+The image names its own build, so the template sets no build variable. `GET /` answers the commit the image was built from as `version` and the release as `release`, and `/health` reports the commit. Each tag is published for `linux/amd64` and `linux/arm64`, and a published version tag is never moved. The package is public, so Railway pulls it without registry credentials.
 
-Railway mounts volumes as root. The template uses Railway's `RAILWAY_RUN_UID=0` override so the server and command share an OS account that can write the fresh volume. The local socket remains private inside the container; see [volume permissions](https://docs.railway.com/volumes#permissions). The selected source must also allow SSH: [private template images with hidden registry credentials disable SSH](https://docs.railway.com/templates/create#private-docker-images).
+Railway mounts volumes as root. The template uses Railway's `RAILWAY_RUN_UID=0` override so the server and command share an OS account that can write the fresh volume. The local socket remains private inside the container; see [volume permissions](https://docs.railway.com/volumes#permissions). Keep the image public: [template images with hidden registry credentials disable SSH](https://docs.railway.com/templates/create#private-docker-images) and stop people from changing the image source, and claiming and recovering the instance need SSH.
