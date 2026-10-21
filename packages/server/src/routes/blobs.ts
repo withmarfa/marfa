@@ -21,6 +21,7 @@ import {
 } from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
+  BlobStoreUnreachable,
   blobDisposition,
   HashingTransform,
   resolveRange,
@@ -856,7 +857,16 @@ export function blobRoutes(
     const recorded = await withBlobUploadLock(
       hash,
       async () => {
-        await finishCopyDeletion(storage, disk, hash);
+        try {
+          await finishCopyDeletion(storage, disk, hash);
+        } catch (error) {
+          // Before anything is placed. A disk that does not finish the
+          // deletion may still carry it out, over the bytes this would place.
+          if (error instanceof BlobStoreUnreachable) {
+            throw storeUnavailable(disk, hash, error);
+          }
+          throw error;
+        }
         const present = (await disk.has(hash)) !== null;
         if (present) {
           await rm(spool, { force: true });

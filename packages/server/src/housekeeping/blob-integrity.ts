@@ -45,10 +45,11 @@ export type IntegrityResult = {
  * the store is named in the result and the log, and the rest of the run
  * goes to the other stores. The question to a store that does not answer
  * is called off. A store's `delete`, which finishes a queued copy deletion
- * or removes a struck copy's bytes, is waited on for the same bound; one
- * that finishes a queued deletion and goes unanswered counts its store
- * unreachable. A copy whose blob's upload lock is held, such as by a delete
- * a store has not finished, is skipped and stays first in line.
+ * or removes a struck copy's bytes, is waited on for the same bound, and
+ * one that goes unanswered counts its store unreachable; a struck copy
+ * stays struck, with its deletion queued. A copy whose blob's upload lock
+ * is held, such as by a delete a store has not finished, is skipped and
+ * stays first in line.
  */
 export class BlobIntegrityChecker {
   constructor(
@@ -138,7 +139,21 @@ export class BlobIntegrityChecker {
           }
           // A row dropped by an operator between the listing and the check is
           // not a strike: nothing was found wrong with a copy the log claims.
-          if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
+          try {
+            if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
+          } catch (err) {
+            if (!(err instanceof BlobStoreUnreachable)) throw err;
+            // Struck, with its deletion queued; the store that did not
+            // finish the deletion is asked nothing more this run.
+            struck += 1;
+            unreachable.add(store.id);
+            log("error", "blob.store_unreachable", {
+              store_id: store.id,
+              kind: store.kind,
+              error: errorMessage(err),
+            });
+            return false;
+          }
           return true;
         });
         if (reached === LOCK_HELD) {

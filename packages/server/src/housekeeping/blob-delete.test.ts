@@ -392,3 +392,47 @@ describe("a store's delete that does not answer", () => {
     }
   });
 });
+
+describe("an upload while the disk's queued deletion of its bytes does not answer", () => {
+  it("answers 503 blob_store_unavailable, and stores the bytes once the delete ends", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const content = "a queued disk deletion that does not answer";
+    // Bytes on the disk that no row names, with their deletion queued, as a
+    // refused restore or a strike leaves them.
+    const hash = await upload(c, content);
+    await c.storage.runInTransaction(async () => {
+      await c.storage.blobs.queueCopyDeletion(hash, c.blobs.disk.id);
+    });
+    const gate = gateDelete(c.blobs.disk);
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      const post = () =>
+        c.app.request("/blobs", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${c.workingKey}`,
+            "Content-Type": "application/octet-stream",
+          },
+          body: new TextEncoder().encode(content),
+        });
+      const refused = await post();
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+
+      // The witness: once the delete ends, the same upload is stored.
+      gate.release();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const stored = await post();
+      expect(stored.status).toBe(201);
+      expect(await c.blobs.disk.has(hash)).not.toBeNull();
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.release();
+      gate.restore();
+    }
+  });
+});

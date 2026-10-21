@@ -553,6 +553,83 @@ describe("BlobIntegrityChecker.runOnce", () => {
     }
   });
 
+  it("counts a store whose delete of a struck copy does not answer as unreachable, and asks it nothing more in the run", async () => {
+    ctx = await createTestContext();
+    const held = [
+      await upload(ctx, "first copy a store has lost"),
+      await upload(ctx, "second copy a store has lost"),
+    ];
+    let asked = 0;
+    const deletes: string[] = [];
+    let release: () => void = () => undefined;
+    const late = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // Holds no copy, so each check strikes one, and its delete hangs.
+    const stub: BlobStore = {
+      id: "store-whose-delete-hangs",
+      kind: "s3",
+      locator: "s3://hanging-delete/blobs",
+      attach: () => Promise.resolve(),
+      put: () => Promise.resolve(),
+      get: () => Promise.reject(new Error("the check never reads")),
+      has: () => {
+        asked++;
+        return Promise.resolve(null);
+      },
+      delete: (hash) => {
+        deletes.push(hash);
+        return late;
+      },
+    };
+    await ctx.storage.blobs.attachStore({
+      id: stub.id,
+      kind: stub.kind,
+      locator: stub.locator,
+    });
+    for (const hash of held) {
+      await ctx.storage.blobs.recordLocation(hash, stub.id);
+    }
+    const all = [ctx.blobs.disk, stub];
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    const silenced = quiet();
+    let result;
+    try {
+      result = await settlesWithin(
+        new BlobIntegrityChecker(
+          ctx.storage,
+          { stores: all, byId: (id) => all.find((s) => s.id === id) },
+          { maxRows: 100, maxBytes: 1024 * 1024 },
+        ).runOnce(),
+        5_000,
+      );
+    } finally {
+      silenced.restore();
+      storeChecks.timeoutMs = timeout;
+    }
+    // One copy struck, its delete given up on, and the store asked about
+    // nothing else; the disk's two copies stamped.
+    expect(result).toMatchObject({ verified: 2, struck: 1, unreachable: 1 });
+    expect(asked).toBe(1);
+    expect(deletes).toHaveLength(1);
+    const struck = deletes[0]!;
+    expect(
+      (await ctx.storage.blobs.listLocations(struck)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    // The copy stays struck, with its deletion queued for a later run.
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([
+      { hash: struck, store_id: stub.id },
+    ]);
+    expect(
+      silenced
+        .lines()
+        .filter((line) => line.message === "blob.store_unreachable")
+        .map((line) => line.store_id),
+    ).toEqual([stub.id]);
+    release();
+  });
+
   it("counts no strike for a row dropped between the listing and the check", async () => {
     // The listing named a copy; by the time the check reaches it an
     // operator has dropped the row. Nothing was found wrong with a copy

@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { readFileSync, writeFileSync } from "node:fs";
 import type { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -8,6 +9,7 @@ import {
 import {
   bytesOf,
   clientsFor,
+  diskPath,
   leaveBacklog,
   ownObjectStore,
   replicationIdle,
@@ -107,6 +109,26 @@ async function replicated(
   );
   await replicationIdle(operator);
   return hash;
+}
+
+/** Alters the disk's copy of `hash` at its first byte, keeping its length,
+ *  so the next integrity check strikes it. */
+function corruptOnDisk(hash: string): void {
+  const path = diskPath(server, hash);
+  const bytes = readFileSync(path);
+  bytes[0] = (bytes[0] ?? 0) ^ 0xff;
+  writeFileSync(path, bytes);
+}
+
+/** Replicates until no store lacks a blob, once the stores answer again. */
+async function replicatedAgain(what: string): Promise<void> {
+  await waitFor(what, async () => {
+    const run = await runJob<{ copied: number; remaining: number }>(
+      operator,
+      "blob-replicate",
+    );
+    return run.result.remaining === 0 ? true : undefined;
+  });
 }
 
 beforeAll(async () => {
@@ -240,6 +262,76 @@ describe("a store's delete that does not answer", () => {
     expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
     const again = await working.uploadBlob(content, "text/plain");
     expect(again.status, JSON.stringify(again.error)).toBe(201);
+  });
+});
+
+describe("a strike whose delete does not answer", () => {
+  it("counts the store as unreachable, asks it nothing more in the run, and keeps the copy struck", async () => {
+    const hashes = [
+      await replicated("struck while the disk's delete hangs, first"),
+      await replicated("struck while the disk's delete hangs, second"),
+    ];
+    for (const hash of hashes) corruptOnDisk(hash);
+
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-delete");
+    const run = await runJob(operator, "blob-integrity");
+    // One copy struck; the disk, whose delete of it hangs, is asked about
+    // nothing else, so the other altered copy waits for a later run.
+    expect(run.result).toMatchObject({ struck: 1, unreachable: 1 });
+    expect(await waitingAt("hold:blob-delete")).toBe(1);
+    const kinds = async (hash: string) =>
+      (await operator.listBlobLocations(hash)).data.data
+        .map((location) => location.kind)
+        .sort();
+    const left = await Promise.all(hashes.map(kinds));
+    expect(left).toEqual(expect.arrayContaining([["s3"], ["disk", "s3"]]));
+
+    // The witness: once the disk answers, the next run strikes the other.
+    await server.clearFault();
+    const next = await runJob(operator, "blob-integrity");
+    expect(next.result).toMatchObject({ struck: 1, unreachable: 0 });
+    await replicatedAgain("the disk's copies made again");
+    for (const hash of hashes)
+      expect(await kinds(hash)).toEqual(["disk", "s3"]);
+  });
+});
+
+describe("an upload while the disk does not finish a queued deletion of its bytes", () => {
+  it("answers 503 blob_store_unavailable, and stores the bytes once the disk answers", async () => {
+    const content = bytesOf("uploaded while the disk's deletion hangs", 120);
+    const hash = await replicated(
+      "uploaded while the disk's deletion hangs",
+      content,
+    );
+    const disk = (await operator.listBlobStores()).data.data.find(
+      (store) => store.kind === "disk",
+    )!.id;
+    // The drop's own delete fails, so the deletion stays queued and the
+    // blob's lock is free.
+    await server.setFault("fail:blob-delete=1");
+    const dropped = await operator.deleteBlobLocation(hash, disk);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    await server.clearFault();
+
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-delete");
+    const refused = await working.uploadBlob(content, "text/plain");
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+    expect(await waitingAt("hold:blob-delete")).toBe(1);
+
+    await server.clearFault();
+    await waitFor("the upload stored once the disk answers", async () => {
+      const stored = await working.uploadBlob(content, "text/plain");
+      return stored.status === 201 ? true : undefined;
+    });
+    await replicatedAgain("the copies of the uploaded blob");
+    expect(
+      (await operator.listBlobLocations(hash)).data.data
+        .map((location) => location.kind)
+        .sort(),
+    ).toEqual(["disk", "s3"]);
   });
 });
 
