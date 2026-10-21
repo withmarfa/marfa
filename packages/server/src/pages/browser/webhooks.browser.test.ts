@@ -8,6 +8,7 @@ import {
 import {
   createTestContext,
   request,
+  seedOauthBearer,
   type TestContext,
 } from "../../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../../pubsub.js";
@@ -21,6 +22,7 @@ let server: { close: () => Promise<void> };
 let origin: string;
 let id: string;
 let keyId: string;
+let app: Awaited<ReturnType<typeof seedOauthBearer>>;
 beforeAll(async () => {
   if (launched instanceof Error) return;
   browser = launched;
@@ -29,6 +31,7 @@ beforeAll(async () => {
   ctx = await createTestContext({ authBaseUrl: origin });
   server = listen(ctx.app, reserved.port);
   initEventLog(ctx.storage.eventLog);
+  app = await seedOauthBearer(ctx, ["webhooks.manage", "core.note:write"]);
   const hook = await request(ctx.app, "POST", "/webhooks", {
     key: ctx.workingKey,
     body: { url: "https://receiver.example/hook", events: ["item.created"] },
@@ -193,3 +196,67 @@ inBrowser(
     }
   },
 );
+
+inBrowser("keeps unsaved app access while retrying its webhook", async () => {
+  const hook = await request(ctx.app, "POST", "/webhooks", {
+    key: app.token,
+    body: { url: "https://receiver.example/app", events: ["item.created"] },
+  });
+  expect(hook.status).toBe(201);
+  await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: { type: "core.note", properties: { body: "app retry" } },
+  });
+  await new WebhookScheduler({
+    storage: ctx.storage,
+    wakePoller: () => Promise.resolve(),
+  }).runOnce();
+  await new WebhookPoller({
+    storage: ctx.storage,
+    http: {
+      post: () =>
+        Promise.resolve({ kind: "answered", status: 400, retryAfter: null }),
+    },
+  }).runOnce();
+  const context = await browser.newContext();
+  try {
+    const login = await context.request.post(origin + "/auth/sign-in/email", {
+      headers: { origin },
+      data: { email: ctx.owner.email, password: ctx.owner.password },
+    });
+    expect(login.status()).toBe(200);
+    const page = await context.newPage();
+    await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+    await page
+      .locator("#access")
+      .getByText("Your data", { exact: true })
+      .click();
+    const access = page
+      .locator("select[name=scopes]")
+      .filter({ has: page.locator('option[value="core.note:write"]') });
+    await access.selectOption("core.note:read");
+    await page.getByText("Delivery history", { exact: true }).click();
+    await page.locator('[data-hook="webhook-retry"]').click();
+    await page
+      .getByText("Retry queued. Reload the page later to see the result.", {
+        exact: true,
+      })
+      .waitFor();
+    expect(await access.inputValue()).toBe("core.note:read");
+    expect(
+      await page.getByRole("button", { name: "Save", exact: true }).isEnabled(),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByText("Saved", { exact: true }).waitFor();
+    const grants = await page.request.get(`${origin}/auth/grants`);
+    expect(grants.ok()).toBe(true);
+    const body = (await grants.json()) as {
+      data: { id: string; scopes: string[] }[];
+    };
+    expect(
+      body.data.find((row) => row.id === app.grantId)?.scopes.sort(),
+    ).toEqual(["core.note:read", "webhooks.manage"]);
+  } finally {
+    await context.close();
+  }
+});
