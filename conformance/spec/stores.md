@@ -382,7 +382,7 @@ While an attached store has not finished a write or a deletion of a blob's bytes
 
 ### `stores/drop-concurrent`
 
-While drops of every copy of one blob are in flight together, the server MUST answer each with `200` or `409 copies_below_minimum` and leave at least `min_copies` copies.
+While drops of every copy of one blob are in flight together, the server MUST answer each with `200`, `409 copies_below_minimum` or, under `stores/drop-unfinished`, `503 blob_store_unavailable`, and leave at least `min_copies` copies.
 
 **Tests:** `compliance/blob-rules.test.ts › never lets two concurrent drops take both copies`.
 
