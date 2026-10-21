@@ -87,7 +87,7 @@ pub enum CoreError {
     },
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
-    #[error("this working copy can no longer be kept current: {reason}; hydrate again")]
+    #[error("{}", copy_expired(reason))]
     CopyExpired { reason: String },
     #[error("the event stream ended early: {reason}")]
     StreamIncomplete { reason: String },
@@ -289,6 +289,25 @@ fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
     format!("{path} was made by another build of the core: {reason}. {holds}")
 }
 
+/// What an expired copy says, with the advice that fits why it expired. The
+/// reason is a code for the causes the core names and a sentence for the
+/// rest, so a person is never shown a bare code, nor the name of an internal
+/// step. A rebuild keeps the writes not yet sent.
+fn copy_expired(reason: &str) -> String {
+    let cause_and_advice = match reason {
+        "credential_ended" => {
+            "the credential it reads with has ended; sign in or approve this app again".to_string()
+        }
+        "read_view_changed" => "what the credential may read, or how the server arranges items and types, has changed; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
+        crate::http::INSTANCE_CHANGED => {
+            "another Marfa now answers at this address; rebuild the copy from it".to_string()
+        }
+        "read_view_invalid" => "the server sent an answer this copy cannot accept as proof of what it may read; rebuild the copy from the server".to_string(),
+        sentence => format!("{sentence}; rebuild the copy from the server"),
+    };
+    format!("this working copy can no longer be kept current: {cause_and_advice}")
+}
+
 impl From<rusqlite::Error> for CoreError {
     fn from(error: rusqlite::Error) -> Self {
         if error.sqlite_error_code() == Some(rusqlite::ErrorCode::DiskFull) {
@@ -337,6 +356,65 @@ impl From<url::ParseError> for CoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn said(reason: &str) -> String {
+        CoreError::CopyExpired {
+            reason: reason.into(),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn an_expired_copy_says_what_to_do_for_the_reason_it_expired() {
+        let ended = said("credential_ended");
+        assert!(
+            ended.contains("sign in or approve this app again"),
+            "{ended}"
+        );
+        let changed = said("read_view_changed");
+        assert!(
+            changed.contains("what the credential may read")
+                && changed.contains("rebuild the copy from the server")
+                && changed.contains("not yet sent are kept"),
+            "{changed}"
+        );
+        assert!(
+            !changed.contains("sign in"),
+            "a changed view needs no new approval: {changed}"
+        );
+        let other = said("instance_changed");
+        assert!(other.contains("another Marfa now answers"), "{other}");
+        let invalid = said("read_view_invalid");
+        assert!(invalid.contains("cannot accept as proof"), "{invalid}");
+        // A reason that is a sentence is shown as it is.
+        let sentence = said("the server's event log ends at 5");
+        assert!(
+            sentence
+                .ends_with("the server's event log ends at 5; rebuild the copy from the server"),
+            "{sentence}"
+        );
+    }
+
+    #[test]
+    fn an_expired_copy_never_shows_the_word_hydrate_to_a_person() {
+        for reason in [
+            "credential_ended",
+            "read_view_changed",
+            "read_view_invalid",
+            "instance_changed",
+            "the event log no longer holds the cursor 4",
+        ] {
+            let text = said(reason);
+            assert!(!text.to_lowercase().contains("hydrat"), "{text}");
+            assert_eq!(
+                CoreError::CopyExpired {
+                    reason: reason.into()
+                }
+                .code(),
+                "copy_expired"
+            );
+        }
+    }
 
     #[test]
     fn every_error_has_a_code_and_every_code_is_listed_once() {
