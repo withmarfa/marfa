@@ -213,7 +213,9 @@ A machine backup or a Railway volume backup is older than the bucket's copy of t
 
 **So the image does not start an older copy with the bucket's current `S3_PREFIX`.** When the volume already holds a database, the entrypoint compares it with the replica under `<S3_PREFIX>/db` before replication starts. When the database may be older, the entrypoint exits with status 1 and a message that names this section, without starting the server or Litestream's replication, and the bucket is unchanged. A point-in-time restore of the bucket onto the same prefix is refused the same way, because the restored file is also behind the replica. `instance/replica-not-older` in `conformance/spec/instance.md` states the rule.
 
-The entrypoint knows which transactions the volume replicated from the `.marfa.db-litestream` folder beside the database. It also refuses a database it cannot show to be the one that folder describes: one copied without the folder, or one that lost its last writes since. When the bucket cannot be listed, the entrypoint cannot compare, so it exits with status 1 and a message that says so; a restart tries again.
+The entrypoint knows which transactions the volume replicated from the `.marfa.db-litestream` folder beside the database. It also refuses a database it cannot show to be the one that folder describes: one copied without the folder, or one that lost its last writes since. It cannot tell an older database file put in place beside the volume's own `marfa.db-wal` from the original, so delete that log before you restore a copy, as the steps above say. When the bucket cannot be listed, the entrypoint cannot compare, so it exits with status 1 and a message that says so; a restart tries again.
+
+A fresh volume restores the replica's newest state, and Litestream writes the folder at its first sync, about a second after the instance starts. If the container is stopped or killed before then, the volume holds a database with no folder, and the next start refuses it. Delete `marfa.db`, `marfa.db-wal` and `marfa.db-shm` from the data directory, and the next start restores the database again.
 
 Going back to an older state loses the later writes from the instance, as you intend. The steps in this section also keep them in the bucket. They give the restored instance a new prefix, so the old prefix is left as it was and nothing writes to it. To run the bucket's newest state instead, delete `marfa.db`, `marfa.db-wal` and `marfa.db-shm` from the data directory, and the next start restores the database from the bucket.
 
@@ -224,7 +226,7 @@ Going back to an older state loses the later writes from the instance, as you in
 3. Choose a new prefix that no instance has used, such as `restored/blobs`. [The names it needs](#the-names-it-needs) gives the rules for a prefix.
 4. Delete the `marfa.db-wal` and `marfa.db-shm` files already in the data directory, then put the copied database file, the log (when the copy has one) and the blob folder where `SQLITE_PATH` and `BLOB_PATH` name. Do not restore a `marfa.db-shm` file.
 5. Set `S3_PREFIX` to the new prefix. Leave the bucket, its credentials, `API_KEY_SALT` and `MARFA_AUTH_SECRET` as they were.
-6. Start the instance. In its log, check that the `replicating to` line shows `path=` followed by the new prefix and `/db`, such as `path=restored/blobs/db`, and that no `detected database behind replica` line appears. Then read `GET /health`.
+6. Start the instance. In its log, check that the `replicating to` line shows `path=` followed by the new prefix and `/db`, such as `path=restored/blobs/db`, and that no `detected database behind replica` line appears. When the data directory holds a `.marfa.db-litestream` folder, the log also says that the entrypoint removed it: the folder describes replication to the old prefix, and without it Litestream starts the new prefix from a snapshot of the database. Then read `GET /health`.
 
 On Railway, make the same change through the dashboard: see [Restore a volume backup](railway.md#restore-a-volume-backup).
 
@@ -242,7 +244,7 @@ Use this when you have no copy of the volume, or the moment you want is not in o
 Use this only when the writes after the backup are not wanted, the bucket cannot be reached and the instance must start without it, or the entrypoint refuses a database you know is not older than the bucket's copy. The instance keeps its prefix, and the database on the volume becomes the bucket's newest copy.
 
 1. Set `MARFA_REPLACE_NEWER_REPLICA` to `true`.
-2. Start the instance. Its log says that `MARFA_REPLACE_NEWER_REPLICA` is set and that the database is replicated without the check.
+2. Start the instance. Its log says that `MARFA_REPLACE_NEWER_REPLICA` is set and that the database is replicated without the check. When the data directory holds a `.marfa.db-litestream` folder, the log also says that the entrypoint removed it, so that Litestream starts from a snapshot of the database.
 3. Once the log shows the `replicating to` line, unset `MARFA_REPLACE_NEWER_REPLICA`, so that a later start checks again.
 
 The writes the bucket held after the database stay only at earlier transaction points, which Litestream's retention removes.

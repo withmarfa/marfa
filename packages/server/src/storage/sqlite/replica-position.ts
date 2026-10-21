@@ -426,6 +426,12 @@ function holdsLtxPages(
 /**
  * Whether the database at `sqlitePath` may be replicated to a replica whose
  * newest transaction is `replica`.
+ *
+ * A log that continues from the recorded position answers before the
+ * database file is read, so an older database file put in place beside the
+ * volume's own log passes. Nothing on the volume can tell it apart: the
+ * record holds only the pages of recent transactions, without checksums,
+ * and SQLite in WAL mode does not count commits in the database header.
  */
 export function checkReplica(
   sqlitePath: string,

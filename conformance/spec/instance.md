@@ -282,7 +282,7 @@ Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` s
 
 **Reason:** everything an instance puts in the bucket is then under its own prefix, its blobs and its database, so one bucket can carry several instances.
 
-**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
+**Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`, `backup/older-database.test.ts › starts an older database under a new prefix that holds no replica, replicates its writes there, and leaves the old replica unchanged`.
 
 ### `instance/replica-restores-own`
 
@@ -292,9 +292,9 @@ Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` s
 
 ### `instance/replica-not-older`
 
-Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set and `MARFA_REPLACE_NEWER_REPLICA` not true, if it starts on a volume that already holds a database older than the database last replicated under its own `<S3_PREFIX>/db/`, then the server MUST leave that replica unchanged.
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set and `MARFA_REPLACE_NEWER_REPLICA` not true, if it starts on a volume that already holds a database while its own `<S3_PREFIX>/db/` holds a replica, and Litestream's record on the volume is missing or ends before that replica's newest transaction, or the write-ahead log beside the database neither continues from the log position after the record's newest transaction nor has moved on to the log's next generation while the database file does not hold every page of that transaction, then the server MUST leave that replica unchanged.
 
-**Reason:** replicating the older database would make it the replica's newest state, and the writes after it would remain only in the replica's history, which expires. `deploy/README.md` says how to start an older database under a new prefix, or to replace the replica on purpose.
+**Reason:** such a database may be older than the replica. Replicating it would make it the replica's newest state, and the writes after it would remain only in the replica's history, which expires. The log is read before the database file, so an older database file put in place beside the volume's own `marfa.db-wal`, which still continues from the recorded position, passes; `deploy/README.md` says to delete that log before restoring a copy. It also says how to start an older database under a new prefix, or to replace the replica on purpose.
 
 **Tests:** `backup/older-database.test.ts › refuses a volume copied before the replica's newest transaction, and leaves the bucket unchanged`, `› refuses an older database copied without Litestream's record, and leaves the bucket unchanged`, `› refuses an older database put in place of the one the volume replicated, and leaves the bucket unchanged`.
 
