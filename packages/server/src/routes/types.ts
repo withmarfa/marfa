@@ -235,15 +235,6 @@ const RetentionPolicySchema = z
   )
   .openapi("RetentionPolicy");
 
-/** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
-export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
-  Record<string, z.ZodType>
-> = {
-  DisplayHints: DisplayHintsSchema,
-  VersionPolicy: VersionPolicySchema,
-  RetentionPolicy: RetentionPolicySchema,
-};
-
 /**
  * A type as the two authoring doors take it.
  *
@@ -348,7 +339,18 @@ const TypeProvenanceSchema = z
   })
   .describe(
     "Whether Marfa ships the type, and the sign-in that first registered it when known.",
-  );
+  )
+  .openapi("TypeProvenance");
+
+/** This module's part of `DESCRIBED_ONLY_BY_REFERENCE` in `_schemas.ts`. */
+export const TYPE_SCHEMAS_DESCRIBED_BY_REFERENCE: Readonly<
+  Record<string, z.ZodType>
+> = {
+  DisplayHints: DisplayHintsSchema,
+  VersionPolicy: VersionPolicySchema,
+  RetentionPolicy: RetentionPolicySchema,
+  TypeProvenance: TypeProvenanceSchema,
+};
 
 /**
  * The same body on the replacement door, where the path names the type.
