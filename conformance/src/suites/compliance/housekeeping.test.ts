@@ -108,18 +108,16 @@ describe("the housekeeping the server runs on itself", () => {
     expect(unknown.error?.error.code).toBe("housekeeping_job_not_found");
   });
 
-  it("leaves a job a setting switches off out of the listing, and answers 404 for it", async () => {
-    // The referee boots with enrichment off. The enrichment fixtures boot
-    // servers with it on and run this name there.
+  it("keeps live-switchable jobs listed when their environment default is off", async () => {
+    // A later /config change can start the job without restarting the server.
     const operator = getManagementClient();
     const listed = await operator.listHousekeeping();
     expect(listed.status).toBe(200);
     const names = listed.data.data.map((row) => row.name);
     expect(names).toContain("trash-purge");
-    expect(names).not.toContain("enrichment-sweep");
+    expect(names).toContain("enrichment-sweep");
     const run = await operator.runHousekeeping("enrichment-sweep");
-    expect(run.status).toBe(404);
-    expect(run.error?.error.code).toBe("housekeeping_job_not_found");
+    expect(run.status).toBe(200);
   });
 
   it("refuses a retention beyond its range and keeps the stored one", async () => {

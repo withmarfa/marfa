@@ -1477,7 +1477,7 @@ export interface paths {
         };
         /**
          * Get the configuration
-         * @description Returns the instance configuration: its display name, enforcement levers and retention settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.
+         * @description Returns the instance configuration: its display name, enforcement levers and live settings, with its `instance_id`. A setting nobody has set is left out. Requires `config.manage`.
          */
         get: operations["getConfig"];
         /**
@@ -4595,10 +4595,28 @@ export interface components {
                 };
             };
         };
-        /** @description The instance configuration: its display name, enforcement levers and retention settings, with the instance's ID. */
+        /** @description The instance configuration: its display name, enforcement levers and live settings, with the instance's ID. */
         InstanceConfig: {
             /** @description Unique identifier for the instance, the same value `GET /` returns. */
             instance_id: string;
+            /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
+            version_recent_days?: number;
+            /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. */
+            version_daily_snapshot_days?: number;
+            /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. */
+            version_weekly_snapshot_days?: number;
+            /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. */
+            version_max_versions?: number;
+            /** @description Disconnect apps unused for this many days. Zero disables retirement. */
+            grant_inactivity_days?: number;
+            /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. */
+            enrichment_enabled?: boolean;
+            /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
+            enrichment_ocr_enabled?: boolean;
+            /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+            error_reporting_enabled?: boolean;
+            /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+            heartbeat_enabled?: boolean;
             /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
             name?: string;
             /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
@@ -22758,6 +22776,24 @@ export interface operations {
                 "application/json": {
                     /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
                     instance_id?: string;
+                    /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. */
+                    version_recent_days?: number;
+                    /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. */
+                    version_daily_snapshot_days?: number;
+                    /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. */
+                    version_weekly_snapshot_days?: number;
+                    /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. */
+                    version_max_versions?: number;
+                    /** @description Disconnect apps unused for this many days. Zero disables retirement. */
+                    grant_inactivity_days?: number;
+                    /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. */
+                    enrichment_enabled?: boolean;
+                    /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. */
+                    enrichment_ocr_enabled?: boolean;
+                    /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+                    error_reporting_enabled?: boolean;
+                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. */
+                    heartbeat_enabled?: boolean;
                     /** @description The instance's display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. Absent: `Marfa`. */
                     name?: string;
                     /** @description The instance's enforcement levers. Each applies to every credential that doesn't set the same lever itself. Absent: no lever is on. */
@@ -22796,7 +22832,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {
@@ -22945,6 +22981,24 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description Days within which every version is kept. Zero makes this window empty. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    version_recent_days?: number | null;
+                    /** @description Days within which a daily version is kept. Must be at least `version_recent_days`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    version_daily_snapshot_days?: number | null;
+                    /** @description Days within which a weekly version is kept. Must be at least `version_daily_snapshot_days`. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    version_weekly_snapshot_days?: number | null;
+                    /** @description Maximum versions per item, after applying the time windows. Per-type policy overrides these instance defaults. `null` removes it, so the server's default applies. */
+                    version_max_versions?: number | null;
+                    /** @description Disconnect apps unused for this many days. Zero disables retirement. `null` removes it, so the server's default applies. */
+                    grant_inactivity_days?: number | null;
+                    /** @description `true` if Marfa reads text and dimensions from files. An active extraction can finish after disabling. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    enrichment_enabled?: boolean | null;
+                    /** @description `true` if file reading includes image text. Enabling reconsiders previously skipped images. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    enrichment_ocr_enabled?: boolean | null;
+                    /** @description `true` if error alerts and exception reports are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    error_reporting_enabled?: boolean | null;
+                    /** @description `true` if scheduled heartbeat requests are sent. Enabling requires a configured receiver. Absent: the environment default applies. `null` removes it, so the server's default applies. */
+                    heartbeat_enabled?: boolean | null;
                     /** @description This instance's ID, accepted so you can send back what `GET /config` returned. It sets nothing. */
                     instance_id?: string;
                     /** @description The instance's display name. `null` removes it, so the server's default applies. */
@@ -22985,7 +23039,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a retention value is out of range, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {

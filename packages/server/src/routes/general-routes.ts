@@ -1,3 +1,4 @@
+import { effectiveConfig, hasErrorReceiver } from "../effective-config.js";
 /**
  * The General page of the owner console: the instance's name and the
  * retention settings `PATCH /config` changes while the server runs, read from
@@ -41,6 +42,11 @@ type Field = keyof Pick<
   | "event_log_retention_hours"
   | "inbound_handled_retention_days"
   | "inbound_pending_retention_days"
+  | "version_recent_days"
+  | "version_daily_snapshot_days"
+  | "version_weekly_snapshot_days"
+  | "version_max_versions"
+  | "grant_inactivity_days"
 >;
 
 interface Keeping {
@@ -51,13 +57,59 @@ interface Keeping {
   standing: (config: AppConfig) => number;
   presets: readonly number[];
   words: (n: number) => string;
+  noZero?: boolean;
 }
 
 const KEEPING: readonly Keeping[] = [
   {
+    field: "version_recent_days",
+    title: "Keep every version for",
+    description:
+      "The first window, measured from today; type policies can override it",
+    standing: (c) => c.versionRecentDays,
+    presets: [7, 30, 90],
+    words: (n) => (n === 0 ? "No recent window" : count(n, "day")),
+  },
+  {
+    field: "version_daily_snapshot_days",
+    title: "Keep daily versions for",
+    description: "Measured from today; at least as long as the first window",
+    standing: (c) => c.versionDailySnapshotDays,
+    presets: [30, 90, 180, 365],
+    words: (n) => (n === 0 ? "No daily window" : count(n, "day")),
+  },
+  {
+    field: "version_weekly_snapshot_days",
+    title: "Keep weekly versions for",
+    description: "Measured from today; at least as long as the daily window",
+    standing: (c) => c.versionWeeklySnapshotDays,
+    presets: [90, 180, 365, 730],
+    words: (n) => (n === 0 ? "No weekly window" : count(n, "day")),
+  },
+  {
+    field: "version_max_versions",
+    title: "Most versions per item",
+    description:
+      "The limit applies after the time windows; the latest version is always kept",
+    standing: (c) => c.versionMaxVersions,
+    presets: [1, 10, 100, 500, 1000],
+    words: (n) => count(n, "version"),
+    noZero: true,
+  },
+  {
+    field: "grant_inactivity_days",
+    title: "Disconnect unused apps after",
+    description:
+      "Measured from their last use or approval; disconnected apps must be approved again",
+    standing: (c) => c.grantInactivityDays ?? 365,
+    presets: [30, 90, 365],
+    words: (n) => (n === 0 ? "Never" : count(n, "day")),
+  },
+
+  {
     field: "trash_retention_days",
     title: "Keep items in the trash",
-    description: "After this, they're deleted for good",
+    description: "After this, they can be deleted for good",
     standing: (config) => config.trashRetentionDays,
     presets: [7, 30, 60, 90, 365],
     words: daysWords,
@@ -110,20 +162,83 @@ export function keepingRows(
     // Zero keeps things with no age limit, so it is the longest.
     const longestLast = (n: number): number =>
       n === 0 ? Number.POSITIVE_INFINITY : n;
-    const offered = [...new Set([...setting.presets, 0, current])].sort(
-      (a, b) => longestLast(a) - longestLast(b),
-    );
+    const offered = [
+      ...new Set([...setting.presets, ...(setting.noZero ? [] : [0]), current]),
+    ].sort((a, b) => longestLast(a) - longestLast(b));
     return {
       field: setting.field,
       title: setting.title,
       description: setting.description,
-      value: String(current),
-      options: offered.map((n) => ({
-        value: String(n),
-        label: setting.words(n),
-      })),
+      value:
+        stored?.[setting.field] === undefined ? "default" : String(current),
+      options: [
+        {
+          value: "default",
+          label: `Default (${setting.words(setting.standing(config))})`,
+        },
+        ...offered.map((n) => ({
+          value: String(n),
+          label: setting.words(n),
+        })),
+      ],
     };
   });
+}
+
+export function liveRows(
+  config: AppConfig,
+  stored: InstanceConfig | null,
+): KeepingRow[] {
+  const defaults = effectiveConfig(config, null);
+  return (
+    [
+      [
+        "enrichment_enabled",
+        "Read text in files",
+        "Read text and dimensions from uploaded files. A running extraction can finish after this is switched off.",
+        true,
+      ],
+      [
+        "enrichment_ocr_enabled",
+        "Read text in images",
+        "Read text from images when file reading is on. Previously skipped images are reconsidered.",
+        true,
+      ],
+      [
+        "error_reporting_enabled",
+        "Send error reports",
+        hasErrorReceiver(config)
+          ? "Send alerts and exception reports to the configured receivers."
+          : "Set an error receiver where Marfa runs to enable reports.",
+        hasErrorReceiver(config),
+      ],
+      [
+        "heartbeat_enabled",
+        "Send a heartbeat",
+        config.heartbeatUrl
+          ? "Let the configured receiver check that Marfa is running."
+          : "Set a heartbeat receiver where Marfa runs to enable it.",
+        Boolean(config.heartbeatUrl),
+      ],
+    ] as const
+  ).map(([field, title, description, available]) => ({
+    field,
+    title,
+    description,
+    value: stored?.[field] === undefined ? "default" : String(stored[field]),
+    options: [
+      {
+        value: "default",
+        label: `Default (${defaults[field] ? "On" : "Off"})`,
+      },
+      { value: "false", label: "Off" },
+      ...(available
+        ? [{ value: "true", label: "On" }]
+        : stored?.[field] === true
+          ? [{ value: "true", label: "Off (no receiver)" }]
+          : []),
+    ],
+  }));
 }
 
 const LEVERS: readonly [
@@ -205,6 +320,7 @@ export function generalRoutes(storage: Storage, config: AppConfig) {
         nonce: c.var.cspNonce,
         instanceName: generalName(stored),
         keeping: keepingRows(config, stored),
+        live: liveRows(config, stored),
         rules: ruleRows(stored),
         about: {
           address: new URL(config.authBaseUrl).host,

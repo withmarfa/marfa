@@ -1,3 +1,5 @@
+import { readEffectiveConfig } from "../effective-config.js";
+import { writeInstanceConfig } from "./instance-config.js";
 import {
   afterAll,
   beforeAll,
@@ -366,4 +368,43 @@ describe("a sweep", () => {
     await new VersionThinner(ctx.storage, SHORT).runOnce();
     expect(await versionNumbers(last)).toEqual([2, 3]);
   });
+});
+
+it("rechecks a changed instance policy in the deleting transaction", async () => {
+  const type = uniqueType("live_policy");
+  await register(type);
+  const id = await itemWithHistory(type);
+  await ageVersion(id, 1, 10);
+  await writeInstanceConfig(ctx.storage.settings, {
+    version_recent_days: 1,
+    version_daily_snapshot_days: 2,
+    version_weekly_snapshot_days: 3,
+  });
+  const thinner = new VersionThinner(ctx.storage, async () => {
+    const c = await readEffectiveConfig(ctx.storage.settings, ctx.config);
+    return {
+      recentDays: c.version_recent_days,
+      dailySnapshotDays: c.version_daily_snapshot_days,
+      weeklySnapshotDays: c.version_weekly_snapshot_days,
+      maxVersions: c.version_max_versions,
+    };
+  });
+  const race = raceTheNextTransaction(() =>
+    writeInstanceConfig(ctx.storage.settings, {}),
+  );
+  try {
+    await thinner.runOnce();
+    expect(race.fired()).toBe(true);
+    expect(await versionNumbers(id)).toEqual([1, 2, 3]);
+  } finally {
+    race.restore();
+  }
+  await writeInstanceConfig(ctx.storage.settings, {
+    version_recent_days: 1,
+    version_daily_snapshot_days: 2,
+    version_weekly_snapshot_days: 3,
+  });
+  await thinner.runOnce();
+  expect(await versionNumbers(id)).toEqual([2, 3]);
+  await writeInstanceConfig(ctx.storage.settings, {});
 });

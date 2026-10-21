@@ -102,6 +102,7 @@ export function shapedError(err: unknown): ShapedError | undefined {
 }
 
 export function createErrorHandler(config: {
+  reportingEnabled?: () => Promise<boolean>;
   errorWebhookUrl: string;
   errorWebhookTimeoutMs?: number;
   /** The environment an alert names. */
@@ -118,7 +119,7 @@ export function createErrorHandler(config: {
    * disk, which is answered with a typed refusal but is the one fault that
    * needs a person, and which the refusal's own text says nothing of.
    */
-  const report = (err: unknown, c: Context<AppEnv>): void => {
+  const report = async (err: unknown, c: Context<AppEnv>): Promise<void> => {
     const reported = reportableError(err);
     const summary = formatErrorSummary(reported);
 
@@ -131,12 +132,6 @@ export function createErrorHandler(config: {
       error: summary,
       error_detail: serializeError(reported),
       stack: errorStack(reported),
-    });
-
-    globalThis.__marfaReportException?.(reported, {
-      request_id: c.get("requestId"),
-      method: c.req.method,
-      path: loggablePath(c.req.path),
     });
 
     // Mark span as errored so the error-aware sampler forces 100% export on this trace.
@@ -152,6 +147,15 @@ export function createErrorHandler(config: {
       }
       span.setStatus({ code: SpanStatusCode.ERROR });
     }
+
+    const enabled =
+      (await config.reportingEnabled?.().catch(() => false)) ?? true;
+    if (!enabled) return;
+    globalThis.__marfaReportException?.(reported, {
+      request_id: c.get("requestId"),
+      method: c.req.method,
+      path: loggablePath(c.req.path),
+    });
 
     if (config.errorWebhookUrl) {
       notifyError(
@@ -170,10 +174,10 @@ export function createErrorHandler(config: {
     }
   };
 
-  return (err, c) => {
+  return async (err, c) => {
     const shaped = shapedError(err);
     if (shaped) {
-      if (diskFull(err)) report(err, c);
+      if (diskFull(err)) await report(err, c);
       // A refusal raised below any route, where no context can take the
       // header before the throw, carries its wait on the error instead.
       if (shaped instanceof PasswordAttemptsSpent)
@@ -248,7 +252,7 @@ export function createErrorHandler(config: {
       );
     }
 
-    report(err, c);
+    await report(err, c);
 
     return jsonResponse(
       c,

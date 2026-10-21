@@ -917,6 +917,10 @@ body:has(.savebar:not([hidden])) .col {
   color: var(--fg);
 }
 
+#general-form {
+  --select: 220px;
+}
+
 .sel {
   position: relative;
   width: var(--select);

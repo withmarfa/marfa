@@ -111,11 +111,6 @@ describe("the housekeeping registrations", () => {
       ["revoked-grant-purge"],
     ],
     [
-      "the grant inactivity window",
-      { grantInactivityDays: 0 },
-      ["grant-inactivity-retirement"],
-    ],
-    [
       "the DCR client retention",
       { dcrClientRetentionDays: 0 },
       ["dcr-client-cleanup"],
@@ -125,7 +120,6 @@ describe("the housekeeping registrations", () => {
       { blobCleanupIntervalMs: 0 },
       ["blob-orphans"],
     ],
-    ["the enrichment flag", { enrichmentEnabled: false }, ["enrichment-sweep"]],
     [
       "the bulk-action job retention",
       { bulkActionJobRetentionMs: 0 },

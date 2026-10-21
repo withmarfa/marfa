@@ -1,3 +1,4 @@
+import { bindErrorReporting } from "./error-reporting.js";
 import { reservePublicListener } from "./public-listener.js";
 import { getClaimStatus, issueSetupCode } from "./auth/instance-claim.js";
 import { startControlSocket } from "./control/socket.js";
@@ -73,6 +74,7 @@ async function main() {
     setBusyBudgetMs(config.sqliteBusyBudgetMs);
     const storage: Storage = await createSqliteStorage(config.sqlitePath);
     startupCleanup.push(() => storage.close());
+    bindErrorReporting(storage.settings, config);
     // The root route keeps this value so it remains answerable if the
     // database later becomes unavailable. Read as soon as the database can
     // say it, so telemetry held for it leaves with the boot's own lines.

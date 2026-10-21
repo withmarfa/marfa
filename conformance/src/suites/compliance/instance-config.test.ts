@@ -778,3 +778,58 @@ describe("the instance display name", () => {
     await client.updateConfig({});
   });
 });
+
+it(
+  "keeps live settings across restart, preserves omitted choices and clears to the environment",
+  async () => {
+    const client = configKey();
+    const chosen = {
+      version_recent_days: 10,
+      version_daily_snapshot_days: 30,
+      version_weekly_snapshot_days: 90,
+      version_max_versions: 50,
+      grant_inactivity_days: 0,
+      enrichment_enabled: false,
+      enrichment_ocr_enabled: false,
+      error_reporting_enabled: false,
+      heartbeat_enabled: false,
+    };
+    expect((await client.updateConfig(chosen)).status).toBe(200);
+    expect(
+      (await client.patchConfig({ enrichment_enabled: true })).status,
+    ).toBe(200);
+    await server!.restart();
+    expect((await configKey().getConfig()).data).toMatchObject({
+      ...chosen,
+      enrichment_enabled: true,
+    });
+    const current = configKey();
+    for (const invalid of [
+      { version_recent_days: -1 },
+      { version_max_versions: 0 },
+      { grant_inactivity_days: -1 },
+      { heartbeat_enabled: true },
+      { error_reporting_enabled: true },
+    ]) {
+      expect((await current.patchConfig(invalid)).status).toBe(400);
+    }
+
+    expect(
+      (await current.patchConfig({ version_daily_snapshot_days: 1 })).status,
+    ).toBe(400);
+    expect((await current.getConfig()).data).toMatchObject({
+      version_daily_snapshot_days: 30,
+    });
+    expect(
+      (await current.patchConfig({ enrichment_enabled: null })).status,
+    ).toBe(200);
+    const cleared = (await current.getConfig()).data;
+    expect(cleared).not.toHaveProperty("enrichment_enabled");
+    expect(cleared).toMatchObject({
+      version_max_versions: 50,
+      heartbeat_enabled: false,
+    });
+    expect((await current.updateConfig({})).status).toBe(200);
+  },
+  3 * FRESH_SERVER_TIMEOUT_MS,
+);

@@ -51,17 +51,17 @@ When a key or app token lacking `instance.read` sends `GET /housekeeping`, the s
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate` and `blob-integrity` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `auth-session-cleanup`, `rate-limit-cleanup`, `revoked-key-reap`, `webhook-schedule`, `webhook-poll`, `blob-replicate`, `blob-integrity`, `enrichment-sweep` and `grant-inactivity-retirement` on every instance, whatever its settings and its `/config`.
 
-**Reason:** these jobs have no off switch. A job whose retention `/config` can set still runs when that retention is 0, and keeps everything.
+**Reason:** jobs controlled by `/config` stay registered so that a later choice can start work without a restart. A disabled job skips work; a zero retention keeps everything.
 
 **Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`.
 
 ### `housekeeping/switched-off-not-listed`
 
-Where a setting switches a housekeeping job off, the server MUST leave that job out of the listing.
+Where a machine-only setting switches a housekeeping job off, the server MUST leave that job out of the listing.
 
-**Tests:** `compliance/housekeeping.test.ts › leaves a job a setting switches off out of the listing, and answers 404 for it`, `compliance/enrichment-malformed-image.test.ts › lists the enrichment sweep on a server with enrichment on`.
+**Tests:** `compliance/housekeeping.test.ts › keeps live-switchable jobs listed when their environment default is off`, `compliance/enrichment-malformed-image.test.ts › lists the enrichment sweep on a server with enrichment on`.
 
 ### `housekeeping/last-outcome`
 
@@ -115,7 +115,7 @@ When a caller authorized by `instance.maintain` or direct owner or local authori
 
 Where a setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
-**Tests:** `compliance/housekeeping.test.ts › leaves a job a setting switches off out of the listing, and answers 404 for it`.
+**Tests:** `compliance/housekeeping.test.ts › keeps live-switchable jobs listed when their environment default is off`.
 
 ### `housekeeping/run-malformed-name`
 

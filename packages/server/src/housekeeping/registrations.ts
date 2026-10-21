@@ -1,3 +1,8 @@
+import {
+  effectiveConfig,
+  readEffectiveConfig,
+  validateEffectiveConfig,
+} from "../effective-config.js";
 import { HOUSEKEEPING_JOBS } from "./metadata.js";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readInstanceConfig } from "../storage/instance-config.js";
@@ -46,10 +51,8 @@ const LONG_RUN_DEADLINE_MS = 6 * 3_600_000;
 /**
  * Every housekeeping job the server runs on itself, registered from one
  * place so the set is a function of the configuration and can be asserted
- * as one. One its configuration switches off is not registered, so it is
- * not listed either; one whose retention `/config` can set while the
- * process runs is registered whatever the instance default, and sweeps
- * nothing until the retention is positive.
+ * as one. Jobs controlled by `/config` stay registered when disabled and read
+ * the effective policy before working. Machine-only switches omit the job.
  */
 export function registerHousekeepingJobs(
   housekeeping: Housekeeping,
@@ -175,15 +178,25 @@ export function registerHousekeepingJobs(
       intervalMs: config.heartbeatIntervalMs ?? 60_000,
       deadlineMs: 30_000,
       firstRunDelayMs: 0,
-      run: () => heartbeat.runOnce(),
+      run: async () =>
+        (await readEffectiveConfig(storage.settings, config)).heartbeat_enabled
+          ? heartbeat.runOnce()
+          : { skipped: true },
     });
   }
 
-  const versionThinner = new VersionThinner(storage, {
-    recentDays: config.versionRecentDays,
-    dailySnapshotDays: config.versionDailySnapshotDays,
-    weeklySnapshotDays: config.versionWeeklySnapshotDays,
-    maxVersions: config.versionMaxVersions,
+  const versionThinner = new VersionThinner(storage, async () => {
+    const stored = await readInstanceConfig(storage.settings);
+    // A changed environment can make previously valid overrides disagree.
+    // Refuse this run rather than prune under an invalid effective policy.
+    validateEffectiveConfig(config, stored ?? {}, {});
+    const effective = effectiveConfig(config, stored);
+    return {
+      recentDays: effective.version_recent_days,
+      dailySnapshotDays: effective.version_daily_snapshot_days,
+      weeklySnapshotDays: effective.version_weekly_snapshot_days,
+      maxVersions: effective.version_max_versions,
+    };
   });
   housekeeping.register({
     name: HOUSEKEEPING_JOBS["version-thinning"].name,
@@ -262,10 +275,14 @@ export function registerHousekeepingJobs(
   // days, so a finer cadence changes nothing but load, and the DCR reaper's
   // interval is that reaper's setting rather than this one's.
   const grantInactivityDays = config.grantInactivityDays ?? 365;
-  if (grantInactivityDays > 0) {
+  {
     const grantInactivityRetirer = new GrantInactivityRetirer(
       storage,
       grantInactivityDays,
+      undefined,
+      async () =>
+        (await readEffectiveConfig(storage.settings, config))
+          .grant_inactivity_days,
     );
     housekeeping.register({
       name: HOUSEKEEPING_JOBS["grant-inactivity-retirement"].name,
@@ -405,18 +422,14 @@ export function registerHousekeepingJobs(
   // loads nothing until an image actually reaches it. The first sweep
   // waits, because boot is the busiest the process ever is and nothing
   // here is urgent.
-  if (config.enrichmentEnabled !== false) {
-    const enrichmentSweeper = new TextEnrichmentSweeper({
+  {
+    const ocr = new TesseractOcr({
+      cachePath:
+        config.enrichmentTessdataDir ?? defaultTessdataDir(config.sqlitePath),
+    });
+    const enrichmentOptions = {
       storage,
       blobs,
-      ocr:
-        config.enrichmentOcrEnabled !== false
-          ? new TesseractOcr({
-              cachePath:
-                config.enrichmentTessdataDir ??
-                defaultTessdataDir(config.sqlitePath),
-            })
-          : null,
       batchSize: config.enrichmentBatchSize ?? 8,
       itemTimeoutMs: config.enrichmentItemTimeoutMs ?? 60_000,
       maxBlobBytes: config.enrichmentMaxBlobBytes ?? 20 * 1024 * 1024,
@@ -424,12 +437,19 @@ export function registerHousekeepingJobs(
       maxAttempts: config.enrichmentMaxAttempts ?? 3,
       maxInflatedBytes: config.enrichmentMaxInflatedBytes ?? 64 * 1024 * 1024,
       maxMemoryBytes: config.enrichmentMaxMemoryBytes ?? 256 * 1024 * 1024,
-    });
+    };
     housekeeping.register({
       name: HOUSEKEEPING_JOBS["enrichment-sweep"].name,
       intervalMs: config.enrichmentIntervalMs ?? 30_000,
       firstRunDelayMs: 20_000,
-      run: () => enrichmentSweeper.runOnce(),
+      run: async () => {
+        const effective = await readEffectiveConfig(storage.settings, config);
+        if (!effective.enrichment_enabled) return { skipped: true };
+        return new TextEnrichmentSweeper({
+          ...enrichmentOptions,
+          ocr: effective.enrichment_ocr_enabled ? ocr : null,
+        }).runOnce();
+      },
     });
   }
 

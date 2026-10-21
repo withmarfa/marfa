@@ -295,9 +295,8 @@ export interface AppConfig {
    *  `MARFA_ENRICHMENT_MAX_MEMORY_BYTES`. */
   enrichmentMaxMemoryBytes?: number;
   /** OCR of image files. On unless `MARFA_ENRICHMENT_OCR_ENABLED=false`.
-   *  Off means image items are recorded as unsupported and never retried,
-   *  which is the right posture for a memory-constrained deployment: the
-   *  wasm core is the heaviest thing extraction loads. */
+   *  Off parks image text extraction; enabling it reconsiders skipped images.
+   *  The wasm core is the heaviest thing extraction loads. */
   enrichmentOcrEnabled?: boolean;
   /** Directory the OCR language model is cached in across runs. Default
    *  {@link defaultTessdataDir}; env override `MARFA_ENRICHMENT_TESSDATA_DIR`.
@@ -332,6 +331,8 @@ export interface AppConfig {
    *  `OTEL_RESOURCE_ATTRIBUTES`, else `production`. Optional on the type so
    *  a test context's `AppConfig` literal takes the default. */
   deploymentEnvironment?: string;
+  errorReportingEnabled?: boolean;
+  heartbeatEnabled?: boolean;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -566,7 +567,7 @@ export const SETTING_GROUPS = [
 
 export type SettingGroup = (typeof SETTING_GROUPS)[number];
 
-/** The retention settings the owner can also change while the server runs, by their name in `PUT /config`. */
+/** Settings the owner can change while the server runs, by their name in `/config`. */
 export type LiveSetting = keyof Pick<
   InstanceConfig,
   | "audit_retention_days"
@@ -574,6 +575,15 @@ export type LiveSetting = keyof Pick<
   | "trash_retention_days"
   | "inbound_handled_retention_days"
   | "inbound_pending_retention_days"
+  | "version_recent_days"
+  | "version_daily_snapshot_days"
+  | "version_weekly_snapshot_days"
+  | "version_max_versions"
+  | "grant_inactivity_days"
+  | "enrichment_enabled"
+  | "enrichment_ocr_enabled"
+  | "error_reporting_enabled"
+  | "heartbeat_enabled"
 >;
 
 /** How a stated value is read: it throws to refuse, and the message completes "NAME ...". */
@@ -1270,11 +1280,19 @@ const settingsShape = {
   ),
 
   MARFA_ENRICHMENT_ENABLED: grouped(
-    { group: "Text from files", label: "Read text in documents" },
+    {
+      group: "Text from files",
+      label: "Read text in documents",
+      live: "enrichment_enabled",
+    },
     on(true, "Whether the server extracts text from uploaded files."),
   ),
   MARFA_ENRICHMENT_OCR_ENABLED: grouped(
-    { group: "Text from files", label: "Read text in images" },
+    {
+      group: "Text from files",
+      label: "Read text in images",
+      live: "enrichment_ocr_enabled",
+    },
     on(
       true,
       "Whether the server reads text from images with OCR. When off, images are recorded as unsupported.",
@@ -1597,10 +1615,14 @@ const settingsShape = {
     ),
   ),
   MARFA_GRANT_INACTIVITY_DAYS: grouped(
-    { group: "Sign-in and access", label: "Disconnect apps left unused" },
+    {
+      group: "Sign-in and access",
+      label: "Disconnect apps left unused",
+      live: "grant_inactivity_days",
+    },
     count(
       365,
-      "How long an application grant may go unused before the server retires it. At 0 grants are never retired. `PUT /config` does not override it.",
+      "How long an application grant may go unused before the server retires it. At 0 grants are never retired. `/config` overrides it.",
       { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
     ),
   ),
@@ -1638,7 +1660,11 @@ const settingsShape = {
     }),
   ),
   VERSION_RECENT_DAYS: grouped(
-    { group: "Keeping things", label: "Keep every version of an item" },
+    {
+      group: "Keeping things",
+      label: "Keep every version of an item",
+      live: "version_recent_days",
+    },
     count(
       30,
       "The window in which the version policy keeps every version of an item.",
@@ -1646,7 +1672,11 @@ const settingsShape = {
     ),
   ),
   VERSION_DAILY_SNAPSHOT_DAYS: grouped(
-    { group: "Keeping things", label: "Keep daily versions for" },
+    {
+      group: "Keeping things",
+      label: "Keep daily versions for",
+      live: "version_daily_snapshot_days",
+    },
     count(
       90,
       "The window in which the version policy keeps one version a day. It must be at least `VERSION_RECENT_DAYS`.",
@@ -1654,7 +1684,11 @@ const settingsShape = {
     ),
   ),
   VERSION_WEEKLY_SNAPSHOT_DAYS: grouped(
-    { group: "Keeping things", label: "Keep weekly versions for" },
+    {
+      group: "Keeping things",
+      label: "Keep weekly versions for",
+      live: "version_weekly_snapshot_days",
+    },
     count(
       365,
       "The window in which the version policy keeps one version a week. It must be at least `VERSION_DAILY_SNAPSHOT_DAYS`.",
@@ -1662,7 +1696,11 @@ const settingsShape = {
     ),
   ),
   VERSION_MAX_VERSIONS: grouped(
-    { group: "Keeping things", label: "Most versions per item" },
+    {
+      group: "Keeping things",
+      label: "Most versions per item",
+      live: "version_max_versions",
+    },
     count(500, "The most versions the version policy keeps for one item."),
   ),
   TRASH_RETENTION_DAYS: grouped(
@@ -1765,6 +1803,28 @@ const settingsShape = {
     on(
       false,
       "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
+    ),
+  ),
+  MARFA_ERROR_REPORTING_ENABLED: grouped(
+    {
+      group: "Alerts and monitoring",
+      label: "Send error reports",
+      live: "error_reporting_enabled",
+    },
+    on(
+      true,
+      "Send error alerts and exception reports to configured receivers. `/config` overrides it; receiver addresses and credentials stay machine settings.",
+    ),
+  ),
+  MARFA_HEARTBEAT_ENABLED: grouped(
+    {
+      group: "Alerts and monitoring",
+      label: "Send a heartbeat",
+      live: "heartbeat_enabled",
+    },
+    on(
+      true,
+      "Send scheduled requests to the configured heartbeat receiver. `/config` overrides it; its address stays a machine setting.",
     ),
   ),
   ERROR_WEBHOOK_URL: grouped(
@@ -2331,6 +2391,8 @@ export function loadConfig(
         s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment.name"],
         s.OTEL_RESOURCE_ATTRIBUTES["deployment.environment"],
       ) ?? DEFAULT_DEPLOYMENT_ENVIRONMENT,
+    errorReportingEnabled: s.MARFA_ERROR_REPORTING_ENABLED,
+    heartbeatEnabled: s.MARFA_HEARTBEAT_ENABLED,
     errorWebhookUrl: s.ERROR_WEBHOOK_URL,
     errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
     trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,

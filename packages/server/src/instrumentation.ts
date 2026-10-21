@@ -1,3 +1,4 @@
+import { errorReportingEnabled } from "./error-reporting.js";
 /**
  * OpenTelemetry bootstrap.
  *
@@ -255,15 +256,22 @@ async function start(): Promise<void> {
     globalThis.__marfaReportException = (err, properties) => {
       // No distinct id: the event is the instance's, and the client then
       // sends it without creating a person.
-      clock.withRealTime(() => {
-        client.captureException(reportableError(err), undefined, {
-          ...staticAttributes,
-          ...(instanceId === undefined || instanceChosen
-            ? {}
-            : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
-          ...properties,
+      void errorReportingEnabled()
+        .then((enabled) => {
+          if (!enabled) return;
+          clock.withRealTime(() => {
+            client.captureException(reportableError(err), undefined, {
+              ...staticAttributes,
+              ...(instanceId === undefined || instanceChosen
+                ? {}
+                : { [ATTR_SERVICE_INSTANCE_ID]: instanceId }),
+              ...properties,
+            });
+          });
+        })
+        .catch(() => {
+          // A failed reporter must not become another reportable rejection.
         });
-      });
     };
   }
 
