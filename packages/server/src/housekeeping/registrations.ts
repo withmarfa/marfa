@@ -447,7 +447,14 @@ export function registerHousekeepingJobs(
         if (!effective.enrichment_enabled) return { skipped: true };
         return new TextEnrichmentSweeper({
           ...enrichmentOptions,
-          ocr: effective.enrichment_ocr_enabled ? ocr : null,
+          ocr,
+          readSettings: async () => {
+            const current = await readEffectiveConfig(storage.settings, config);
+            return {
+              enabled: current.enrichment_enabled,
+              ocr: current.enrichment_ocr_enabled ? ocr : null,
+            };
+          },
         }).runOnce();
       },
     });

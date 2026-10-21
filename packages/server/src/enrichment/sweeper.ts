@@ -28,6 +28,8 @@ export interface TextEnrichmentSweeperOptions {
   blobs: BlobLayer;
   /** OCR engine, or null when image extraction is disabled. */
   ocr: OcrEngine | null;
+  /** Current choices, read again before admitting each item. */
+  readSettings?: () => Promise<{ enabled: boolean; ocr: OcrEngine | null }>;
   batchSize: number;
   itemTimeoutMs: number;
   maxBlobBytes: number;
@@ -104,13 +106,13 @@ export class TextEnrichmentSweeper {
    * registered, removed, or changed in its definition at any version
    * reconsiders what it parked.
    */
-  private get configSignature(): string {
+  private configSignature(ocr: OcrEngine | null): string {
     return JSON.stringify({
       max_blob_bytes: this.opts.maxBlobBytes,
       max_text_chars: this.opts.maxTextChars,
       max_inflated_bytes: this.opts.maxInflatedBytes,
       max_memory_bytes: this.opts.maxMemoryBytes,
-      ocr: this.opts.ocr !== null,
+      ocr: ocr !== null,
       types: registeredTypesFingerprint(),
     });
   }
@@ -122,10 +124,12 @@ export class TextEnrichmentSweeper {
     failed: number;
   }> {
     const { storage } = this.opts;
+    const initial = await this.readSettings();
+    if (!initial.enabled) return { extracted: 0, skipped: 0, failed: 0 };
     const candidates = await storage.enrichment.listCandidates(
       this.opts.maxAttempts,
       this.opts.batchSize,
-      this.configSignature,
+      this.configSignature(initial.ocr),
     );
 
     let extracted = 0;
@@ -137,7 +141,9 @@ export class TextEnrichmentSweeper {
     // request path on the same event loop for no throughput gain.
     for (const candidate of candidates) {
       await yieldBulkWork();
-      const outcome = await this.processOne(candidate);
+      const settings = await this.readSettings();
+      if (!settings.enabled) break;
+      const outcome = await this.processOne(candidate, settings.ocr);
       if (outcome === "extracted") extracted += 1;
       else if (outcome === "failed") failed += 1;
       else skipped += 1;
@@ -149,13 +155,24 @@ export class TextEnrichmentSweeper {
     return { extracted, skipped, failed };
   }
 
-  private async processOne(candidate: {
-    item_id: string;
-    type: string;
-    blob_ref: string;
-    mime_type: string;
-  }): Promise<"extracted" | "skipped" | "failed"> {
+  private readSettings() {
+    return (
+      this.opts.readSettings?.() ??
+      Promise.resolve({ enabled: true, ocr: this.opts.ocr })
+    );
+  }
+
+  private async processOne(
+    candidate: {
+      item_id: string;
+      type: string;
+      blob_ref: string;
+      mime_type: string;
+    },
+    ocr: OcrEngine | null,
+  ): Promise<"extracted" | "skipped" | "failed"> {
     const { storage, blobs } = this.opts;
+    const signature = this.configSignature(ocr);
     const prior = await storage.enrichment.get(candidate.item_id);
     // Attempts count against one blob: a new blob is a fresh start, not
     // attempt N+1 of the old one, or the first attempt on genuinely new
@@ -175,7 +192,7 @@ export class TextEnrichmentSweeper {
         status,
         attempts: counted,
         error,
-        config_signature: this.configSignature,
+        config_signature: signature,
       });
     };
     // Terminal for this content under this configuration: re-offered only
@@ -201,8 +218,11 @@ export class TextEnrichmentSweeper {
       // the dimension reader, and a video whose type does not declare
       // width, height or duration still lands here.
       const wantsText = isEnrichableMime(candidate.mime_type, {
-        ocrAvailable: this.opts.ocr !== null,
+        ocrAvailable: ocr !== null,
       });
+      const textDisabled =
+        !wantsText &&
+        isEnrichableMime(candidate.mime_type, { ocrAvailable: true });
       const derivable = derivableDimensionFields(
         candidate.type,
         candidate.mime_type,
@@ -277,6 +297,7 @@ export class TextEnrichmentSweeper {
           const outcome = await this.extractWithTimeout(
             bytes,
             candidate.mime_type,
+            ocr,
           );
           if (outcome.kind === "text") patch.extracted_text = outcome.text;
           else {
@@ -420,7 +441,14 @@ export class TextEnrichmentSweeper {
         // A reason on a done row is the useful case rather than a
         // contradiction: a video that gave up its duration and not its size
         // says exactly that.
-        await record("done", reasons.length > 0 ? reasons.join("; ") : null);
+        // Dimension success does not finish text work that OCR disabled.
+        // Park it until the configuration changes, without retrying it on
+        // every sweep or overwriting any dimensions already stored.
+        if (textDisabled) reasons.push("image text reading disabled");
+        await record(
+          textDisabled ? "skipped" : "done",
+          reasons.length > 0 ? reasons.join("; ") : null,
+        );
       }
 
       return textError === null ? "extracted" : "failed";
@@ -455,6 +483,7 @@ export class TextEnrichmentSweeper {
   private async extractWithTimeout(
     bytes: Buffer,
     mimeType: string,
+    ocr: OcrEngine | null,
   ): ReturnType<typeof extractText> {
     const budget = new AbortController();
     const timer = setTimeout(() => {
@@ -473,7 +502,7 @@ export class TextEnrichmentSweeper {
       return await Promise.race([
         extractText(bytes, mimeType, {
           maxTextChars: this.opts.maxTextChars,
-          ocr: this.opts.ocr,
+          ocr,
           office: {
             maxInflatedBytes: this.opts.maxInflatedBytes,
             maxMemoryBytes: this.opts.maxMemoryBytes,
@@ -483,7 +512,7 @@ export class TextEnrichmentSweeper {
         timeout,
       ]);
     } catch (err) {
-      await this.opts.ocr?.terminate().catch(() => {
+      await ocr?.terminate().catch(() => {
         // A worker that cannot be terminated is replaced on next use.
       });
       throw err;

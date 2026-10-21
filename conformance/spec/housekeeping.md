@@ -61,7 +61,7 @@ The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-lo
 
 Where a machine-only setting switches a housekeeping job off, the server MUST leave that job out of the listing.
 
-**Tests:** `compliance/housekeeping.test.ts › keeps live-switchable jobs listed when their environment default is off`, `compliance/enrichment-malformed-image.test.ts › lists the enrichment sweep on a server with enrichment on`.
+**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `housekeeping/last-outcome`
 
@@ -113,9 +113,9 @@ When a caller authorized by `instance.maintain` or direct owner or local authori
 
 ### `housekeeping/switched-off-not-run`
 
-Where a setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
+Where a machine-only setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or direct owner or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
-**Tests:** `compliance/housekeeping.test.ts › keeps live-switchable jobs listed when their environment default is off`.
+**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `housekeeping/run-malformed-name`
 
