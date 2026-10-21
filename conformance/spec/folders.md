@@ -4098,7 +4098,7 @@ When a file that carries no ID arrives from another folder whose missing-file bi
 
 ### `folders/moved-arrival-text-note`
 
-When a file at a name other than `.md` or `.markdown` (in any letter case) arrives from another folder whose missing-file binding of a note uniquely identifies it by identity, or by bytes at a name other than `.md` or `.markdown`, a device MUST bind the arriving file to that note.
+When a file at a name other than `.md` or `.markdown` (in any letter case) arrives from another folder whose missing-file binding of a note uniquely identifies it by identity, or by the bytes of a note's file that was at a name other than `.md` or `.markdown`, a device MUST bind the arriving file to that note.
 
 **Reason:** a note at a `.txt` name carries no ID line, so only its identity or its bytes follow it.
 

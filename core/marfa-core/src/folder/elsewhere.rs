@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
-use super::{
-    Catalog, Folder, STATE_DIR, bytes_of, carries_frontmatter, identity, plainly_inside, state,
-};
+use super::{Catalog, Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::directory::Directory;
 use crate::{Core, Result, store};
 
@@ -176,14 +174,9 @@ impl Peer {
         let catalog = self
             .catalog
             .get_or_init(|| Catalog::load(&*folder.core.conn().ok()?).ok());
-        catalog.as_ref().is_some_and(|catalog| {
-            folder
-                .core
-                .get(item_id)
-                .ok()
-                .flatten()
-                .is_some_and(|item| bytes_of(&item, catalog).is_some())
-        })
+        catalog
+            .as_ref()
+            .is_some_and(|catalog| folder.file_item(item_id, catalog).unwrap_or(false))
     }
 
     fn bound_to(&self, item_id: &str) -> Option<state::Bound> {
