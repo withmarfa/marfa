@@ -803,6 +803,7 @@ describe("a query key no door declares", () => {
   ): Promise<{ status: number; unknown: unknown }> {
     const path = template.replace(/\{[^}]+\}/g, id);
     if (
+      template === "/items/summaries" ||
       template === "/owner" ||
       template.startsWith("/owner/") ||
       template === "/restore"
