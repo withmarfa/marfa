@@ -134,9 +134,9 @@ else
   #
   # Litestream's record beside the database names the transactions this
   # volume replicated, and Litestream continues the replica from it. Where
-  # the replica holds nothing, as under a new prefix, it would start at
-  # the record's first transaction, whose file its retention has long since
-  # removed, and every sync would fail. Under the override the record no
+  # the replica holds nothing, as under a new prefix, it would upload from
+  # transaction 1, whose file its retention has long since removed from the
+  # record, and every sync would fail. Under the override the record no
   # longer describes what replication continues. Removing it makes
   # Litestream start the replica from a snapshot of the database.
   record="$(dirname "$SQLITE_PATH")/.$(basename "$SQLITE_PATH")-litestream"

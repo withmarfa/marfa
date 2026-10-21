@@ -61,7 +61,7 @@ function recordedTxid(volume: string): bigint {
   return existsSync(dir) ? newestTxid(readdirSync(dir)) : 0n;
 }
 
-/** What `sql` prints against the database on a stopped `volume`. */
+/** What `sql` prints against the database on `volume`. */
 function query(volume: string, sql: string): string {
   const result = spawnSync("sqlite3", [sqlitePath(volume), sql], {
     encoding: "utf8",
@@ -252,9 +252,9 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
 
     const moved = await boot(copy, "moved", fresh);
     expect(moved.bootedAs).toBe("first");
-    const started = newestTxid(await replicaAt(`${fresh}/db/0000`));
+    await replicaAt(`${fresh}/db/0000`);
     await write(copy, "after-move");
-    await replicaPast(`${fresh}/db/0000`, started);
+    await replicaPast(`${fresh}/db/0000`, recordedTxid(copy) - 1n);
     expect(await moved.stop()).toBe(0);
     expect(moved.output()).toContain("Removing Litestream's record");
     expect(await keysUnder(`${prefix}/`)).toEqual(old);
@@ -269,9 +269,9 @@ describe("deploy/entrypoint.sh with a database already on the volume", () => {
       MARFA_REPLACE_NEWER_REPLICA: "true",
     });
     expect(replaced.bootedAs).toBe("first");
-    const started = newestTxid(await replicaAt(`${prefix}/db/0000`, before));
+    await replicaAt(`${prefix}/db/0000`, before);
     await write(copy, "after-override");
-    await replicaPast(`${prefix}/db/0000`, started);
+    await replicaPast(`${prefix}/db/0000`, recordedTxid(copy) - 1n);
     expect(await replaced.stop()).toBe(0);
     expect(replaced.output()).toContain("MARFA_REPLACE_NEWER_REPLICA is set");
   });
