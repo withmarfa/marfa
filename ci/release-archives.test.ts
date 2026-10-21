@@ -146,6 +146,29 @@ describe("a release is published only when every archive built", () => {
     expect(uploaded?.with?.name).not.toBe(upload?.with?.name);
   });
 
+  it("reads no secret in the jobs that build the Linux binary or gather the release", () => {
+    for (const name of ["cli-linux", "collect"]) {
+      expect(JSON.stringify(jobs[name])).not.toContain("secrets.");
+    }
+  });
+
+  it("checks the archives the release holds against its checksums before anything irreversible", () => {
+    const steps = jobs.publish?.steps ?? [];
+    const check = steps.findIndex((step) =>
+      (step.run ?? "").includes("sha256sum -c"),
+    );
+    const npm = steps.findIndex((step) =>
+      (step.run ?? "").includes('npm publish "./artifacts'),
+    );
+    const open = steps.findIndex((step) =>
+      (step.run ?? "").includes("--draft=false"),
+    );
+    expect(check).toBeGreaterThanOrEqual(0);
+    expect(steps[check]?.run).toContain("gh release download");
+    expect(check).toBeLessThan(npm);
+    expect(check).toBeLessThan(open);
+  });
+
   it("writes one checksum file for the four archives", () => {
     const step = jobs.collect?.steps.find((candidate) =>
       (candidate.run ?? "").includes("write-checksums.sh"),

@@ -795,6 +795,19 @@ jobs:
             exit 1
           fi
 
+      # What the release holds, not what this run built: a re-run after a
+      # partial upload rebuilds the archives, and a draft keeps the files it
+      # already has, so the checksum file could describe other archives than
+      # the ones a person downloads.
+      - name: Check the release's archives against its checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/held"
+          gh release download "v$VERSION" --dir "$RUNNER_TEMP/held" --pattern 'marfa-*'
+          cd "$RUNNER_TEMP/held"
+          sha256sum -c "marfa-$VERSION-checksums.txt"
+
       - uses: actions/download-artifact@v8
         with:
           pattern: image-digest-${{ needs.build.outputs.version }}-*
