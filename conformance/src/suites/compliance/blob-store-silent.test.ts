@@ -16,14 +16,17 @@ import {
 import { waitFor } from "../../utils/wait.js";
 
 /**
- * What `blob-integrity` and `blob-replicate` do when a store does not answer,
- * on a server of the fixture's own that keeps its bytes on a disk and in the
- * run's object store. The `hold:blob-has` and `hold:blob-read` faults
- * (`conformance/README.md`, "Faults") make every store hang before it
- * answers whether it holds a blob or opens its bytes, until the fault is
- * cleared or the server gives the request up, and `store-check-deadline`
- * shortens how long the server waits for an answer, so a case tests the
- * bound rather than waiting out its 15 seconds.
+ * What `blob-integrity`, `blob-replicate` and a read of a blob's bytes do
+ * when a store does not answer, on a server of the fixture's own that keeps
+ * its bytes on a disk and in the run's object store. The `hold:blob-has`
+ * and `hold:blob-read` faults (`conformance/README.md`, "Faults") make every
+ * store hang before it answers whether it holds a blob or opens its bytes,
+ * until the fault is cleared or the server gives the request up;
+ * `hold:blob-write` and `hold:blob-delete` make a store's write or delete
+ * hang until the fault is cleared, since a store can carry one out after
+ * the server stops waiting. `store-check-deadline` shortens how long the
+ * server waits for an answer, so a case tests the bound rather than waiting
+ * out its 15 seconds.
  *
  * **Why a server of its own.** A hold acts on every store of the server it
  * is set on, and the scheduler runs the same jobs on its own clock. Each
@@ -71,9 +74,25 @@ async function waiting(): Promise<number> {
     .reduce((sum, fault) => sum + fault.waiting, 0);
 }
 
+/** How many store calls wait at the hold `name` now. */
+async function waitingAt(name: string): Promise<number> {
+  return (
+    (await server.faults()).find((fault) => fault.name === name)?.waiting ?? 0
+  );
+}
+
+/** The id of the run's object store. */
+async function objectStore(): Promise<string> {
+  const stores = (await operator.listBlobStores()).data.data;
+  return stores.find((store) => store.kind === "s3")!.id;
+}
+
 /** A blob in both stores, referenced so that nothing purges it. */
-async function replicated(words: string): Promise<string> {
-  const upload = await working.uploadBlob(bytesOf(words, 120), "text/plain");
+async function replicated(
+  words: string,
+  content = bytesOf(words, 120),
+): Promise<string> {
+  const upload = await working.uploadBlob(content, "text/plain");
   expect(upload.status, JSON.stringify(upload.error)).toBe(201);
   const hash = upload.data.hash;
   const note = await working.createItem({
@@ -167,5 +186,119 @@ describe("a replication run while no store answers", () => {
       remaining: 0,
     });
     expect((await operator.listBlobLocations(hash!)).data.data).toHaveLength(2);
+  });
+});
+
+describe("a store's delete that does not answer", () => {
+  it("leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends", async () => {
+    const content = bytesOf("deleted while the store hangs", 120);
+    const hash = await replicated("deleted while the store hangs", content);
+    const s3 = await objectStore();
+    // The drop's own delete fails, so the deletion stays queued for a run.
+    await server.setFault("fail:blob-delete=1");
+    const dropped = await operator.deleteBlobLocation(hash, s3);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    await server.clearFault();
+
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-delete");
+    const checked = await runJob(operator, "blob-integrity");
+    // The object store is the one counted: the disk answers.
+    expect(checked.result).toMatchObject({ struck: 0, unreachable: 1 });
+    // The delete the run gave up on is still out.
+    expect(await waitingAt("hold:blob-delete")).toBe(1);
+
+    const copied = await runJob(operator, "blob-replicate");
+    expect(copied.result).toMatchObject({ copied: 0, remaining: 1 });
+    // Skipped rather than asked again: no second delete waits.
+    expect(await waitingAt("hold:blob-delete")).toBe(1);
+    expect(
+      (await operator.listBlobLocations(hash)).data.data.map(
+        (location) => location.kind,
+      ),
+    ).toEqual(["disk"]);
+
+    const refused = await working.uploadBlob(content, "text/plain");
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+
+    await server.clearFault();
+    await waitFor("the object store's copy made again", async () => {
+      const run = await runJob<{ copied: number; remaining: number }>(
+        operator,
+        "blob-replicate",
+      );
+      return run.result.remaining === 0 ? true : undefined;
+    });
+    expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
+    // The late delete took nothing the copy made after it holds: the check
+    // takes the copy never checked first, and would strike it if gone.
+    expect((await runJob(operator, "blob-integrity")).result).toMatchObject({
+      struck: 0,
+      unreachable: 0,
+    });
+    expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
+    const again = await working.uploadBlob(content, "text/plain");
+    expect(again.status, JSON.stringify(again.error)).toBe(201);
+  });
+});
+
+describe("a store's write that does not answer", () => {
+  it("finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes", async () => {
+    const content = bytesOf("written while the store hangs", 120);
+    const [hash] = await leaveBacklog(operator, working, [content]);
+
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-write");
+    const run = await runJob(operator, "blob-replicate");
+    expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
+    // The write the run gave up on is still out.
+    expect(await waitingAt("hold:blob-write")).toBe(1);
+
+    const later = await runJob(operator, "blob-replicate");
+    expect(later.result).toMatchObject({ copied: 0, remaining: 1 });
+    expect(await waitingAt("hold:blob-write")).toBe(1);
+    expect(
+      (await operator.listBlobLocations(hash!)).data.data.map(
+        (location) => location.kind,
+      ),
+    ).toEqual(["disk"]);
+
+    const refused = await working.uploadBlob(content, "text/plain");
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+
+    await server.clearFault();
+    await waitFor("the object store's copy", async () => {
+      const copied = await runJob<{ copied: number; remaining: number }>(
+        operator,
+        "blob-replicate",
+      );
+      return copied.result.remaining === 0 ? true : undefined;
+    });
+    expect((await operator.listBlobLocations(hash!)).data.data).toHaveLength(2);
+  });
+});
+
+describe("a read of a blob's bytes while a store does not open them", () => {
+  it("answers 503 blob_store_unavailable when no store opens the bytes, and serves them from a store that does", async () => {
+    const content = bytesOf("read while the stores hang", 120);
+    const hash = await replicated("read while the stores hang", content);
+
+    await storesHang();
+    const refused = await working.downloadBlob(hash);
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("blob_store_unavailable");
+    expect(await waiting()).toBe(0);
+
+    // Only the first store asked, the disk, hangs; the object store answers.
+    await server.clearFault();
+    await server.setFault("store-check-deadline=200");
+    await server.setFault("hold:blob-read=1");
+    const served = await working.downloadBlob(hash);
+    expect(served.status, JSON.stringify(served.error)).toBe(200);
+    expect(new Uint8Array(served.data)).toEqual(content);
+    // The read the server passed over waits at the hold no longer.
+    expect(await waitingAt("hold:blob-read")).toBe(0);
   });
 });

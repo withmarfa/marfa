@@ -4762,6 +4762,42 @@
         ],
         "description": "An error response."
       },
+      "BlobStoreUnavailableOrWriteContentionRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "blob_store_unavailable",
+                  "write_contention"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
       "BlobOrphanPage": {
         "type": "object",
         "properties": {
@@ -4933,42 +4969,6 @@
                 "type": "string",
                 "enum": [
                   "range_not_satisfiable"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
-      "BlobStoreUnavailableOrWriteContentionRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "blob_store_unavailable",
-                  "write_contention"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -30070,11 +30070,11 @@
             }
           },
           "503": {
-            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+            "description": "- `blob_store_unavailable`: a store hasn't finished an earlier write or delete of these bytes, so Marfa can't place them yet. Marfa stores nothing. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                  "$ref": "#/components/schemas/BlobStoreUnavailableOrWriteContentionRefusal"
                 }
               }
             },
