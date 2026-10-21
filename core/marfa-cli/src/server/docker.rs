@@ -131,8 +131,12 @@ impl Docker {
         let reference = format!("{image}:{release}");
         let output = self.output(&["manifest", "inspect", &reference])?;
         let said = text(&output.stderr).to_lowercase();
+        // The registry's own word for a tag it does not have: `manifest
+        // unknown` from Docker 29 against ghcr.io, `no such manifest` from older
+        // clients. Any other failure (a credential helper that is "not found",
+        // no network, a denied pull) says nothing about the release.
         if !output.status.success()
-            && (said.contains("no such manifest") || said.contains("not found"))
+            && (said.contains("manifest unknown") || said.contains("no such manifest"))
         {
             return Err(CliError::Usage(format!(
                 "there is no release {release}: {reference} is not in the registry. Releases are listed at https://github.com/withmarfa/marfa/releases"

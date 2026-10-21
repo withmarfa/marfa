@@ -46,7 +46,10 @@ case "$1" in
     esac ;;
   container) n=$(named "$@"); [ -e "$S/c-$n" ] && echo "$n"; exit 0 ;;
   image) [ -e "$S/image" ] ;;
-  manifest) case "$3" in *:9.9.9) echo "no such manifest: $3" >&2; exit 1 ;; esac ;;
+  manifest) case "$3" in
+    *:9.9.9) echo "manifest unknown" >&2; exit 1 ;;
+    *:8.8.8) echo 'error getting credentials - err: exec: "docker-credential-x": executable file not found in $PATH' >&2; exit 1 ;;
+  esac ;;
   rm) rm -f "$S/c-$3" ;;
   inspect) echo '{"Status":"running"}' ;;
   exec)
@@ -927,6 +930,29 @@ fn a_release_that_does_not_exist_is_found_before_anything_is_written() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("no release 9.9.9"), "{stderr}");
     assert!(!rig.dir.exists() && !rig.log().contains("network create"));
+}
+
+#[test]
+fn an_upgrade_to_a_release_that_does_not_exist_writes_nothing() {
+    let rig = Rig::new("upgradenone");
+    rig.installed(&["--access", "local"]);
+    let before = rig.file(".env");
+    fs::remove_file(rig.state.join("image")).unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "9.9.9", "--wait", "5"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("no release 9.9.9"), "{stderr}");
+    assert_eq!(rig.file(".env"), before);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+}
+
+#[test]
+fn a_registry_that_cannot_answer_does_not_make_a_release_missing() {
+    let rig = Rig::new("credentials");
+    let port = rig.port.to_string();
+    let (code, _, stderr) =
+        rig.install_as(&["--access", "local", "--release", "8.8.8", "--port", &port]);
+    assert_eq!(code, 0, "{stderr}");
 }
 
 #[test]

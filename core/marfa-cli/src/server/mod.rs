@@ -1195,6 +1195,11 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
     let docker = Docker::new(!out.json);
     docker.check()?;
     let unchanged = target == state.release;
+    // A release that does not exist is found before it is written down, or no
+    // later upgrade could name a real one below it.
+    if !unchanged && !docker.image_present(&format!("{IMAGE}:{target}"))? {
+        docker.release_exists(IMAGE, &target)?;
+    }
     if !unchanged {
         steps.say(&format!(
             "Read the changelog for {target} first (https://docs.marfa.so/changelog). If it says the database changes shape, follow the Upgrade guide (https://docs.marfa.so/guides/upgrade) instead of this command."
