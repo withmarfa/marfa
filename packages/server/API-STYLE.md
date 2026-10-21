@@ -33,15 +33,15 @@ So each operation, parameter, field and response says what it needs to on its ow
 - An imperative verb and its object, in sentence case, with no final period: "Create an item", "Get a blob URL". About four words: the summary is a label, and anything more goes in the description. **(checked: at most 32 characters)**
 - Use one verb for one meaning:
 
-  | Verb     | Use it for                                                                |
-  | -------- | ------------------------------------------------------------------------- |
-  | Get      | One object, by ID.                                                        |
-  | List     | A page of objects.                                                        |
-  | Create   | A new object that Marfa makes.                                            |
-  | Register | A new object you declare to Marfa, such as a type, a connector or an app. |
-  | Update   | A partial change (`PATCH`).                                               |
-  | Replace  | A whole object (`PUT`).                                                   |
-  | Delete   | Removal. Say what happens to the object in the description.               |
+  | Verb     | Use it for                                                         |
+  | -------- | ------------------------------------------------------------------ |
+  | Get      | One object, by ID.                                                 |
+  | List     | A page of objects.                                                 |
+  | Create   | A new record, such as an item, a key, a webhook or a folder.       |
+  | Register | A definition Marfa then recognizes: a type, a connector or an app. |
+  | Update   | A partial change (`PATCH`).                                        |
+  | Replace  | A whole object (`PUT`).                                            |
+  | Delete   | Removal. Say what happens to the object in the description.        |
 
   When none fits, use the plain verb for the act, such as Restore, Upload or Search. These verbs stay on purpose, because a generic one would lose what happens:
 

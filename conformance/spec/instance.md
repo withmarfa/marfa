@@ -276,7 +276,7 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ### `instance/document-groups`
 
-When `GET /openapi.json` is answered, the server MUST give each operation in `paths` exactly one tag.
+When `GET /openapi.json` is answered, the server MUST give each operation in `paths` and each request in `webhooks` exactly one tag.
 
 **Tests:** `compliance/instance.test.ts › declares no tag that no operation carries, and no operation without one`, `› lists every operation once, under its own tag, in each tag's x-operation-order`.
 
@@ -288,7 +288,7 @@ When `GET /openapi.json` is answered, the server MUST declare in `tags` exactly 
 
 ### `instance/document-operation-order`
 
-When `GET /openapi.json` is answered, the server MUST write on each tag an `x-operation-order` that lists each operation carrying the tag once, by its `operationId` or, for a request Marfa sends, by its name in `webhooks`, in the order a developer meets them: create or register, get, list, update, replace, delete, then the group's other actions.
+When `GET /openapi.json` is answered, the server MUST write on each tag an `x-operation-order` that lists each operation carrying the tag once, by its `operationId` or, for a request Marfa sends, by its name in `webhooks`.
 
 **Reason:** the order interleaves paths, so `paths` alone cannot carry it, and a reader of the document needs the order from the server.
 
