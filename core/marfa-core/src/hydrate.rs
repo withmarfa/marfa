@@ -455,6 +455,11 @@ pub(crate) fn type_pattern(name: &str) -> Result<bool> {
     })
 }
 
+/// A type identifier the server's grammar takes, and no namespace pattern.
+pub(crate) fn type_id(name: &str) -> Result<bool> {
+    Ok(!name.ends_with(".*") && type_pattern(name)?)
+}
+
 /// A `system.*` type is listed at both tiers, as the slice takes it
 /// (`store::slice_takes`).
 fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {

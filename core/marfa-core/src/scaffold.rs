@@ -35,7 +35,7 @@ pub fn scaffold_type(
         if parent == id {
             return Err(invalid(format!("{id} cannot be its own parent")));
         }
-        if parent.ends_with(".*") || !crate::hydrate::type_pattern(parent)? {
+        if !crate::hydrate::type_id(parent)? {
             return Err(invalid(format!(
                 "not a parent for {id}: {parent:?}; {}",
                 crate::hydrate::GRAMMAR
