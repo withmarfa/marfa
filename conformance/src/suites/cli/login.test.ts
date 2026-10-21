@@ -89,6 +89,7 @@ describe("the owner", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         client_name: "marfa",
+        software_id: "so.marfa.cli",
         application_type: "native",
         grant_types: [
           "urn:ietf:params:oauth:grant-type:device_code",

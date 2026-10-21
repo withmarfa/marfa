@@ -1,4 +1,3 @@
-import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 import type { Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { listActiveAppGrants } from "./grant-lifecycle.js";
@@ -14,31 +13,39 @@ import { webOriginsOf } from "./web-origins.js";
  */
 export type AppKind = "app" | "web" | "cli";
 
+/**
+ * The `software_id` the `marfa` command line registers under. RFC 7591 gives
+ * every copy of one program the same `software_id`, which is what tells the
+ * command line from another program that signs in with the device grant.
+ */
+export const COMMAND_LINE_SOFTWARE_ID = "so.marfa.cli";
+
 /** What a client's registration says, as far as the kind of app is concerned. */
 export interface RegisteredApp {
   applicationType: string | null;
   redirectUris: readonly string[];
-  grantTypes: readonly string[] | null;
+  softwareId: string | null;
 }
 
 /**
- * The kind of app a registration describes. A client that registered for the
- * device grant is a program signing in from a terminal, which is how the
- * `marfa` command line registers, so it is the command line. A client that
- * registered as a web page with an `https` address is a web page, the same
- * reading that decides which addresses an approval lets call the API. Any
- * other client is an app.
+ * The kind of app a registration describes. A client that registered the
+ * command line's `software_id` is the command line; the grant it signs in
+ * with says nothing, because any program without a browser can use the device
+ * grant. A client that registered as a web page with an `https` address is a
+ * web page, the same reading that decides which addresses an approval lets
+ * call the API. Any other client is an app.
  *
- * A registration is all there is to go on: another program that registers for
- * the device grant also reads as the command line, and a web client that
- * registered only a loopback address reads as an app.
+ * A registration is all there is to go on, and any client may send any
+ * `software_id`: another program that sends the command line's reads as the
+ * command line, and a web client that registered only a loopback address reads
+ * as an app. The kind is a label for the owner and decides no access.
  */
 export function appKindOf(client: RegisteredApp | null): {
   kind: AppKind;
   origins: string[];
 } {
   if (client === null) return { kind: "app", origins: [] };
-  if (client.grantTypes?.includes(DEVICE_CODE_GRANT_TYPE) === true)
+  if (client.softwareId === COMMAND_LINE_SOFTWARE_ID)
     return { kind: "cli", origins: [] };
   const origins = webOriginsOf(client);
   return origins.length > 0

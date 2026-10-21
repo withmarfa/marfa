@@ -1753,6 +1753,12 @@ export interface OauthClientRow {
    * client may refresh.
    */
   grantTypes: string[] | null;
+  /**
+   * The `software_id` the client registered (RFC 7591 section 2), or `null`
+   * where it sent none. The client names itself, so it identifies the program
+   * a person is told about and grants no authority.
+   */
+  softwareId: string | null;
 }
 
 /**

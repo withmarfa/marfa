@@ -130,20 +130,40 @@ async function mintedBy(
 }
 
 describe("GET /auth/grants", () => {
-  it("classifies registered native, web and device apps", async () => {
-    for (const kind of ["app", "web", "cli"] as const) {
-      const redirect =
-        kind === "web" ? "https://reader.example/callback" : CALLBACK;
+  it("classifies registered native, web, command line and other device apps", async () => {
+    const cases = [
+      { kind: "app", device: false, registration: {} },
+      { kind: "web", device: false, registration: {} },
+      {
+        kind: "cli",
+        device: true,
+        registration: { software_id: "so.marfa.cli" },
+      },
+      // A device-grant client that is not the command line is an app, even
+      // when it calls itself "marfa".
+      {
+        kind: "app",
+        device: true,
+        registration: { client_name: "marfa" },
+      },
+      {
+        kind: "app",
+        device: true,
+        registration: { software_id: "so.example.set-top-box" },
+      },
+    ];
+    for (const { kind, device, registration } of cases) {
+      const web = kind === "web";
+      const redirect = web ? "https://reader.example/callback" : CALLBACK;
       const app = await registerApp(server, SCOPE, {
-        application_type: kind === "web" ? "web" : "native",
+        application_type: web ? "web" : "native",
         redirect_uris: [redirect],
         grant_types: [
           "authorization_code",
           "refresh_token",
-          ...(kind === "cli"
-            ? ["urn:ietf:params:oauth:grant-type:device_code"]
-            : []),
+          ...(device ? ["urn:ietf:params:oauth:grant-type:device_code"] : []),
         ],
+        ...registration,
       });
       const consent = await sentTo(
         server,

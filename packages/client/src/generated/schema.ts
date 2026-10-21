@@ -4989,7 +4989,7 @@ export interface components {
             /** @description Unique identifier for the app's grant. */
             id: string;
             /**
-             * @description `cli` registered for device authorization; otherwise `web` has approved web origins, and `app` is any other app.
+             * @description `cli` registered the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app.
              * @enum {string}
              */
             kind: "app" | "web" | "cli";
