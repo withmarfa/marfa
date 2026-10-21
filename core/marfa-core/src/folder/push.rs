@@ -272,8 +272,8 @@ pub(super) fn new_document(
 
 /// What the copy says of a draft before queueing it: the hold the scan puts
 /// on a document the copy would refuse.
-pub(super) fn admission_hold(core: &crate::Core, key: &str, draft: &Draft) -> Option<Flagged> {
-    match core.check_create(draft) {
+pub(super) fn admission_hold(catalog: &Catalog, key: &str, draft: &Draft) -> Option<Flagged> {
+    match crate::check_create(catalog, draft) {
         Err(error) if local_admission_refusal(&error) => Some(Flagged::of(
             key,
             &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),

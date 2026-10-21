@@ -1379,19 +1379,6 @@ impl Core {
         self.write_update(id, edit, Based::AsRead, Body::Read)
     }
 
-    /// Whether the copy would take a new item made from `draft`, answered as
-    /// `write_create` would refuse it, with nothing queued or saved. A draft
-    /// naming a natural key is judged by the server, so it is not judged here.
-    pub(crate) fn check_create(&self, draft: &Draft) -> Result<()> {
-        let conn = self.conn()?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        refuse_unmakeable_create(&catalog, draft)?;
-        if draft.source_id.is_none() {
-            catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
-        }
-        Ok(())
-    }
-
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -2541,6 +2528,19 @@ fn refuse_system_type(r#type: &str) -> Result<()> {
             "{type} is written only through its own operation, never as an item{door}"
         ),
     })
+}
+
+/// Whether the copy would take a new item made from `draft`, answered as
+/// `write_create` would refuse it, with nothing queued or saved. A draft
+/// naming a natural key is judged by the server, so it is not judged here.
+/// Judged against the `catalog` the caller loaded, so a caller judging
+/// many drafts keeps them to one revision.
+pub(crate) fn check_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<()> {
+    refuse_unmakeable_create(catalog, draft)?;
+    if draft.source_id.is_none() {
+        catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
+    }
+    Ok(())
 }
 
 /// What no copy could make an item of, whatever it holds: a name the server
