@@ -25,7 +25,8 @@ export async function runAuditedTransaction<T>(
     await holdAt("write", typeof entry === "function" ? action : entry.action);
   // Only a write a request starts counts toward the lock fault: the server's
   // own writes would otherwise take it from the request it is armed for.
-  if (!nested && inRequest() && failAt("lock")) throw lockNotFree();
+  if (faultsArmed() && !nested && inRequest() && failAt("lock"))
+    throw lockNotFree();
   const id = generateId();
   let result!: T;
   const witness = { recorded: false };
