@@ -289,6 +289,12 @@ mod tests {
                     ),
                     "{message}"
                 );
+                assert!(
+                    message.contains(
+                        "Item content, edges, tags, search, counts, events and exports need one; through --socket, items are reached only by `items summaries` and `items trash`"
+                    ),
+                    "{message}"
+                );
             }
             other => panic!("{other:?}"),
         }

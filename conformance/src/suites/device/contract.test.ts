@@ -753,6 +753,16 @@ describe("the contract the binary was built for", () => {
         ["connectors", "deliveries", "body", ID, ID],
         ["blobs", "download", HASH, "--output", out],
         ["items", "list"],
+        ["items", "tag", ID, "kept"],
+        [
+          "items",
+          "bulk-action",
+          "tags",
+          "--type",
+          "core.note",
+          "--add",
+          "kept",
+        ],
       ]) {
         const label = args.join(" ");
         const before = socket.requests;
@@ -766,6 +776,7 @@ describe("the contract the binary was built for", () => {
         const { error } = refusal(refused.stderr);
         expect(error.code, label).toBe("unauthorized");
         expect(error.message, label).toContain(NEEDS_A_KEY);
+        expect(error.message, label).toContain(WHAT_NEEDS_ONE);
         expect(socket.requests, label).toBeGreaterThan(before);
       }
     } finally {
@@ -776,6 +787,8 @@ describe("the contract the binary was built for", () => {
 
 const NEEDS_A_KEY =
   "this operation needs a key or a token, which --socket does not carry; run it without --socket";
+const WHAT_NEEDS_ONE =
+  "Item content, edges, tags, search, counts, events and exports need one; through --socket, items are reached only by `items summaries` and `items trash`";
 
 /**
  * A server on a Unix socket of its own. It serves a supplied JSON answer,
