@@ -28,6 +28,11 @@ pub enum ItemsCommand {
         #[command(flatten)]
         page: PageArgs,
     },
+    /// Manage item trash through direct local authority. Use `--socket`.
+    Trash {
+        #[command(subcommand)]
+        command: TrashCommand,
+    },
     /// One item by id.
     Get {
         /// The item id.
@@ -184,6 +189,78 @@ pub enum ItemsCommand {
         #[command(subcommand)]
         command: BulkActionCommand,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TrashCommand {
+    /// List trash summaries and the retention period, one page at a time.
+    List {
+        /// Only this exact item type.
+        #[arg(long = "type")]
+        type_: Option<String>,
+        /// Match item names, ignoring case.
+        #[arg(long)]
+        q: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// Move the item and its cascading children into the trash.
+    Move {
+        /// The item ID from the summary listing.
+        id: String,
+        /// The item version from the summary listing.
+        #[arg(long)]
+        version: u64,
+    },
+    /// Restore the item and the children its trash took.
+    Restore {
+        /// The item ID from the summary listing.
+        id: String,
+        /// The item version from the summary listing.
+        #[arg(long)]
+        version: u64,
+    },
+    /// Permanently delete one item that is still in the trash.
+    Purge {
+        /// The item ID from the summary listing.
+        id: String,
+        /// The item version from the summary listing.
+        #[arg(long)]
+        version: u64,
+    },
+    /// Permanently delete up to 200 trash items. Continue with the returned cursor.
+    Empty {
+        /// A cursor from the previous batch. Absent starts with the first batch.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Confirm permanent deletion with `PURGE`.
+        #[arg(long, value_parser = ["PURGE"])]
+        confirm: String,
+    },
+}
+
+pub fn trash_request(command: &TrashCommand) -> Result<Request, CliError> {
+    let action = |id: &str, version: u64, action: &str| {
+        Request::post(&["items", "summaries", id, action]).query("version", version.to_string())
+    };
+    Ok(match command {
+        TrashCommand::List { type_, q, page } => Request::get(&["trash"])
+            .query_opt("type", type_.as_deref())
+            .query_opt("q", q.as_deref())
+            .query_opt("limit", page.limit.map(|n| n.to_string()))
+            .query_opt("cursor", page.cursor.as_deref()),
+        TrashCommand::Move { id, version } => action(id, *version, "trash"),
+        TrashCommand::Restore { id, version } => action(id, *version, "restore"),
+        TrashCommand::Purge { id, version } => action(id, *version, "purge"),
+        TrashCommand::Empty { cursor, confirm } => {
+            if confirm != "PURGE" {
+                return Err(CliError::Usage(
+                    "emptying the trash needs --confirm PURGE".into(),
+                ));
+            }
+            Request::post(&["trash", "empty"]).query_opt("cursor", cursor.as_deref())
+        }
+    })
 }
 
 /// No `revoked`: only the server revokes.
@@ -929,6 +1006,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         _ => None,
     };
     let request = match &command {
+        ItemsCommand::Trash { command } => trash_request(command)?,
         ItemsCommand::List(args) => list_request(args),
         ItemsCommand::Summaries { type_, q, page } => {
             summaries_request(type_.as_deref(), q.as_deref(), page)

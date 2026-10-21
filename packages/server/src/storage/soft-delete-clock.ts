@@ -6,7 +6,7 @@ import { softDeleteState, type ItemState } from "@withmarfa/shared";
  * `transition` — cannot disagree about them.
  *
  * `trashed_at` records when an item entered its soft-deleted state, and the
- * retention sweep is its only reader. `updated_at` cannot stand in for it:
+ * retention sweep and trash summaries read it. `updated_at` cannot stand in for it:
  * any write to a trashed row moves the modification time, tag and
  * extension writes included, so a sweep reading it would restart the clock
  * on an edit made in the bin.

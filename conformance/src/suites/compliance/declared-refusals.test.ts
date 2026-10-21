@@ -806,7 +806,10 @@ describe("a query key no door declares", () => {
       template === "/items/summaries" ||
       template === "/owner" ||
       template.startsWith("/owner/") ||
-      template === "/restore"
+      template === "/restore" ||
+      template === "/trash" ||
+      template === "/trash/empty" ||
+      template.startsWith("/items/summaries")
     ) {
       const response = await getOwnerClient().rawRequest(`${path}?${STRAY}=1`, {
         method: method as "GET" | "POST" | "PATCH" | "DELETE",

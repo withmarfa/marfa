@@ -102,6 +102,25 @@ async function edgesFrom(
   for (const entry of made.results) trackEdge(ctx, entry.id!);
 }
 
+async function trashSummaryPage(): Promise<Read> {
+  const query = `last-page-trash-${ctx.runId}`;
+  const ids = await notes(LIMIT, query);
+  for (const id of ids) expect((await client.deleteItem(id)).ok).toBe(true);
+  const cookie = process.env.MARFA_OWNER_COOKIE;
+  expect(cookie, "MARFA_OWNER_COOKIE is required").toBeTruthy();
+  return async ({ limit, cursor }) => {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    if (cursor) params.set("cursor", cursor);
+    const response = await fetch(`${apiUrl}/trash?${params}`, {
+      headers: { cookie: cookie! },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as Page;
+    expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
+    return body;
+  };
+}
+
 /** Seeds exactly `LIMIT` rows behind a door and returns how to read them. */
 const seeds: Record<string, () => Promise<Read>> = {
   "GET /items/summaries": async () => {
@@ -144,6 +163,7 @@ const seeds: Record<string, () => Promise<Read>> = {
         await client.listItems({ source: own.ctx.source, ...page }),
       ) as Page;
   },
+  "GET /trash": async () => trashSummaryPage(),
   "GET /edges": async () => {
     const edgeType = `mock.fulllastpage.${ctx.runId}`;
     const registered = await client.registerEdgeType({
@@ -318,7 +338,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(12);
+    expect(cursorDoors).toHaveLength(13);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

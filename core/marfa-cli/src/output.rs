@@ -586,6 +586,13 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
     if text.is_empty() {
         text.push("(none)".into());
     }
+    if let Some(days) = page.get("retention_days").and_then(Value::as_u64) {
+        text.push(if days == 0 {
+            "retention: until deleted".into()
+        } else {
+            format!("retention: {days} days")
+        });
+    }
     if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
         text.push(format!("more: --cursor {cursor}"));
     }
@@ -685,6 +692,34 @@ fn record_cells(record: &Value) -> Vec<String> {
             owned("outcome"),
             owned("finished_at"),
             run_note(record).to_string(),
+        ];
+    }
+    if record.get("trashed_at").is_some() {
+        return vec![
+            owned("id"),
+            owned("type"),
+            format!("v{}", record["version"]),
+            owned("trashed_at"),
+            owned("name"),
+            record
+                .get("trashed_by")
+                .map(|by| field(by, "name"))
+                .filter(|name| !name.is_empty())
+                .unwrap_or("Not recorded")
+                .to_string(),
+        ];
+    }
+    if record.get("name").is_some()
+        && record.get("version").is_some()
+        && record.get("properties").is_none()
+    {
+        return vec![
+            owned("id"),
+            owned("type"),
+            format!("v{}", record["version"]),
+            owned("created_at"),
+            owned("name"),
+            owned("source"),
         ];
     }
     let kind = ["type", "action"]
@@ -792,6 +827,33 @@ mod tests {
 
     use super::{describe, edges_from, snippet_text};
     use serde_json::json;
+
+    #[test]
+    fn summary_lists_show_the_name_and_version_needed_for_an_action() {
+        let row = json!({"id":"item-one", "type":"core.note", "version":3, "name":"Shopping list", "source":"notes", "created_at":"2026-01-01T00:00:00Z"});
+        let text = describe(&json!({"data":[row], "next_cursor":null})).unwrap();
+        assert!(text.contains("Shopping list"));
+        assert!(text.contains("v3"));
+    }
+
+    #[test]
+    fn trash_lists_show_deletion_identity_version_and_retention() {
+        let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "name":"Shopping list", "trashed_at":"2026-01-02T00:00:00Z", "trashed_by":{"name":"Notes app"}}], "next_cursor":null, "retention_days":30})).unwrap();
+        for word in [
+            "Shopping list",
+            "v3",
+            "Notes app",
+            "2026-01-02",
+            "retention: 30 days",
+        ] {
+            assert!(text.contains(word), "missing {word}: {text}");
+        }
+        assert!(
+            describe(&json!({"data":[], "next_cursor":null, "retention_days":0}))
+                .unwrap()
+                .contains("retention: until deleted")
+        );
+    }
 
     #[test]
     fn a_snippet_prints_as_the_text_it_was_cut_from() {

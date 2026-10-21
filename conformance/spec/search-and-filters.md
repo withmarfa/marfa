@@ -1116,9 +1116,9 @@ Every list and every search answers the same envelope. A hydrated block of edges
 
 When a list or a search answers, the server MUST carry the rows under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key but a sibling that the operation's own rule names.
 
-**Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys` and the `min_copies` of `GET /blobs/stores`.
+**Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys` the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
-**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-seven doors, every one the document publishes as a page`.
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-eight doors, every one the document publishes as a page`.
 
 ### `search-and-filters/page-whole-set`
 
@@ -2196,7 +2196,7 @@ When `GET /items/summaries` carries direct owner browser authority or private lo
 
 ### `search-and-filters/owner-summaries-projection`
 
-When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-text` and `types/item-name-empty`.
+When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `type`, `version`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-text` and `types/item-name-empty`.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
 

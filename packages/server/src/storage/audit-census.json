@@ -516,5 +516,12 @@
       "runAuditedTransaction": 1,
       "writeInstanceConfig": 1
     }
+  },
+  "routes/owner-trash.ts": {
+    "boundary": "Each owner or local lifecycle operation uses runAuditedTransaction; empty trash invokes the same audited operation once per candidate and reports each outcome.",
+    "calls": {
+      "runAuditedTransaction": 1,
+      "writeItem": 1
+    }
   }
 }

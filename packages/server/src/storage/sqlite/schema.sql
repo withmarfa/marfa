@@ -597,6 +597,7 @@ CREATE TABLE IF NOT EXISTS `items` (
 	`state` text DEFAULT 'active' NOT NULL,
 	`tier` text DEFAULT 'library' NOT NULL,
 	`trashed_at` text,
+	`trashed_by` text,
 	`restored_at` text,
 	`properties` blob NOT NULL,
 	`created_at` text NOT NULL,

@@ -12,6 +12,7 @@ import { initForms } from "./form.js";
 import { initGeneral } from "./general.js";
 import { initHealth } from "./health.js";
 import { localizeDates } from "./local-date.js";
+import { initItems } from "./items.js";
 import { initKeys } from "./keys.js";
 import { initPasskey } from "./passkey.js";
 import { initPasskeySignIn } from "./passkey-sign-in.js";
@@ -38,6 +39,7 @@ function start(): void {
   initConfirm();
   initSignOut();
   initKeys();
+  initItems();
   initGeneral();
   initHealth();
   initSignIns();

@@ -66,5 +66,45 @@ it("lists and searches names through local authority without item content", asyn
     "id",
     "name",
     "source",
+    "type",
+    "version",
   ]);
+});
+
+it("manages trash through local authority with summary responses", async () => {
+  const created = await cli.json<{ item: { id: string; version: number } }>([
+    "items",
+    "create",
+    "--type",
+    "core.note",
+    "--properties",
+    JSON.stringify({ title: "CLI trash witness", body: "private-trash-body" }),
+  ]);
+  const local = cli.viaSocket(server.controlSocket);
+  const id = created.item.id;
+  const version = String(created.item.version);
+  for (const action of ["move", "restore", "move"]) {
+    const result = await local.json([
+      "items",
+      "trash",
+      action,
+      id,
+      "--version",
+      version,
+    ]);
+    expect(JSON.stringify(result)).not.toContain("private-trash-body");
+  }
+  const page = await local.json<{
+    data: { id: string; trashed_by: { kind: string } }[];
+  }>(["items", "trash", "list"]);
+  expect(page.data.find((row) => row.id === id)?.trashed_by.kind).toBe("local");
+  await local.json(["items", "trash", "purge", id, "--version", version]);
+  const result = await local.json<{ purged: number; failures: unknown[] }>([
+    "items",
+    "trash",
+    "empty",
+    "--confirm",
+    "PURGE",
+  ]);
+  expect(result.failures).toEqual([]);
 });

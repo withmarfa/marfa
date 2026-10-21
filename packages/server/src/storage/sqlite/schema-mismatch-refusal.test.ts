@@ -232,3 +232,13 @@ it("refuses a populated registration-owned inbound schema without modifying its 
   );
   expect(digest(path)).toBe(before);
 });
+
+it("refuses a database without the durable trash actor without changing it", async () => {
+  const path = scratch();
+  await seed(path, schemaWith("items", "\n\t`trashed_by` text,", "") + A_ROW);
+  const before = digest(path);
+  await expect(createConnection(path)).rejects.toThrow(
+    /the items table lacks trashed_by/,
+  );
+  expect(digest(path)).toBe(before);
+});

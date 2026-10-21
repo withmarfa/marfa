@@ -343,6 +343,12 @@ const DOORS: Door[] = [
  * reviewer.
  */
 const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
+  "POST /items/summaries/:id/trash":
+    "moves an existing row through the canonical lifecycle without writing properties",
+  "POST /items/summaries/:id/restore":
+    "restores an existing row through the canonical lifecycle without writing properties",
+  "POST /items/summaries/:id/purge":
+    "purges an existing trashed row without creating a row or writing properties",
   "POST /items/bulk-get": "read-only batch fetch",
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones": "writes a purge's record, not an item's properties",

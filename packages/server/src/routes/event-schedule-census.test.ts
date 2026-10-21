@@ -46,6 +46,10 @@ const WRITING = [
 
 /** Doors under `/items` that write no property, with what they write. */
 const NOT_WRITING: Record<string, string> = {
+  "POST /items/summaries/:id/trash": "moves a row to the trash",
+  "POST /items/summaries/:id/restore":
+    "restores a row without editing properties",
+  "POST /items/summaries/:id/purge": "removes a trashed row",
   "DELETE /items/:id": "moves a row to the bin",
   "POST /items/:id/purge": "removes a row",
   "DELETE /items/:id/extensions/:namespace": "an extension, not a property",

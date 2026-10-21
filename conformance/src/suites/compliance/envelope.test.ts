@@ -111,6 +111,12 @@ describe("one envelope for every list and search", () => {
       path: () => "/items/summaries",
       owner: true,
     },
+    {
+      template: "/trash",
+      path: () => "/trash",
+      owner: true,
+      siblings: ["retention_days"],
+    },
     { template: "/edges", path: () => "/edges" },
     { template: "/items/{id}/edges", path: () => `/items/${itemId}/edges` },
     {
@@ -182,12 +188,12 @@ describe("one envelope for every list and search", () => {
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names twenty-seven doors, every one the document publishes as a page", async () => {
+  it("names twenty-eight doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(27);
+    expect(doors).toHaveLength(28);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -217,7 +223,7 @@ describe("one envelope for every list and search", () => {
   });
 
   it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
-    // Outside the twenty-seven: the owner's approved-apps list is served
+    // Outside the twenty-eight: the owner's approved-apps list is served
     // beside the document rather than in it, and answers the same two keys.
     expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
     const minted = await client.createKey({

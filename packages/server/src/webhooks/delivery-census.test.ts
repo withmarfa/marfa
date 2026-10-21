@@ -26,6 +26,8 @@ const SRC = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 /** Modules using a connection primitive, including in-process fetch dispatch. */
 const OUTBOUND: Record<string, string> = {
+  "pages/client/items.ts":
+    "runs in the owner's browser and calls this server's summary lifecycle and type deletion doors; it sends no webhook delivery",
   "control/socket.ts":
     "probes the configured local control socket; it sends no webhook delivery",
   "webhooks/outbound-http.ts":

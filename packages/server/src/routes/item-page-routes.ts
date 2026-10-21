@@ -23,6 +23,7 @@ import {
   type ItemType,
   type ItemView,
 } from "./item-pages.js";
+import { isLockedPlatformType } from "./_schema-reach.js";
 import { summaryFilters } from "./item-summaries.js";
 import { sizeWords } from "./export-routes.js";
 
@@ -175,6 +176,17 @@ export function itemPageRoutes(storage: Storage) {
         schema,
         count: types.find((t) => t.schema.id === id)?.count ?? 0,
         trashed: trashed[id] ?? 0,
+        removable: !!schema && !isLockedPlatformType(id),
+        removalReason:
+          schema && !isLockedPlatformType(id)
+            ? (await storage.items.countByType(id)) > 0
+              ? "This type still has items, including items in the trash. Remove them before removing the type."
+              : (await storage.types.list()).some(
+                    (t) => t.parent === id || t.compatible_with?.includes(id),
+                  )
+                ? "Another type depends on this type. Remove that dependency first."
+                : undefined
+            : undefined,
       }),
       schema ? 200 : 404,
     );

@@ -3,7 +3,7 @@ import { buildPublishedOpenAPISpec } from "./openapi-published.js";
 
 /**
  * Every list and search answers `{data, next_cursor}`, both required and
- * nothing else beside them but the siblings two doors declare about the
+ * nothing else beside them but the siblings some doors declare about the
  * answer. The conformance suite holds the served bodies to this; this holds
  * the document to it, so a door that publishes a page shape of its own fails
  * here rather than in a generated client.
@@ -35,6 +35,7 @@ interface Document {
 
 /** The keys a page may carry beside `data` and `next_cursor`, by component. */
 const SIBLINGS: Record<string, { required: string[]; optional: string[] }> = {
+  TrashPage: { required: ["retention_days"], optional: [] },
   BlobStorePage: { required: ["min_copies"], optional: [] },
   OccurrencePage: {
     required: ["scan", "window"],
@@ -200,8 +201,8 @@ function siblingsOf(components: Iterable<string>): {
 }
 
 describe("the page envelope in the document", () => {
-  it("is answered by twenty-seven doors", () => {
-    expect(pages.size).toBe(27);
+  it("is answered by twenty-eight doors", () => {
+    expect(pages.size).toBe(28);
   });
 
   it("answers data and next_cursor, required, and only declared siblings, on every door", () => {

@@ -1016,6 +1016,11 @@ const beyondTheTable: Record<string, () => string[]> = {};
 /** Table commands that require private machine authority rather than a key. */
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "items summaries": () => [],
+  "items trash list": () => [],
+  "items trash move": () => [ID, "--version", "1"],
+  "items trash restore": () => [ID, "--version", "1"],
+  "items trash purge": () => [ID, "--version", "1"],
+  "items trash empty": () => ["--confirm", "PURGE"],
   "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
   "owner passkeys list": () => [],
   "owner passkeys rename": () => [ID, "--name", "Studio"],
@@ -1215,6 +1220,42 @@ describe("every command holds the server to the contract", () => {
           expect(outcome.code, label).toBe(1);
           expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
           expect(outcome.stdout, label).toBe("");
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
+  it("holds every trash command to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const paths: Record<string, string> = {
+      "items trash list": "GET /trash",
+      "items trash move": `POST /items/summaries/${ID}/trash?version=1`,
+      "items trash restore": `POST /items/summaries/${ID}/restore?version=1`,
+      "items trash purge": `POST /items/summaries/${ID}/purge?version=1`,
+      "items trash empty": "POST /trash/empty",
+    };
+    try {
+      for (const [command, path] of Object.entries(paths)) {
+        for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+          socket.contract = contract;
+          socket.asked = [];
+          socket.answer = {};
+          const outcome = await marfa([
+            "--json",
+            "--socket",
+            socket.path,
+            ...command.split(" "),
+            ...PRIVATE_SOCKET_TABLE[command]!(),
+          ]);
+          expect(socket.asked, command).toEqual([path]);
+          if (contract === BUILT_FOR)
+            expect(outcome.code, command + outcome.stderr).toBe(0);
+          else {
+            expect(outcome.code).toBe(1);
+            expect(codeOf(outcome.stderr)).toBe("contract_mismatch");
+          }
         }
       }
     } finally {

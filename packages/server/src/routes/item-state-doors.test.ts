@@ -128,6 +128,12 @@ describe.each(DOORS)("$name", (door) => {
  * the next reviewer.
  */
 const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
+  "POST /items/summaries/:id/trash":
+    "moves an existing row through the canonical lifecycle without writing properties",
+  "POST /items/summaries/:id/restore":
+    "restores an existing row through the canonical lifecycle without writing properties",
+  "POST /items/summaries/:id/purge":
+    "purges an existing trashed row without creating a row or writing properties",
   "POST /items/:id/transition":
     "moves an existing row; `storage.items.transition` validates the graph",
   "POST /items/:id/restore":

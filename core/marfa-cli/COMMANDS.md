@@ -399,6 +399,90 @@ marfa items summaries [OPTIONS]
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 
+### marfa items trash
+
+Manage item trash through direct local authority. Use `--socket`.
+
+```text
+marfa items trash [OPTIONS] <COMMAND>
+```
+
+### marfa items trash list
+
+List trash summaries and the retention period, one page at a time.
+
+```text
+marfa items trash list [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--type <TYPE>` | Only this exact item type. |
+| `--q <Q>` | Match item names, ignoring case. |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
+### marfa items trash move
+
+Move the item and its cascading children into the trash.
+
+```text
+marfa items trash move [OPTIONS] --version <VERSION> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item ID from the summary listing. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The item version from the summary listing. |
+
+### marfa items trash restore
+
+Restore the item and the children its trash took.
+
+```text
+marfa items trash restore [OPTIONS] --version <VERSION> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item ID from the summary listing. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The item version from the summary listing. |
+
+### marfa items trash purge
+
+Permanently delete one item that is still in the trash.
+
+```text
+marfa items trash purge [OPTIONS] --version <VERSION> <ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ID>` | The item ID from the summary listing. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The item version from the summary listing. |
+
+### marfa items trash empty
+
+Permanently delete up to 200 trash items. Continue with the returned cursor.
+
+```text
+marfa items trash empty [OPTIONS] --confirm <CONFIRM>
+```
+
+| Option | Description |
+| --- | --- |
+| `--cursor <CURSOR>` | A cursor from the previous batch. Absent starts with the first batch. |
+| `--confirm <CONFIRM>` | Confirm permanent deletion with `PURGE`. One of `PURGE`. |
+
 ### marfa items get
 
 One item by id.

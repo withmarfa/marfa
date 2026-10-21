@@ -14,9 +14,15 @@ import { readInstanceConfig } from "../storage/instance-config.js";
 import { pageOf } from "./_schemas.js";
 import { setNoStore } from "./no-store.js";
 
-const ItemSummarySchema = z
+export const ItemSummarySchema = z
   .object({
     id: z.string().describe("Unique identifier for the item."),
+    type: z.string().describe("The item type identifier."),
+    version: z
+      .number()
+      .int()
+      .min(1)
+      .describe("The version to pass when changing this item."),
     name: z
       .string()
       .describe(
@@ -35,7 +41,7 @@ const listRoute = createRoute({
   tags: ["Items"],
   summary: "List item summaries",
   description:
-    "Returns item names, sources and creation times, newest first. Only the owner or a local command can use this operation. Trashed and system items are excluded.",
+    "Returns item names, types, versions, sources and creation times, newest first. Only the owner or a local command can use this operation. Trashed and system items are excluded.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: {
@@ -62,7 +68,7 @@ const listRoute = createRoute({
       content: {
         "application/json": {
           schema: pageOf(ItemSummarySchema, "ItemSummaryPage", {
-            page: "A page of item names, sources and creation times.",
+            page: "A page of item summaries.",
             data: "The item summaries on this page.",
           }),
           example: {
@@ -70,6 +76,8 @@ const listRoute = createRoute({
               {
                 id: "01900000-0000-7000-8000-000000000001",
                 name: "Shopping list",
+                type: "core.note",
+                version: 1,
                 source: "notes",
                 created_at: "2026-01-01T12:00:00.000Z",
               },

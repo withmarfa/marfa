@@ -969,3 +969,15 @@ When a name field contains text, the server MUST return its first line after tri
 When no name candidate produces nonblank text, the server MUST return `Untitled` as the item's name.
 
 **Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+
+### `types/delete-owner`
+
+When a recent owner session or private local command sends `DELETE /types/{id}`, the server MUST apply the built-in type, existing-item, subtype and compatibility-dependency checks before removing an unused custom type.
+
+**Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
+
+### `types/delete-owner-force`
+
+If a direct owner or private local command sends `DELETE /types/{id}?force=true`, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.

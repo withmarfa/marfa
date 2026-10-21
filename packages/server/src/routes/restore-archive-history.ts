@@ -75,6 +75,35 @@ export function archiveRestoredAt(
   return normalizeTimeBound(restoredAt, "archive date");
 }
 
+/** Trash identity belongs to the trash operation, not the latest version. */
+export function archiveTrash(
+  item: Record<string, unknown>,
+  at: unknown,
+  by: unknown,
+  index: number,
+) {
+  if (at !== undefined && at !== null && !instant(at))
+    throw refusal("item", item, index, "trashed_at", "a valid instant");
+  const trashed_at =
+    typeof at === "string" ? normalizeTimeBound(at, "archive date") : null;
+  const named = archivedWriter(by, "trashed_by");
+  if ("field" in named)
+    throw refusal("item", item, index, named.field, named.expected);
+  if (
+    (trashed_at !== null || named.writer !== null) &&
+    item.state !== "trashed" &&
+    item.state !== "revoked"
+  )
+    throw refusal(
+      "item",
+      item,
+      index,
+      "trashed_at",
+      "null outside the soft-deleted state",
+    );
+  return { trashed_at, trashed_by: named.writer };
+}
+
 /** `seenIds` spans the archive; version counters are unique only within an item. */
 export function archiveVersions(
   item: Record<string, unknown>,

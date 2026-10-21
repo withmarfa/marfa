@@ -20,6 +20,7 @@ import { reservedCredentialSourcePrefix } from "../middleware/auth.js";
 import {
   archiveDates,
   archiveRestoredAt,
+  archiveTrash,
   archiveVersions,
   archiveWriter,
 } from "./restore-archive-history.js";
@@ -135,6 +136,8 @@ export interface ArchivedItemLine {
   versions?: unknown;
   writer?: unknown;
   restored_at?: unknown;
+  trashed_at?: unknown;
+  trashed_by?: unknown;
 }
 
 /** An `edges.ndjson` line. */
@@ -249,6 +252,7 @@ export function itemRefusal(
   if (text) return text;
   archiveDates("item", item, index);
   archiveRestoredAt(item, entry.restored_at, index);
+  archiveTrash(item, entry.trashed_at, entry.trashed_by, index);
   archiveWriter(item, entry.writer, index);
   const history = archiveVersions(item, entry.versions, index, seenSnapshotIds);
   const scalar = archiveScalarRefusal("item", item, index);
