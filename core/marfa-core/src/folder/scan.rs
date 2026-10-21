@@ -137,9 +137,9 @@ impl Folder {
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
     /// identity are as the last read left them, which a full pass catches.
-    /// Either way it leaves for a later pass a file that is not a document
-    /// and changed within `settle`, which a copy or a download may still be
-    /// writing.
+    /// Either way it leaves for a later pass a file that is not a document,
+    /// or is a file item at a document name, and changed within `settle`,
+    /// which a copy or a download may still be writing.
     pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
         self.scan_as(full, Some(settle), Files::Write)
     }
@@ -709,8 +709,8 @@ impl Folder {
                     None => Ok(false),
                 }
             };
-            // A file at a document name is read before the claim, which needs
-            // its id line, so only the claim can say that it is a file item's,
+            // A file at a document name is read at once, since the claim needs
+            // its id line, so only the claim says whether it is a file item's,
             // which a copy or a download may still be writing.
             let settling = settle.is_some_and(|settle| {
                 walked

@@ -333,9 +333,9 @@ fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
     Ok(None)
 }
 
-/// The most code units of a line kept. A longer line is neither a fence nor
-/// an id line, so the rest of it is read past, and a file that is not text
-/// is never held whole.
+/// The most bytes (UTF-8) or code units (UTF-16) of a line kept. A longer line
+/// is neither a fence nor an id line, so the rest of it is read past, and a
+/// file that is not text is never held whole.
 const LINE_LIMIT: usize = 4096;
 
 /// A line, or an empty one in place of a line past `LINE_LIMIT`.
