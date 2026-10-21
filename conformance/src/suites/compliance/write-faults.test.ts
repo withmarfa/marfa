@@ -10,6 +10,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { HOLD, mark, seed } from "../../utils/bulk-jobs.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
@@ -354,6 +355,30 @@ describe("an entry of a page under atomic: false that meets the write lock", () 
     expect(refused.status).toBe(503);
     expect(refused.error?.error.code).toBe("write_contention");
     expect(await stored(tag)).toHaveLength(0);
+  });
+
+  it("is not met by a write the server makes for itself, so the fault waits for the caller's write", async () => {
+    const tag = tagged("lock-background");
+    await seed(working, tag, 2);
+    // The write is the bulk-action worker's own chunk. The worker is held
+    // after it took the job and before its first write, so the fault is set
+    // while that write is in flight.
+    await server.setFault(HOLD.claimed);
+    const queued = await mark(working, tag, `${tag}-done`);
+    await server.waitForHold(HOLD.claimed);
+    await server.setFault("fail:lock=1");
+    await server.clearFault(HOLD.claimed);
+    const job = await working.pollBulkActionToTerminal(queued);
+    expect(await fired("fail:lock")).toBe(0);
+    // Witness: the server's own write ran to its end after the fault was set.
+    expect(job.status).toBe("completed");
+    const refused = await working.bulkItems({
+      atomic: false,
+      items: notes(2, tag),
+    });
+    expect(refused.status).toBe(503);
+    expect(refused.error?.error.code).toBe("write_contention");
+    expect(await fired("fail:lock")).toBe(1);
   });
 });
 

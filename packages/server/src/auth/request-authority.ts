@@ -28,6 +28,14 @@ export function withRequestAuthority<T>(
   );
 }
 
+/**
+ * Whether the caller runs inside a request's admission. The server's own work
+ * runs outside every one (`runInBackground`).
+ */
+export function inRequest(): boolean {
+  return requests.getStore() !== undefined;
+}
+
 export function rememberAuthorityPermission(permission: Permission): void {
   requests.getStore()?.permissions.add(permission);
 }

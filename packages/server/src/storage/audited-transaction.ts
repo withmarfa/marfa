@@ -1,4 +1,5 @@
 import { auditActor, withAuditActor } from "../auth/audit-actor.js";
+import { inRequest } from "../auth/request-authority.js";
 import { generateId } from "@withmarfa/shared";
 import type { AuditLogEntry, Storage } from "./interface.js";
 import {
@@ -22,7 +23,10 @@ export async function runAuditedTransaction<T>(
   const nested = transactionControl.getStore() !== undefined;
   if (faultsArmed() && !nested && holdArmed("write"))
     await holdAt("write", typeof entry === "function" ? action : entry.action);
-  if (!nested && failAt("lock")) throw lockNotFree();
+  // Only a write a request starts counts toward the lock fault: the server's
+  // own writes would otherwise take it from the request it is armed for.
+  if (faultsArmed() && !nested && inRequest() && failAt("lock"))
+    throw lockNotFree();
   const id = generateId();
   let result!: T;
   const witness = { recorded: false };
