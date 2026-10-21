@@ -918,9 +918,11 @@ When a held type declares properties reserved for document own fields, metadata,
 
 ### `folders/uncarried-preserve`
 
-When a document is edited, a device MUST preserve item properties that cannot be carried as document properties.
+When a document is edited, a device MUST preserve item properties that cannot be carried as document properties, except a `type` property that the document's `type` line replaces with a value that is not a type identifier (`folders/foreign-type-property`).
 
-**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`.
+**Reason:** an app can set a `type` property that names a type, which no file can show, but a word the person writes on the line is their edit of it and wins.
+
+**Tests:** `device/folders-frontmatter.test.ts › reports a type that declares a property no file can carry, and keeps it`, `device/folders-frontmatter.test.ts › replaces an app's type property with the word the person writes on the line`.
 
 ### `folders/write-own-fields`
 
@@ -1242,9 +1244,9 @@ If a document's `type` line holds a type identifier the copy does not hold, a `s
 
 When a document's `type` line holds a value that is not a type identifier (`types/id-grammar`), a device MUST carry that value as the item property `type` and leave the item's type unchanged.
 
-**Reason:** other note apps write their own words in a `type` line, such as `type: reference`. No such value can ever name a Marfa type, so holding the file would hold every note those apps made, and dropping the value would lose what the person wrote.
+**Reason:** other note apps write their own words in a `type` line, such as `type: reference`. No such value can ever name a Marfa type, so holding the file would hold every note those apps made, and dropping the value would lose what the person wrote. The value replaces a `type` property an app set (`folders/uncarried-preserve`).
 
-**Tests:** `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `› changes only the property when the line comes to hold another word`, `› clears the property and keeps the type when the line is taken out`, `› reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
+**Tests:** `device/folders-frontmatter.test.ts › makes the note the folder's default type and keeps the line's value as a property`, `› changes only the property when the line comes to hold another word`, `› replaces an app's type property with the word the person writes on the line`, `› clears the property and keeps the type when the line is taken out`, `› reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
 
 ### `folders/foreign-type-write`
 

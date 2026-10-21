@@ -5578,6 +5578,49 @@ describe("what frontmatter says", () => {
       expect(read(harness!, "Reference.md")).toMatch(/^type: article$/m);
     });
 
+    it("replaces an app's type property with the word the person writes on the line", async () => {
+      const id = "01a00000-0000-7000-8000-0000000099f1";
+      harness = await folderHarness("folder-type-foreign-over-app", {
+        settings: { search: { types: ["core.note", "core.bookmark"] } },
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id,
+                properties: {
+                  title: "Held",
+                  body: "held\n",
+                  type: "core.bookmark",
+                },
+              },
+            },
+          ],
+        },
+      });
+      const rows = scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect(
+        typeLines("Held.md"),
+        "a type property naming a type did not leave the item's type on the line",
+      ).toEqual(["type: core.note"]);
+      edit(harness, "Held.md", "type: core.note", "type: reference");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [sent] = sentUpdates(harness).filter((update) => update.id === id);
+      expect(
+        [
+          sent?.body.type,
+          (sent?.body.properties as Record<string, unknown> | undefined)?.type,
+        ],
+        "the app's type property was kept over the person's word",
+      ).toEqual([undefined, "reference"]);
+      expect([rows.get(id)?.type, rows.get(id)?.properties.type]).toEqual([
+        "core.note",
+        "reference",
+      ]);
+      expect(typeLines("Held.md")).toEqual(["type: reference"]);
+    });
+
     it("clears the property and keeps the type when the line is taken out", async () => {
       const { id, rows } = await madeFromForeign("folder-type-foreign-removed");
       edit(harness!, "Reference.md", "type: reference\n", "");

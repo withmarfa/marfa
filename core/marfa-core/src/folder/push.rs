@@ -527,10 +527,14 @@ impl Folder {
             };
         }
         if whole {
-            // No file can carry these, so leaving them out is no clear.
+            // No file can carry these, so leaving them out is no clear. A
+            // `type` line holding no type identifier reads as the property,
+            // and the person's word replaces the one an app set.
             for (field, value) in &held.properties {
                 if !fields::carried(field, value, edge_types)? {
-                    properties.insert(field.clone(), value.clone());
+                    properties
+                        .entry(field.clone())
+                        .or_insert_with(|| value.clone());
                 }
             }
         }
