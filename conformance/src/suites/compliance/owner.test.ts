@@ -814,12 +814,14 @@ describe("claiming through the private socket", () => {
         });
         expect(claim.status).toBe(201);
         expect(Object.keys(claim.body).sort()).toEqual([
+          "avatar",
           "created_at",
           "email",
           "id",
           "name",
         ]);
         expect(claim.body).toMatchObject({
+          avatar: null,
           email: "socket.owner@example.test",
           name: "socket owner",
         });
