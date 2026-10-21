@@ -75,7 +75,7 @@ describe("durable instance claim", () => {
     for (let i = 0; i < 10; i++)
       await expect(
         exchangeSetupCode(storage, "wrong", "192.0.2.1"),
-      ).rejects.toMatchObject({ code: "unauthorized" });
+      ).rejects.toMatchObject({ code: "setup_proof_invalid" });
     const peer = await createSqliteStorage(path);
     cleanups.push(() => peer.close());
     await expect(
@@ -83,7 +83,7 @@ describe("durable instance claim", () => {
     ).rejects.toMatchObject({ code: "rate_limited" });
     await expect(
       exchangeSetupCode(peer, "wrong", "192.0.2.2"),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "setup_proof_invalid" });
     expect(
       (
         await claimOwner(storage, auth, {
@@ -99,19 +99,19 @@ describe("durable instance claim", () => {
     const { ticket } = await issueSetupTicket(storage);
     const { token } = await exchangeSetupTicket(storage, ticket);
     await expect(exchangeSetupTicket(storage, ticket)).rejects.toMatchObject({
-      code: "unauthorized",
+      code: "setup_proof_invalid",
     });
     const old = await issueSetupTicket(storage);
     await issueSetupCode(storage);
     await expect(
       exchangeSetupTicket(storage, old.ticket),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "setup_proof_invalid" });
     await expect(
       claimOwner(storage, auth, {
         ...details,
         proof: { kind: "session", token },
       }),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "setup_proof_invalid" });
   });
   it("does not consume proof or create an account for malformed details or audit failure", async () => {
     const { storage, auth } = await fixture();
@@ -260,7 +260,7 @@ describe("claim expiry and recovery rollback", () => {
     const now = Date.now(),
       clock = vi.spyOn(Date, "now").mockReturnValue(now + 5 * 60_000);
     await expect(exchangeSetupTicket(storage, ticket)).rejects.toMatchObject({
-      code: "unauthorized",
+      code: "setup_proof_invalid",
     });
     clock.mockReturnValue(now);
     const next = await issueSetupTicket(storage);
@@ -271,7 +271,7 @@ describe("claim expiry and recovery rollback", () => {
         ...details,
         proof: { kind: "session", token },
       }),
-    ).rejects.toMatchObject({ code: "unauthorized" });
+    ).rejects.toMatchObject({ code: "setup_proof_invalid" });
   });
   it("keeps the password and lock counters on audit failure, then clears only the recovered account's lock", async () => {
     const { storage, auth } = await fixture();
@@ -337,7 +337,7 @@ it("rechecks shared setup generation after slow password preparation", async () 
       ...details,
       proof: { kind: "code", code, address: "127.0.0.1" },
     }),
-  ).rejects.toMatchObject({ code: "unauthorized" });
+  ).rejects.toMatchObject({ code: "setup_proof_invalid" });
   expect(replaced).toHaveBeenCalledOnce();
   expect(await storage.__sqliteAll("SELECT id FROM auth_user")).toHaveLength(0);
 });

@@ -65,7 +65,7 @@ function unclaimed(state: ClaimState): void {
 }
 function invalidProof(): never {
   throw new MarfaError(
-    ErrorCode.UNAUTHORIZED,
+    ErrorCode.SETUP_PROOF_INVALID,
     "Setup proof is invalid, expired, or replaced. Obtain a new setup code or link.",
   );
 }

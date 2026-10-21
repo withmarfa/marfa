@@ -4801,6 +4801,23 @@ export interface components {
             };
         };
         /** @description An error response. */
+        SetupProofInvalidRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "setup_proof_invalid";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
         OwnerExistsRefusal: {
             /** @description What went wrong. */
             error: {
@@ -23860,7 +23877,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                    "application/json": components["schemas"]["SetupProofInvalidRefusal"];
                 };
             };
             /** @description The browser origin or transport is not permitted. */
