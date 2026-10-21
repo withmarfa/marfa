@@ -2504,13 +2504,9 @@ describe("files and items", () => {
         .map((request) => request.raw);
     const copying = join(harness.dir, "movie.bin");
     writeFileSync(copying, Buffer.alloc(0));
-    let written = 0;
     // Faster than the watch's debounce, for longer than it waits for the
     // folder to settle, so passes run while the copy is under way.
-    const writing = setInterval(() => {
-      written += 1;
-      appendFileSync(copying, Buffer.alloc(4096, written % 256));
-    }, 50);
+    const writing = writeSteadily(copying, 50);
     const watching = harness.folder.watch();
     let whole: Buffer;
     try {
@@ -2527,7 +2523,7 @@ describe("files and items", () => {
         { timeout: 30_000, interval: 100 },
       );
       await new Promise((resolve) => setTimeout(resolve, 6_000));
-      clearInterval(writing);
+      await writing.stop();
       whole = readFileSync(copying);
       await vi.waitFor(
         () => {
@@ -2537,8 +2533,11 @@ describe("files and items", () => {
       );
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
-      clearInterval(writing);
-      await watching.stop();
+      try {
+        await writing.stop();
+      } finally {
+        await watching.stop();
+      }
     }
     expect(
       uploads().map((bytes) => bytes.length),
