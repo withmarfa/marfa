@@ -93,7 +93,7 @@ describe("the formula is written from the release's checksum file", () => {
           .join("\n"),
         "no line for marfa-0.0.23-darwin-x86_64",
       ],
-      ["0.0.23", `${SUMS}\n${lines[0]}`, "more than once"],
+      ["0.0.23", [SUMS, ...lines.slice(0, 1)].join("\n"), "more than once"],
       ["0.0.23", SUMS.replace(ARM, "A".repeat(64)), "64 lowercase hexadecimal"],
       ["0.0.23", SUMS.replace(ARM, "a".repeat(63)), "64 lowercase hexadecimal"],
       ["0.0.24", SUMS, "no line for marfa-0.0.24-darwin-arm64"],
@@ -108,7 +108,7 @@ describe("the formula is written from the release's checksum file", () => {
 });
 
 describe("the workflow pushes the formula only after the release is public", () => {
-  const tap = jobs["tap"];
+  const tap = jobs.tap;
 
   it("waits for the publish job and runs only for a tag", () => {
     expect([tap?.needs ?? []].flat()).toContain("publish");
@@ -124,7 +124,7 @@ describe("the workflow pushes the formula only after the release is public", () 
     expect(guard).toBeGreaterThanOrEqual(0);
     expect(guard).toBeLessThan(fetch);
     expect(steps[guard]?.run).toContain("HOMEBREW_TAP_TOKEN");
-    expect(steps[guard]?.env?.["HOMEBREW_TAP_TOKEN"]).toBe(
+    expect(steps[guard]?.env?.HOMEBREW_TAP_TOKEN).toBe(
       "${{ secrets.HOMEBREW_TAP_TOKEN }}",
     );
   });
@@ -137,9 +137,9 @@ describe("the workflow pushes the formula only after the release is public", () 
     const uses = text.match(/secrets\.HOMEBREW_TAP_TOKEN/g) ?? [];
     expect(uses).toHaveLength(2);
     const checkout = (tap?.steps ?? []).find(
-      (s) => s.with?.["repository"] === "withmarfa/homebrew-tap",
+      (s) => s.with?.repository === "withmarfa/homebrew-tap",
     );
-    expect(checkout?.with?.["token"]).toBe("${{ secrets.HOMEBREW_TAP_TOKEN }}");
+    expect(checkout?.with?.token).toBe("${{ secrets.HOMEBREW_TAP_TOKEN }}");
     expect(
       tap?.steps.filter((s) => s.run?.includes("write-formula.sh")),
     ).toHaveLength(1);
