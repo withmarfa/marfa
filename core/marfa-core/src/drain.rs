@@ -17,6 +17,8 @@ use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWri
 use crate::{Core, Result};
 use crate::{read_view, store};
 
+mod pages;
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainReport {
     /// Writes the server answered this pass, whatever it answered.
@@ -1110,6 +1112,26 @@ fn send_queue(
     // Sent out of queue order as a test, so the walk does not reach it again.
     let mut tested: HashSet<String> = HashSet::new();
     let mut cursor = 0;
+
+    if report.unavailable.is_none() && !pass.changed() {
+        pages::send(
+            &pages::Sender {
+                core,
+                http,
+                generation,
+                stop,
+            },
+            pass,
+            report,
+            &mut pages::Standing {
+                all: &all,
+                rows: &rows,
+                answers: &mut answers,
+                landing: &landing,
+            },
+            &mut confirm,
+        )?;
+    }
 
     loop {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -2356,6 +2378,8 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
+/// `read` is the read the answer owes, where it was made before the answer
+/// was settled.
 fn settle_success(
     core: &Core,
     row: &QueuedWrite,
@@ -2363,6 +2387,7 @@ fn settle_success(
     shape: Shape,
     pass: &mut ViewChange,
     answered_now: bool,
+    read: Option<ReadBack>,
 ) -> Result<Settled> {
     let item = if shape == Shape::Item {
         serde_json::from_str::<WireWriteAnswer>(&answer.body).ok()
@@ -2457,13 +2482,15 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
-    let read = match read_owed(
-        core,
-        &owed,
-        Bin::Held,
-        pass,
-        answered_now && moves_source(row),
-    ) {
+    let read = match read.map(Ok).unwrap_or_else(|| {
+        read_owed(
+            core,
+            &owed,
+            Bin::Held,
+            pass,
+            answered_now && moves_source(row),
+        )
+    }) {
         Ok(read) => read,
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
@@ -2549,6 +2576,7 @@ fn settle(
             shape,
             pass,
             true,
+            None,
         ),
         Classified::Environmental => Ok(Settled {
             retry_after_seconds: answer
@@ -2734,7 +2762,7 @@ fn settle_delivered(
         replayed: true,
         contract_named: true,
     };
-    settle_success(core, row, &answer, shape, pass, true)
+    settle_success(core, row, &answer, shape, pass, true, None)
 }
 
 /// A natural-key receipt settles independently of the current read authority.
@@ -2959,7 +2987,7 @@ fn read_owed_backs(
                 "edge" => Shape::Edge,
                 _ => Shape::Plain,
             };
-            settle_success(core, &row, &answer, shape, pass, false)?
+            settle_success(core, &row, &answer, shape, pass, false, None)?
         };
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {

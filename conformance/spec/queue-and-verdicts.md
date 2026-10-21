@@ -148,6 +148,50 @@ When the server answers a write with `Idempotency-Replayed: true`, or with `ackn
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `› sends an edit of its own create on the version that create made where the server answers a repeat of it`.
 
+## Creates sent in pages
+
+A first sync of a folder, or an import, queues thousands of creates. Sent one at a time, each create and its read-back is two requests against the server's request limit; sent in pages, a page of up to a thousand is one request and its read-back a request for each hundred.
+
+### `queue-and-verdicts/create-pages`
+
+When a drain finds 50 or more item creates, or 50 or more edge creates, that it has never sent and that are ready to send, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
+
+**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path.
+
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
+
+### `queue-and-verdicts/page-never-sent`
+
+A device MUST NOT put in a page a write it has sent before.
+
+**Reason:** a write sent and not answered may have landed, and only its own door, under its idempotency key, answers it from the server's record (`queue-and-verdicts/key-kept-on-retry`).
+
+**Tests:** `device/pages.test.ts › sends a page whose answer was lost again one write at a time, under each write's key`.
+
+### `queue-and-verdicts/page-entry-alone`
+
+When a page answers an entry with anything but `created` under the id it was queued with, a device MUST send that write on its own door, under its idempotency key, in the same drain.
+
+**Reason:** the page's answer for one entry is not a verdict on the write; its own door gives the answer every other write gets, including a replay of a write an earlier page took.
+
+**Tests:** `device/pages.test.ts › sends an entry the page does not create under its own id on its own door, under its key, in the same drain`.
+
+### `queue-and-verdicts/page-limited`
+
+When the server answers a page with `429`, a device MUST leave every write in the page unanswered, uncounted and unsent.
+
+**Reason:** a limited request was not taken, so the next drain can send the same writes in a page again rather than one at a time.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server limits unanswered, unsent and uncounted`.
+
+### `queue-and-verdicts/page-read-back`
+
+When a page creates a write, a device MUST read it back through `POST /items/bulk-get`, at most 100 ids to a request, and settle it on that read as `queue-and-verdicts/success-read-again` says.
+
+**Reason:** a read for each created row would spend the request limit the page saved; the server takes at most 100 ids to a request (`items/bulk-get-cap`).
+
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› ends the drain where the read of a page meets a changed read view, with no write answered`.
+
 ## The version a write carries
 
 An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the row has moved since (`versions.md`).

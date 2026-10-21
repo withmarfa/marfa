@@ -280,6 +280,30 @@ fn a_drain_that_succeeds_records_a_span_with_its_counts_and_no_error() {
 }
 
 #[test]
+fn a_page_of_creates_records_a_span_with_its_kind_size_and_status() {
+    let server = Scripted::start();
+    let core = copy_keyed(&server, "k");
+    holding_a_catalog(&core);
+    for _ in 0..50 {
+        core.create_item(&note(None)).unwrap();
+    }
+    server.on("/items/bulk", vec![scripted::refusal(429, "rate_limited")]);
+
+    let (result, log) = recorded(|| core.drain());
+
+    let report = result.unwrap();
+    assert_eq!(report.undelivered, 50, "{report:?}");
+    let page = log.one("write_page");
+    assert_eq!(page.fields["outcome"], "unavailable");
+    assert_eq!(page.fields["kind"], "create_item");
+    assert_eq!(page.fields["entries"], "50");
+    assert_eq!(page.fields["status"], "429");
+    assert!(log.spans("write").is_empty(), "{log:?}");
+    assert!(error_events(&log).is_empty(), "{log:?}");
+    assert_eq!(log.open_spans(), Vec::<&str>::new());
+}
+
+#[test]
 fn a_drain_a_follow_starts_when_its_server_is_back_records_its_span_on_the_follows_subscriber() {
     let server = Scripted::start();
     let (core, _) = copy_with_a_write(&server, &note(None), "k");
