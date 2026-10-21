@@ -1475,6 +1475,14 @@ export interface BlobRegistry {
   /** Mark every store not in `ids` detached. Returns how many were. */
   detachStoresExcept(ids: readonly string[]): Promise<number>;
   listStores(): Promise<BlobStoreRow[]>;
+  /**
+   * The attached stores of `kind` recorded at `locator` that the log
+   * records at least one copy in, with how many.
+   */
+  copiesClaimedAt(
+    kind: BlobStoreKind,
+    locator: string,
+  ): Promise<{ store_id: string; copies: number }[]>;
 
   /**
    * Write a location row: the store holds the bytes and they hashed to

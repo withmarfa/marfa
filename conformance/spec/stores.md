@@ -60,9 +60,25 @@ When the server starts over a disk folder that holds the marker of a store, the 
 
 ### `stores/fresh-folder-fresh-store`
 
-When the server starts over a disk folder that holds no marker, the server MUST list a new store and claim no copies in it.
+When the server starts over a disk folder that holds no marker, and `stores/missing-folder-refused` does not refuse the start, the server MUST list a new store and claim no copies in it.
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
+
+### `stores/missing-folder-refused`
+
+Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the location log records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
+
+**Reason:** a folder or marker missing where the log records copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
+
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the log records copies there, and creates neither`.
+
+### `stores/missing-folder-untouched`
+
+If `stores/missing-folder-refused` refuses the start, then the server MUST NOT create the folder or write a marker in it.
+
+**Reason:** a marker written there would make the next start take the folder as a new store.
+
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the log records copies there, and creates neither`.
 
 ### `stores/detached-listed`
 

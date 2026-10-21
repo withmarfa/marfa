@@ -1,20 +1,25 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   renameSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
+  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
+  type RefusedBoot,
 } from "../../utils/fresh-server.js";
 import {
   blobFolder,
@@ -39,8 +44,9 @@ import {
  *
  * **A store is its folder.** A store's id is read from the marker its folder
  * holds, so the folder the server is restarted over decides which store it
- * is. The last test restarts the server over a folder that kept its marker
- * and then over one that did not.
+ * is. The folder tests restart the server over a folder that kept its
+ * marker, over another folder, and over its own folder with the marker or
+ * the whole folder gone while the log still records copies there.
  */
 let server: FreshServer | undefined;
 let operator: MarfaClient;
@@ -55,6 +61,12 @@ const content = {
 };
 const hashes = {} as Record<keyof typeof content, string>;
 const stamps = {} as Record<"first" | "second", string>;
+
+/** Where a disk store kept in `folder` keeps one blob's bytes. */
+function pathIn(folder: string, hash: string): string {
+  const hex = hash.slice("sha256:".length);
+  return join(folder, hex.slice(0, 4), hex);
+}
 
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -259,11 +271,10 @@ describe("a store is its folder", () => {
     ]);
     expect(existsSync(diskPath(server!, hashes.first))).toBe(false);
 
-    // The folder gone with its marker: a fresh store with no copies claimed,
-    // and the first one stays listed, detached.
-    await server!.restart(() => {
-      rmSync(folder, { recursive: true, force: true });
-    });
+    // Another folder, which holds no marker: a fresh store with no copies
+    // claimed, and the first one stays listed, detached.
+    const other = join(server!.stateDir, "other-blobs");
+    await server!.restart({ env: { BLOB_PATH: other } });
     ({ operator, working } = clientsFor(server!));
     const after = (await operator.listBlobStores()).data.data;
     expect(after).toHaveLength(2);
@@ -325,7 +336,19 @@ describe("a store is its folder", () => {
       original.id,
       fresh.id,
     ]);
-    expect(existsSync(diskPath(server!, hashes.first))).toBe(true);
+    expect(existsSync(pathIn(other, hashes.first))).toBe(true);
+
+    // Back on the first folder without its marker: the store recorded there
+    // is detached and claims nothing, so the folder is a fresh store.
+    await server!.restart(() => {
+      rmSync(join(folder, ".marfa-store"));
+    });
+    ({ operator, working } = clientsFor(server!));
+    const back = (await operator.listBlobStores()).data.data;
+    const attached = back.filter((store) => store.detached_at === null);
+    expect(attached).toHaveLength(1);
+    expect([original.id, fresh.id]).not.toContain(attached[0]!.id);
+    expect(attached[0]!.kind).toBe("disk");
   });
 });
 
@@ -407,4 +430,71 @@ describe("a store whose folder is away", () => {
     expect(run.result).toMatchObject({ struck: 1, unreachable: 0 });
     expect(await locations(hash)).toEqual([]);
   });
+});
+
+describe("a store whose folder is missing at start", () => {
+  it(
+    "refuses to start while the folder or its marker is missing and the log records copies there, and creates neither",
+    async () => {
+      const uploaded = await working.uploadBlob(
+        bytesOf("saved before the drive went away", 120),
+        "text/plain",
+      );
+      expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+      const hash = uploaded.data.hash;
+      const [copy] = await locations(hash);
+      const folder = blobFolder(server!);
+      const away = `${folder}.away`;
+      const database = join(
+        mkdtempSync(join(tmpdir(), "blob-folder-missing-")),
+        "marfa.db",
+      );
+      const refusals: RefusedBoot[] = [];
+      /** Boots on a copy of the stopped server's database and its folder. */
+      const refusedStart = async (): Promise<RefusedBoot> => {
+        const refused = await bootRefused("blob-folder-missing", {
+          prepare: (sqlitePath) => copyFileSync(database, sqlitePath),
+          extraEnv: { ...DISK_ONLY, BLOB_PATH: folder },
+        });
+        refusals.push(refused);
+        return refused;
+      };
+      try {
+        await server!.restart(async () => {
+          copyFileSync(server!.sqlitePath, database);
+          renameSync(folder, away);
+
+          const missing = await refusedStart();
+          expect(missing.code).toBe(1);
+          expect(missing.output).toContain(folder);
+          expect(missing.output).toContain("Mount or restore it");
+          expect(existsSync(folder)).toBe(false);
+
+          // A mount point left empty by a drive that did not mount.
+          mkdirSync(folder);
+          const unmarked = await refusedStart();
+          expect(unmarked.code).toBe(1);
+          expect(unmarked.output).toContain(folder);
+          expect(readdirSync(folder)).toEqual([]);
+
+          rmSync(folder, { recursive: true });
+          renameSync(away, folder);
+        });
+      } finally {
+        for (const refused of refusals) await refused.stop();
+        rmSync(join(database, ".."), { recursive: true, force: true });
+      }
+
+      // The witness: with the folder back, the same store serves the blob.
+      ({ operator, working } = clientsFor(server!));
+      const stores = (await operator.listBlobStores()).data.data;
+      expect(
+        stores
+          .filter((store) => store.detached_at === null)
+          .map((store) => store.id),
+      ).toEqual([copy!.store_id]);
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });
