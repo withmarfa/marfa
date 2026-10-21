@@ -376,8 +376,8 @@ impl Folders {
     /// `url` and `key` go together; without them only `list`, `status`,
     /// `confirm_first_sync`, `confirm`, `restore` and `remove` work.
     /// `renewer` renews `key` when the server refuses it, for every folder
-    /// these calls and watches work, as `Core.open` describes; it needs `url`
-    /// and `key`.
+    /// these calls and watches work, as `CredentialRenewer` describes; it needs
+    /// `url` and `key`.
     #[uniffi::constructor(default(renewer = None))]
     pub fn new(
         url: Option<String>,

@@ -1105,6 +1105,8 @@ When a native client's registration names a redirect URI in a private-use scheme
 
 If a native client's registration names a redirect URI in a scheme other than `http` or `https` that is not a reverse domain name, or that has an authority, then the server MUST answer `400 invalid_redirect_uri`.
 
+**Reason:** RFC 8252 section 7.1: a scheme not named for a domain can be claimed by another app on the device, and a private-use URI has no naming authority, so a single slash follows the scheme.
+
 **Tests:** `compliance/oauth.test.ts › registers a native client's private-use redirect URI in reverse-domain form, and refuses one in any other form`.
 
 ### `keys-and-oauth/register-web-private-use`
