@@ -172,12 +172,15 @@ else
     fi
     if [ "$verdict" = empty ]; then forget_record=true; fi
   fi
+  # The record goes before its marker: a start killed between the two finds
+  # the old marker beside no record, or part of one, and refuses, where a
+  # record left without its marker would be adopted as this replica's.
   if [ "$forget_record" = true ]; then
-    rm -f "$replica_marker"
     if [ -e "$record" ]; then
       echo "Removing Litestream's record at $record, which describes replication that this start does not continue, so Litestream starts the replica at $S3_PREFIX/db from a snapshot of the database." >&2
       rm -rf "$record"
     fi
+    rm -f "$replica_marker"
   fi
   printf 'endpoint=%s\nbucket=%s\nprefix=%s\n' "$endpoint" "$bucket" "$S3_PREFIX" > "$replica_marker.tmp"
   mv "$replica_marker.tmp" "$replica_marker"

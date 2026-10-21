@@ -570,7 +570,7 @@ export function refusalMessage(
     unrecorded: `The database at ${where.sqlitePath} has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, so it may be older than the replica.`,
     elsewhere:
       other === undefined
-        ? `The database at ${where.sqlitePath} has a record of replicating, but ${replicaMarkerPath(where.sqlitePath)}, which names the replica that record is of, cannot be read. So it has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, and it may be older than the replica.`
+        ? `The database at ${where.sqlitePath} has a record of replicating, but ${replicaMarkerPath(where.sqlitePath)}, which names the replica that record is of, cannot be read. So it has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, and it may be older than the replica. To check it as a volume an earlier image replicated, delete ${replicaMarkerPath(where.sqlitePath)} and start again.`
         : `The database at ${where.sqlitePath} last replicated to ${describeReplica(other, endpointDiffers)}, not to ${replica}. So it has no record of replicating to ${replica}, which holds transactions up to ${String(verdict.replica)}, and it may be older than the replica.`,
     replaced: `The database at ${where.sqlitePath} is not the one this volume last replicated to ${replica}, at transaction ${String(verdict.local)}: it was replaced, restored or lost writes since, so it may be older than the replica, which holds transactions up to ${String(verdict.replica)}.`,
   }[verdict.reason];
