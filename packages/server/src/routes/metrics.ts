@@ -56,7 +56,7 @@ const getMetricsRoute = createRoute({
   operationId: "getServerMetrics",
   method: "get",
   path: "/",
-  tags: ["Instance"],
+  tags: ["Health and maintenance"],
   summary: "Get server metrics",
   description:
     "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",

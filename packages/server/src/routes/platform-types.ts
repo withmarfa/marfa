@@ -62,10 +62,7 @@ const listDriftRoute = createRoute({
   operationId: "listPlatformTypeDrift",
   method: "get",
   path: "/drift",
-  // Filed under the type registry, which is what a drifted row is a row of.
-  // Both operations here published no tag at all, so they were the only two
-  // in the reference that belonged to no heading.
-  tags: ["Types"],
+  tags: ["Health and maintenance"],
   summary: "List stale platform types",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
@@ -108,7 +105,7 @@ const deletePlatformTypeRoute = createRoute({
   operationId: "deletePlatformType",
   method: "delete",
   path: "/{id}",
-  tags: ["Types"],
+  tags: ["Health and maintenance"],
   summary: "Delete a stale platform type",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.maintain"),

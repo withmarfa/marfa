@@ -67,7 +67,7 @@ const listAuditRoute = createRoute({
   operationId: "listAuditLog",
   method: "get",
   path: "/",
-  tags: ["Instance"],
+  tags: ["Health and maintenance"],
   summary: "List audit log entries",
   description:
     "Returns audit log entries, newest first. Marfa records changes, sign-ins and exports here, not other reads. Requires `audit.read`.",

@@ -18,7 +18,6 @@ import {
   EXPOSED_RESPONSE_HEADERS,
   finalizeOpenAPISpec,
   OPENAPI_DOCUMENT_INFO,
-  PUBLIC_TAGS,
 } from "./openapi-finalize.js";
 import { cors } from "hono/cors";
 import { secureHeaders } from "hono/secure-headers";
@@ -1008,7 +1007,6 @@ export function createApp(
         ...OPENAPI_DOCUMENT_INFO,
         version: String(servedContractVersion()),
       },
-      tags: PUBLIC_TAGS,
     }),
   );
   app.get("/openapi.json", refuseUndeclaredQueryKeys([]), (c) =>

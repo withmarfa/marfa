@@ -580,7 +580,7 @@ const createEndpointRoute = createRoute({
   operationId: "createInboundEndpoint",
   method: "post",
   path: "/{id}/endpoints",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "Create a webhook endpoint",
   description:
     "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
@@ -619,7 +619,7 @@ const listEndpointsRoute = createRoute({
   operationId: "listInboundEndpoints",
   method: "get",
   path: "/{id}/endpoints",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "List webhook endpoints",
   description:
     "Returns the connector's webhook endpoints, newest first, retired ones included.",
@@ -647,7 +647,7 @@ const retireEndpointRoute = createRoute({
   operationId: "retireInboundEndpoint",
   method: "delete",
   path: "/{id}/endpoints/{endpoint_id}",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "Retire a webhook endpoint",
   description:
     "Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
@@ -679,7 +679,7 @@ const listDeliveriesRoute = createRoute({
   operationId: "listInboundDeliveries",
   method: "get",
   path: "/{id}/deliveries",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "List inbound deliveries",
   description:
     "Returns the webhook deliveries the connector received, oldest first, without their bodies. Only those not yet handled, unless you set `state`.",
@@ -722,7 +722,7 @@ const deliveryBodyRoute = createRoute({
   operationId: "getInboundDeliveryBody",
   method: "get",
   path: "/{id}/deliveries/{delivery_id}/body",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "Get an inbound delivery's body",
   description:
     "Returns a delivery's body exactly as it arrived, as `application/octet-stream` whatever the sender declared.",
@@ -757,7 +757,7 @@ const markHandledRoute = createRoute({
   operationId: "markInboundDeliveriesHandled",
   method: "post",
   path: "/{id}/deliveries/handled",
-  tags: ["Connectors"],
+  tags: ["Inbound webhooks"],
   summary: "Mark inbound deliveries handled",
   description:
     "Marks each named delivery handled, with an outcome, and returns them in the order you named. The first mark stands: marking a delivery again returns it unchanged.",

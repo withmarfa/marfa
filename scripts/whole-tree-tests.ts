@@ -24,6 +24,7 @@ export const ROOT_FILTERS: readonly string[] = [
   // The committed `openapi.json` and the files beside the routes.
   "openapi-committed-spec.test.ts",
   "openapi-open-objects.test.ts",
+  "openapi-operation-order.test.ts",
   "openapi-routes.test.ts",
   "openapi-style.test.ts",
   "openapi-version-integers.test.ts",

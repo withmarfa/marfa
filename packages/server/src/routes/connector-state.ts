@@ -209,7 +209,7 @@ const holdRoute = createRoute({
   operationId: "holdConnector",
   method: "post",
   path: "/{id}/hold",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Take or renew a hold",
   description:
     "Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.",
@@ -261,7 +261,7 @@ const releaseHoldRoute = createRoute({
   operationId: "releaseConnectorHold",
   method: "delete",
   path: "/{id}/hold",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Release a hold",
   description:
     "Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.",
@@ -287,7 +287,7 @@ const getStateRoute = createRoute({
   operationId: "getConnectorState",
   method: "get",
   path: "/{id}/state",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Get the state document",
   description:
     "Returns the state document of the connector's source. A later key with the same source reads the same document.",
@@ -306,7 +306,7 @@ const putStateRoute = createRoute({
   operationId: "replaceConnectorState",
   method: "put",
   path: "/{id}/state",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Replace the state document",
   description:
     "Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.",
@@ -336,7 +336,7 @@ const deleteStateRoute = createRoute({
   operationId: "deleteConnectorState",
   method: "delete",
   path: "/{id}/state",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Delete the state document",
   description:
     "Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
@@ -355,7 +355,7 @@ const writeAgreementsRoute = createRoute({
   operationId: "writeConnectorAgreements",
   method: "post",
   path: "/{id}/agreements",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Write agreements",
   description:
     "Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.",
@@ -402,7 +402,7 @@ const lookupAgreementsRoute = createRoute({
   operationId: "lookupConnectorAgreements",
   method: "post",
   path: "/{id}/agreements/lookup",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "Look up agreements",
   description:
     "Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.",
@@ -439,7 +439,7 @@ const listAgreementsRoute = createRoute({
   operationId: "listConnectorAgreements",
   method: "get",
   path: "/{id}/agreements",
-  tags: ["Connectors"],
+  tags: ["Connector state"],
   summary: "List a connector's agreements",
   description:
     "Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.",

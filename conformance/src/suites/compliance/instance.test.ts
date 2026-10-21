@@ -606,6 +606,77 @@ describe("the instance", () => {
     expect(untagged).toEqual([]);
   });
 
+  it("lists every operation once, under its own tag, in each tag's x-operation-order", async () => {
+    // The order is the document's only statement of how a group reads, since
+    // lifecycle order interleaves paths. A list that misses an operation, names
+    // one twice, files one under another group or names one the document does
+    // not carry leaves a reader of the document with a group it cannot follow.
+    const doc = (await client.openApiDocument()).data as unknown as {
+      tags: { name: string; "x-operation-order"?: string[] }[];
+      paths: Record<
+        string,
+        Record<string, { operationId?: string; tags?: string[] }>
+      >;
+      webhooks?: Record<string, Record<string, { tags?: string[] }>>;
+    };
+    const methodNames = ["get", "post", "put", "patch", "delete"];
+    // Each published operation by the name its group lists it under: its
+    // operationId, or for a request Marfa sends, the webhook's name.
+    const carried = new Map<string, string[]>();
+    for (const methods of Object.values(doc.paths)) {
+      for (const [method, op] of Object.entries(methods)) {
+        if (!methodNames.includes(method)) continue;
+        carried.set(op.operationId ?? "(no operationId)", op.tags ?? []);
+      }
+    }
+    for (const [name, methods] of Object.entries(doc.webhooks ?? {})) {
+      for (const [method, op] of Object.entries(methods)) {
+        if (!methodNames.includes(method)) continue;
+        carried.set(name, op.tags ?? []);
+      }
+    }
+    // The witness: there are operations to list, and a webhook among them.
+    expect(carried.size).toBeGreaterThan(100);
+    expect(Object.keys(doc.webhooks ?? {}).length).toBeGreaterThan(0);
+
+    const listed: string[] = [];
+    const filedWrong: string[] = [];
+    for (const tag of doc.tags) {
+      const order = tag["x-operation-order"];
+      expect(order, `${tag.name} has no x-operation-order`).toBeDefined();
+      for (const name of order ?? []) {
+        listed.push(name);
+        const tags = carried.get(name);
+        if (tags === undefined)
+          filedWrong.push(`${tag.name} lists ${name}, which is not published`);
+        else if (tags.length !== 1 || tags[0] !== tag.name) {
+          filedWrong.push(
+            `${tag.name} lists ${name}, which carries ${tags.join(", ")}`,
+          );
+        }
+      }
+    }
+    expect(filedWrong).toEqual([]);
+    expect(listed.filter((name, i) => listed.indexOf(name) !== i)).toEqual([]);
+    expect(
+      [...carried.keys()].filter((name) => !listed.includes(name)),
+    ).toEqual([]);
+
+    // `paths` follows the lists: each path stands where its earliest
+    // operation does, so none comes before a path whose operation is listed
+    // earlier.
+    const rank = new Map(listed.map((name, i) => [name, i]));
+    const ranks = Object.values(doc.paths).map((methods) =>
+      Math.min(
+        ...Object.entries(methods)
+          .filter(([method]) => methodNames.includes(method))
+          .map(([, op]) => rank.get(op.operationId ?? "") ?? Infinity),
+      ),
+    );
+    expect(ranks.every((r) => Number.isFinite(r))).toBe(true);
+    expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
+  });
+
   it("answers 404 not_found in the standard envelope for a path it does not serve", async () => {
     const r = await client.rawRequest("/no-such-door");
     expect(r.status).toBe(404);
