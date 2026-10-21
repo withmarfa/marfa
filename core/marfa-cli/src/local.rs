@@ -291,7 +291,7 @@ mod tests {
                 );
                 assert!(
                     message.contains(
-                        "Item content, edges, tags, search, counts, events and exports need one; through --socket, items are reached only by `items summaries` and `items trash`"
+                        "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one"
                     ),
                     "{message}"
                 );

@@ -1099,7 +1099,7 @@ describe("the instance from the terminal", () => {
         "this operation needs a key or a token, which --socket does not carry; run it without --socket",
       );
       expect(refused.envelope.error.message, label).toContain(
-        "Item content, edges, tags, search, counts, events and exports need one; through --socket, items are reached only by `items summaries` and `items trash`",
+        "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one",
       );
     }
   });

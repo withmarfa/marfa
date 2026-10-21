@@ -723,7 +723,9 @@ describe("the contract the binary was built for", () => {
     const socket = await PrivateSocket.start();
     try {
       // Witness: a socket that answers 200 serves a streamed download and a
-      // plain read, so what follows is the 401 and not the command line.
+      // plain read, so what follows is the 401 and not the command line. The
+      // refused commands are ones the real server refuses without a key: a
+      // blob download is not one of them.
       const out = join(socket.dir, "blob.out");
       const served = await marfa([
         "--json",
@@ -750,8 +752,6 @@ describe("the contract the binary was built for", () => {
       for (const args of [
         ["export"],
         ["events"],
-        ["connectors", "deliveries", "body", ID, ID],
-        ["blobs", "download", HASH, "--output", out],
         ["items", "list"],
         ["items", "tag", ID, "kept"],
         [
@@ -788,7 +788,7 @@ describe("the contract the binary was built for", () => {
 const NEEDS_A_KEY =
   "this operation needs a key or a token, which --socket does not carry; run it without --socket";
 const WHAT_NEEDS_ONE =
-  "Item content, edges, tags, search, counts, events and exports need one; through --socket, items are reached only by `items summaries` and `items trash`";
+  "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one";
 
 /**
  * A server on a Unix socket of its own. It serves a supplied JSON answer,

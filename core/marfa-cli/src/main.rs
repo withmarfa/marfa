@@ -77,8 +77,9 @@ struct Cli {
     allow_http: bool,
 
     /// Use private local process authority through this Unix socket, without a keychain.
-    /// It manages the instance and reaches items only by name, through `items summaries` and
-    /// `items trash`; item content needs a key.
+    /// Item properties, edges, tags, search, counts, events and exports still need a key.
+    /// `items summaries`, `items trash`, the `blobs` commands and bulk-action job status and
+    /// cancel do not.
     #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key"], help_heading = "Server")]
     socket: Option<std::path::PathBuf>,
 

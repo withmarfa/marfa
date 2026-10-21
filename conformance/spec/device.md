@@ -1604,9 +1604,9 @@ If the server answers `401` to a request that a command sent through `--socket P
 
 ### `device/local-socket-names-key-needs`
 
-If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST say that item content, edges, tags, search, counts, events and exports need a key, and that through `--socket` items are reached only by `items summaries` and `items trash`.
+If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST say that item properties, edges, tags, search, counts, events and exports need a key, and that `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through `--socket` without one.
 
-**Reason:** a person who ran a content command through the socket needs to know which commands the socket reaches before choosing a key, as `items/local-authority-content` sets.
+**Reason:** a person who ran a command that needs a key through the socket needs to know which commands the socket reaches before choosing a key, as `items/local-authority-content` and `search-and-filters/owner-read-boundary` set.
 
 **Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
 
