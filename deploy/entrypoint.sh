@@ -3,9 +3,13 @@
 # it. With no database on the volume the last replica under the instance's
 # own `S3_PREFIX` is restored first, so a fresh volume boots the instance it
 # replaces rather than an empty one, and never another instance that shares
-# the bucket under another prefix. Then the server runs under `litestream
-# replicate -exec`, which streams every committed page to the bucket and
-# stops the server when it is itself stopped.
+# the bucket under another prefix. A database that was already on the volume
+# is first checked against that replica, and replication does not start when
+# the database may be older: Litestream would make it the replica's newest
+# state, and the writes after it would remain only in the replica's
+# history, which expires. Then the server runs under `litestream replicate
+# -exec`, which streams every committed page to the bucket and stops the
+# server when it is itself stopped.
 #
 # Without `S3_BUCKET` there is nothing to stream to, and the server runs on
 # its own; that is a local or trial container, never a deployment, and the
@@ -36,13 +40,18 @@ if [ -z "${S3_FORCE_PATH_STYLE:-}" ]; then
   if [ -n "${S3_ENDPOINT:-}" ]; then S3_FORCE_PATH_STYLE=true; else S3_FORCE_PATH_STYLE=false; fi
 fi
 : "${S3_REGION:=us-east-1}"
+# The value with the space around it removed, as the server reads a setting.
+trimmed() {
+  t=$1
+  while :; do case $t in [[:space:]]*) t=${t#?} ;; *) break ;; esac; done
+  while :; do case $t in *[[:space:]]) t=${t%?} ;; *) break ;; esac; done
+  printf '%s' "$t"
+}
 # The key prefix as the server reads it (`keyPrefix` in
 # `packages/server/src/config.ts`), because Litestream takes the replica path,
 # `<prefix>/db`, as written. The server is handed the same reading, and
 # `ci/entrypoint.test.ts` holds the two together.
-prefix=${S3_PREFIX:-}
-while :; do case $prefix in [[:space:]]*) prefix=${prefix#?} ;; *) break ;; esac; done
-while :; do case $prefix in *[[:space:]]) prefix=${prefix%?} ;; *) break ;; esac; done
+prefix=$(trimmed "${S3_PREFIX:-}")
 [ -n "$prefix" ] || prefix=blobs
 while :; do case $prefix in /*) prefix=${prefix#/} ;; *) break ;; esac; done
 while :; do case $prefix in */) prefix=${prefix%/} ;; *) break ;; esac; done
@@ -54,6 +63,18 @@ case /$prefix/ in
 esac
 S3_PREFIX=$prefix
 export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION S3_PREFIX
+
+# The words the server reads as a flag, in any case and with any space
+# around them, and empty for unset.
+replace_newer=$(trimmed "${MARFA_REPLACE_NEWER_REPLICA:-}" | tr '[:upper:]' '[:lower:]')
+case $replace_newer in
+  true | 1 | yes | on) replace_newer=true ;;
+  '' | false | 0 | no | off) replace_newer=false ;;
+  *)
+    echo "MARFA_REPLACE_NEWER_REPLICA must be true or false (also 1/0, yes/no, on/off)" >&2
+    exit 1
+    ;;
+esac
 
 mkdir -p "$(dirname "$SQLITE_PATH")" "$BLOB_PATH"
 
@@ -101,10 +122,68 @@ if [ -z "${S3_BUCKET:-}" ]; then
   echo "S3_BUCKET is not set: the database is not streamed off-site and no object store is attached" >&2
   supervise /bin/sh "$0" run-server || code=$?
 else
+  had_database=false
+  if [ -e "$SQLITE_PATH" ]; then had_database=true; fi
   # `-if-db-not-exists` leaves a database already on the volume alone;
   # `-if-replica-exists` makes a prefix holding no replica yet, the first boot
   # of a new instance, a fresh start rather than a failure.
   litestream restore -config /etc/litestream.yml -if-db-not-exists -if-replica-exists "$SQLITE_PATH"
+
+  # A database the restore wrote is the replica's newest state. One that was
+  # already here may be older. The check reads the volume and lists the
+  # bucket, and writes to neither. A bucket it cannot list leaves the answer
+  # unknown, and the start fails rather than risk the replica's newer writes:
+  # a restart policy tries again, and the override starts without the bucket.
+  #
+  # Litestream's record beside the database names the transactions this
+  # volume replicated, and Litestream continues the replica from it without
+  # asking whether the record is of this replica or of this database. Unless
+  # the check found that it continues this replica, it is removed, and
+  # Litestream starts the replica from a snapshot of the database. Kept, a
+  # record of a database the restore replaced, of another replica, or of an
+  # empty replica's predecessor would have Litestream upload transactions
+  # whose files the record does not hold, and every sync would fail.
+  #
+  # Transaction IDs count within one replica's history, so a file beside the
+  # database names the replica the record is of, as `replicaMarker` in
+  # `packages/server/src/storage/sqlite/replica-position.ts` reads it. It is
+  # removed with the record and written once the record is settled, so the
+  # two agree. The check takes a record with no such file, which a volume
+  # replicated by an earlier image holds, to be of this replica. The file
+  # holds one value a line, so the endpoint and bucket are written as the
+  # server reads them, without the space around them.
+  record="$(dirname "$SQLITE_PATH")/.$(basename "$SQLITE_PATH")-litestream"
+  replica_marker="$SQLITE_PATH-replica"
+  endpoint=$(trimmed "${S3_ENDPOINT:-}")
+  bucket=$(trimmed "$S3_BUCKET")
+  forget_record=false
+  if [ "$had_database" = false ]; then
+    forget_record=true
+  elif [ "$replace_newer" = true ]; then
+    echo "MARFA_REPLACE_NEWER_REPLICA is set, so the database at $SQLITE_PATH is replicated to $S3_PREFIX/db without checking that it is not older than the replica there: it becomes the replica's newest state. Unset MARFA_REPLACE_NEWER_REPLICA once this start has replicated." >&2
+    forget_record=true
+  else
+    if ! replica=$(litestream ltx -config /etc/litestream.yml -level all -json "$SQLITE_PATH"); then
+      echo "Could not list the replica at $S3_PREFIX/db in the bucket $S3_BUCKET, so this start cannot check that the database at $SQLITE_PATH is not older than it. Replication has not started, and the bucket is unchanged. Start again once the bucket can be reached. To start without the check, start once with MARFA_REPLACE_NEWER_REPLICA=true: a database older than the replica then becomes its newest state." >&2
+      exit 1
+    fi
+    if ! verdict=$(printf '%s' "$replica" | node dist/replica-check.js "$SQLITE_PATH" "$bucket" "$S3_PREFIX" "$endpoint"); then
+      exit 1
+    fi
+    if [ "$verdict" = empty ]; then forget_record=true; fi
+  fi
+  # The record goes before its marker: a start killed between the two finds
+  # the old marker beside no record, or part of one, and refuses, where a
+  # record left without its marker would be adopted as this replica's.
+  if [ "$forget_record" = true ]; then
+    if [ -e "$record" ]; then
+      echo "Removing Litestream's record at $record, which describes replication that this start does not continue, so Litestream starts the replica at $S3_PREFIX/db from a snapshot of the database." >&2
+      rm -rf "$record"
+    fi
+    rm -f "$replica_marker"
+  fi
+  printf 'endpoint=%s\nbucket=%s\nprefix=%s\n' "$endpoint" "$bucket" "$S3_PREFIX" > "$replica_marker.tmp"
+  mv "$replica_marker.tmp" "$replica_marker"
 
   supervise litestream replicate -config /etc/litestream.yml -exec "/bin/sh \"$0\" run-server" || code=$?
 fi

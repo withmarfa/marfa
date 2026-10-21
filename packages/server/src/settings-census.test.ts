@@ -11,7 +11,8 @@ const REPO = resolve(SRC, "../../..");
  * The files outside `config.ts` that may touch the environment, and why.
  * None of them is the server: each is a test that switches itself on, runs
  * itself under another zone, stubs the process, or starts a process of its
- * own, or the fixture such a test starts.
+ * own, the fixture such a test starts, or a program the image runs before
+ * the server.
  */
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "pages/browser/webhooks.browser.test.ts":
@@ -29,6 +30,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "events/expand-recurrence.test.ts": "runs under another TZ",
   "instrumentation.test.ts":
     "stubs process.exit to watch a bad setting stop the preload",
+  "replica-check.ts":
+    "the image's check before replication, which takes its paths as arguments; a program of its own, not the server",
   "storage/sqlite/backup-writer.ts":
     "the writer process the test above starts, which takes its directory as an argument; a fixture, not the server",
   "test-browser.ts":
@@ -91,6 +94,8 @@ const NOT_SERVER_SETTINGS: Record<string, string> = {
     "the directory the CLI writes a systemd user unit under on Linux, read by the CLI",
   VERSION_RELEASE:
     "the build argument that makes an image a release, read by the image's build",
+  MARFA_REPLACE_NEWER_REPLICA:
+    "replicates a database that may be older than its replica, read by the image's entrypoint",
   MARFA_TEST_OWNER_EMAIL:
     "the throwaway owner's email, printed by the local boot script",
   MARFA_TEST_OWNER_PASSWORD:
