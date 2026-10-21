@@ -191,14 +191,21 @@ export async function tryBlobUploadLock<T>(
  *
  * Taken one at a time in sorted order, so two callers holding several never
  * wait on each other in a cycle, and in a loop rather than by nesting, so a
- * request naming thousands of hashes takes them all.
+ * request naming thousands of hashes takes them all. A refusal under
+ * `refuseUnanswered` lets go the locks already taken.
  */
 export async function holdBlobUploadLocks(
   hashes: readonly string[],
+  options: LockOptions = {},
 ): Promise<() => void> {
   const releases: (() => void)[] = [];
-  for (const hash of [...new Set(hashes)].sort()) {
-    releases.push(await acquire(hash));
+  try {
+    for (const hash of [...new Set(hashes)].sort()) {
+      releases.push(await acquire(hash, options));
+    }
+  } catch (error) {
+    for (const release of releases) release();
+    throw error;
   }
   let released = false;
   return () => {

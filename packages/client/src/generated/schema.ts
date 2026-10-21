@@ -23360,7 +23360,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.
+             * @description - `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy, or a store hasn't finished an earlier write or delete of a blob the archive names. Nothing was written. Try again later.
              *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
              */
             503: {

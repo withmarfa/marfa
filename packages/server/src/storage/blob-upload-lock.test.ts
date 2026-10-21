@@ -115,6 +115,55 @@ describe("a hold that outlasts its caller", () => {
   });
 });
 
+describe("holding many locks without waiting on an unanswered call", () => {
+  it("refuses at once while one hash is held past an unanswered call, and lets go the locks it took", async () => {
+    const [first = "", held = "", last = ""] = hashes(3, "many-refuse");
+    const call = gate();
+    const refusal = new Error("a store did not answer");
+    await withBlobUploadLock(held, () => {
+      outlastBlobUploadLock(held, call.promise, () => refusal);
+      return Promise.resolve();
+    });
+    await expect(
+      holdBlobUploadLocks([first, held, last], { refuseUnanswered: true }),
+    ).rejects.toBe(refusal);
+    // The lock taken before the refusal is free again.
+    await expect(
+      tryBlobUploadLock(first, () => Promise.resolve("free")),
+    ).resolves.toBe("free");
+    // The witness: once the call ends, the same request takes every lock.
+    call.open();
+    await tick();
+    const release = await holdBlobUploadLocks([first, held, last], {
+      refuseUnanswered: true,
+    });
+    release();
+  });
+
+  it("refuses while queued behind a holder that then gives up on its call", async () => {
+    const [held = "", other = ""] = hashes(2, "many-queued");
+    const call = gate();
+    const caller = gate();
+    const refusal = new Error("a store did not answer");
+    const holding = withBlobUploadLock(held, async () => {
+      await caller.promise;
+      outlastBlobUploadLock(held, call.promise, () => refusal);
+    });
+    const queued = holdBlobUploadLocks([held, other], {
+      refuseUnanswered: true,
+    });
+    await tick();
+    caller.open();
+    await holding;
+    await expect(queued).rejects.toBe(refusal);
+    call.open();
+    await tick();
+    await expect(
+      tryBlobUploadLock(held, () => Promise.resolve("free")),
+    ).resolves.toBe("free");
+  });
+});
+
 describe("taking a lock only when it is free", () => {
   it("skips a hash that is held, and runs once it is free", async () => {
     const [hash = ""] = hashes(1, "try");

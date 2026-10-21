@@ -272,13 +272,13 @@ While an attached store has not finished a write or a deletion of a blob's bytes
 
 **Reason:** the store can still carry out the write or the deletion after the server stops waiting. A copy made meanwhile could be removed by the late deletion with the location log still naming it, and a run that waited on the store would hang as the first did.
 
-**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
 
 ### `stores/replicate-after-unfinished`
 
 When an attached store finishes a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST make the copy the blob lacks on a later run of `blob-replicate`.
 
-**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
 
 ### `stores/upload-unfinished`
 
@@ -286,7 +286,7 @@ While an attached store has not finished a write or a deletion of a blob's bytes
 
 **Reason:** a late deletion could remove the bytes the upload would register, and waiting would hang the request on a store that may never answer. The caller still holds the bytes and can send them again.
 
-**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `› answers 503 blob_store_unavailable, and stores the bytes once the disk answers`.
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `› answers 503 blob_store_unavailable, and stores the bytes once the disk answers`.
 
 ## Minimum copies and dropping a copy
 
@@ -442,7 +442,7 @@ If an attached store leaves a deletion of a dropped or struck copy's bytes from 
 
 **Reason:** the run finishes the deletions a drop or a strike left before it checks the copies, and removes the bytes of a copy it strikes. A store that hangs on one is a store the run cannot reach, so the run asks it nothing more. The deletion stays queued for a later run, and a struck copy stays struck.
 
-**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends`, `› counts the store as unreachable, asks it nothing more in the run, and keeps the copy struck`.
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› counts the store as unreachable, asks it nothing more in the run, and keeps the copy struck`.
 
 ### `stores/unreachable-read`
 

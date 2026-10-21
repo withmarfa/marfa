@@ -235,7 +235,7 @@ const restoreArchiveRoute = createRoute({
     },
     503: {
       description:
-        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+        "- `blob_store_unavailable`: a blob store failed, or didn't answer in time, while Marfa checked a blob's copy, or a store hasn't finished an earlier write or delete of a blob the archive names. Nothing was written. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
@@ -871,10 +871,13 @@ export function restoreArchiveRoutes(
         limits.maxRowBytes,
       );
 
-      const releaseBlobs = await holdBlobUploadLocks([
-        ...archive.blobs.map((blob) => blob.hash),
-        ...archive.absent,
-      ]);
+      // Refused at once, as an upload is, while a store has not finished
+      // an earlier write or delete of one of these blobs: the request would
+      // otherwise wait on a store that may never answer.
+      const releaseBlobs = await holdBlobUploadLocks(
+        [...archive.blobs.map((blob) => blob.hash), ...archive.absent],
+        { refuseUnanswered: true },
+      );
       try {
         const absent = await stillAbsent(storage, blobs, archive.absent);
         const wrote = await placeBlobBytes(storage, blobs, archive.blobs);

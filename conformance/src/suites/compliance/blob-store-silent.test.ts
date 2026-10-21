@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readFileSync, writeFileSync } from "node:fs";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -15,6 +15,7 @@ import {
   replicationIdle,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -131,6 +132,16 @@ async function replicatedAgain(what: string): Promise<void> {
   });
 }
 
+/** The instance's owner, who alone may restore an archive. */
+function owner(): MarfaClient {
+  return new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: "",
+    ownerCookie: server.ownerCookie,
+    ownerCredentials: TEST_OWNER,
+  });
+}
+
 beforeAll(async () => {
   server = await bootFreshServer("blob-store-silent", ownObjectStore());
   ({ operator, working } = clientsFor(server));
@@ -212,10 +223,13 @@ describe("a replication run while no store answers", () => {
 });
 
 describe("a store's delete that does not answer", () => {
-  it("leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload of its bytes, and keeps the copy made once the delete ends", async () => {
+  it("leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends", async () => {
     const content = bytesOf("deleted while the store hangs", 120);
     const hash = await replicated("deleted while the store hangs", content);
     const s3 = await objectStore();
+    const exported = await owner().exportArchive();
+    expect(exported.status, JSON.stringify(exported.error)).toBe(200);
+    const archive = exported.data;
     // The drop's own delete fails, so the deletion stays queued for a run.
     await server.setFault("fail:blob-delete=1");
     const dropped = await operator.deleteBlobLocation(hash, s3);
@@ -243,6 +257,10 @@ describe("a store's delete that does not answer", () => {
     const refused = await working.uploadBlob(content, "text/plain");
     expect(refused.status).toBe(503);
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
+    // A restore of an archive carrying the blob is refused at once too.
+    const restoreRefused = await owner().restoreArchive(archive);
+    expect(restoreRefused.status).toBe(503);
+    expect(restoreRefused.error?.error.code).toBe("blob_store_unavailable");
 
     await server.clearFault();
     await waitFor("the object store's copy made again", async () => {
@@ -262,6 +280,9 @@ describe("a store's delete that does not answer", () => {
     expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(2);
     const again = await working.uploadBlob(content, "text/plain");
     expect(again.status, JSON.stringify(again.error)).toBe(201);
+    // The witness: the same archive restores once the store has answered.
+    const restored = await owner().restoreArchive(archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 });
 

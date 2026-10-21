@@ -1550,6 +1550,14 @@ If a store fails, or does not answer within 15 seconds, while `POST /restore` ch
 
 **Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`, `› restores an archive lacking a blob that the object store holds whole while the disk cannot be read for it`.
 
+### `search-and-filters/restore-store-unfinished`
+
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if `POST /restore` names that blob in its archive, then the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a late deletion could remove the bytes the restore would register, and waiting would hang the request on a store that may never answer. The caller still holds the archive and can send it again.
+
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`.
+
 ### `search-and-filters/restore-store-unavailable-unwritten`
 
 When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT write any item, type registration or blob of the archive.
