@@ -20,7 +20,7 @@ import { uploadReferenced } from "../../utils/blobs.js";
 /**
  * Every list and every search answers one envelope: the rows under `data`
  * and the cursor that continues them under `next_cursor`, `null` on the
- * last page. Two doors carry a sibling about the answer rather than the
+ * last page. Three doors carry a sibling about the answer rather than the
  * page. Nothing else stands beside the two keys.
  */
 

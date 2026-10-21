@@ -235,19 +235,30 @@ const seeds: Record<string, () => Promise<Read>> = {
     return async (page) => answered(await client.search(token, page)) as Page;
   },
   "GET /webhooks/{id}/deliveries": async () => {
+    const itemType = `mock.lastpage.${ctx.runId}`;
+    answered(await client.registerType({ id: itemType, fields: {} }));
     const hook = answered(
       await client.createWebhook({
         url: receiver.hookUrl("full-last-page"),
         events: ["item.created"],
+        type_filter: itemType,
       }),
     );
     trackWebhook(ctx, hook.id, client);
+    const unrelated = answered(
+      await client.createItem(createNote({ source: ctx.source })),
+    );
+    trackItem(ctx, unrelated.item.id);
     // One at a time: the bulk door sends nothing to a webhook unless asked
     // to with `enable_fanout`.
     const ids: string[] = [];
     for (let i = 0; i < LIMIT; i++) {
       const created = answered(
-        await client.createItem(createNote({ source: ctx.source })),
+        await client.createItem({
+          type: itemType,
+          source: ctx.source,
+          properties: {},
+        }),
       );
       trackItem(ctx, created.item.id);
       ids.push(created.item.id);
