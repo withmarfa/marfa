@@ -2401,8 +2401,8 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
-/// `read` is a page's read of the row its create made, at version 1, made
-/// before the answer was settled.
+/// `read` is a page's read of what its create made at version 1, made
+/// before the answer was settled; the row can have moved past 1 since.
 fn settle_success(
     core: &Core,
     row: &QueuedWrite,
