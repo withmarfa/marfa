@@ -1225,8 +1225,12 @@ impl Core {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    pub(crate) fn drain_held(&self, _one: &MutexGuard<'_, ()>) -> Result<DrainReport> {
-        drain::drain(self, &NEVER_STOPPED)
+    /// A drain that ends in an error keeps what it settled before it.
+    pub(crate) fn drain_held(
+        &self,
+        _one: &MutexGuard<'_, ()>,
+    ) -> std::result::Result<DrainReport, drain::Cut> {
+        drain::drain_keeping(self, &NEVER_STOPPED)
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not

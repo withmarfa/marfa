@@ -304,6 +304,20 @@ impl Folder {
         report: &mut DrainReport,
         watched: bool,
     ) -> Result<usize> {
+        self.remember_refusals(report)?;
+        if report.unavailable.is_some() || report.stopped.is_some() {
+            return Ok(0);
+        }
+        let (gave_way, withdrawn) = self.give_way(watched)?;
+        report
+            .verdicts
+            .retain(|verdict| !withdrawn.contains(&verdict.id));
+        Ok(gave_way)
+    }
+
+    /// Remembers each placement the server refused among the verdicts a
+    /// drain reports, and reads nothing.
+    pub(super) fn remember_refusals(&self, report: &DrainReport) -> Result<()> {
         let mut refused: Vec<(String, Held)> = Vec::new();
         for verdict in &report.verdicts {
             let row = {
@@ -343,14 +357,7 @@ impl Folder {
         if !refused.is_empty() {
             self.remember_refused(refused)?;
         }
-        if report.unavailable.is_some() || report.stopped.is_some() {
-            return Ok(0);
-        }
-        let (gave_way, withdrawn) = self.give_way(watched)?;
-        report
-            .verdicts
-            .retain(|verdict| !withdrawn.contains(&verdict.id));
-        Ok(gave_way)
+        Ok(())
     }
 
     /// Gives way from the latest of this folder's placement writes to each

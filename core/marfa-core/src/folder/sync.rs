@@ -8,6 +8,7 @@ use super::{
 };
 use crate::Result;
 use crate::directory::Directory;
+use crate::drain::Cut;
 use crate::error::CoreError;
 use crate::model::HydrateReport;
 
@@ -122,7 +123,8 @@ impl Folder {
         let hydrated = self.resume()?;
         let settings = self.send_settings_edit()?;
         let scan = self.scan_keeping_files()?;
-        let (drain, rebuilt) = self.drain_rebuilding()?;
+        let mut rebuilt = None;
+        let drain = self.drain_rebuilding(&mut rebuilt)?;
         Ok(SendReport {
             hydrated,
             settings,
@@ -147,7 +149,8 @@ impl Folder {
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
         let scan = self.scan()?;
-        let (mut drain, rebuilt) = self.drain_rebuilding()?;
+        let mut rebuilt = None;
+        let mut drain = self.drain_rebuilding(&mut rebuilt)?;
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
@@ -178,16 +181,24 @@ impl Folder {
 
     /// A drain that the server ends by saying the copy's read view changed,
     /// as it does once the folder's key is replaced or narrowed, builds the
-    /// copy again and drains once more, so the writes still waiting go out in
-    /// this run rather than the next. Once only: a second change ends the run.
-    /// A rebuild that fails ends it with its own error, the queue kept.
-    fn drain_rebuilding(&self) -> Result<(Drained, Option<HydrateReport>)> {
-        match self.drain() {
-            Err(CoreError::CopyExpired { reason }) if reason == "read_view_changed" => {
-                let rebuilt = self.hydrate()?;
-                Ok((self.drain()?, Some(rebuilt)))
+    /// copy again into `rebuilt` and drains once more, so the writes still
+    /// waiting go out in this run rather than the next. What the first drain
+    /// settled is told with what the second sent. Once a run: where `rebuilt`
+    /// holds a rebuild already, a change ends the run. A rebuild that fails
+    /// ends it with its own error, the queue kept.
+    fn drain_rebuilding(&self, rebuilt: &mut Option<HydrateReport>) -> Result<Drained> {
+        match self.drain_keeping(false) {
+            Ok(drained) => Ok(drained),
+            Err(Cut {
+                error: CoreError::CopyExpired { reason },
+                settled,
+            }) if reason == "read_view_changed" && rebuilt.is_none() => {
+                *rebuilt = Some(self.hydrate()?);
+                let mut drained = *settled;
+                drained.absorb(self.drain()?);
+                Ok(drained)
             }
-            drained => drained.map(|drained| (drained, None)),
+            Err(cut) => Err(cut.error),
         }
     }
 

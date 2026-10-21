@@ -2594,18 +2594,39 @@ describe("files and items", () => {
      * answers, says the copy's read view has changed, as it does once the
      * folder's key is replaced. A hydration lists every note created since,
      * as the server would, and reads the catalog through `catalog` once the
-     * view has changed.
+     * view has changed. Where `again`, every read by id is refused. The create
+     * of the note titled `refused` is refused `validation_error`, and the read
+     * its refusal owes is answered.
      */
     async function rekeyed(
       label: string,
-      catalog: () => Answer = () => typeCatalog(),
-      again = false,
+      {
+        catalog = () => typeCatalog(),
+        again = false,
+        refused,
+      }: { catalog?: () => Answer; again?: boolean; refused?: string } = {},
     ): Promise<{ harness: FolderHarness; changed: () => boolean }> {
       const notes: Array<{ item: WireItemOptions }> = [];
       const made = await folderHarness(label, { rows: { "core.note": notes } });
       let changed = false;
-      scriptFolderWrites(made, {
-        creating: (answer) => {
+      // The refused create's row, which the door must not hold, and whose
+      // read the refusal owes is answered before the view changes.
+      const refusedIds = new Set<string>();
+      const held = scriptFolderWrites(made, {
+        creating: (answer, request) => {
+          const { id, properties } = JSON.parse(request.body) as {
+            id: string;
+            properties: { title?: unknown };
+          };
+          if (refused !== undefined && properties.title === refused) {
+            held.delete(id);
+            refusedIds.add(id);
+            return refusal(
+              400,
+              "validation_error",
+              "That title is not allowed",
+            );
+          }
           if (answer.kind === "json" && answer.status === 201) {
             const { item } = answer.body as { item: WireItemOptions };
             notes.push({ item });
@@ -2617,6 +2638,9 @@ describe("files and items", () => {
           // A bulk read resolves each id through this door too, and a
           // hydration's reads are answered: only a read by id is refused.
           if (!made.server.requests.includes(request)) return answer;
+          if (refusedIds.has(request.pathname.split("/").at(-1) ?? "")) {
+            return answer;
+          }
           changed = true;
           return refusal(409, "read_view_changed", "The read view has changed");
         },
@@ -2680,6 +2704,49 @@ describe("files and items", () => {
       },
     );
 
+    it("reports a refusal from before the view changed with the writes sent after the rebuild", async () => {
+      const made = await rekeyed("folder-push-view-changed-after-refusal", {
+        refused: "Alpha",
+      });
+      harness = made.harness;
+      for (const title of ["Alpha", "Beta", "Gamma"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      // The witness: the view changed under this push, after the refusal.
+      expect(made.changed()).toBe(true);
+      expect(hydrations(harness) - before).toBe(1);
+      const refusals = pushed.value.drain.verdicts.filter(
+        (verdict) =>
+          verdict.kind === "create_item" && verdict.verdict === "refused",
+      );
+      expect(
+        refusals.map((verdict) => verdict.refusal?.code),
+        `the refusal from before the rebuild left the push's report: ${JSON.stringify(pushed.value.drain)}`,
+      ).toEqual(["validation_error"]);
+      // A refusal is the write's verdict, not a write left waiting.
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(pushed.value.drain.undelivered).toBe(0);
+      expect(
+        sentTitles(harness).sort(),
+        "a write was lost, or sent twice, across the rebuild",
+      ).toEqual(["Alpha", "Beta", "Gamma"]);
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (!queued.ok) return;
+      expect(
+        queued.value
+          .filter(
+            (write) =>
+              write.kind === "create_item" && write.verdict === "refused",
+          )
+          .map((write) => write.reason),
+      ).toEqual(["validation_error"]);
+    });
+
     it("builds the copy again while watching and delivers every waiting write, still watching", async () => {
       const made = await rekeyed("folder-watch-view-changed");
       harness = made.harness;
@@ -2707,11 +2774,9 @@ describe("files and items", () => {
     });
 
     it("builds the copy again only once in a push, and ends it copy_expired where the view changes again", async () => {
-      const made = await rekeyed(
-        "folder-push-view-changes-twice",
-        () => typeCatalog(),
-        true,
-      );
+      const made = await rekeyed("folder-push-view-changes-twice", {
+        again: true,
+      });
       harness = made.harness;
       for (const title of ["One", "Two", "Three"]) {
         put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
@@ -2740,10 +2805,9 @@ describe("files and items", () => {
 
     it("ends the push with the rebuild's own failure, keeping the writes for the next push", async () => {
       let failing = true;
-      const made = await rekeyed(
-        "folder-push-view-changed-rebuild-fails",
-        () => (failing ? answers.serverFault() : typeCatalog()),
-      );
+      const made = await rekeyed("folder-push-view-changed-rebuild-fails", {
+        catalog: () => (failing ? answers.serverFault() : typeCatalog()),
+      });
       harness = made.harness;
       for (const title of ["One", "Two"]) {
         put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
