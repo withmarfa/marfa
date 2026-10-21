@@ -977,7 +977,7 @@ describe("how the copies are placed and removed", () => {
     await replicateToZero();
     expect(await audited("blob.copy_replicated", hash)).toHaveLength(2);
 
-    const orphan = await uploadText("purged with a row in the log");
+    const orphan = await uploadText("purged with a row in the copy record");
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
     await run("blob-orphans");
     expect(await audited("blob.purge", orphan)).toHaveLength(0);
@@ -1009,7 +1009,7 @@ describe("how the copies are placed and removed", () => {
 
   it("refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy", async () => {
     const hash = await uploadReferencedText(
-      "the log says two, the disk has none",
+      "the copy record says two, the disk has none",
     );
     await replicateToZero();
     const stores = (await operator.listBlobStores()).data.data;
@@ -1021,8 +1021,8 @@ describe("how the copies are placed and removed", () => {
       "s3",
     ]);
 
-    // The disk's copy goes behind the log's back, as a store's late delete
-    // would take it: the log still names two copies.
+    // The disk's copy goes behind the copy record's back, as a store's late delete
+    // would take it: the copy record still names two copies.
     unlinkSync(path);
     const refused = await operator.deleteBlobCopy(hash, s3.id);
     expect(refused.status).toBe(409);

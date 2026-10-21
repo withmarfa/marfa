@@ -114,7 +114,7 @@ async function dropWithTheStoreFailing(hash: string): Promise<void> {
   expect(await fired()).toBe(1);
   const copies = (await operator.listBlobCopies(hash)).data.data;
   expect(copies.map((copy) => copy.kind)).toEqual(["s3"]);
-  // The copy is out of the log and its bytes are still on the disk.
+  // The copy is out of the copy record and its bytes are still on the disk.
   expect(existsSync(diskPath(server, hash))).toBe(true);
 }
 

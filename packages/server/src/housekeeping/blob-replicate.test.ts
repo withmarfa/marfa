@@ -1,5 +1,5 @@
 /**
- * Replication gives every attached store the copies the log says it lacks,
+ * Replication gives every attached store the copies the copy record says it lacks,
  * bounded per run, and records a copy only once the target has verified
  * it. A second disk store stands in for the bucket.
  */
@@ -356,7 +356,7 @@ describe("BlobReplicator.runOnce", () => {
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
     const hash = await upload(ctx, "read from the nearer copy");
-    // An object-store stub the log also names as holding the blob, which
+    // An object-store stub the copy record also names as holding the blob, which
     // counts how often it is read from.
     let reads = 0;
     const stub: BlobStore = {
@@ -396,7 +396,7 @@ describe("BlobReplicator.runOnce", () => {
     expect(await second.has(hash)).not.toBeNull();
     expect(reads).toBe(0);
     // The witness that the stub is a source at all: with the disk's copy
-    // struck from the log, the object store is what is read.
+    // struck from the copy record, the object store is what is read.
     const third = await upload(
       ctx,
       "read from the far copy when it is all there is",
@@ -429,7 +429,10 @@ describe("BlobReplicator.runOnce", () => {
   it("records nothing for a recorded copy the source no longer has", async () => {
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
-    const hash = await upload(ctx, "named by the log, gone from the disk");
+    const hash = await upload(
+      ctx,
+      "named by the copy record, gone from the disk",
+    );
     await ctx.blobs.disk.delete(hash);
     const replicator = new BlobReplicator(ctx.storage, stores, {
       maxBlobs: 100,
@@ -447,9 +450,9 @@ describe("BlobReplicator.runOnce", () => {
     // The witness: with the bytes back, the same run copies them.
     await ctx.blobs.disk.put(hash, {
       stream: Readable.from([
-        Buffer.from("named by the log, gone from the disk"),
+        Buffer.from("named by the copy record, gone from the disk"),
       ]),
-      size_bytes: "named by the log, gone from the disk".length,
+      size_bytes: "named by the copy record, gone from the disk".length,
     });
     expect(await replicator.runOnce()).toMatchObject({
       copied: 1,

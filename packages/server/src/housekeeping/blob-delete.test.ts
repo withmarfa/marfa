@@ -237,7 +237,7 @@ describe("purgeBlob", () => {
     const { stores, second } = await withSecondStore(ctx);
     const content = "everywhere, then nowhere";
     const hash = await upload(ctx, content);
-    // Bytes in the second store the log does not know about: they go too.
+    // Bytes in the second store the copy record does not know about: they go too.
     await second.put(hash, {
       stream: Readable.from([Buffer.from(content)]),
       size_bytes: content.length,
@@ -480,7 +480,7 @@ describe("a drop that the copy record alone would allow", () => {
   it("refuses the drop when the other copy in the copy record is gone from its store, and keeps the copy", async () => {
     ctx = await createTestContext();
     const { stores, second, hash } = await twoCopies(ctx, "one gone");
-    // The disk lost its copy behind the log's back, as a late delete would.
+    // The disk lost its copy behind the copy record's back, as a late delete would.
     await ctx.blobs.disk.delete(hash);
     const refused = dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
     await expect(refused).rejects.toBeInstanceOf(CopiesBelowMinimum);
@@ -616,7 +616,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
     ctx = await createTestContext();
     const c = ctx;
     const { stores, second } = await withSecondStore(c);
-    const content = "refused by the log";
+    const content = "refused by the copy record";
     const hash = await upload(c, content);
     await second.put(hash, {
       stream: Readable.from([Buffer.from(content)]),
@@ -630,7 +630,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
       return new Promise(() => undefined);
     };
     try {
-      // Two copies and a minimum of two: the log refuses the drop.
+      // Two copies and a minimum of two: the copy record refuses the drop.
       const refused = dropBlobCopy(c.storage, stores, hash, second.id, 2);
       await expect(settlesWithin(refused, 1_000)).rejects.toBeInstanceOf(
         CopiesBelowMinimum,
@@ -640,7 +640,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
     } finally {
       c.blobs.disk.has = has;
     }
-    // The witness: a drop the log allows asks the other store.
+    // The witness: a drop the copy record allows asks the other store.
     c.blobs.disk.has = (wanted, cancel) => {
       asked++;
       return has(wanted, cancel);

@@ -17,12 +17,12 @@ import {
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
  * written over the copy record, and every deletion here answers to it: a
- * drop goes only if the log's count of live copies allows it, decided in
+ * drop goes only if the copy record's count of live copies allows it, decided in
  * the one statement that removes the row, and the stores confirm enough of
  * the copies that remain; a purge takes a blob to zero only because the
  * orphan report named it on an earlier run and nothing names it in the
  * transaction that removes the row; a strike's second half discards bytes
- * the check has just struck from the log. Each
+ * the check has just struck from the copy record. Each
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
  *
@@ -65,7 +65,7 @@ export class CopyNotFound extends Error {
 }
 
 /**
- * Drop one store's copy of a blob, when the log says enough live copies
+ * Drop one store's copy of a blob, when the copy record says enough live copies
  * would remain and their stores confirm they hold them. The log alone can
  * name a copy that is gone, such as one a store's late delete removed, and
  * a drop trusting it could take the last real copy. The log is asked first,
@@ -147,10 +147,10 @@ export async function dropBlobCopy(
 }
 
 /**
- * How many of `others`, the blob's other live copies the log names, their
+ * How many of `others`, the blob's other live copies the copy record names, their
  * stores confirm they hold at the blob's size, each asked within the store
  * check bound. A store that fails or does not answer confirms nothing. The
- * caller holds the blob's upload lock, so the log's copies of the blob do
+ * caller holds the blob's upload lock, so the copy record's copies of the blob do
  * not change before the drop commits.
  */
 async function confirmedOthers(
@@ -190,8 +190,8 @@ async function confirmedOthers(
  * which checks that the report still stands within `due` and that nothing
  * references the blob, so an upload of the same bytes or a write naming
  * them that landed after the sweep's walk keeps it. The bytes go after the
- * row, from every attached store rather than the ones the log names,
- * because a copy the log did not know about would otherwise outlive its
+ * row, from every attached store rather than the ones the copy record names,
+ * because a copy the copy record did not know about would otherwise outlive its
  * row; a purge record covers the gap, so a failure between the two leaves
  * the next sweep a purge to finish (`finishPurge`) rather than a row naming
  * bytes that are gone. Answers whether the blob was purged; a blob whose

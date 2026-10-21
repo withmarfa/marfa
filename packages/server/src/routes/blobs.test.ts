@@ -781,7 +781,7 @@ describe("DELETE /blobs/:hash/copies/:store", () => {
     });
     expect(audits.data.map((row) => row.resource_id)).toContain(hash);
 
-    // The last copy is refused: the log and the bytes are untouched.
+    // The last copy is refused: the copy record and the bytes are untouched.
     const refused = await request(
       ctx.app,
       "DELETE",

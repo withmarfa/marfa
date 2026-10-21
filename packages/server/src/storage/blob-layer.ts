@@ -18,7 +18,7 @@ import { outlastBlobUploadLock } from "./blob-upload-lock.js";
  * The stores this instance has attached, built in one place so that every
  * caller that boots an app has stores with ids and rows. A store that was
  * constructed and never attached has no id, records no copy and would
- * make the log lie by omission.
+ * make the copy record lie by omission.
  */
 export interface BlobLayer {
   /** Always present: where an upload lands, and the spool it lands through. */
@@ -228,7 +228,7 @@ export function answeringFirst(
 }
 
 /**
- * For each blob in `sizes`, an attached store that the log records a copy
+ * For each blob in `sizes`, an attached store that the copy record names a copy
  * in and that holds the blob at its whole size, asked of the stores
  * themselves; `null` when none does. The stores are asked in the order
  * {@link answeringFirst} gives, the disk first otherwise, and a store that

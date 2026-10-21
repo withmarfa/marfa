@@ -28,14 +28,14 @@ export type IntegrityResult = {
 };
 
 /**
- * Every copy the log claims is checked on a schedule, least recently
+ * Every copy the copy record claims is checked on a schedule, least recently
  * checked first across every attached store, so a store with many copies
  * cannot keep the run from ever reaching another. A disk copy is
  * re-hashed, which reads every byte; an object store is asked for the
  * object by name and size, since its bytes were verified before they left
  * and a fetch to re-hash them would cost the transfer the direct link
  * exists to avoid. A copy found present and intact is stamped; one found
- * missing or altered is struck from the log with an error line and an
+ * missing or altered is struck from the copy record with an error line and an
  * audit row, and the caller wakes replication to put it back from another
  * store.
  *
@@ -138,7 +138,7 @@ export class BlobIntegrityChecker {
             return true;
           }
           // A row dropped by an operator between the listing and the check is
-          // not a strike: nothing was found wrong with a copy the log claims.
+          // not a strike: nothing was found wrong with a copy the copy record claims.
           try {
             if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
           } catch (err) {

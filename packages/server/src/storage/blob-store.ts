@@ -29,7 +29,7 @@ import type { BlobStoreKind } from "./interface.js";
  *
  * A store never lists what it holds. The copy record says which stores
  * hold which blob, so a question about a store's contents is a question
- * to the log answered by `has`, and nothing here needs an enumeration that
+ * to the copy record answered by `has`, and nothing here needs an enumeration that
  * an object store would page and a disk would walk.
  */
 export interface BlobStore {

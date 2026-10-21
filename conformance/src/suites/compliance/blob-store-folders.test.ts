@@ -46,7 +46,7 @@ import {
  * holds, so the folder the server is restarted over decides which store it
  * is. The folder tests restart the server over a folder that kept its
  * marker, over another folder, and over its own folder with the marker or
- * the whole folder gone while the log still records copies there.
+ * the whole folder gone while the copy record still names copies there.
  */
 let server: FreshServer | undefined;
 let operator: MarfaClient;
@@ -253,7 +253,7 @@ describe("a store is its folder", () => {
     const folder = blobFolder(server!);
 
     // The folder emptied of every blob but not of its marker: the same
-    // store, still attached, still claiming the copies the log names.
+    // store, still attached, still claiming the copies the copy record names.
     await server!.restart(() => {
       for (const entry of readdirSync(folder)) {
         if (entry !== ".marfa-store") {

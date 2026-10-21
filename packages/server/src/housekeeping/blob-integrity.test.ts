@@ -631,7 +631,7 @@ describe("BlobIntegrityChecker.runOnce", () => {
   it("counts no strike for a row dropped between the listing and the check", async () => {
     // The listing named a copy; by the time the check reaches it an
     // operator has dropped the row. Nothing was found wrong with a copy
-    // the log claims, so nothing is logged, audited or discarded.
+    // the copy record claims, so nothing is logged, audited or discarded.
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
     const hash = await upload(ctx, "dropped under the check");

@@ -98,7 +98,7 @@ describe("BlobOrphanReporter.runOnce", () => {
     expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
     expect(await ctx.blobs.disk.has(orphan)).not.toBeNull();
 
-    // Past it: gone from every store, the log and the registry.
+    // Past it: gone from every store, the copy record and the registry.
     time.advance(2);
     expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
     expect(await ctx.storage.blobs.get(orphan)).toBeNull();

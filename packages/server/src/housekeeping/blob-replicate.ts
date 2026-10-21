@@ -43,7 +43,7 @@ export type ReplicationResult = {
  * less is not consulted, because `all` is the one policy this build
  * defines and every row carries it. One sweep in both directions, disk to
  * bucket on an ordinary instance and bucket to disk after a restore,
- * because the log does not care which kind holds a copy. A copy is
+ * because the copy record does not care which kind holds a copy. A copy is
  * recorded only after the target's `put` has verified that the bytes hash
  * to their name.
  *
@@ -206,7 +206,7 @@ export class BlobReplicator {
     return true;
   }
 
-  /** An attached store the log says holds the blob, other than the target:
+  /** An attached store the copy record says holds the blob, other than the target:
    *  the disk first, because reading it costs no transfer. */
   private async sourceFor(
     hash: string,
