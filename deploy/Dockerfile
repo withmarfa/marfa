@@ -65,7 +65,6 @@ ENV MARFA_CONTROL_SOCKET=/data/control/marfa.sock
 # without it names no release.
 ARG VERSION_SHA
 ARG VERSION_RELEASE
-ARG RAILWAY_GIT_COMMIT_SHA
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends acl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=cli-build /repo/core/target/release/marfa /usr/local/bin/marfa
@@ -73,7 +72,7 @@ COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 COPY --from=build --chown=node:node /out ./
 COPY deploy/litestream.yml /etc/litestream.yml
 COPY deploy/entrypoint.sh /usr/local/bin/marfa-entrypoint
-RUN printf '{"sha":"%s","deployed_at":"%s"%s}\n' "${VERSION_SHA:-${RAILWAY_GIT_COMMIT_SHA:-dev}}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${VERSION_RELEASE:+,\"release\":\"$VERSION_RELEASE\"}" > version.json \
+RUN printf '{"sha":"%s","deployed_at":"%s"%s}\n' "${VERSION_SHA:-dev}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${VERSION_RELEASE:+,\"release\":\"$VERSION_RELEASE\"}" > version.json \
   && chmod +x /usr/local/bin/marfa-entrypoint \
   && mkdir -p /data \
   && chown -R node:node /app /data
