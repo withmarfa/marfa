@@ -7826,7 +7826,7 @@
               "web",
               "cli"
             ],
-            "description": "`cli` registered the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app."
+            "description": "`cli` registered with the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app."
           },
           "client_id": {
             "type": "string",

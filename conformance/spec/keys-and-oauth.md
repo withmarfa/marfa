@@ -1795,7 +1795,7 @@ When `GET /auth/grants` lists a grant, the server MUST give it `client_name`, th
 
 When `GET /auth/grants` lists a grant, the server MUST report `kind` as `cli` for a client registered with the `software_id` `so.marfa.cli`, otherwise `web` for a client with approved web origins, otherwise `app`.
 
-**Reason:** The `marfa` command line registers that `software_id` (RFC 7591 section 2). Its grant and its name do not tell it from another program that signs in with the device grant, so a client registered for device authorization with another `software_id`, or none, is an app. Any client can send any `software_id`, so the kind labels the app for the owner and decides no access. This classifies the registered app without changing its stored connection kind or its owner's sign-in category.
+**Reason:** The `marfa` command line registers that `software_id` (RFC 7591 section 2). Its grant and its name do not tell it from another program that signs in with the device grant, so a client with another `software_id`, or none, is an app, device grant or not. Any client can send any `software_id`, so the kind labels the app for the owner and decides no access. This classifies the registered app without changing its stored connection kind or its owner's sign-in category.
 
 **Tests:** `compliance/auth-grants.test.ts › classifies registered native, web, command line and other device apps`.
 

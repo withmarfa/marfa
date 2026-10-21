@@ -879,8 +879,27 @@ mod tests {
     }
 
     #[test]
+    fn a_login_whose_code_runs_out_during_an_outage_ends_on_the_outage() {
+        let down = r#"{"error":{"code":"unavailable","message":"try again"}}"#;
+        let door = Door::open_at(|_| vec![Answer::json("503 Service Unavailable", down)]);
+        let discovery = waiting_discovery(&door.url);
+        let outcome = wait_with(&discovery, "client", &a_code(1), std::thread::sleep);
+        match outcome {
+            Err(CliError::Refused { status, code, .. }) => {
+                assert_eq!((status, code.as_str()), (503, "unavailable"));
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert_eq!(
+            door.received().len(),
+            1,
+            "the code is not polled past its end"
+        );
+    }
+
+    #[test]
     fn a_login_ends_on_a_refusal_that_is_not_a_wait() {
-        for refusal in ["access_denied", "expired_token"] {
+        for refusal in ["access_denied", "expired_token", "invalid_grant"] {
             let body = format!(r#"{{"error":{{"code":"{refusal}","message":"no"}}}}"#);
             let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", &body)]);
             let discovery = waiting_discovery(&door.url);

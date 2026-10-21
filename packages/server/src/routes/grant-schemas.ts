@@ -26,7 +26,7 @@ export const GrantSchema = z
     kind: z
       .enum(["app", "web", "cli"])
       .describe(
-        "`cli` registered the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app.",
+        "`cli` registered with the `marfa` command line's `software_id`; otherwise `web` has approved web origins, and `app` is any other app.",
       ),
     client_id: z.string().describe("The ID of the registered app."),
     client_name: z
