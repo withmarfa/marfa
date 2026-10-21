@@ -195,11 +195,12 @@ Fixture paths are under `src/suites/`.
 
 ## Folders
 
-| Operation                   | Status  | Fixture                      | Notes                                                                                                              |
-| --------------------------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `POST /folders`             | covered | `compliance/folders.test.ts` | Write on `system.folder` in the type map; each setting checked and named when refused.                             |
-| `PATCH /folders/{id}`       | covered | `compliance/folders.test.ts` | Needs the version read; a stale change merges or answers `409 version_conflict`; a revoked folder does not change. |
-| `POST /folders/{id}/revoke` | covered | `compliance/folders.test.ts` | Terminal: a second revoke answers `400 invalid_transition`.                                                        |
+| Operation                   | Status  | Fixture                            | Notes                                                                                                              |
+| --------------------------- | ------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `GET /folders`              | covered | `compliance/folder-status.test.ts` | Active summaries, bounded pages, and owner or private local authority.                                             |
+| `POST /folders`             | covered | `compliance/folders.test.ts`       | Write on `system.folder` in the type map; each setting checked and named when refused.                             |
+| `PATCH /folders/{id}`       | covered | `compliance/folders.test.ts`       | Needs the version read; a stale change merges or answers `409 version_conflict`; a revoked folder does not change. |
+| `POST /folders/{id}/revoke` | covered | `compliance/folders.test.ts`       | Terminal: a second revoke answers `400 invalid_transition`.                                                        |
 
 ## Instance maintenance
 
