@@ -19,6 +19,15 @@ import { readRequestLog } from "./status-declarations.js";
 
 const HOUR_MS = 3_600_000;
 
+/**
+ * Moving the clock makes the hourly rate-limit cleanup due. With the
+ * scheduler polling, it can claim the job before the run these cases ask
+ * for, which then gets `409 housekeeping_job_running`. A poll interval at
+ * the setting's ceiling means the scheduler never claims anything; a run
+ * asked for over HTTP does not wait on a poll.
+ */
+const SCHEDULER_NEVER_POLLS_MS = "2147483647";
+
 let scratch: string;
 let server: FreshServer;
 /** Preloaded into the server: a Node warning and a line on stderr, and on
@@ -38,6 +47,7 @@ beforeAll(async () => {
   );
   server = await bootFreshServer("target-interface", {
     NODE_OPTIONS: `--require ${preload}`,
+    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -66,6 +76,7 @@ describe("the clock", () => {
       const day = 24 * HOUR_MS;
       const own = await bootFreshServer("clock-boot-restart", {
         MARFA_TEST_CLOCK_OFFSET_MS: String(day),
+        MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
       });
       try {
         await own.advanceClock(HOUR_MS);
