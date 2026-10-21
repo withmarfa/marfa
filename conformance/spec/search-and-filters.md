@@ -1258,6 +1258,14 @@ When an item that `GET /export?format=archive` carries is of `core.file` or a ty
 
 **Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
 
+### `search-and-filters/archive-missing-unreadable`
+
+When an item that `GET /export?format=archive` carries is of `core.file` or a type that inherits from it, in its current version or a snapshot the archive carries, and its `blob_ref` is a whole `sha256:` hash that the credential requesting the archive could not read through the blob operations, the server MUST name the hash in the manifest's `missing_blobs` with a `mime_type` and a `size_bytes` of `null`.
+
+**Reason:** an archive written by a credential lacking `blobs.manage` leaves out the bytes of a file that only an earlier version names (`search-and-filters/archive-history-bytes`), and naming them tells a reader, a restore and `marfa export` that the archive lacks that file. The type and size are not given, and the hash is named whether or not the instance holds the blob, so the archive says no more of the blob than the blob operations do (`blobs/read-unreadable`).
+
+**Tests:** `compliance/archive-history.test.ts › carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names in missing_blobs only a file's it could not`.
+
 ### `search-and-filters/archive-missing-only-blobs`
 
 The server MUST NOT name in the manifest's `missing_blobs` a hash that the instance holds no blob of and that no carried file's `blob_ref` names.
@@ -1265,6 +1273,14 @@ The server MUST NOT name in the manifest's `missing_blobs` a hash that the insta
 **Reason:** a run of hex in a row's text, or in any other property, may be anything, such as a checksum someone noted down. Only the instance's own record, or a file's `blob_ref`, makes it a blob.
 
 **Tests:** `compliance/export-missing-blob.test.ts › names in a later archive's missing_blobs a file's blob that a restore answered missing`.
+
+### `search-and-filters/archive-unreadable-only-files`
+
+The server MUST NOT name in the manifest's `missing_blobs` a hash that the credential requesting the archive could not read through the blob operations and that no carried file's `blob_ref` names.
+
+**Reason:** only the instance's record makes such a hash a blob, so naming it would tell the credential whether the instance holds bytes that the blob operations answer as unknown (`blobs/read-unreadable`). An archive written by such a credential can therefore lack, without naming it, a blob that a hash outside a file's `blob_ref` refers to. An export by the owner, or by a credential holding `blobs.manage`, reads every blob.
+
+**Tests:** `compliance/archive-history.test.ts › carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names in missing_blobs only a file's it could not`.
 
 ### `search-and-filters/archive-missing-not-carried`
 
@@ -1356,7 +1372,7 @@ When a snapshot in an archive requested by a credential names a blob, the server
 
 **Reason:** a historical reference keeps bytes from orphan collection but does not grant read permission (`blobs/lend-earlier-version`).
 
-**Tests:** `compliance/archive-history.test.ts › carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and no others`.
+**Tests:** `compliance/archive-history.test.ts › carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names in missing_blobs only a file's it could not`.
 
 ### `search-and-filters/archive-selection-read`
 

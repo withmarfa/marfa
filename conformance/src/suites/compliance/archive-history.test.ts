@@ -222,7 +222,7 @@ describe("the history an archive carries", () => {
     expect(await versionsFor(noteReader)).toEqual([]);
   });
 
-  it("carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and no others", async () => {
+  it("carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names in missing_blobs only a file's it could not", async () => {
     const stranger = await client.createKey({
       label: "history-other-uploader",
       source: `${ctx.source}-other-uploader`,
@@ -262,6 +262,30 @@ describe("the history an archive carries", () => {
       properties_mode: "replace",
     });
 
+    // A file whose first version names bytes the key sent and whose current
+    // version names others, so only the snapshot names the first.
+    const earlier = await client.uploadBlob(
+      new Uint8Array(Buffer.from(`earlier file ${ctx.runId}`)),
+      "text/plain",
+    );
+    const current = await client.uploadBlob(
+      new Uint8Array(Buffer.from(`current file ${ctx.runId}`)),
+      "text/plain",
+    );
+    expect(earlier.status, JSON.stringify(earlier.error)).toBe(201);
+    expect(current.status, JSON.stringify(current.error)).toBe(201);
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: earlier.data.hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    trackItem(ctx, file.data.item.id);
+    await patch(file.data.item.id, {
+      properties: { blob_ref: current.data.hash, mime_type: "text/plain" },
+    });
+    expect((await client.downloadBlob(earlier.data.hash)).status).toBe(404);
+
     const archive = await client.exportArchive({ source: ctx.source });
     expect(archive.status).toBe(200);
     const carried = listTarGzEntries(archive.data)
@@ -269,11 +293,22 @@ describe("the history an archive carries", () => {
       .map((e) => e.name);
     expect(carried).toContain(`blobs/${up.data.hash}`);
     expect(carried).not.toContain(`blobs/${upHidden.data.hash}`);
+    expect(carried).toContain(`blobs/${current.data.hash}`);
+    expect(carried).not.toContain(`blobs/${earlier.data.hash}`);
     const manifest = JSON.parse(
       readTarGzEntry(archive.data, "manifest.json") ?? "{}",
-    ) as { blobs: Record<string, unknown> };
+    ) as {
+      blobs: Record<string, unknown>;
+      missing_blobs: Record<string, unknown>;
+    };
     expect(Object.keys(manifest.blobs)).toContain(up.data.hash);
     expect(Object.keys(manifest.blobs)).not.toContain(upHidden.data.hash);
+    expect(Object.keys(manifest.blobs)).not.toContain(earlier.data.hash);
+    // The file's earlier blob is named with nothing of its record, and the
+    // note's, which only the instance's record makes a blob, is not named.
+    expect(manifest.missing_blobs).toEqual({
+      [earlier.data.hash]: { mime_type: null, size_bytes: null },
+    });
   });
 });
 
