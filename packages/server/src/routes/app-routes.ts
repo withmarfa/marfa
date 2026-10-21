@@ -5,6 +5,10 @@
  * the owner is refused here. Disconnecting is done by the browser through the
  * public sign-in door.
  */
+import { parseScope, grantCoversScope } from "@withmarfa/shared";
+import { getPermissionBundles } from "../config.js";
+import { grantExpiresAt } from "../auth/grant-expiry.js";
+import { resolveChoosableTypes } from "./access-types.js";
 import { Hono, type Context } from "hono";
 import {
   findConnectedApp,
@@ -30,7 +34,7 @@ import {
 } from "../pages/navigation.js";
 import type { RegistryItem } from "../pages/registry.js";
 import type { Storage } from "../storage/interface.js";
-import { describeHeld } from "./access-model.js";
+import { buildAccess, describeHeld } from "./access-model.js";
 import { readAccessWords } from "./access-view.js";
 import {
   APPS_HREF,
@@ -45,7 +49,7 @@ import {
 import { CONSOLE_PAGES } from "./console.js";
 import { consoleContentSecurityPolicy } from "./content-security-policy.js";
 import { homeSearchQuery } from "./home-page.js";
-import { keyListRows, timeOf } from "./key-rows.js";
+import { keyListRows, timeOf, withReads } from "./key-rows.js";
 
 /** The most apps the picker beside an app's page lists. */
 const MAX_SIBLINGS = 100;
@@ -173,6 +177,16 @@ export function appRoutes(storage: Storage) {
         : []),
       { title: "Approved", value: dateWords(Date.parse(app.grantedAt), now) },
       {
+        title: "Ends if unused",
+        value: (() => {
+          const at = grantExpiresAt(
+            app,
+            c.var.config.grantInactivityDays ?? 365,
+          );
+          return at === null ? "Never" : dateWords(Date.parse(at), now);
+        })(),
+      },
+      {
         title: "Last used",
         value: lastUsedValue(timeOf(app.lastUsedAt), now),
       },
@@ -195,10 +209,21 @@ export function appRoutes(storage: Storage) {
         id: app.id,
         name: app.name,
         details,
-        access: {
-          scopes: app.scopes,
-          ...(await readAccessWords(storage, app.scopes)),
-        },
+        scopes: app.scopes,
+        access: buildAccess({
+          scopes: withReads(app.scopes).flatMap((literal) => {
+            const parsed = parseScope(literal);
+            return parsed ? [parsed] : [];
+          }),
+          held: undefined,
+          ...(await readAccessWords(storage, withReads(app.scopes))),
+          chooseTypes: (await resolveChoosableTypes(storage, [])).filter(
+            (type) => grantCoversScope(app.scopes, `${type.id}:read`),
+          ),
+          bundles: getPermissionBundles(),
+          start: "held",
+          narrowing: app.scopes,
+        }),
         keys: await keyListRows(storage, made, now, { maker: false }),
         siblings,
       }),

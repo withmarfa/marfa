@@ -1083,3 +1083,137 @@ describe("types that share a label", () => {
     expect(alone.summaries.data).toBe("Read and edit tasks");
   });
 });
+
+describe("connected app inherited access", () => {
+  it.each([
+    ["*:read", "core.note"],
+    ["core.*:read", "core.note.*"],
+    ["edge.*:read", "edge.user.blocks"],
+    ["metadata:read", "metadata.types"],
+    ["profile:read", "profile.name"],
+  ])(
+    "allows %s to remain while %s drops from edit to read",
+    (broad, pattern) => {
+      const scopes = [broad, `${pattern}:write`];
+      const model = buildAccess({
+        scopes: [...scopes, `${pattern}:read`].map(scope),
+        held: undefined,
+        bundles: [],
+        start: "held",
+        narrowing: scopes,
+      });
+      const row = [...model.data, ...model.profile].find(
+        (row) => row.kind === "level" && row.selected === `${pattern}:write`,
+      );
+      expect(row?.kind).toBe("level");
+      if (row?.kind !== "level") return;
+      expect(row.inherited).toBeUndefined();
+      expect(row.options).toEqual([
+        { value: `${pattern}:read`, label: "Read only" },
+        { value: `${pattern}:write`, label: "Read and edit" },
+      ]);
+      const wider = [...model.data, ...model.profile].find(
+        (row) => row.kind === "level" && row.selected === broad,
+      );
+      expect(wider?.kind === "level" && wider.options[0]).toEqual({
+        value: "",
+        label: "Remove this access",
+      });
+    },
+  );
+
+  it("lets a subtree be removed while preserving its exact parent", () => {
+    const scopes = ["core.note:read", "core.note.*:read"];
+    const model = buildAccess({
+      scopes: scopes.map(scope),
+      held: undefined,
+      bundles: [],
+      start: "held",
+      narrowing: scopes,
+    });
+    const subtree = model.data.find(
+      (row) => row.selected === "core.note.*:read",
+    );
+    expect(subtree?.inherited).toBeUndefined();
+    expect(subtree?.options[0]).toEqual({
+      value: "",
+      label: "Remove this access",
+    });
+    expect(subtree?.description).toContain(
+      "Other settings still apply within this group.",
+    );
+  });
+  it("keeps the broad profile control editable when every profile row is also named", () => {
+    const scopes = [
+      "profile:read",
+      "profile.name:read",
+      "profile.email:read",
+      "profile.avatar:read",
+    ];
+    const model = buildAccess({
+      scopes: scopes.map(scope),
+      held: undefined,
+      bundles: [],
+      start: "held",
+      narrowing: scopes,
+    });
+    const broad = model.profile.find(
+      (row) => row.kind === "level" && row.selected === "profile:read",
+    );
+    expect(broad?.kind === "level" && broad.inherited).toBeUndefined();
+    expect(broad?.kind === "level" && broad.options[0]).toEqual({
+      value: "",
+      label: "Remove this access",
+    });
+  });
+  it.each([
+    ["*:read", "core.note:read", "read"],
+    ["*:write", "core.note:read", "read"],
+    ["core.media.*:write", "core.media.article:read", "read"],
+    ["content:write", "core.note:read", "read"],
+    ["edge.*:write", "edge.parent-of:read", "read"],
+    ["metadata:write", "metadata.types:read", "write"],
+    ["profile:write", "profile.name:read", "write"],
+  ])(
+    "locks %s coverage of %s at its effective %s level",
+    (broad, narrow, level) => {
+      const scopes = [broad, narrow];
+      const model = buildAccess({
+        scopes: scopes.map(scope),
+        held: undefined,
+        bundles: [],
+        start: "held",
+        narrowing: scopes,
+      });
+      const rows = [...model.data, ...model.profile].filter(
+        (row) => row.kind === "level",
+      );
+      const dependent = rows.find((row) => row.selected === narrow);
+      expect(dependent?.inherited).toEqual({ level, scopes: [narrow] });
+      expect(dependent?.options).toEqual([
+        {
+          value: narrow,
+          label: level === "write" ? "Read and edit" : "Read only",
+        },
+      ]);
+      expect(
+        rows.find((row) => row.selected === broad)?.inherited,
+      ).toBeUndefined();
+      const reloaded = buildAccess({
+        scopes: [scope(narrow)],
+        held: undefined,
+        bundles: [],
+        start: "held",
+        narrowing: [narrow],
+      });
+      const unlocked = [...reloaded.data, ...reloaded.profile].find(
+        (row) => row.kind === "level",
+      );
+      expect(unlocked?.kind === "level" && unlocked.inherited).toBeUndefined();
+      expect(unlocked?.kind === "level" && unlocked.options[0]).toEqual({
+        value: "",
+        label: "No access",
+      });
+    },
+  );
+});

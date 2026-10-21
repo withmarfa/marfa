@@ -50,6 +50,7 @@ import {
 } from "./permission-labels.js";
 import type { ChoosableType } from "./access-types.js";
 import { reachLine } from "./scope-openness.js";
+import { scopesAreNarrower } from "../storage/consent-scopes.js";
 import {
   humanizeType,
   isExactTypeScope,
@@ -119,6 +120,10 @@ export interface LevelRow {
   /** Lowest first. Never above the request, never below what the app holds. */
   options: LevelOption[];
   selected: string;
+  /** A saved overlapping grant must be reduced before this row can change. */
+  inherited?: { level: Level; scopes: string[] };
+  /** Preserve the saved literals if this row is left unchanged. */
+  savedScopes?: string[];
   /** Present on a row for all data when the person may choose types instead. */
   choose?: ChooseTypes;
   /** The item type the row is for, where it is for one item type: the identifier a search matches and a clash names it by. */
@@ -209,6 +214,8 @@ export interface AccessInput {
    * once one is on.
    */
   start?: "off" | "held";
+  /** Saved app scopes whose overlapping access must stay explicit while narrowing. */
+  narrowing?: readonly string[];
 }
 
 /** What a caller looked up to name a scope in words; a pattern it leaves out is named from the registry. */
@@ -400,7 +407,7 @@ export function buildAccess(given: AccessInput): AccessModel {
     const now = floor === "none" ? undefined : `Now: ${LEVEL_LABELS[floor]}`;
     const id = nextId();
     patternOf.set(id, ask.scope.typePattern);
-    return {
+    const row: LevelRow = {
       kind: "level",
       id,
       ...(name === undefined ? {} : { name }),
@@ -415,11 +422,81 @@ export function buildAccess(given: AccessInput): AccessModel {
       })),
       selected: pick?.value ?? "",
     };
+    if (name === undefined && input.narrowing) {
+      const own = input.narrowing.filter((literal) => {
+        const parsed = parseScope(literal);
+        return (
+          parsed?.kind === ask.scope.kind &&
+          parsed.typePattern === ask.scope.typePattern
+        );
+      });
+      const others = input.narrowing.filter(
+        (literal) => !own.includes(literal),
+      );
+      row.savedScopes = own;
+      const coveredByOther = others.some((literal) =>
+        grantCoversScope([literal], `${ask.scope.typePattern}:read`),
+      );
+      const coversOther = others.some((literal) => {
+        const parsed = parseScope(literal);
+        return (
+          parsed !== null &&
+          isLevelKind(parsed) &&
+          grantCoversScope(own, `${parsed.typePattern}:read`)
+        );
+      });
+      row.options = row.options.filter((option) => {
+        // Keep the original choice even when another setting changes its
+        // effective level. Sending it unchanged preserves every saved literal.
+        if (option.value === row.selected) return true;
+        const candidate = [...others, ...(option.value ? [option.value] : [])];
+        if (!scopesAreNarrower(input.narrowing ?? [], candidate)) return false;
+        if (option.value === "") return !coveredByOther;
+        return (
+          levelHeld(candidate, ask.scope.typePattern) ===
+          levelOfValue(option.value, "none")
+        );
+      });
+      if (coversOther) {
+        row.options = row.options.map((option) =>
+          option.value === ""
+            ? { ...option, label: "Remove this access" }
+            : option,
+        );
+        row.description = [
+          row.description && `${row.description.replace(/\.$/, "")}.`,
+          "Other settings still apply within this group.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+      if (row.options.length === 1) {
+        const level = levelHeld(input.narrowing, ask.scope.typePattern);
+        row.inherited = { level, scopes: own };
+        row.options = [{ value: row.selected, label: LEVEL_LABELS[level] }];
+        row.description = [
+          row.description,
+          "Other access also covers this. Change the broader access and save to see more choices.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+    }
+    return row;
   };
 
   /** The types to choose in place of all data, one level control each. */
   const chooseFor = (ask: Ask): ChooseTypes | undefined => {
     if (ask.scope.kind !== "type" || ask.scope.typePattern !== "*")
+      return undefined;
+    // Existing narrower rows must remain visible, rather than appearing a
+    // second time in a type picker that could promise to remove their access.
+    if (
+      input.narrowing?.some((literal) => {
+        const parsed = parseScope(literal);
+        return parsed?.kind === "type" && parsed.typePattern !== "*";
+      })
+    )
       return undefined;
     const rows: LevelRow[] = [];
     for (const type of input.chooseTypes ?? []) {
@@ -521,7 +598,7 @@ export function buildAccess(given: AccessInput): AccessModel {
         noun: row.noun,
         alias: row.type,
         held: row.held,
-        level: levelOfValue(row.selected, row.held),
+        level: row.inherited?.level ?? levelOfValue(row.selected, row.held),
       }));
 
   return {

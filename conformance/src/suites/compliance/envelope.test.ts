@@ -182,18 +182,19 @@ describe("one envelope for every list and search", () => {
         "/occurrences?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z",
       siblings: ["window", "scan"],
     },
+    { template: "/auth/grants", path: () => "/auth/grants", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? ownerCookie : door.operator ? managementKey : apiKey;
 
-  it("names twenty-eight doors, every one the document publishes as a page", async () => {
+  it("names twenty-nine doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(28);
+    expect(doors).toHaveLength(29);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -212,7 +213,7 @@ describe("one envelope for every list and search", () => {
             parameter.in === "query" && parameter.name === "cursor",
         ),
     );
-    expect(whole).toHaveLength(15);
+    expect(whole).toHaveLength(16);
     for (const door of whole) {
       const body = (await read(door.path(), credentialOf(door))) as Record<
         string,
@@ -222,10 +223,8 @@ describe("one envelope for every list and search", () => {
     }
   });
 
-  it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
-    // Outside the twenty-eight: the owner's approved-apps list is served
-    // beside the document rather than in it, and answers the same two keys.
-    expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
+  it("answers GET /auth/grants to a key with grants.manage in the same envelope", async () => {
+    expect((await servedDocument()).paths["/auth/grants"]).toBeDefined();
     const minted = await client.createKey({
       label: "envelope-grants",
       source: `${ctx.source}-grants`,

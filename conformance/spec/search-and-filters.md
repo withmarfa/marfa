@@ -1118,7 +1118,7 @@ When a list or a search answers, the server MUST carry the rows under `data` and
 
 **Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys`, the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
-**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-eight doors, every one the document publishes as a page`.
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-nine doors, every one the document publishes as a page`.
 
 ### `search-and-filters/page-whole-set`
 
@@ -1128,9 +1128,9 @@ When a list takes no `cursor`, the server MUST answer its whole set with `next_c
 
 ### `search-and-filters/page-grants`
 
-The server MUST answer `GET /auth/grants` in the envelope of a list, though the API document does not publish it.
+The server MUST answer `GET /auth/grants` in the envelope of a list.
 
-**Tests:** `compliance/envelope.test.ts › answers GET /auth/grants, which the document does not publish, in the same envelope`.
+**Tests:** `compliance/envelope.test.ts › answers GET /auth/grants to a key with grants.manage in the same envelope`.
 
 ### `search-and-filters/page-full-last`
 

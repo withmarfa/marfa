@@ -523,5 +523,16 @@
       "runAuditedTransaction": 1,
       "writeItem": 1
     }
+  },
+  "auth/grant-narrowing.ts": {
+    "boundary": "Owner grant narrowing compares live consent inside the consent lock and audited transaction; token withdrawal, pending codes and projection roll back together on audit failure. grant-narrowing.test.ts exercises refusal, races and rollback.",
+    "calls": {
+      "OauthProviderStore.setConsentScopes": 1,
+      "OauthProviderStore.revokeTokensBeyondScopes": 1,
+      "OauthProviderStore.revokeAuthorizationCodesForGrant": 1,
+      "OauthProviderStore.deleteDeviceCodesForGrant": 1,
+      "runAuditedTransaction": 1,
+      "writeItem": 1
+    }
   }
 }

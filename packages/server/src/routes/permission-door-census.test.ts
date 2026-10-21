@@ -98,6 +98,9 @@ const DATA_PLANE = [
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
+  "PATCH /auth/grants/:id": DIRECT,
+  "GET /auth/grants": "grants.manage",
+  "DELETE /auth/grants/:id": "grants.manage",
   "GET /export": "reads some type, or owner browser session",
   "GET /items/stats": "reads some type, or owner browser session",
   "GET /folders/:id/status": "reads some type, or owner or local command",
@@ -157,16 +160,6 @@ const STANDING: Record<string, string> = {
   "GET /blobs/:hash/url": READS_BLOBS,
   "POST /blobs": "writes some type, or blobs.manage",
   ...Object.fromEntries(DATA_PLANE.map((door) => [door, READS])),
-};
-
-/**
- * Doors that ask their permission inside the handler. They take no body and
- * no validated query, so nothing about the request is read before the
- * permission; they are driven like the standing doors.
- */
-const ASKED_IN_PLACE: Record<string, string> = {
-  "GET /auth/grants": "grants.manage, on a plain route",
-  "DELETE /auth/grants/:id": "grants.manage, on a plain route",
 };
 
 /**
@@ -603,7 +596,6 @@ describe("every door asks what it asks of every caller before anything else", ()
   it("names every door the app serves, once", () => {
     const named = [
       ...Object.keys(STANDING),
-      ...Object.keys(ASKED_IN_PLACE),
       ...Object.keys(OPEN_BY_ROW),
       ...Object.values(NO_CREDENTIAL).flat(),
     ];
@@ -618,10 +610,7 @@ describe("every door asks what it asks of every caller before anything else", ()
 
   it("refuses a credential the door does not admit 403, whatever is wrong with its request", async () => {
     const wrong: string[] = [];
-    for (const door of [
-      ...Object.keys(STANDING),
-      ...Object.keys(ASKED_IN_PLACE),
-    ]) {
+    for (const door of [...Object.keys(STANDING)]) {
       const got = await answer(await malformed(door, refusedBy(door)));
       if (got !== "403 forbidden" && got !== "403 type_not_permitted") {
         wrong.push(`${door} answered ${got}`);

@@ -1499,10 +1499,10 @@ function effectiveLevel(
  * the answer is no. A skipped consent screen, and a minted token whose exact
  * `core.*:write` then outranks the entry that had been holding it down.
  *
- * So a wildcard requirement is two questions. The subtree root has to be
- * covered, which is the resolver's own question and delegates to it. And
- * nothing inside the subtree may sit lower than what is being asked for,
- * which no resolver can answer because none of them look downward.
+ * A wildcard requirement must cover the general descendants as well as its
+ * parent-inclusive root. An exact grant at the root says nothing about its
+ * descendants. Nothing inside the subtree may sit lower than the requested
+ * level either, which no resolver can answer because none look downward.
  *
  * `resolve` is the axis's own resolver, so the point question is answered by
  * whatever the request path runs and this adds a rule rather than replacing
@@ -1527,11 +1527,11 @@ function grantCoversPattern(
     return enough(resolve(pattern));
   }
 
-  // Upward: is the subtree granted at all. `core.*` is parent-inclusive, so
-  // `core` is a fair representative of it. For the global wildcard there is
-  // no root above, and asking a resolver about `*` returns the global entry
-  // alone on every axis here — which is exactly the ceiling in question.
-  if (!enough(resolve(root ?? GLOBAL_TYPE_WILDCARD))) return false;
+  // The pattern witnesses descendants outside any narrower held pattern.
+  // The root is a separate point: an exact entry there overrides the subtree
+  // for that point alone, and can neither grant nor deny its descendants.
+  if (!enough(resolve(pattern))) return false;
+  if (root !== null && !enough(resolve(root))) return false;
 
   // Downward, which is the half no resolver can do. A key at or above the
   // requested root was already answered above; only a key strictly inside the

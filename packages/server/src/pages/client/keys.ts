@@ -76,9 +76,16 @@ export function literalsOf(form: HTMLFormElement): string[] {
   for (const select of form.querySelectorAll<HTMLSelectElement>(
     "select[name=scopes], select[name=types]",
   )) {
-    if (select.value === "" || select.value === CHOOSE_TYPES) continue;
+    if (select.disabled || select.value === "" || select.value === CHOOSE_TYPES)
+      continue;
     if (select.name === "types" && !choosing) continue;
-    literals.add(select.value);
+    if (
+      select.dataset.savedScopes &&
+      select.value === select.dataset.savedValue
+    ) {
+      for (const literal of JSON.parse(select.dataset.savedScopes) as string[])
+        literals.add(literal);
+    } else literals.add(select.value);
   }
   for (const box of form.querySelectorAll<HTMLInputElement>(
     "input[type=checkbox][name=scopes]",

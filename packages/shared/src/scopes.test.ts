@@ -1030,6 +1030,29 @@ describe("scopesOfferedOffByDefaultOnly", () => {
  * the only one whose failure is a fail-open rather than a re-prompt.
  */
 describe("grantCoversScope", () => {
+  it.each(["core.note", "edge.user"])(
+    "distinguishes exact %s access from its whole subtree",
+    (root) => {
+      expect(grantCoversScope([`${root}:read`], `${root}:read`)).toBe(true);
+      expect(grantCoversScope([`${root}:read`], `${root}.*:read`)).toBe(false);
+      expect(grantCoversScope([`${root}.*:read`], `${root}.*:read`)).toBe(true);
+      const global = root.startsWith("edge.") ? "edge.*" : "*";
+      expect(
+        grantCoversScope(
+          [`${global}:read`, `${root}:write`],
+          `${root}.*:write`,
+        ),
+      ).toBe(false);
+      for (const point of [root, `${root}.private`]) {
+        expect(
+          grantCoversScope(
+            [`${root}.*:write`, `${point}:read`],
+            `${root}.*:write`,
+          ),
+        ).toBe(false);
+      }
+    },
+  );
   describe("item types, where breadth is the whole point", () => {
     it("covers a named type from a namespace wildcard", () => {
       // A person who granted "all your core content" has already answered

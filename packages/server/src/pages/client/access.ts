@@ -56,7 +56,10 @@ function picksIn(group: HTMLElement): LevelPick[] {
       noun: select.dataset.noun ?? "",
       alias: select.dataset.alias,
       held,
-      level: levelOfValue(select.value, held),
+      level:
+        select.dataset.inheritedLevel === undefined
+          ? levelOfValue(select.value, held)
+          : asLevel(select.dataset.inheritedLevel),
       type: select.closest("[data-choose-types]") !== null,
     };
   });

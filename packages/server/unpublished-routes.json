@@ -23,8 +23,6 @@
   "GET /auth/static/auth.css": "a stylesheet those pages load",
   "GET /auth/static/pages.css": "the stylesheet the console and moment pages load",
   "GET /auth/static/pages.js": "the script the console and moment pages load",
-  "GET /auth/grants": "lists the apps the owner authorized",
-  "DELETE /auth/grants/{id}": "revokes one",
   "GET /setup": "first-party owner setup page",
   "POST /setup/claim": "same-origin owner setup form submission",
   "POST /setup/exchange": "single-use browser handoff exchange",

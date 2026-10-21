@@ -1,5 +1,6 @@
 import { refuseProfileEmailWrite } from "./profile-scope.js";
-import { isAPIError } from "better-auth/api";
+import { scopesAreNarrower } from "../storage/consent-scopes.js";
+import { APIError, isAPIError } from "better-auth/api";
 import { withConsentLock } from "./consent-lock.js";
 import { revokeProjectedGrant, auditGrantReused } from "./grant-lifecycle.js";
 import { appWriter } from "./version-writer.js";
@@ -343,6 +344,31 @@ export function withCredentialAudit<
                   args.data?.userId !== confirms.userId
                 )
                   return null;
+              }
+              if (
+                operation === "create" &&
+                ["oauthAccessToken", "oauthRefreshToken"].includes(
+                  args.model,
+                ) &&
+                args.data
+              ) {
+                const { clientId, userId, scopes } = args.data;
+                if (
+                  typeof clientId === "string" &&
+                  typeof userId === "string" &&
+                  Array.isArray(scopes)
+                ) {
+                  const held = await storage.oauthProvider?.getPriorConsent(
+                    clientId,
+                    userId,
+                  );
+                  if (!held || !scopesAreNarrower(held, scopes as string[]))
+                    throw new APIError("BAD_REQUEST", {
+                      error: "invalid_grant",
+                      error_description:
+                        "The app's access changed. Authorize again.",
+                    });
+                }
               }
               if (operation === "delete")
                 previous = await adapter.findOne(args);

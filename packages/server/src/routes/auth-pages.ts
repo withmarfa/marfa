@@ -3,7 +3,14 @@ import { contentSecurityPolicy } from "./content-security-policy.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import type { Context } from "hono";
-import { Hono } from "hono";
+import { createOpenAPIRouter } from "../openapi.js";
+import { appKindOf } from "../auth/connected-apps.js";
+import { narrowAppGrant } from "../auth/grant-narrowing.js";
+import {
+  listGrantsRoute,
+  deleteGrantRoute,
+  narrowGrantRoute,
+} from "./grant-schemas.js";
 import { readInstanceName } from "../instance-name.js";
 import {
   MarfaError,
@@ -230,8 +237,8 @@ async function createUserAppGrant(
  * @better-auth/oauth-provider plugin, with its own salt and signer wired
  * through `instance.ts`. Nothing here signs anything.
  */
-export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
-  const router = new Hono<AppEnv>();
+export function authRoutes(storage: Storage, auth?: MarfaAuth) {
+  const router = createOpenAPIRouter<AppEnv>();
 
   // Each lane counts every door before looking up a code, including successful
   // lookups: a sweep may try each code only once. Owner authority comes from
@@ -354,7 +361,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   // under the grant.
   // -----------------------------------------------------------------------
 
-  router.get("/grants", async (c) => {
+  router.openapi(listGrantsRoute, async (c) => {
     // Listing every app the owner authorized, and revoking one, are
     // operations on other principals' access — the same standing as the key
     // management routes beside them.
@@ -365,7 +372,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     requirePermission(c, "grants.manage");
     const grants: {
       id: string;
-      kind: string;
+      kind: "app" | "web" | "cli";
       client_id: string;
       client_name: string | null;
       origins: string[];
@@ -384,7 +391,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           : ((await storage.oauthProvider?.getClient(clientId)) ?? null);
       grants.push({
         id: item.id,
-        kind: "app",
+        kind: appKindOf(client).kind,
         client_id: clientId,
         client_name: client?.name ?? null,
         origins: client === null ? [] : webOriginsOf(client),
@@ -396,10 +403,30 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
           typeof props.last_used_at === "string" ? props.last_used_at : null,
       });
     }
-    return c.json({ data: grants, next_cursor: null });
+    return c.json({ data: grants, next_cursor: null }, 200);
   });
 
-  router.delete("/grants/:id", async (c) => {
+  router.openapi(narrowGrantRoute, async (c) => {
+    requireRecentOwnerAuthentication(c);
+    const { id } = c.req.valid("param");
+    const { scopes, expected_scopes } = c.req.valid("json");
+    const owner = await storage.owner?.find();
+    const result = await narrowAppGrant(
+      storage,
+      owner?.id ?? null,
+      id,
+      expected_scopes,
+      scopes,
+      {
+        keyId: authorityId(c),
+        clientIp: c.var.clientIp ?? null,
+        writer: requestWriter(c),
+      },
+    );
+    return c.json({ scopes: result }, 200);
+  });
+
+  router.openapi(deleteGrantRoute, async (c) => {
     // The same axis as `GET /grants`: `grants.manage` to act at all.
     requirePermission(c, "grants.manage");
     if (c.get("authority")?.kind === "owner")

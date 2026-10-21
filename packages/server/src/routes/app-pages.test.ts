@@ -248,7 +248,7 @@ describe("Home, for the connected apps", () => {
 });
 
 describe("an app's own page", () => {
-  it("shows its kind, when it was approved and last used, and what it can reach without a control to change it", async () => {
+  it("shows its kind, when it was approved and last used, and what it can reach with narrowing controls", async () => {
     await disconnectAll();
     const app = await seedOauthBearer(ctx, ["core.note:read"], {
       clientName: "Reader",
@@ -263,15 +263,10 @@ describe("an app's own page", () => {
     expect(text).toMatch(/Approved \w+ \d+/);
     expect(text).toMatch(/Last used Never/);
     expect(text).toContain("Your data");
-    // It shows what the app holds and asks for nothing: no field but the
-    // password of the confirm dialog, no save.
-    expect(
-      pageFields(html)
-        .filter((f) => f.type !== "hidden")
-        .map((f) => f.name),
-    ).toEqual(["password"]);
-    expect(pageForms(html).filter((f) => f.method === "post")).toEqual([]);
-    expect(text).not.toContain("Save changes");
+    expect(pageFields(html).some((f) => f.name === "scopes")).toBe(true);
+    expect(pageForms(html).some((f) => f.method === "post")).toBe(true);
+    expect(text).toContain("Reducing access ends sign-ins that use more");
+    expect(text).toContain("Ends if unused");
   });
 
   it("lists the keys the app made, linking to each key's page, and not the owner's own", async () => {

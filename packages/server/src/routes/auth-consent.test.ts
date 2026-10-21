@@ -16,11 +16,12 @@
  *     (DCR registration without client_name is RFC 7591-compliant)
  */
 import { makeSignature } from "better-auth/crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { setActivePermissionBundles } from "../config.js";
 import { itemWrites } from "../storage/item-writes.js";
 import type { TestContext } from "../test-utils.js";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, seedOauthBearer } from "../test-utils.js";
 import { __test_internals } from "./auth-consent.js";
 import { defaultSubmission, readControls, visibleText } from "../test-html.js";
 
@@ -29,6 +30,7 @@ let ctx: TestContext | undefined;
 afterEach(async () => {
   await ctx?.cleanup();
   ctx = undefined;
+  setActivePermissionBundles(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -227,6 +229,78 @@ async function seedAccessToken(
 // ---------------------------------------------------------------------------
 
 describe("GET /auth/authorize (consent page)", () => {
+  it("requires approval when an exact type request becomes a subtree request", async () => {
+    setActivePermissionBundles([
+      {
+        id: "subtree",
+        label: "Note subtypes",
+        description: "",
+        default_on: true,
+        scopes: ["core.note.*:read"],
+      },
+    ]);
+    ctx = await createTestContext({});
+    const app = await seedOauthBearer(ctx, ["core.note:read"]);
+    const verifier = randomBytes(32).toString("base64url");
+    const extra = {
+      redirect_uri: "http://localhost:5173/callback",
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    };
+    const exact = await buildSignedOauthQuery(
+      app.clientId,
+      "core.note:read",
+      extra,
+    );
+    const alreadyApproved = await ctx.ownerRequest(`/auth/authorize?${exact}`);
+    expect(alreadyApproved.status).toBe(302);
+    expect(
+      new URL(alreadyApproved.headers.get("location")!).searchParams.has(
+        "code",
+      ),
+    ).toBe(true);
+
+    const subtree = await buildSignedOauthQuery(
+      app.clientId,
+      "core.note.*:read",
+      extra,
+    );
+    const screen = await ctx.ownerRequest(`/auth/authorize?${subtree}`);
+    expect(screen.status).toBe(200);
+    expect(screen.headers.get("location")).toBeNull();
+    expect(await screen.text()).toContain('value="core.note.*:read"');
+    const approved = await request(
+      ctx.app,
+      "POST",
+      "/auth/authorize/decision",
+      {
+        headers: { cookie: ctx.owner.cookie, origin: ORIGIN },
+        form: {
+          accept: "true",
+          oauth_query: subtree,
+          scopes: ["core.note.*:read"],
+        },
+      },
+    );
+    expect(approved.status).toBe(302);
+    const code = new URL(approved.headers.get("location")!).searchParams.get(
+      "code",
+    );
+    expect(code).not.toBeNull();
+    const token = await request(ctx.app, "POST", "/auth/oauth2/token", {
+      headers: { origin: ORIGIN },
+      form: {
+        grant_type: "authorization_code",
+        client_id: app.clientId,
+        code: code!,
+        redirect_uri: extra.redirect_uri,
+        code_verifier: verifier,
+      },
+    });
+    expect(token.status).toBe(200);
+    expect(((await token.json()) as { scope: string }).scope).toBe(
+      "core.note.*:read",
+    );
+  });
   it("redirects to /auth/sign-in when no session is present", async () => {
     ctx = await createTestContext();
     const res = await request(

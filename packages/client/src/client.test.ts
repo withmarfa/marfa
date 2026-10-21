@@ -575,3 +575,61 @@ it.each(["items", "edges"] as const)(
     expect(server.seen).toHaveLength(1);
   },
 );
+
+it("sends the published app grant operations and reads an empty disconnect answer", async () => {
+  const seen: Request[] = [];
+  const client = createClient({
+    baseUrl: "https://marfa.example",
+    credential: "k",
+    fetch: (input, init) => {
+      const request = new Request(input, init);
+      seen.push(request);
+      return Promise.resolve(
+        new Response(
+          request.method === "DELETE"
+            ? null
+            : JSON.stringify(
+                request.method === "GET"
+                  ? { data: [], next_cursor: null }
+                  : { scopes: ["core.note:read"] },
+              ),
+          {
+            status: request.method === "DELETE" ? 204 : 200,
+            headers: {
+              "content-type": "application/json",
+              [CONTRACT_HEADER]: String(CONTRACT_VERSION),
+            },
+          },
+        ),
+      );
+    },
+  });
+  expect((await client.GET("/auth/grants")).data?.next_cursor).toBeNull();
+  const choice = {
+    scopes: ["core.note:read"],
+    expected_scopes: ["core.note:write"],
+  };
+  expect(
+    (
+      await client.PATCH("/auth/grants/{id}", {
+        params: { path: { id: "app-1" } },
+        body: choice,
+      })
+    ).data?.scopes,
+  ).toEqual(choice.scopes);
+  expect(
+    (
+      await client.DELETE("/auth/grants/{id}", {
+        params: { path: { id: "app-1" }, query: { revoke_keys: "1" } },
+      })
+    ).response.status,
+  ).toBe(204);
+  expect(
+    seen.map((r) => [r.method, new URL(r.url).pathname, new URL(r.url).search]),
+  ).toEqual([
+    ["GET", "/auth/grants", ""],
+    ["PATCH", "/auth/grants/app-1", ""],
+    ["DELETE", "/auth/grants/app-1", "?revoke_keys=1"],
+  ]);
+  expect(await seen[1]!.json()).toEqual(choice);
+});

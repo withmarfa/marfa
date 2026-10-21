@@ -194,7 +194,7 @@ const SignInSchema = z
       .string()
       .nullable()
       .describe(
-        "When the sign-in ends unless something changes, in UTC. A browser's is seven days and one minute after `last_used_at`. `null` for an app, and for a key that doesn't expire.",
+        "When the sign-in ends unless used again, in UTC. For an app, the inactivity boundary. `null` for disabled app inactivity retirement or a key without an expiry.",
       )
       .openapi({ example: "2026-10-12T14:13:08.000Z" }),
     ip_address: z
@@ -409,6 +409,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
       auth,
       keysInReach(storage, c),
       owner?.id ?? null,
+      c.var.config.grantInactivityDays ?? 365,
     );
     const current =
       authority?.kind === "owner" ? authority.sessionId : undefined;
@@ -437,6 +438,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
         clientIp: c.get("clientIp") ?? null,
         writer: requestWriter(c),
       },
+      c.var.config.grantInactivityDays ?? 365,
     );
     if (renamed === "browser")
       throw new MarfaError(

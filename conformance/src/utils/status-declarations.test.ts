@@ -954,9 +954,9 @@ describe("the sign-in routes", () => {
     const report = reportStatuses(
       parseRequestLines(
         logLine({
-          method: "GET",
-          path: "/auth/grants",
-          route: "/auth/grants",
+          method: "POST",
+          path: "/auth/confirm",
+          route: "/auth/confirm",
           status: 418,
         }),
       ),
@@ -964,7 +964,7 @@ describe("the sign-in routes", () => {
     );
     expect(
       report.undeclared.map((u) => `${u.operation} ${String(u.status)}`),
-    ).toEqual(["GET /auth/grants 418"]);
+    ).toEqual(["POST /auth/confirm 418"]);
   });
 
   it("report a route under the library's pattern that nothing names", () => {
