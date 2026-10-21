@@ -624,15 +624,18 @@ describe("where a file sits", () => {
   });
 
   it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
-    const [photo, paper, words] = [
+    const [photo, paper, words, notes] = [
       "01a00000-0000-7000-8000-0000000016f1",
       "01a00000-0000-7000-8000-0000000016f2",
       "01a00000-0000-7000-8000-0000000016f3",
+      "01a00000-0000-7000-8000-0000000016f4",
     ];
     const photoBytes = Buffer.from([
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x16, 0xf1,
     ]);
     const paperBytes = Buffer.from("%PDF-1.4\n%%EOF\n");
+    // A file item at a document name, whose bytes are plain text.
+    const notesBytes = Buffer.from("plain text held as a file\n");
     const placed = await placedHarness(
       "placement-added-again",
       [
@@ -664,12 +667,19 @@ describe("where a file sits", () => {
           properties: { title: "words", body: "plain words\n" },
           path: "words.txt",
         },
+        {
+          id: notes,
+          title: "notes.md",
+          type: "core.file",
+          properties: { title: "notes.md", blob_ref: hashOf(notesBytes) },
+          path: "notes.md",
+        },
       ],
       { search: { types: ["core.file", "core.file.image", "core.note"] } },
     );
     harness = placed.harness;
     acceptUploads(harness.server);
-    for (const bytes of [photoBytes, paperBytes]) {
+    for (const bytes of [photoBytes, paperBytes, notesBytes]) {
       scriptBlob(harness.server, bytes);
     }
     const first = await harness.folder.pull();
@@ -677,6 +687,7 @@ describe("where a file sits", () => {
     expect(readFileSync(join(harness.dir, "Pictures", "photo.png"))).toEqual(
       photoBytes,
     );
+    expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(notesBytes);
     expect(read(harness, "words.txt")).toBe("plain words\n");
 
     // Its own state goes, and the directory is added again: none of these
@@ -704,6 +715,8 @@ describe("where a file sits", () => {
     ).toEqual(["new.png", "photo.png"]);
     expect(existsSync(join(harness.dir, "words (2).txt"))).toBe(false);
     expect(existsSync(join(harness.dir, "paper (2).pdf"))).toBe(false);
+    expect(existsSync(join(harness.dir, "notes (2).md"))).toBe(false);
+    expect(readFileSync(join(harness.dir, "notes.md"))).toEqual(notesBytes);
 
     // Taken back, a file holds its item's own bytes, so it goes with the
     // item when another device trashes it.

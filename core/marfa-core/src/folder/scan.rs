@@ -1412,7 +1412,7 @@ impl Folder {
                 });
             }
         }
-        // A file that cannot carry an id and that no record here names, the
+        // A file that carries no id and that no record here names, the
         // folder added again over its own files say, is the item this folder
         // holds that is placed where it sits and whose bytes it holds. An item
         // the search no longer holds, one another folder took in or one that
@@ -1423,7 +1423,6 @@ impl Folder {
                 || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
-                || carries_frontmatter(&file.path)
             {
                 continue;
             }
@@ -1444,7 +1443,11 @@ impl Folder {
                 let Some(item) = self.core.get(&edge.source_id)? else {
                     continue;
                 };
-                if !self.holds_bytes(&item, file, catalog) {
+                // A note's Markdown file carries its id line, so one without
+                // it is only ever a file item's.
+                if carries_frontmatter(&file.path) && bytes_of(&item, catalog).is_none()
+                    || !self.holds_bytes(&item, file, catalog)
+                {
                     continue;
                 }
                 taken.insert(item.id.clone());
@@ -1470,18 +1473,21 @@ impl Folder {
                 break;
             }
         }
-        // A file that cannot carry an id, moved here from another folder on
-        // this machine, is the item that folder bound it to.
+        // A file that carries no id, moved here from another folder on this
+        // machine, is the item that folder bound it to.
         for (at, file) in files.iter().enumerate() {
             if file.deferred
                 || claims[at].is_some()
                 || waiting.contains_key(&at)
                 || file.id.is_some()
-                || carries_frontmatter(&file.path)
             {
                 continue;
             }
-            let Some(theirs) = peers.left_behind(file.mark.as_deref(), &file.hash) else {
+            let Some(theirs) = peers.left_behind(
+                file.mark.as_deref(),
+                &file.hash,
+                carries_frontmatter(&file.path),
+            ) else {
                 continue;
             };
             if by_item.contains_key(theirs.item_id.as_str()) || taken.contains(&theirs.item_id) {
@@ -1749,10 +1755,13 @@ impl Folder {
         // An item already in the bin is where the delete would put it, and the
         // server refuses a second delete `404`.
         let mut leaves = true;
-        let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
+        let missing = if let Some(item) = held.filter(|item| item.state != ItemState::Trashed) {
             let holds = self.holds(item_id, settings, members);
             let look = match &bound {
-                Some(bound) => peers.moved_to(bound, holds),
+                Some(bound) => {
+                    let catalog = Catalog::load(&*self.core.conn()?)?;
+                    peers.moved_to(bound, holds, bytes_of(&item, &catalog).is_some())
+                }
                 None => Look::Nowhere,
             };
             match look {
