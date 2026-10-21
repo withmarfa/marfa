@@ -807,6 +807,7 @@ describe("a query key no door declares", () => {
       (method === "GET" && template === "/folders") ||
       template === "/auth/grants" ||
       template.startsWith("/auth/grants/") ||
+      template === "/attention" ||
       template === "/owner" ||
       template.startsWith("/owner/") ||
       template === "/restore" ||
@@ -885,8 +886,9 @@ describe("a query key no door declares", () => {
 
     const unrefused: string[] = [];
     for (const door of doors) {
-      // The credential that may use the door: the per-test key holds every
-      // permission, and the management key holds the instance routes it does not.
+      // The owner-only doors use the owner session above. For the others, the
+      // per-test key holds every content permission and the management key
+      // holds the instance permissions it does not.
       let refused = false;
       for (const key of [apiKey, managementKey ?? ""]) {
         const { status, unknown } = await stray(
@@ -912,10 +914,21 @@ describe("a query key no door declares", () => {
   }, 120_000);
 
   it("is refused after the credential, so a bare request still answers 401", async () => {
-    for (const path of ["/items", "/types", "/keys", "/events"]) {
+    for (const path of ["/items", "/types", "/keys", "/events", "/attention"]) {
       const bare = await fetch(`${apiUrl}${path}?${STRAY}=1`);
       expect(bare.status, path).toBe(401);
       await bare.body?.cancel();
+    }
+  });
+
+  it("refuses ordinary keys before inspecting the attention query", async () => {
+    for (const key of [apiKey, process.env.MARFA_MANAGEMENT_KEY]) {
+      expect(key).toBeTruthy();
+      const response = await fetch(`${apiUrl}/attention?${STRAY}=1`, {
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      expect(response.status).toBe(403);
+      await response.body?.cancel();
     }
   });
 
