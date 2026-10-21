@@ -436,3 +436,60 @@ describe("an upload while the disk's queued deletion of its bytes does not answe
     }
   });
 });
+
+describe("a drop that the location log alone would allow", () => {
+  async function twoCopies(c: TestContext, content: string) {
+    const { stores, second } = await withSecondStore(c);
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    return { stores, second, hash };
+  }
+
+  it("drops a copy while the other copy the log names is held", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "both held");
+    await dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    expect(await second.has(hash)).toBeNull();
+  });
+
+  it("refuses the drop when the other copy the log names is gone from its store, and keeps the copy", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "one gone");
+    // The disk lost its copy behind the log's back, as a late delete would.
+    await ctx.blobs.disk.delete(hash);
+    const refused = dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
+    await expect(refused).rejects.toBeInstanceOf(CopiesBelowMinimum);
+    await expect(refused).rejects.toMatchObject({ live: 1, minCopies: 1 });
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id, second.id].sort());
+    expect(await second.has(hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
+  });
+
+  it("refuses the drop when the store of the other copy does not answer", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "other silent");
+    const has = ctx.blobs.disk.has.bind(ctx.blobs.disk);
+    ctx.blobs.disk.has = () => new Promise(() => undefined);
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      await expect(
+        dropBlobCopy(ctx.storage, stores, hash, second.id, 1),
+      ).rejects.toBeInstanceOf(CopiesBelowMinimum);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      ctx.blobs.disk.has = has;
+    }
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    expect(await second.has(hash)).not.toBeNull();
+  });
+});

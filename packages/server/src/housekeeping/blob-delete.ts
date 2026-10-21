@@ -11,16 +11,18 @@ import { errorMessage } from "../error-text.js";
 import {
   awaitStoreChange,
   storeCheckTimeoutMs,
+  within,
 } from "../storage/blob-layer.js";
 
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
  * written over the location log, and every deletion here answers to it: a
  * drop goes only if the log's count of live copies allows it, decided in
- * the one statement that removes the row; a purge takes a blob to zero
- * only because the orphan report named it on an earlier run and nothing
- * names it in the transaction that removes the row; a strike's
- * second half discards bytes the check has just struck from the log. Each
+ * the one statement that removes the row, and the stores confirm enough of
+ * the copies that remain; a purge takes a blob to zero only because the
+ * orphan report named it on an earlier run and nothing names it in the
+ * transaction that removes the row; a strike's second half discards bytes
+ * the check has just struck from the log. Each
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
  *
@@ -63,9 +65,11 @@ export class LocationNotFound extends Error {
 
 /**
  * Drop one store's copy of a blob, when the log says enough live copies
- * would remain. Location removal, audit and cleanup intent commit together
- * before bytes are deleted, so a store failure leaves a retryable intent
- * and the drop still succeeds.
+ * would remain and their stores confirm they hold them. The log alone can
+ * name a copy that is gone, such as one a store's late delete removed, and
+ * a drop trusting it could take the last real copy. Location removal, audit
+ * and cleanup intent commit together before bytes are deleted, so a store
+ * failure leaves a retryable intent and the drop still succeeds.
  */
 export async function dropBlobCopy(
   storage: Storage,
@@ -78,6 +82,7 @@ export async function dropBlobCopy(
   const store = stores.byId(storeId);
   if (!store) throw new LocationNotFound(hash, storeId);
   await withBlobUploadLock(hash, async () => {
+    const confirmed = await confirmedOthers(storage, stores, hash, storeId);
     await runAuditedTransaction(
       storage,
       async () => {
@@ -92,6 +97,11 @@ export async function dropBlobCopy(
             (location) => !location.detached,
           ).length;
           throw new CopiesBelowMinimum(hash, live, minCopies);
+        }
+        // The log allowed it; the stores must too. Thrown here, the row's
+        // removal rolls back with the rest of the transaction.
+        if (confirmed < minCopies) {
+          throw new CopiesBelowMinimum(hash, confirmed + 1, minCopies);
         }
         await storage.blobs.queueCopyDeletion(hash, storeId);
       },
@@ -115,6 +125,48 @@ export async function dropBlobCopy(
       });
     }
   });
+}
+
+/**
+ * How many of the blob's other live copies, those the log names in attached
+ * stores other than `storeId`, their stores confirm they hold at the blob's
+ * size, each asked within the store check bound. A store that fails or does
+ * not answer confirms nothing. The caller holds the blob's upload lock, so
+ * the log's copies of the blob do not change before the drop commits.
+ */
+async function confirmedOthers(
+  storage: Storage,
+  stores: Stores,
+  hash: string,
+  storeId: string,
+): Promise<number> {
+  const record = await storage.blobs.get(hash);
+  const locations = await storage.blobs.listLocations(hash);
+  if (!record || !locations.some((l) => l.store_id === storeId && !l.detached))
+    return 0;
+  const answers = await Promise.all(
+    locations
+      .filter((location) => !location.detached && location.store_id !== storeId)
+      .map(async (location) => {
+        const other = stores.byId(location.store_id);
+        if (!other) return false;
+        try {
+          const held = await within(
+            (cancel) => other.has(hash, cancel),
+            storeCheckTimeoutMs(),
+          );
+          return held?.size_bytes === record.size_bytes;
+        } catch (err) {
+          log("error", "blob.drop_copy_unconfirmed", {
+            hash,
+            store_id: other.id,
+            error: errorMessage(err),
+          });
+          return false;
+        }
+      }),
+  );
+  return answers.filter(Boolean).length;
 }
 
 /**

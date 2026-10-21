@@ -16545,7 +16545,7 @@ export interface operations {
                     "application/json": components["schemas"]["BlobLocationNotFoundOrBlobNotFoundRefusal"];
                 };
             };
-            /** @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`. Nothing changes. */
+            /** @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

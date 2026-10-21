@@ -623,7 +623,7 @@ const deleteBlobLocationRoute = createRoute({
         },
       },
       description:
-        "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`. Nothing changes.",
+        "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.",
     },
   },
 });

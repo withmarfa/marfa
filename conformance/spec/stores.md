@@ -326,6 +326,14 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 **Tests:** `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/drop-confirms-copies`
+
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
+
+**Reason:** the location log can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the log could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+
+**Tests:** `compliance/blob-rules.test.ts › refuses a drop the log allows when the other copy is gone from its store, and keeps the copy`.
+
 ### `stores/drop-no-copy`
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_location_not_found`.
@@ -358,7 +366,7 @@ When a caller authorized by `blobs.manage` or direct owner or local authority se
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`.
 
