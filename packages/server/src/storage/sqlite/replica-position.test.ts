@@ -457,6 +457,35 @@ describe("the replica marker", () => {
     });
   });
 
+  it("reads an endpoint written another way as the same endpoint", async () => {
+    const volume = await volumeWith(3);
+    writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));
+    for (const endpoint of [
+      "http://127.0.0.1:3900/",
+      "HTTP://127.0.0.1:3900",
+      "http://127.0.0.1:3900//",
+    ]) {
+      writeFileSync(
+        replicaMarkerPath(volume.sqlitePath),
+        replicaMarker({ ...TARGET, endpoint }),
+      );
+      expect(checkReplica(volume.sqlitePath, 5n, TARGET), endpoint).toEqual({
+        start: true,
+      });
+    }
+    const aws = {
+      ...TARGET,
+      endpoint: "https://S3.eu-west-1.amazonaws.com:443/",
+    };
+    writeFileSync(replicaMarkerPath(volume.sqlitePath), replicaMarker(aws));
+    expect(
+      checkReplica(volume.sqlitePath, 5n, {
+        ...TARGET,
+        endpoint: "https://s3.eu-west-1.amazonaws.com",
+      }),
+    ).toEqual({ start: true });
+  });
+
   it("refuses a record whose marker names another replica, however far it reaches", async () => {
     const volume = await volumeWith(3);
     writeLtx(volume.sqlitePath, await ltxAtLogEnd(volume, 5n));

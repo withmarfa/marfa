@@ -40,13 +40,18 @@ if [ -z "${S3_FORCE_PATH_STYLE:-}" ]; then
   if [ -n "${S3_ENDPOINT:-}" ]; then S3_FORCE_PATH_STYLE=true; else S3_FORCE_PATH_STYLE=false; fi
 fi
 : "${S3_REGION:=us-east-1}"
+# The value with the space around it removed, as the server reads a setting.
+trimmed() {
+  t=$1
+  while :; do case $t in [[:space:]]*) t=${t#?} ;; *) break ;; esac; done
+  while :; do case $t in *[[:space:]]) t=${t%?} ;; *) break ;; esac; done
+  printf '%s' "$t"
+}
 # The key prefix as the server reads it (`keyPrefix` in
 # `packages/server/src/config.ts`), because Litestream takes the replica path,
 # `<prefix>/db`, as written. The server is handed the same reading, and
 # `ci/entrypoint.test.ts` holds the two together.
-prefix=${S3_PREFIX:-}
-while :; do case $prefix in [[:space:]]*) prefix=${prefix#?} ;; *) break ;; esac; done
-while :; do case $prefix in *[[:space:]]) prefix=${prefix%?} ;; *) break ;; esac; done
+prefix=$(trimmed "${S3_PREFIX:-}")
 [ -n "$prefix" ] || prefix=blobs
 while :; do case $prefix in /*) prefix=${prefix#/} ;; *) break ;; esac; done
 while :; do case $prefix in */) prefix=${prefix%/} ;; *) break ;; esac; done
@@ -61,9 +66,7 @@ export SQLITE_PATH BLOB_PATH S3_FORCE_PATH_STYLE S3_REGION S3_PREFIX
 
 # The words the server reads as a flag, in any case and with any space
 # around them, and empty for unset.
-replace_newer=$(printf '%s' "${MARFA_REPLACE_NEWER_REPLICA:-}" | tr '[:upper:]' '[:lower:]')
-while :; do case $replace_newer in [[:space:]]*) replace_newer=${replace_newer#?} ;; *) break ;; esac; done
-while :; do case $replace_newer in *[[:space:]]) replace_newer=${replace_newer%?} ;; *) break ;; esac; done
+replace_newer=$(trimmed "${MARFA_REPLACE_NEWER_REPLICA:-}" | tr '[:upper:]' '[:lower:]')
 case $replace_newer in
   true | 1 | yes | on) replace_newer=true ;;
   '' | false | 0 | no | off) replace_newer=false ;;
@@ -146,9 +149,13 @@ else
   # `packages/server/src/storage/sqlite/replica-position.ts` reads it. It is
   # removed with the record and written once the record is settled, so the
   # two agree. The check takes a record with no such file, which a volume
-  # replicated by an earlier image holds, to be of this replica.
+  # replicated by an earlier image holds, to be of this replica. The file
+  # holds one value a line, so the endpoint and bucket are written as the
+  # server reads them, without the space around them.
   record="$(dirname "$SQLITE_PATH")/.$(basename "$SQLITE_PATH")-litestream"
   replica_marker="$SQLITE_PATH-replica"
+  endpoint=$(trimmed "${S3_ENDPOINT:-}")
+  bucket=$(trimmed "$S3_BUCKET")
   forget_record=false
   if [ "$had_database" = false ]; then
     forget_record=true
@@ -160,7 +167,7 @@ else
       echo "Could not list the replica at $S3_PREFIX/db in the bucket $S3_BUCKET, so this start cannot check that the database at $SQLITE_PATH is not older than it. Replication has not started, and the bucket is unchanged. Start again once the bucket can be reached. To start without the check, start once with MARFA_REPLACE_NEWER_REPLICA=true: a database older than the replica then becomes its newest state." >&2
       exit 1
     fi
-    if ! verdict=$(printf '%s' "$replica" | node dist/replica-check.js "$SQLITE_PATH" "$S3_BUCKET" "$S3_PREFIX" "${S3_ENDPOINT:-}"); then
+    if ! verdict=$(printf '%s' "$replica" | node dist/replica-check.js "$SQLITE_PATH" "$bucket" "$S3_PREFIX" "$endpoint"); then
       exit 1
     fi
     if [ "$verdict" = empty ]; then forget_record=true; fi
@@ -172,7 +179,7 @@ else
       rm -rf "$record"
     fi
   fi
-  printf 'endpoint=%s\nbucket=%s\nprefix=%s\n' "${S3_ENDPOINT:-}" "$S3_BUCKET" "$S3_PREFIX" > "$replica_marker.tmp"
+  printf 'endpoint=%s\nbucket=%s\nprefix=%s\n' "$endpoint" "$bucket" "$S3_PREFIX" > "$replica_marker.tmp"
   mv "$replica_marker.tmp" "$replica_marker"
 
   supervise litestream replicate -config /etc/litestream.yml -exec "/bin/sh \"$0\" run-server" || code=$?

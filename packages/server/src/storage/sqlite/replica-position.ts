@@ -201,6 +201,29 @@ export function readReplicaMarker(
   };
 }
 
+/**
+ * Whether `a` and `b` name one replica. An HTTP endpoint is compared as a
+ * URL, so the case of its scheme and host, a default port and a trailing
+ * slash do not tell two apart.
+ */
+export function sameReplica(a: ReplicaName, b: ReplicaName): boolean {
+  return (
+    a.bucket === b.bucket &&
+    a.prefix === b.prefix &&
+    endpointKey(a.endpoint) === endpointKey(b.endpoint)
+  );
+}
+
+function endpointKey(endpoint: string): string {
+  if (URL.canParse(endpoint)) {
+    const url = new URL(endpoint);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+    }
+  }
+  return endpoint.replace(/\/+$/, "");
+}
+
 /** The directory Litestream keeps its level-0 LTX files in for `sqlitePath`. */
 export function localLtxDir(sqlitePath: string): string {
   return join(
@@ -498,7 +521,7 @@ export function checkReplica(
   if (marker === "unreadable") {
     return { start: false, reason: "elsewhere", replica };
   }
-  if (marker !== undefined && replicaMarker(marker) !== replicaMarker(target)) {
+  if (marker !== undefined && !sameReplica(marker, target)) {
     return { start: false, reason: "elsewhere", recordedFor: marker, replica };
   }
   const newest = newestLocalLtx(sqlitePath);

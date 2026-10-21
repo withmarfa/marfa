@@ -617,6 +617,31 @@ describe("deploy/entrypoint.sh, before replication starts", () => {
     expect(existsSync(join(run.dir, RECORD))).toBe(true);
   });
 
+  it("writes the endpoint and bucket into the marker and the check as the server reads them, without the space around them", async () => {
+    const run = start({
+      database: true,
+      record: true,
+      listing: LISTING,
+      env: {
+        S3_BUCKET: " a-bucket\n",
+        S3_ENDPOINT: "http://127.0.0.1:3900\n",
+      },
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(readFileSync(join(run.dir, "check-args"), "utf8")).toBe(
+      `${join(run.dir, "data/marfa.db")}\na-bucket\nblobs\nhttp://127.0.0.1:3900\n`,
+    );
+    expect(readFileSync(join(run.dir, MARKER), "utf8")).toBe(
+      replicaMarker({
+        endpoint: "http://127.0.0.1:3900",
+        bucket: "a-bucket",
+        prefix: "blobs",
+      }),
+    );
+  });
+
   it("replaces a marker that names another replica when the check finds the replica empty and the record is removed", async () => {
     const run = start({
       bucket: true,
