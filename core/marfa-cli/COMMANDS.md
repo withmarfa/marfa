@@ -31,7 +31,7 @@ Every command accepts these.
 | 1 | The request was refused, by the server (a wrong or spent setup code included), by the CLI before sending, for an answer on another contract, or for a docs page that does not exist, or the archive of an export or a restore lacks blobs it names; a retry does not change it. |
 | 2 | The command line was wrong, or named no store or server. |
 | 3 | The environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again. |
-| 4 | The working copy or the queue refused under the device rules, or this system has no keychain. |
+| 4 | The working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system). |
 | 5 | No credential, the credential was refused, or the sign-in ended; `marfa login` starts one. |
 | 130 | A long-lived command (`folders watch`, `events`, `device changes`) was ended by Ctrl-C, or a second Ctrl-C ended a command that was still stopping. |
 

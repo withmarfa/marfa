@@ -64,7 +64,7 @@ pub enum CliError {
     NoServerForKey,
     #[error("no credential for {origin}: {}", crate::credentials::advice())]
     NoCredential { origin: String },
-    #[error("no keychain on this system: {0}")]
+    #[error("the keychain cannot be used: {0}")]
     NoKeychain(String),
     #[error("signed out of {origin}: run `marfa login`")]
     SignedOut { origin: String },
@@ -250,7 +250,7 @@ impl Exit {
                 "the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract, full local storage, a docs site that cannot be read); try again"
             }
             Exit::Local => {
-                "the working copy or the queue refused under the device rules, or this system has no keychain"
+                "the working copy or the queue refused under the device rules, or the keychain cannot be used (locked, missing, unreadable, or none on this system)"
             }
             Exit::Credential => {
                 "no credential, the credential was refused, or the sign-in ended; `marfa login` starts one"

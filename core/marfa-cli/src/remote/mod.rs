@@ -371,9 +371,10 @@ impl Remote {
         }
         match credentials::current() {
             Ok(Some(origin)) => Ok(origin),
-            // A keychain that cannot be asked means no server was named,
-            // whose message says how to name one.
-            Ok(None) | Err(CliError::NoKeychain(_)) => Err(CliError::NoServerNamed),
+            // Nothing kept, or a keychain that is off: naming a server is the
+            // way on. A keychain that fails to answer may hold one, so its
+            // reason is the answer.
+            Ok(None) => Err(CliError::NoServerNamed),
             Err(error) => Err(error),
         }
     }

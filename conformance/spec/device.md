@@ -1712,6 +1712,14 @@ If the answer to the check of `keys keep` names another contract than the CLI wa
 
 **Tests:** `device/credential-locks.test.ts › keeps no key for $name, refusing it with exit $exit`.
 
+### `device/command-keychain-unreadable`
+
+If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason, and MUST NOT report `no_server`.
+
+**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off (`--no-keychain`, `MARFA_NO_KEYCHAIN`), or holds no current server, nothing is kept and `no_server` with exit 2 is right.
+
+**Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`.
+
 ### `device/command-events-refuses-cursor`
 
 If the stream that `events` reads sends a `cursor_ahead` or `catchup_too_old` frame (`events/cursor-ahead`, `events/catchup-too-old`), then the CLI MUST end the command `invalid` with exit 1, saying the cursor is not one the server's log holds.

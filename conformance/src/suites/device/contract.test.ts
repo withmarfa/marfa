@@ -694,6 +694,23 @@ describe("the contract the binary was built for", () => {
     }
   });
 
+  it("reports a keychain that cannot be read as itself, not as no server named", async () => {
+    const unreadable = await marfa(["--json", "whoami"], undefined, {
+      MARFA_KEYCHAIN: "/marfa-test-no-keychain",
+    });
+    expect(unreadable.code, unreadable.stderr).toBe(4);
+    const error = refusal(unreadable.stderr).error;
+    expect(error.code).toBe("no_keychain");
+    expect(error.message).toMatch(/keychain/);
+    // The witness: with the keychain off nothing is kept, and a server is
+    // what the command asks for.
+    const off = await marfa(["--json", "whoami"], undefined, {
+      MARFA_NO_KEYCHAIN: "1",
+    });
+    expect(off.code, off.stderr).toBe(2);
+    expect(refusal(off.stderr).error.code).toBe("no_server");
+  });
+
   it("exits 1, not 5, when the server refuses the setup code", async () => {
     const started = await ScriptedServer.start();
     server = started;
