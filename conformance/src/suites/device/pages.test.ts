@@ -675,35 +675,33 @@ describe("creates in pages", () => {
     harness = made.harness;
     const { door } = made;
     const { notes } = await queue(harness, 51);
-    let refused = 0;
+    let refused = false;
     door.page = () => {
-      if (refused > 0) return undefined;
-      refused += 1;
-      return answers.unauthorized();
-    };
-    door.single = () => {
-      if (refused > 1) return undefined;
-      refused += 1;
+      if (refused) return undefined;
+      refused = true;
       return answers.unauthorized();
     };
 
     const first = await drain(harness);
 
-    expect(refused).toBe(2);
+    expect(refused).toBe(true);
     expect(first.stopped, JSON.stringify(first)).not.toBeNull();
+    expect(first.answered).toBe(0);
+    // A write sent on its own door would meet the same refusal under a key
+    // the server never saw, and could go in no page after.
+    expect(door.requests("POST", "/items")).toHaveLength(0);
     expect(door.items.size).toBe(1);
 
     const second = await drain(harness);
 
-    // The walk sent the first write on its own door, under its key; the rest
-    // were never taken, so they go in a page as a first attempt.
     const pages = door.requests("POST", "/items/bulk");
     expect(pages, JSON.stringify(second)).toHaveLength(2);
     expect(
       (JSON.parse(pages[1]?.body ?? "{}") as { items: ItemEntry[] }).items.map(
         (entry) => entry.id,
       ),
-    ).toEqual(notes.slice(1).map((note) => note.item_id));
+    ).toEqual(notes.map((note) => note.item_id));
+    expect(door.requests("POST", "/items")).toHaveLength(0);
     expect(second.answered).toBe(51);
     expect(door.items.size).toBe(52);
   });

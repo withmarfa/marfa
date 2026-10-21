@@ -186,9 +186,25 @@ When the server answers a page with `429`, a device MUST leave every write in th
 
 ### `queue-and-verdicts/page-not-authorized`
 
-If the server answers a page with `401` and the device cannot renew its credential, then a device MUST leave every write in the page unanswered, uncounted and unsent.
+If the server answers a page with `401` and the device cannot renew its credential, then a device MUST leave every write in the page uncounted and unsent.
 
 **Reason:** a request refused for its credential was not taken, so once the device can sign in the same writes go in a page again rather than one at a time under keys the server never saw.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
+
+### `queue-and-verdicts/page-credential-blocks-queue`
+
+When the server answers a page `401` naming its contract, a device MUST block every write with no verdict `credential_refused`.
+
+**Reason:** the page's `401` is the refusal `queue-and-verdicts/credential-blocks-queue` says of a write: every queued write carries the same credential.
+
+**Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
+
+### `queue-and-verdicts/page-credential-stops-drain`
+
+When the server answers a page `401` naming its contract, a device MUST send no write after it in that drain.
+
+**Reason:** a write of the page sent on its own door would meet the same refusal under a key the server never saw, and a write sent before goes in no later page (`queue-and-verdicts/page-never-sent`).
 
 **Tests:** `device/pages.test.ts › leaves every write of a page the server refuses the credential for unsent, so it goes in a page again`.
 

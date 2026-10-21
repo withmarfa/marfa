@@ -17,9 +17,9 @@ use serde::Deserialize;
 
 use super::{
     Bin, Classified, DrainReport, ReadBack, Readiness, Settled, Shape, Unreadable, ViewChange,
-    apply_read_back, classify, committed, ends_the_drain, failure_of, not_the_writes, put_verdict,
-    rate_limited, read_owed, readiness, receipt_key, same_attempt, settle_success, store_fault,
-    unavailable, unavailable_by, verdict_of, waited,
+    apply_read_back, classify, committed, ends_the_drain, failure_of, not_the_writes,
+    park_for_credential, put_verdict, rate_limited, read_owed, readiness, receipt_key,
+    same_attempt, settle_success, store_fault, unavailable, unavailable_by, verdict_of, waited,
 };
 use crate::error::CoreError;
 use crate::http::{Answer, BULK_GET_LIMIT, Http, INSTANCE_CHANGED, REQUEST_LIMIT};
@@ -291,7 +291,8 @@ struct PageResult {
 
 /// Sends one page and settles what it created. `false` where the server
 /// answered the page with no answer for its entries that is about them, so
-/// the rest of the pass goes on the walk.
+/// the rest of the pass goes on the walk, or refused its credential and
+/// parked the queue.
 fn send_page(
     sender: &Sender<'_>,
     pass: &mut ViewChange,
@@ -421,6 +422,12 @@ fn send_page(
             report.unavailable =
                 unavailable(&answer).or_else(|| answer.as_ref().err().map(CoreError::to_string));
             return Ok(true);
+        }
+        // A write sent on its own door would meet the same refusal, under a
+        // key that then keeps it out of every later page.
+        Classified::BlockQueue(_) => {
+            park_for_credential(core, report)?;
+            return Ok(false);
         }
         _ => return Ok(false),
     }

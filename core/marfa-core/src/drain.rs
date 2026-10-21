@@ -1135,6 +1135,10 @@ fn send_queue(
 
     loop {
         crate::catch_up::refuse_if_stopped(stop)?;
+        // A page refused for its credential parked the queue.
+        if report.stopped.is_some() {
+            break;
+        }
         // The pass ended before the suspect was sent again.
         if report.unavailable.is_some()
             && let Some(stuck) = suspect.take()
@@ -1319,11 +1323,7 @@ fn send_queue(
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(payload) => payload,
             Err(CoreError::Unauthorized { .. }) => {
-                let conn = core.conn()?;
-                let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
-                report.stopped = Some(format!(
-                    "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
-                ));
+                park_for_credential(core, report)?;
                 break;
             }
             Err(error) => {
@@ -1648,11 +1648,7 @@ fn send_queue(
             carry_on = true;
         }
         if stop {
-            let conn = core.conn()?;
-            let parked = store::block_unanswered(&conn, BlockedReason::CredentialRefused)?;
-            report.stopped = Some(format!(
-                "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
-            ));
+            park_for_credential(core, report)?;
             break;
         }
         if settled.unavailable.is_some() && !carry_on {
@@ -1679,6 +1675,16 @@ fn send_queue(
     }
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;
+    Ok(())
+}
+
+/// Parks every unanswered write until the credential is replaced, and says
+/// so: the rest of the pass would meet the same refusal.
+fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
+    let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
+    report.stopped = Some(format!(
+        "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
+    ));
     Ok(())
 }
 
