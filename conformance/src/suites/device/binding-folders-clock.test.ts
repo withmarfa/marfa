@@ -105,6 +105,29 @@ describe("folder clock and scan boundaries", () => {
     expect((await bound.testClose()).ok).toBe(true);
   });
 
+  it("counts a file whose create the server has not answered waiting, and unchanged once it has", async () => {
+    const harness = await prepared("binding-scan-waiting");
+    const { bound, dir } = harness;
+    expect((await bound.testOpen()).ok).toBe(true);
+    writeFileSync(join(dir, "note.md"), "original\n");
+    const created = await bound.testScan();
+    expect(
+      created.ok && [created.value.created, created.value.waiting],
+    ).toEqual([1, 0]);
+    const waiting = await bound.testScan();
+    expect(
+      waiting.ok && [waiting.value.unchanged, waiting.value.waiting],
+    ).toEqual([0, 1]);
+    // The witness: once the create is sent, the same file is unchanged.
+    const sent = await bound.testDrain();
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    const settled = await bound.testScan();
+    expect(
+      settled.ok && [settled.value.unchanged, settled.value.waiting],
+    ).toEqual([1, 0]);
+    expect((await bound.testClose()).ok).toBe(true);
+  });
+
   it("performs a full first pass and the first pass past sixty seconds", async () => {
     const harness = await prepared("binding-periodic-scan");
     const { device } = harness;

@@ -775,6 +775,7 @@ export interface BindingFolderScan {
   updated: number;
   renamed: number;
   unchanged: number;
+  waiting: number;
   missing: number;
   deleted: number;
   skipped: number;

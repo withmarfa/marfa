@@ -167,7 +167,11 @@ pub struct FolderScan {
     pub created: u64,
     pub updated: u64,
     pub renamed: u64,
+    /// Files whose bytes are as they were and have no write waiting.
     pub unchanged: u64,
+    /// Files whose bytes are as they were but whose item's create or edit the
+    /// server has not answered yet. Not counted in `unchanged`.
+    pub waiting: u64,
     pub missing: u64,
     pub deleted: u64,
     pub skipped: u64,
@@ -726,27 +730,32 @@ fn pass_of(
             flagged: settings.flagged,
             unwritten: settings.unwritten,
         },
-        scan: FolderScan {
-            created: scan.created as u64,
-            updated: scan.updated as u64,
-            renamed: scan.renamed as u64,
-            unchanged: (scan.unchanged + scan.waiting) as u64,
-            missing: scan.missing as u64,
-            deleted: scan.deleted as u64,
-            skipped: scan.skipped as u64,
-            moved_away: scan.moved_away as u64,
-            paused: scan.paused as u64,
-            trashed: scan.trashed,
-            secrets: scan.secrets,
-            warnings: scan.warnings.into_iter().map(flagged_file).collect(),
-            root_gone: scan.root_gone,
-        },
+        scan: scan_of(scan),
         rebased: drain.rebased as u64,
         gave_way: drain.gave_way as u64,
         drain: drained(drain.report)?,
         pull: pull.map(pull_of),
         flagged: flagged.into_iter().map(flagged_file).collect(),
     })
+}
+
+fn scan_of(scan: marfa_core::ScanReport) -> FolderScan {
+    FolderScan {
+        created: scan.created as u64,
+        updated: scan.updated as u64,
+        renamed: scan.renamed as u64,
+        unchanged: scan.unchanged as u64,
+        waiting: scan.waiting as u64,
+        missing: scan.missing as u64,
+        deleted: scan.deleted as u64,
+        skipped: scan.skipped as u64,
+        moved_away: scan.moved_away as u64,
+        paused: scan.paused as u64,
+        trashed: scan.trashed,
+        secrets: scan.secrets,
+        warnings: scan.warnings.into_iter().map(flagged_file).collect(),
+        root_gone: scan.root_gone,
+    }
 }
 
 fn pull_of(pull: marfa_core::PullReport) -> FolderPull {
@@ -798,6 +807,17 @@ fn state_of(status: &str) -> Result<FileState, MarfaError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_counts_a_file_with_a_write_waiting_apart_from_an_unchanged_one() {
+        let scan = scan_of(marfa_core::ScanReport {
+            unchanged: 3,
+            waiting: 2,
+            ..Default::default()
+        });
+        assert_eq!(scan.unchanged, 3);
+        assert_eq!(scan.waiting, 2);
+    }
 
     #[test]
     fn every_state_a_status_names_crosses() {

@@ -5028,7 +5028,7 @@ When a folder scan finds a file whose bytes are as they were bound and whose wri
 
 **Reason:** A file whose write the server never took is not agreed with the server, and a summary that called it unchanged hides the writes still to send.
 
-**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`.
+**Tests:** `device/folders.test.ts › ends 3 and says so while a rate limit leaves writes undelivered, and counts them waiting`; `device/binding-folders-clock.test.ts › counts a file whose create the server has not answered waiting, and unchanged once it has`.
 
 ### `folders/scan-waiting-not-dead`
 
