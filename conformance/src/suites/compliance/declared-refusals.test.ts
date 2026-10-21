@@ -921,6 +921,15 @@ describe("a query key no door declares", () => {
     }
   });
 
+  it("serves the attention inventory to the owner", async () => {
+    const response = await getOwnerClient().rawRequest<{ data: unknown[] }>(
+      "/attention",
+    );
+    expect(response.status, JSON.stringify(response.error)).toBe(200);
+    expect(Array.isArray(response.data.data)).toBe(true);
+    await expectMatchesSchema("GET", "/attention", 200, response.data);
+  });
+
   it("refuses ordinary keys before inspecting the attention query", async () => {
     for (const key of [apiKey, process.env.MARFA_MANAGEMENT_KEY]) {
       expect(key).toBeTruthy();
