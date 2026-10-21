@@ -739,6 +739,9 @@ async function collectSelection(input: {
       const restoredAt = await storage.items.restoredAtOf(
         result.data.map((item) => item.id),
       );
+      const trashDetails = await storage.items.trashDetailsOf(
+        result.data.map((item) => item.id),
+      );
       for (const item of await reader.cascade(storage, result.data)) {
         const metadata = reader.metadata(await storage.metadata.get(item.id));
         // Which of the row's digests lend its reach, so a restore credits
@@ -766,6 +769,10 @@ async function collectSelection(input: {
           versions,
           writer: writers.get(item.id) ?? null,
           restored_at: restoredAt.get(item.id) ?? null,
+          trashed_at: trashDetails.get(item.id)?.trashed_at ?? null,
+          trashed_by: readsHistory(item.type)
+            ? (trashDetails.get(item.id)?.trashed_by ?? null)
+            : null,
           lending_blobs: lendingBlobs,
           lending_extensions: lendingExtensions,
         });

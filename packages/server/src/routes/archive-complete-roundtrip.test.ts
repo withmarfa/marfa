@@ -807,6 +807,10 @@ describe("complete archive round trips", () => {
     const archived = await source.storage.items.getIncludingTrashed(item.id);
     expect(archived!.state).toBe("trashed");
     expect(await source.storage.items.get(item.id)).toBeNull();
+    const trash = (await source.storage.items.trashDetailsOf([item.id])).get(
+      item.id,
+    );
+    expect(trash?.trashed_by?.kind).toBe("key");
     const history = await source.storage.versions.all(item.id);
     expect(history).toHaveLength(1);
     const response = await restore(
@@ -818,6 +822,9 @@ describe("complete archive round trips", () => {
       archived,
     );
     expect(await target.storage.versions.all(item.id)).toEqual(history);
+    expect(
+      (await target.storage.items.trashDetailsOf([item.id])).get(item.id),
+    ).toEqual(trash);
     const event = (await target.storage.eventLog.getAfter(0n, 100)).find(
       (entry) => entry.item_id === item.id,
     );

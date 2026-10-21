@@ -139,6 +139,7 @@ const OPEN_DOORS: Record<string, string> = {
   "POST /setup/name":
     "saves the instance name, authenticated by the owner session cookie and origin",
   "GET /auth/owner/items": "the owner console gate",
+  "GET /auth/owner/trash": "the owner console gate",
   "GET /auth/owner/types/:id": "the owner console gate",
   "GET /auth/owner/export":
     "Export and restore page authenticated by direct owner session",

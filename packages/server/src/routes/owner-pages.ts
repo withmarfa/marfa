@@ -14,6 +14,7 @@ import { consoleGate } from "./console-gate.js";
 import { exportPage } from "./export-routes.js";
 import { generalRoutes } from "./general-routes.js";
 import { healthPageRoutes } from "./health-page-routes.js";
+import { trashPageRoutes } from "./trash-page-routes.js";
 import { itemPageRoutes } from "./item-page-routes.js";
 import { keyRoutes } from "./key-routes.js";
 import { setNoStore } from "./no-store.js";
@@ -33,6 +34,7 @@ export function ownerPages(
   router.use("*", consoleGate(storage, auth));
   router.route("/", accountPages(storage, auth));
   router.route("/", itemPageRoutes(storage));
+  router.route("/", trashPageRoutes(storage, view.config));
   router.route("/", keyRoutes(storage));
   router.route("/", appRoutes(storage));
   router.route("/", browserRoutes(storage, auth));

@@ -738,3 +738,65 @@ inBrowser(
     });
   },
 );
+
+inBrowser("Trash confirmation recovery", () => {
+  it("lets the owner cancel confirmation and retry the same purge", async () => {
+    const made = await ctx.app.request("/items", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${ctx.workingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        type: "core.note",
+        state: "trashed",
+        properties: {
+          title: "Trash confirmation witness",
+          body: "private-trash-body",
+        },
+      }),
+    });
+    expect(made.status).toBe(201);
+    const { item } = (await made.json()) as { item: { id: string } };
+    const { context, page } = await signedIn();
+    try {
+      await page.goto(`${origin}/auth/owner/trash`);
+      await ageSession();
+      await page
+        .getByRole("button", {
+          name: "Delete for good: Trash confirmation witness",
+          exact: true,
+        })
+        .click();
+      const purge = page.getByRole("dialog", {
+        name: "Delete “Trash confirmation witness” for good?",
+      });
+      await purge
+        .getByRole("button", { name: "Delete for good", exact: true })
+        .click();
+      await dialogOf(page).waitFor();
+      await dialogOf(page)
+        .getByRole("button", { name: "Cancel", exact: true })
+        .click();
+      await page.waitForFunction(
+        `document.querySelector('[data-item-change="purge"]')?.getAttribute("aria-busy") !== "true"`,
+      );
+      expect(
+        (await ctx.storage.items.getIncludingTrashed(item.id))?.state,
+      ).toBe("trashed");
+      await purge
+        .getByRole("button", { name: "Delete for good", exact: true })
+        .click();
+      await confirmWithPassword(page);
+      await page
+        .getByRole("button", {
+          name: "Delete for good: Trash confirmation witness",
+          exact: true,
+        })
+        .waitFor({ state: "detached" });
+      expect(await ctx.storage.items.getIncludingTrashed(item.id)).toBeNull();
+    } finally {
+      await context.close();
+    }
+  });
+});

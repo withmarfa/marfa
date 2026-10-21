@@ -74,7 +74,7 @@ async function doors(): Promise<Door[]> {
 async function get(door: Door, query: string): Promise<Response> {
   const required = REQUIRED[door.path];
   const joined = [required, query].filter(Boolean).join("&");
-  if (door.operationId === "listItemSummaries")
+  if (["listItemSummaries", "listTrash"].includes(door.operationId))
     return ctx.ownerRequest(`${door.path}?${joined}`);
   return request(ctx.app, "GET", `${door.path}?${joined}`, {
     key: ctx.workingKey,
@@ -90,6 +90,7 @@ describe("an empty type, source, tags or filter", () => {
         "getItemStats",
         "listItems",
         "listItemSummaries",
+        "listTrash",
         "listOccurrences",
         "searchItems",
         "streamEvents",

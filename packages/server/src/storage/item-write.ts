@@ -1217,8 +1217,9 @@ async function trash(
     if (!snap) continue;
     refuseUnlessUninstalled(snap, mayRead(writer, snap.type));
   }
+  const by = await versionWriter(storage, writer);
   for (const id of toTrash) {
-    await itemWrites(storage).delete(id, id === row.id ? undefined : root);
+    await itemWrites(storage).delete(id, id === row.id ? undefined : root, by);
   }
   return taken.filter(
     (snap): snap is Item => snap !== null && snap.id !== row.id,

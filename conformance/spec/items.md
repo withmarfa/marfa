@@ -2085,3 +2085,75 @@ If a request body nests more than 64 levels and holds text that is not well-form
 If a `GET /search` query contains a NUL character, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/odd-input.test.ts › refuses a search query holding a NUL, and answers one without`.
+
+## Owner trash management
+
+### `items/owner-trash-summary`
+
+When the owner or a private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-selection`
+
+When `GET /trash` lists items, the server MUST select only trashed non-system items admitted by instance source filtering, applying exact `type` and name-only `q` filters before cursor pagination in descending creation-time and ID order.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-actions`
+
+When a recent owner session or a private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` under that item summary, the server MUST apply the corresponding item lifecycle operation, including its cascade, restoration and connection protections.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-content-boundary`
+
+When an owner trash operation succeeds or fails, the server MUST exclude item properties, metadata, history and edge content from its response, including any `current` value on a version conflict.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-version`
+
+If an owner trash action's required `version` differs from the item's current version, then the server MUST answer `409 version_conflict` with the current item summary and leave the item unchanged.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/trash-identity`
+
+When an item enters the trash, the server MUST retain the responsible sign-in's identity and name at that time beside its deletion time until restoration, with null identity where no sign-in is known.
+
+**Tests:** `compliance/owner-trash.test.ts › preserves deletion identity and time through an archive and clears them on restoration`.
+
+### `items/trash-archive-identity`
+
+When an archive exports and restores a trashed item, the server MUST preserve its recorded `trashed_at` and `trashed_by`, leaving missing historical values null.
+
+**Tests:** `compliance/owner-trash.test.ts › preserves deletion identity and time through an archive and clears them on restoration`.
+
+### `items/owner-empty-trash`
+
+When a recent owner session or a private local command posts to `/trash/empty`, the server MUST attempt at most 200 selected items that still have their selected version and trash state, returning the committed purge count, per-item failures and the next batch cursor.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-cli`
+
+When a caller runs `marfa --socket PATH items trash list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
+
+**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every trash command to the contract through its private socket`.
+
+### `items/owner-trash-eligibility`
+
+When a trash summary has a recorded deletion time and effective retention is positive, the server MUST return `eligible_for_deletion_at` as the deletion time plus that many days, or null when the deadline is outside the supported date range.
+
+**Reason:** This is eligibility for a later sweep, not an exact deletion promise. Disabled expiry and missing historical deletion times return null.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-unknown-outcome`
+
+If an owner trash write has an unresolved transaction outcome, then the server MUST report `details.write_outcome: unknown` without claiming the item was kept or deleted.
+
+**Reason:** An unavailable commit witness cannot prove rollback. A single-item action answers 500; an empty-trash batch includes the uncertain failure, stops processing and returns no continuation cursor. The caller reads current state before a manual retry.
+
+**Tests:** `cli/item-summaries.test.ts › stops an uncertain trash batch and exposes its outcome through the real socket CLI`.

@@ -22,6 +22,7 @@ import {
   Select,
 } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
+import { ChangeNotice, ItemAction, RemoveTypeAction } from "./item-actions.js";
 import { pluralNoun } from "./scope-copy.js";
 
 export const ITEMS_HREF = "/auth/owner/items";
@@ -82,6 +83,7 @@ function ItemRows(props: { rows: ItemSummary[] }) {
       {props.rows.map((row) => (
         <Row
           title={row.name}
+          buttons={<ItemAction item={row} action="trash" />}
           description={
             <>
               Added by {row.source || "an unknown source"} on{" "}
@@ -161,7 +163,9 @@ export function renderItemsPage(props: ItemsPageParams) {
       trail={[{ label: "Items" }]}
       items={siblings(props.types)}
     >
-      <div class="stack-24">
+      <div class="stack-24" data-item-actions>
+        <ChangeNotice />
+        <div data-item-flash hidden role="status" />
         <PageHeader
           title="Items"
           lede="Everything in Marfa, by type, and where each item came from. To read or change an item, open an app that uses it."
@@ -301,7 +305,13 @@ export function renderItemsPage(props: ItemsPageParams) {
   );
 }
 export function renderTypePage(
-  props: PageBase & { schema?: TypeSchema; count: number; trashed: number },
+  props: PageBase & {
+    schema?: TypeSchema;
+    count: number;
+    trashed: number;
+    removalReason?: string;
+    removable?: boolean;
+  },
 ) {
   const type = props.schema;
   const title = type?.label ?? type?.id ?? "Type";
@@ -315,7 +325,9 @@ export function renderTypePage(
       items={siblings(props.types)}
       currentItemHref={type && typeHref(type.id)}
     >
-      <div class="stack-24">
+      <div class="stack-24" data-item-actions>
+        <ChangeNotice />
+        <div data-item-flash hidden role="status" />
         <PageHeader
           title={type ? title : "That type isn't here"}
           lede={type?.description}
@@ -352,7 +364,11 @@ export function renderTypePage(
                 href={itemsHref({ type: type.id })}
               />
               {props.trashed > 0 && (
-                <Row title="In the trash" value={String(props.trashed)} />
+                <Row
+                  title="In the trash"
+                  value={String(props.trashed)}
+                  href={`/auth/owner/trash?type=${encodeURIComponent(type.id)}`}
+                />
               )}
             </RowGroup>
           </Section>
@@ -367,6 +383,9 @@ export function renderTypePage(
               }
             />
           </RowGroup>
+        )}
+        {type && props.removable && (
+          <RemoveTypeAction id={type.id} reason={props.removalReason} />
         )}
       </div>
     </ConsolePage>,

@@ -127,6 +127,8 @@ it("returns only summaries, including on pages, while content doors and errors s
       "id",
       "name",
       "source",
+      "type",
+      "version",
     ]);
   for (const path of [
     "/auth/owner/items",

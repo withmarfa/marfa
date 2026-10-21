@@ -176,6 +176,8 @@ it("pages name matches without leaking content or widening other owner reads", a
       "id",
       "name",
       "source",
+      "type",
+      "version",
     ]);
   const noHit = await owner(
     "/items/summaries?type=core.note&q=private-body-witness",

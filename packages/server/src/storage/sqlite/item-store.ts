@@ -61,6 +61,8 @@ import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
   ItemSummary,
+  TrashDetails,
+  TrashSummary,
   ItemSummaryFilters,
   ItemStatsAxis,
   ArchivedItemDates,
@@ -783,7 +785,9 @@ export class SqliteItemStore implements ItemStore {
     if (
       dates.created_at === undefined &&
       dates.updated_at === undefined &&
-      dates.restored_at === undefined
+      dates.restored_at === undefined &&
+      dates.trashed_at === undefined &&
+      dates.trashed_by === undefined
     )
       return;
     await this.db.update(items).set(dates).where(eq(items.id, id)).run();
@@ -849,6 +853,10 @@ export class SqliteItemStore implements ItemStore {
             // taken. Stamped here so such a row's retention window starts
             // where every other trashed row's does.
             ...softDeleteClock(input.type, SYSTEM_DEFAULT_STATE, state, now),
+            trashed_by:
+              state === softDeleteState(input.type) && !input.as_archived
+                ? (input.writer ?? null)
+                : null,
             tier: input.tier ?? "library",
             properties: sql`jsonb(${JSON.stringify(properties)})`,
             created_at: now,
@@ -1135,6 +1143,39 @@ export class SqliteItemStore implements ItemStore {
     return out;
   }
 
+  async trashDetailsOf(
+    ids: readonly string[],
+  ): Promise<Map<string, TrashDetails>> {
+    const out = new Map<string, TrashDetails>();
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const rows = await this.db
+        .select({
+          id: items.id,
+          trashed_at: items.trashed_at,
+          trashed_by: items.trashed_by,
+        })
+        .from(items)
+        .where(inArray(items.id, ids.slice(offset, offset + 500)))
+        .all();
+      for (const { id, ...details } of rows) out.set(id, details);
+    }
+    return out;
+  }
+
+  async listTrashSummaries(
+    filters: ItemSummaryFilters,
+  ): Promise<PaginatedResult<TrashSummary>> {
+    const page = await this.listSummaries({ ...filters, state: "trashed" });
+    const details = await this.trashDetailsOf(page.data.map((row) => row.id));
+    return {
+      ...page,
+      data: page.data.map((row) => ({
+        ...row,
+        ...(details.get(row.id) ?? { trashed_at: null, trashed_by: null }),
+      })),
+    };
+  }
+
   async listSummaries(
     filters: ItemSummaryFilters,
   ): Promise<PaginatedResult<ItemSummary>> {
@@ -1146,7 +1187,7 @@ export class SqliteItemStore implements ItemStore {
     const offset = filters.offset ?? 0;
     let skipMatches = query ? offset : 0;
     const batchSize = query ? MAX_PAGE_LIMIT : limit + 1;
-    const key = `item-summaries:${JSON.stringify([filters.type ?? null, query])}`;
+    const key = `item-summaries:${JSON.stringify([filters.type ?? null, query, filters.state ?? null])}`;
     let after = filters.cursor
       ? decodeKeyedCursorNullable(filters.cursor, key)
       : undefined;
@@ -1156,7 +1197,9 @@ export class SqliteItemStore implements ItemStore {
         "Invalid summary cursor",
       );
     const conditions = itemFilterConditions({
-      exclude_states: ["trashed"],
+      ...(filters.state
+        ? { state: filters.state }
+        : { exclude_states: ["trashed" as const] }),
       exclude_system_types: true,
       source_filter: filters.source_filter,
     });
@@ -1177,6 +1220,7 @@ export class SqliteItemStore implements ItemStore {
         .select({
           id: items.id,
           type: items.type,
+          version: items.version,
           source: items.source,
           created_at: items.created_at,
           properties: sql<string>`json(${items.properties})`,
@@ -1213,6 +1257,8 @@ export class SqliteItemStore implements ItemStore {
         }
         data.push({
           id: row.id,
+          type: row.type,
+          version: row.version,
           name,
           source: row.source ?? MISSING_SOURCE,
           created_at: row.created_at,
@@ -1837,7 +1883,11 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string, trashedWith?: CascadeRoot): Promise<void> {
+  async delete(
+    id: string,
+    trashedWith?: CascadeRoot,
+    writer: VersionWriter | null = null,
+  ): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -1868,6 +1918,7 @@ export class SqliteItemStore implements ItemStore {
         // time, which a later write to the trashed row would move.
         // `softDeleteClock` carries why.
         ...softDeleteClock(row.type, row.state, target, now),
+        trashed_by: writer,
       })
       .where(eq(items.id, id));
     if (trashedWith !== undefined && target === "trashed") {
@@ -2095,6 +2146,7 @@ export class SqliteItemStore implements ItemStore {
         state: "active",
         updated_at: now,
         ...softDeleteClock(row.type, row.state, "active", now),
+        trashed_by: null,
       })
       .where(eq(items.id, id))
       .run();
@@ -2241,6 +2293,10 @@ export class SqliteItemStore implements ItemStore {
         state,
         updated_at: now,
         ...softDeleteClock(row.type, row.state, state, now),
+        ...(row.state === softDeleteState(row.type) ||
+        state === softDeleteState(row.type)
+          ? { trashed_by: null }
+          : {}),
       })
       .where(eq(items.id, id))
       .run();

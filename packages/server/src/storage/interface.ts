@@ -688,7 +688,15 @@ export type StoredCreateItemInput = CreateItemInput &
 export type ArchivedDates = Partial<Pick<Item, "created_at" | "updated_at">>;
 
 /** An item line's dates, with when the row last came back from the bin. */
-export type ArchivedItemDates = ArchivedDates & { restored_at?: string };
+export interface TrashDetails {
+  trashed_at: string | null;
+  trashed_by: VersionWriter | null;
+}
+export type ArchivedItemDates = ArchivedDates & {
+  restored_at?: string;
+  trashed_at?: string | null;
+  trashed_by?: VersionWriter | null;
+};
 
 /**
  * **Server-internal, and set by a restore alone.** An edge whose type is not
@@ -745,12 +753,17 @@ export interface CascadeRoot {
 /** An owner-visible name, origin and creation time, with no content fields. */
 export interface ItemSummary {
   id: string;
+  type: string;
+  version: number;
   name: string;
   source: string;
   created_at: string;
 }
 
+export type TrashSummary = ItemSummary & TrashDetails;
+
 export interface ItemSummaryFilters {
+  state?: "trashed";
   type?: string;
   q?: string;
   limit?: number;
@@ -807,6 +820,10 @@ export interface ItemStore {
    */
   getIncludingTrashed(id: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
+  trashDetailsOf(ids: readonly string[]): Promise<Map<string, TrashDetails>>;
+  listTrashSummaries(
+    filters: ItemSummaryFilters,
+  ): Promise<PaginatedResult<TrashSummary>>;
   listSummaries(
     filters: ItemSummaryFilters,
   ): Promise<PaginatedResult<ItemSummary>>;
@@ -845,7 +862,11 @@ export interface ItemStore {
    * one through a cascading edge, recorded only where this call moves the row
    * into the bin, so a row already there stays its own trash's.
    */
-  delete(id: string, trashedWith?: CascadeRoot): Promise<void>;
+  delete(
+    id: string,
+    trashedWith?: CascadeRoot,
+    writer?: VersionWriter | null,
+  ): Promise<void>;
   /** The row each cascaded row's trash named, while the bin holds it. */
   cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
   /** Hard-deletes a trashed row, leaving its tombstones. `revokedGrant` also

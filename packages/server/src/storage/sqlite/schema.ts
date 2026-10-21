@@ -86,6 +86,9 @@ export const items = sqliteTable(
     // by a second delete starts a fresh window rather than inheriting the
     // first one. Nullable because an active row has no such time.
     trashed_at: text("trashed_at"),
+    trashed_by: text("trashed_by", { mode: "json" }).$type<
+      import("@withmarfa/shared").VersionWriter | null
+    >(),
     // When the row last came back out of its soft-deleted state; null for a
     // row that never has. The feed-expiry job leaves such a row alone, so an
     // item a person brought back from the bin is not binned again by the

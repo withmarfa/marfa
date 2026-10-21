@@ -35,6 +35,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "pages/browser/approve-access.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
+  "pages/browser/trash.browser.test.ts":
+    "A browser test fails in CI if no browser can be launched.",
   "pages/browser/apps.browser.test.ts":
     "fails rather than skips when CI says a browser is expected, a test's own switch",
   "pages/browser/general.browser.test.ts":

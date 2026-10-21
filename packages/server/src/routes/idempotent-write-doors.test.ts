@@ -70,6 +70,8 @@ const WRITE_METHODS: readonly string[] = [
  * those routes) or the reason the write cannot carry a key.
  */
 const WRITERS: Record<string, string> = {
+  "routes/owner-trash.ts":
+    "direct owner/local lifecycle actions; each checks the selected version and present state, and empty-trash reports each committed result rather than automatically replaying an uncertain write",
   // --- Behind an idempotent door ---
   "routes/items.ts":
     "POST /items, PATCH /items/{id}, DELETE /items/{id} and POST /items/{id}/purge, all in IDEMPOTENT_WRITE_DOORS",
@@ -233,6 +235,12 @@ describe("every door is a route the app really serves", () => {
  * anything in neither table.
  */
 const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
+  "POST /items/summaries/:id/trash":
+    "direct authority action checks the selected version; browser refreshes after an uncertain response",
+  "POST /items/summaries/:id/restore":
+    "direct authority action checks the selected version; browser refreshes after an uncertain response",
+  "POST /items/summaries/:id/purge":
+    "direct authority action checks the selected version and trash membership; browser refreshes after an uncertain response",
   "POST /items/bulk":
     "resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding",
   "POST /items/bulk-get": "read-only batch fetch",

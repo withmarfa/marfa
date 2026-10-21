@@ -23,7 +23,12 @@ import {
 import type { SchemaValidationIssue, TypeSchema } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import {
+  authorityId,
+  isDirectAuthority,
+  requireRecentOwnerAuthentication,
+  requireAuth,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
 import type { TypeResolver } from "../storage/policy.js";
@@ -832,8 +837,11 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a type",
   description:
-    "Deletes a type. With `force=true`, items of the type stay, but writes that create them or set their properties fail with `unknown_type` until the type is registered again.",
-  security: [{ bearerAuth: [] }],
+    "Deletes an unused type. A key can use `force=true` to keep existing items without their type; new writes then fail until it is registered again. A recent owner session or local command can remove only unused types.",
+  security: [{ bearerAuth: [] }, { ownerSession: [] }] as Record<
+    string,
+    string[]
+  >[],
   middleware: changesSchema,
   request: {
     params: z.object({
@@ -887,7 +895,7 @@ const deleteTypeRoute = createRoute({
         },
       },
       description:
-        "- `forbidden`: you don't have `schema.write`.\n- `core_type_immutable`: Marfa ships this type, and no credential can delete it.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
+        "- `forbidden`: you lack `schema.write`, your owner sign-in is too old, or direct authority requested `force=true`.\n- `core_type_immutable`: Marfa ships this type, and no credential can delete it.\n- `type_not_permitted`: your type map doesn't grant write on the type.",
     },
     404: {
       content: {
@@ -1151,7 +1159,14 @@ export function typeRoutes(storage: Storage) {
             `Type "${id}" not found`,
           );
         }
-        requireTypeSchemaWrite(c, "change", id);
+        if (isDirectAuthority(c)) {
+          requireRecentOwnerAuthentication(c);
+          if (force === "true")
+            throw new MarfaError(
+              ErrorCode.FORBIDDEN,
+              "The owner console removes only unused types. Move or remove their items first.",
+            );
+        } else requireTypeSchemaWrite(c, "change", id);
 
         // Checked before the items refusal, and outside `force`, because this
         // one cannot be forced past. Reporting the forcible obstruction first
@@ -1189,7 +1204,9 @@ export function typeRoutes(storage: Storage) {
           if (items.data.length > 0) {
             throw new MarfaError(
               ErrorCode.TYPE_IN_USE,
-              `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+              isDirectAuthority(c)
+                ? `Type "${id}" still has items. Remove them before removing the type.`
+                : `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
             );
           }
         }
@@ -1198,7 +1215,7 @@ export function typeRoutes(storage: Storage) {
       },
       {
         client_ip: c.get("clientIp") ?? null,
-        key_id: c.get("apiKey")?.id,
+        key_id: authorityId(c),
         action: "type.delete",
         resource_type: "type",
         resource_id: id,
