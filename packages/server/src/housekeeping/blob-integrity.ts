@@ -44,8 +44,8 @@ export type IntegrityResult = {
  * store check bound, says nothing of its copies: none is stamped or struck,
  * the store is named in the result and the log, and the rest of the run
  * goes to the other stores. The question to a store that does not answer
- * is called off, so the run, and the blob's upload lock it holds, end in
- * bounded time.
+ * is called off. A store's `delete`, which finishes a queued copy deletion
+ * or removes a struck copy's bytes, still has no time limit.
  */
 export class BlobIntegrityChecker {
   constructor(

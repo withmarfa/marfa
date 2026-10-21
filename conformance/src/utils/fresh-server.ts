@@ -105,10 +105,9 @@ export interface FreshServer {
    * `free:<volume>=<bytes>` sets the reported free space,
    * `store-check-deadline=<ms>` shortens how long a blob store may go
    * unanswered, and `resolve:<hostname>=<answers>` scripts webhook name
-   * lookups. The points are
-   * stated in `conformance/README.md`, "Faults". The fault is cleared by
-   * `clearFault`, by `restart`, and by `stop`, so none outlives the fixture
-   * that set it.
+   * lookups. The points are stated in `conformance/README.md`, "Faults".
+   * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
+   * none outlives the fixture that set it.
    */
   setFault(spec: string): Promise<void>;
   /** Clears one fault, or every fault when no name is given. */
