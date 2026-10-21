@@ -166,7 +166,8 @@ impl Folder {
                 .as_ref()
                 .is_some_and(|pulled| pulled.placed + pulled.ended > 0)
         {
-            drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
+            let later = self.drain_rebuilding(&mut rebuilt)?;
+            self.absorb(&mut drain, later)?;
         }
         Ok(SyncReport {
             hydrated,
@@ -195,11 +196,27 @@ impl Folder {
             }) if reason == "read_view_changed" && rebuilt.is_none() => {
                 *rebuilt = Some(self.hydrate()?);
                 let mut drained = *settled;
-                drained.absorb(self.drain()?);
+                self.absorb(&mut drained, self.drain()?)?;
                 Ok(drained)
             }
             Err(cut) => Err(cut.error),
         }
+    }
+
+    /// Takes `later`, a later drain of the same run, into `drained`. A write
+    /// that drain gave way from has left the queue, and the verdict an
+    /// earlier drain told of it goes with it.
+    fn absorb(&self, drained: &mut Drained, later: Drained) -> Result<()> {
+        drained.absorb(later);
+        let conn = self.core.conn()?;
+        let mut kept = Vec::with_capacity(drained.report.verdicts.len());
+        for verdict in std::mem::take(&mut drained.report.verdicts) {
+            if crate::store::queued_write(&conn, &verdict.id)?.is_some() {
+                kept.push(verdict);
+            }
+        }
+        drained.report.verdicts = kept;
+        Ok(())
     }
 
     /// Takes the folder at `dir` off this machine: its own state under
@@ -362,6 +379,68 @@ mod tests {
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
+    }
+
+    #[test]
+    fn a_verdict_an_earlier_drain_told_leaves_with_a_write_a_later_drain_withdrew() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let db = dir.path().join(STATE_DIR).join("core.sqlite");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();
+        super::super::settings_file::bind(&core, "folder").unwrap();
+        drop(core);
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let queued = folder
+            .core
+            .create_item(&crate::model::Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "Kept", "body": "" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let told = |id: &str| crate::drain::DrainVerdict {
+            id: id.into(),
+            kind: crate::model::WriteKind::CreateEdge,
+            item_id: None,
+            edge_id: None,
+            verdict: Some(crate::model::Verdict::Refused),
+            reason: Some("edge_duplicate".into()),
+            refusal: None,
+            conflicted_copy_id: None,
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+        };
+        let drained = |verdicts| Drained {
+            report: crate::DrainReport {
+                verdicts,
+                ..drained()
+            },
+            rebased: 0,
+            gave_way: 0,
+        };
+        let mut first = drained(vec![told(&queued.id), told("withdrawn")]);
+        folder.absorb(&mut first, drained(Vec::new())).unwrap();
+        assert_eq!(
+            first
+                .report
+                .verdicts
+                .iter()
+                .map(|verdict| verdict.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![queued.id.as_str()],
+            "a write no longer queued kept its verdict, or a queued one lost it"
+        );
     }
 
     #[test]
