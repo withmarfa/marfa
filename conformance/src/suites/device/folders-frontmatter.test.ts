@@ -34,6 +34,7 @@ import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
+import type { DoorRow } from "../../device/folder-door.js";
 import type {
   WireEdgeOptions,
   WireItemOptions,
@@ -4362,7 +4363,6 @@ describe("what frontmatter says", () => {
     for (const [name, line] of [
       ["Shape.md", "tags: {a: 1}"],
       ["Number.md", "tags: [1]"],
-      ["Untyped.md", "type:"],
     ]) {
       put(harness, name!, `---\n${line}\n---\nbody\n`);
     }
@@ -4413,7 +4413,6 @@ describe("what frontmatter says", () => {
         ["Number.md", "unreadable"],
         ["Shape.md", "unreadable"],
         ["Trash.md", "unreadable"],
-        ["Untyped.md", "unreadable"],
       ].sort(),
     );
   });
@@ -5409,6 +5408,263 @@ describe("what frontmatter says", () => {
         queue.value.filter((row) => row.kind.endsWith("_item")).length,
       "a type no document can be was queued",
     ).toBe(0);
+  });
+
+  describe("a type line that names no type", () => {
+    /** Every type line a file's frontmatter holds, as written. */
+    function typeLines(name: string): string[] {
+      return frontOf(harness!, name)
+        .split("\n")
+        .filter((line) => /^type:/.test(line));
+    }
+
+    /** The creates and updates sent after the first `skip` requests. */
+    function sentAfter(skip: number): {
+      creates: number;
+      updates: Array<{ id: string; body: Record<string, unknown> }>;
+    } {
+      const later = harness!.server.requests.slice(skip);
+      return {
+        creates: later.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/items",
+        ).length,
+        updates: later
+          .filter(
+            (request) =>
+              request.method === "PATCH" &&
+              /^\/items\/[^/]+$/.test(request.pathname),
+          )
+          .map((request) => ({
+            id: request.pathname.split("/").at(-1) ?? "",
+            body: JSON.parse(request.body) as Record<string, unknown>,
+          })),
+      };
+    }
+
+    /** A folder of notes and bookmarks, after the push that made `Reference.md`
+     *  from a file whose type line is an Obsidian-style word. */
+    async function madeFromForeign(
+      label: string,
+    ): Promise<{ id: string; rows: Map<string, DoorRow> }> {
+      harness = await folderHarness(label, {
+        settings: { search: { types: ["core.note", "core.bookmark"] } },
+      });
+      const rows = scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      put(harness, "Reference.md", "---\ntype: reference\n---\nnotes\n");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [created] = sentCreates(harness);
+      expect(
+        created?.type,
+        "the note was not made, so nothing below is about it",
+      ).toBe("core.note");
+      return { id: String(created!.id), rows };
+    }
+
+    it("makes the note the folder's default type and keeps the line's value as a property", async () => {
+      harness = await folderHarness("folder-type-foreign-create");
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const typed = "---\ntype: reference\ntitle: Reading\n---\nnotes\n";
+      put(harness, "Reference.md", typed);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged,
+        "a type line naming no type held the note",
+      ).toEqual([]);
+      const [created] = sentCreates(harness);
+      expect(
+        [created?.type, (created?.properties as Record<string, unknown>)?.type],
+        "the note was not made the folder's default type with the line kept as a property",
+      ).toEqual(["core.note", "reference"]);
+      expect(
+        [
+          read(harness, "Reference.md").includes("marfa_id:"),
+          typeLines("Reference.md"),
+        ],
+        "the item was not written back, or writing it changed the person's type line",
+      ).toEqual([true, ["type: reference"]]);
+    });
+
+    it("sends nothing on the scan after the file is written back", async () => {
+      const { id } = await madeFromForeign("folder-type-foreign-again");
+      const written = read(harness!, "Reference.md");
+      expect(written, "the file was not written back").toContain(
+        `marfa_id: ${id}`,
+      );
+      const skip = harness!.server.requests.length;
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        [sentAfter(skip), pushed.value.scan.flagged],
+        "the file the folder wrote read back as an edit",
+      ).toEqual([{ creates: 0, updates: [] }, []]);
+      expect(read(harness!, "Reference.md")).toBe(written);
+    });
+
+    it("writes the same file on a second machine", async () => {
+      const { id, rows } = await madeFromForeign("folder-type-foreign-first");
+      const row = rows.get(id)!;
+      second = await folderHarness("folder-type-foreign-second", {
+        settings: { search: { types: ["core.note", "core.bookmark"] } },
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id,
+                properties: row.properties,
+                version: row.version,
+                ...(row.occurred_at === undefined
+                  ? {}
+                  : {
+                      occurred_at: row.occurred_at,
+                      created_at: row.occurred_at,
+                    }),
+              },
+            },
+          ],
+        },
+      });
+      expect((await second.folder.pull()).ok).toBe(true);
+      expect(
+        read(second, "Reference.md"),
+        "a second machine wrote the item's type over the person's line",
+      ).toBe(read(harness!, "Reference.md"));
+    });
+
+    it("retypes the item when the line comes to name a type, and drops the property", async () => {
+      const { id, rows } = await madeFromForeign("folder-type-foreign-retype");
+      edit(harness!, "Reference.md", "type: reference", "type: core.bookmark");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [sent] = sentUpdates(harness!).filter((update) => update.id === id);
+      expect(
+        [
+          sent?.body.type,
+          sent?.body.retype,
+          (sent?.body.properties as Record<string, unknown> | undefined)?.type,
+        ],
+        "the line naming a type did not retype, or the old word stayed a property",
+      ).toEqual(["core.bookmark", true, undefined]);
+      expect([rows.get(id)?.type, rows.get(id)?.properties.type]).toEqual([
+        "core.bookmark",
+        undefined,
+      ]);
+      expect(read(harness!, "Reference.md")).toMatch(/^type: core\.bookmark$/m);
+    });
+
+    it("changes only the property when the line comes to hold another word", async () => {
+      const { id, rows } = await madeFromForeign("folder-type-foreign-reword");
+      edit(harness!, "Reference.md", "type: reference", "type: article");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [sent] = sentUpdates(harness!).filter((update) => update.id === id);
+      expect(
+        [
+          sent?.body.type,
+          (sent?.body.properties as Record<string, unknown> | undefined)?.type,
+        ],
+        "another word was not sent as the property alone",
+      ).toEqual([undefined, "article"]);
+      expect([rows.get(id)?.type, rows.get(id)?.properties.type]).toEqual([
+        "core.note",
+        "article",
+      ]);
+      expect(read(harness!, "Reference.md")).toMatch(/^type: article$/m);
+    });
+
+    it("clears the property and keeps the type when the line is taken out", async () => {
+      const { id, rows } = await madeFromForeign("folder-type-foreign-removed");
+      edit(harness!, "Reference.md", "type: reference\n", "");
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      const [sent] = sentUpdates(harness!).filter((update) => update.id === id);
+      expect(
+        [
+          sent?.body.type,
+          sent?.body.properties_mode,
+          Object.hasOwn(
+            (sent?.body.properties as Record<string, unknown> | undefined) ??
+              {},
+            "type",
+          ),
+        ],
+        "taking the line out did not clear the property, or moved the type",
+      ).toEqual([undefined, "replace", false]);
+      expect([rows.get(id)?.type, rows.get(id)?.properties.type]).toEqual([
+        "core.note",
+        undefined,
+      ]);
+    });
+
+    it("reads every value the grammar refuses as a property, and still refuses a type the copy does not hold", async () => {
+      harness = await folderHarness("folder-type-foreign-forms");
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const forms: Array<[string, string, unknown]> = [
+        ["Number", "type: 2", 2],
+        ["List", "type: [a, b]", ["a", "b"]],
+        ["Empty", 'type: ""', ""],
+        ["Blank", 'type: "  "', "  "],
+        ["Capital", "type: Core.Note", "Core.Note"],
+        ["Trailing", "type: a.", "a."],
+        ["Leading", "type: .b", ".b"],
+        ["Wildcard", "type: core.*", "core.*"],
+        ["Reserved", "type: schema.thing", "schema.thing"],
+      ];
+      for (const [title, line] of forms) {
+        put(harness, `${title}.md`, `---\n${line}\n---\n${title}\n`);
+      }
+      const nullLine = "---\ntype:\n---\nNull\n";
+      put(harness, "Null.md", nullLine);
+      const misspelt = "---\ntype: core.notes\n---\nMisspelt\n";
+      put(harness, "Misspelt.md", misspelt);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(
+        pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+        "a dotted type the copy does not hold was not refused, or a value no type can be was held",
+      ).toEqual([["Misspelt.md", "refused"]]);
+      expect(read(harness, "Misspelt.md")).toBe(misspelt);
+      const made = new Map(
+        sentCreates(harness).map((sent) => [
+          String((sent.properties as Record<string, unknown>).title),
+          sent,
+        ]),
+      );
+      for (const [title, line, value] of forms) {
+        const sent = made.get(title);
+        expect(
+          [sent?.type, (sent?.properties as Record<string, unknown>)?.type],
+          `${title}: the value was not kept as a property of a note`,
+        ).toEqual(["core.note", value]);
+        expect(
+          typeLines(`${title}.md`),
+          `${title}: writing the item back changed its type line`,
+        ).toEqual([line]);
+      }
+      expect(
+        made.get("Null")?.type,
+        "an empty type line did not make a note",
+      ).toBe("core.note");
+      expect(
+        [read(harness, "Null.md").includes("marfa_id:"), typeLines("Null.md")],
+        "the item was not written back, or writing it filled in an empty type line",
+      ).toEqual([true, ["type:"]]);
+      const skip = harness.server.requests.length;
+      const again = await harness.folder.push();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      expect(
+        sentAfter(skip),
+        "a file the folder wrote back read as an edit",
+      ).toEqual({ creates: 0, updates: [] });
+    });
   });
 
   it("takes a versioned file's missing tags line as no tags, and a lineless file's as no change", async () => {

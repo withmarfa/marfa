@@ -529,7 +529,7 @@ impl Folder {
         if whole {
             // No file can carry these, so leaving them out is no clear.
             for (field, value) in &held.properties {
-                if fields::reserved(field, edge_types) {
+                if !fields::carried(field, value, edge_types)? {
                     properties.insert(field.clone(), value.clone());
                 }
             }
