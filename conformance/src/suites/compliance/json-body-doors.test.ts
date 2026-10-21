@@ -128,10 +128,13 @@ async function send(
   const [method, template] = door.split(" ") as [string, string];
   const path =
     options.path ?? template.replace(/\{[^}]+\}/g, () => randomUUID());
-  // Owner updates and sign-in management refuse every key, so the owner's
-  // browser is what reaches their body. Public claims keep their own proof.
+  // Owner updates, sign-in management, and grant narrowing refuse every key,
+  // so the owner's browser is what reaches their body. Public claims keep
+  // their own proof.
   const credential: Record<string, string> =
-    door === "PATCH /owner" || template.startsWith("/owner/")
+    door === "PATCH /owner" ||
+    door === "PATCH /auth/grants/{id}" ||
+    template.startsWith("/owner/")
       ? { cookie: ownerCookie(), origin: new URL(apiUrl).origin }
       : { Authorization: `Bearer ${key}` };
   return fetch(`${apiUrl}${path}`, {
