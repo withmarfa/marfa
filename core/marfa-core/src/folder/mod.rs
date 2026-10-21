@@ -1674,16 +1674,9 @@ impl Folder {
             .iter()
             .map(|path| identity::relative(&self.root, path))
             .collect::<Result<Vec<String>>>()?;
-        // Every file the walk found, whether or not it is pushed: leaving one
-        // out journals it missing and deletes the item bound to it.
         let seen: HashSet<String> = found.iter().cloned().collect();
         let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
-        // Files a scan must not call unchanged.
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
-        // Each file's size and time, taken before its read, so a change made
-        // during the read differs from what is recorded.
-        let stats: Vec<(String, String)> = Vec::new();
-        let unchanged: HashSet<String> = HashSet::new();
         Ok(ControlFlow::Continue(ScanState {
             full,
             settle,
@@ -1701,8 +1694,8 @@ impl Folder {
             paths,
             keys,
             unanswered,
-            stats,
-            unchanged,
+            stats: Vec::new(),
+            unchanged: HashSet::new(),
             early: HashMap::new(),
             shown: HashMap::new(),
             embedded: HashSet::new(),
@@ -7555,8 +7548,9 @@ mod tests {
             .to_string()
     }
 
-    // No server answers in these tests, so a bound note whose write is still
-    // unanswered is counted `waiting` and not `unchanged`.
+    // The settle time for `scan_watching`, which only a file that is not a
+    // document waits on. No server answers in these tests, so a bound note
+    // whose write is unanswered counts as `waiting`, not `unchanged`.
     const QUICK: Duration = Duration::from_secs(3600);
 
     #[test]
