@@ -640,7 +640,7 @@ describe("GET /blobs/stores", () => {
 });
 
 describe("GET /blobs/:hash/copies", () => {
-  it("lists the log for a blob and 404s for one not registered", async () => {
+  it("lists a blob's copies and 404s for one not registered", async () => {
     const data = new TextEncoder().encode("copies listed");
     await uploadReferenced(data);
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/copies`, {

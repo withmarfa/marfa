@@ -1007,7 +1007,7 @@ describe("how the copies are placed and removed", () => {
     expect((await fetch(link)).status).toBe(404);
   });
 
-  it("refuses a drop the log allows when the other copy is gone from its store, and keeps the copy", async () => {
+  it("refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy", async () => {
     const hash = await uploadReferencedText(
       "the log says two, the disk has none",
     );

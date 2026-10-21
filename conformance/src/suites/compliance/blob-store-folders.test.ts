@@ -434,7 +434,7 @@ describe("a store whose folder is away", () => {
 
 describe("a store whose folder is missing at start", () => {
   it(
-    "refuses to start while the folder or its marker is missing and the log records copies there, and creates neither",
+    "refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither",
     async () => {
       const uploaded = await working.uploadBlob(
         bytesOf("saved before the drive went away", 120),

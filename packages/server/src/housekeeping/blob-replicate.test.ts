@@ -426,7 +426,7 @@ describe("BlobReplicator.runOnce", () => {
     expect(await second.has(third)).not.toBeNull();
   });
 
-  it("records nothing for a copy the log names but the source no longer has", async () => {
+  it("records nothing for a recorded copy the source no longer has", async () => {
     ctx = await createTestContext();
     const { stores, second } = await withSecondStore(ctx);
     const hash = await upload(ctx, "named by the log, gone from the disk");

@@ -70,7 +70,7 @@ Where no object store is configured, if the server starts over a disk folder tha
 
 **Reason:** a folder or marker missing where the copy record names copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
 
-**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the log records copies there, and creates neither`.
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`.
 
 ### `stores/missing-folder-untouched`
 
@@ -78,7 +78,7 @@ If `stores/missing-folder-refused` refuses the start, then the server MUST NOT c
 
 **Reason:** a marker written there would make the next start take the folder as a new store.
 
-**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the log records copies there, and creates neither`.
+**Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the copy record names copies there, and creates neither`.
 
 ### `stores/detached-listed`
 
@@ -348,7 +348,7 @@ If a caller authorized by `blobs.manage` or direct owner or local authority send
 
 **Reason:** the copy record can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
 
-**Tests:** `compliance/blob-rules.test.ts › refuses a drop the log allows when the other copy is gone from its store, and keeps the copy`.
+**Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
 ### `stores/drop-no-copy`
 

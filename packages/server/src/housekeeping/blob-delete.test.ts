@@ -152,7 +152,7 @@ async function reportOrphan(c: TestContext, hash: string): Promise<void> {
 }
 
 describe("the per-hash lock", () => {
-  it("holds an upload of the same bytes behind a drop in flight, so the log and the bytes agree", async () => {
+  it("holds an upload of the same bytes behind a drop in flight, so the copy record and the bytes agree", async () => {
     // The drop removes the disk's row, then deletes its bytes. An upload
     // arriving between the two would see the bytes present, skip its own
     // put, and record the disk again for bytes about to go; behind the
@@ -467,7 +467,7 @@ describe("a drop that the copy record alone would allow", () => {
     return { stores, second, hash };
   }
 
-  it("drops a copy while the other copy the log names is held", async () => {
+  it("drops a copy while the other copy in the copy record is held", async () => {
     ctx = await createTestContext();
     const { stores, second, hash } = await twoCopies(ctx, "both held");
     await dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
@@ -477,7 +477,7 @@ describe("a drop that the copy record alone would allow", () => {
     expect(await second.has(hash)).toBeNull();
   });
 
-  it("refuses the drop when the other copy the log names is gone from its store, and keeps the copy", async () => {
+  it("refuses the drop when the other copy in the copy record is gone from its store, and keeps the copy", async () => {
     ctx = await createTestContext();
     const { stores, second, hash } = await twoCopies(ctx, "one gone");
     // The disk lost its copy behind the log's back, as a late delete would.
@@ -612,7 +612,7 @@ describe("a drop while a store has not finished a change to the blob", () => {
     ).toEqual([c.blobs.disk.id]);
   });
 
-  it("refuses a drop the log alone refuses without asking any store", async () => {
+  it("refuses a drop the copy record alone refuses without asking any store", async () => {
     ctx = await createTestContext();
     const c = ctx;
     const { stores, second } = await withSecondStore(c);

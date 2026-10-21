@@ -429,7 +429,7 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(data)).not.toBeNull();
   });
 
-  it("purges the bytes, the log's rows and the report's row together", async () => {
+  it("purges the bytes, the copy record's rows and the report's row together", async () => {
     ctx = await createTestContext();
     const data = new TextEncoder().encode("rows go with the bytes");
     const hash = hashOf(data);
