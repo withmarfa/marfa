@@ -1,7 +1,7 @@
 import { BlobStoreUnreachable } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
-import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { LOCK_HELD, tryBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { finishPendingCopyDeletions, type Stores } from "./blob-delete.js";
 import { copyIntact, strikeCopy } from "./blob-strike.js";
 import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
@@ -45,7 +45,11 @@ export type IntegrityResult = {
  * the store is named in the result and the log, and the rest of the run
  * goes to the other stores. The question to a store that does not answer
  * is called off. A store's `delete`, which finishes a queued copy deletion
- * or removes a struck copy's bytes, still has no time limit.
+ * or removes a struck copy's bytes, is waited on for the same bound, and
+ * one that goes unanswered counts its store unreachable; a struck copy
+ * stays struck, with its deletion queued. A copy whose blob's upload lock
+ * is held, such as by a delete a store has not finished, is skipped and
+ * stays first in line.
  */
 export class BlobIntegrityChecker {
   constructor(
@@ -56,7 +60,7 @@ export class BlobIntegrityChecker {
   ) {}
 
   async runOnce(): Promise<IntegrityResult> {
-    await finishPendingCopyDeletions(
+    const unreachable = await finishPendingCopyDeletions(
       this.storage,
       this.stores,
       this.bounds.maxRows,
@@ -65,7 +69,6 @@ export class BlobIntegrityChecker {
     let struck = 0;
     let bytes = 0;
     const attached = this.stores.stores.map((store) => store.id);
-    const unreachable = new Set<string>();
     const asked = new Set<string>();
     // Listed again once a store turns out to be unreachable: its copies are
     // never stamped, so they would stay first in line and fill every run's
@@ -91,7 +94,7 @@ export class BlobIntegrityChecker {
           return { verified, struck, bytes, unreachable: unreachable.size };
         }
         asked.add(key);
-        const reached = await withBlobUploadLock(row.hash, async () => {
+        const reached = await tryBlobUploadLock(row.hash, async () => {
           let intact: boolean;
           try {
             intact =
@@ -136,9 +139,28 @@ export class BlobIntegrityChecker {
           }
           // A row dropped by an operator between the listing and the check is
           // not a strike: nothing was found wrong with a copy the log claims.
-          if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
+          try {
+            if (await strikeCopy(this.storage, store, row.hash)) struck += 1;
+          } catch (err) {
+            if (!(err instanceof BlobStoreUnreachable)) throw err;
+            // Struck, with its deletion queued; the store that did not
+            // finish the deletion is asked nothing more this run.
+            struck += 1;
+            unreachable.add(store.id);
+            log("error", "blob.store_unreachable", {
+              store_id: store.id,
+              kind: store.kind,
+              error: errorMessage(err),
+            });
+            return false;
+          }
           return true;
         });
+        if (reached === LOCK_HELD) {
+          // Not checked, so it takes no row of the run's bound.
+          asked.delete(key);
+          continue;
+        }
         if (!reached) {
           relist = true;
           break;

@@ -14,11 +14,14 @@ import type { Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   recordedStores,
+  storeCheckTimeoutMs,
   storeUnavailable,
+  within,
   type BlobLayer,
 } from "../storage/blob-layer.js";
 import {
   BLOB_CONTENT_SECURITY_POLICY,
+  BlobStoreUnreachable,
   blobDisposition,
   HashingTransform,
   resolveRange,
@@ -373,6 +376,18 @@ const uploadBlobRoute = createRoute({
       description:
         "- `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving.",
     },
+    503: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
+      description:
+        "- `blob_store_unavailable`: a store hasn't finished an earlier write or delete of these bytes, so Marfa can't place them yet. Marfa stores nothing. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
+    },
   },
 });
 
@@ -608,7 +623,19 @@ const deleteBlobLocationRoute = createRoute({
         },
       },
       description:
-        "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`. Nothing changes.",
+        "- `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.",
+    },
+    503: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "blob_store_unavailable",
+            "write_contention",
+          ]),
+        },
+      },
+      description:
+        "- `blob_store_unavailable`: a store hasn't finished an earlier write or delete of this blob, so Marfa can't tell which copies it has yet. Nothing changes. Try again later.\n- `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.",
     },
   },
 });
@@ -745,7 +772,13 @@ export function blobRoutes(
     let failure: { store: BlobStore; error: unknown } | undefined;
     for (const store of stores) {
       try {
-        read = await store.get(hash, range ?? undefined);
+        // Bounded to the first byte, not the whole body: a store that does
+        // not open the bytes in time is passed over for the next.
+        read = await within(
+          (cancel) => store.get(hash, range ?? undefined, cancel),
+          storeCheckTimeoutMs(),
+          { late: (gone) => gone?.stream.destroy() },
+        );
       } catch (error) {
         // A store that cannot answer says nothing of the bytes, and another
         // store may hold them.
@@ -829,9 +862,21 @@ export function blobRoutes(
     // has anything to undo. The per-hash lock is what makes the answer
     // authoritative: taken across the check, the move and the registration,
     // a request that saw the bytes absent is the one that put them there and
-    // the only one that may take them back.
+    // the only one that may take them back. A lock held past a store's write
+    // or delete that went unanswered is answered 503 at once: the request
+    // would otherwise wait on a store it cannot see, and the caller still
+    // has the bytes to send again.
     const recorded = await withBlobUploadLock(hash, async () => {
-      await finishCopyDeletion(storage, disk, hash);
+      try {
+        await finishCopyDeletion(storage, disk, hash);
+      } catch (error) {
+        // Before anything is placed. A disk that does not finish the
+        // deletion may still carry it out, over the bytes this would place.
+        if (error instanceof BlobStoreUnreachable) {
+          throw storeUnavailable(disk, hash, error);
+        }
+        throw error;
+      }
       const present = (await disk.has(hash)) !== null;
       if (present) {
         await rm(spool, { force: true });

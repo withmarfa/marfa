@@ -494,6 +494,8 @@ async function prepareArchiveExport(
       // The read was made outside the blob's upload lock, so the copy may
       // have been put right since: it is read again under the lock, as
       // `blob-integrity` reads it, and struck only if it is still wrong.
+      // While a store's change to the blob is unfinished the lock refuses,
+      // and the strike is left to `blob-integrity`.
       new VerifyingTransform(hash, size, async () => {
         await withBlobUploadLock(hash, async () => {
           if (!(await copyIntact(store, hash, size, signal))) {

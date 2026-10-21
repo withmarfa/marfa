@@ -196,8 +196,9 @@ export enum ErrorCode {
    */
   INBOUND_UNAVAILABLE = "inbound_unavailable",
   /**
-   * A store failed, or did not answer in time, while the server checked or
-   * read a copy of a blob. Says nothing about whether the copy is there.
+   * A store failed, or did not answer in time, while the server checked,
+   * read, wrote or deleted a copy of a blob. Says nothing about whether the
+   * copy is there.
    */
   BLOB_STORE_UNAVAILABLE = "blob_store_unavailable",
   REQUEST_TIMEOUT = "request_timeout",
@@ -659,7 +660,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   [ErrorCode.BLOB_STORE_UNAVAILABLE]: {
     status: 503,
     summary:
-      "A blob store failed, or did not answer in time, while Marfa checked or read a blob's copy. Nothing was written. Retry later.",
+      "A blob store failed, or did not answer in time, while Marfa checked, read, wrote or deleted a blob's copy. Nothing was written. Retry later.",
   },
   [ErrorCode.REQUEST_TIMEOUT]: {
     status: 408,

@@ -663,10 +663,15 @@ describe("an archive export of a blob it cannot read", () => {
         },
       });
       expect(res.status).toBe(201);
-      await new BlobReplicator(ctx.storage, stores, {
+      // Copied under the ordinary bound: the short one this block sets is
+      // for the export, and a write on a loaded machine can outlast it.
+      storeChecks.timeoutMs = timeout;
+      const replicated = await new BlobReplicator(ctx.storage, stores, {
         maxBlobs: 100,
         maxBytes: 1024 * 1024,
       }).runOnce();
+      expect(replicated.copied).toBe(hashes.length);
+      storeChecks.timeoutMs = 50;
       const open = { count: 0 };
       const checks = vi
         .spyOn(ctx.blobs.disk, "has")

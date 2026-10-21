@@ -6,10 +6,13 @@ import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { awaitStoreChange, storeChecks } from "../storage/blob-layer.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import {
   CopiesBelowMinimum,
   LocationNotFound,
   dropBlobCopy,
+  finishPendingCopyDeletions,
   purgeBlob,
 } from "./blob-delete.js";
 
@@ -19,6 +22,23 @@ afterEach(async () => {
   await ctx?.cleanup();
   ctx = undefined;
 });
+
+/** `work`, or a rejection once `ms` have passed without it settling. */
+async function settlesWithin<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`still running after ${String(ms)} ms`));
+        }, ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function upload(c: TestContext, content: string): Promise<string> {
   const res = await c.app.request("/blobs", {
@@ -285,5 +305,351 @@ describe("purgeBlob", () => {
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
     // Kept, and out of the report.
     expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+  });
+});
+
+describe("a store's delete that does not answer", () => {
+  it("leaves the deletion queued and the blob held until the delete ends, skips the blob meanwhile, and refuses an upload of its bytes", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "a delete that does not answer";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    const gate = gateDelete(second);
+    let deletes = 0;
+    const gated = second.delete.bind(second);
+    second.delete = (wanted) => {
+      deletes++;
+      return gated(wanted);
+    };
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      // The drop stands although its delete has not answered.
+      await dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      expect(deletes).toBe(1);
+      expect(
+        (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      ).toEqual([c.blobs.disk.id]);
+      const pending = () => c.storage.blobs.listPendingCopyDeletions(10);
+      expect(await pending()).toEqual([{ hash, store_id: second.id }]);
+
+      // A later pass skips the blob rather than waiting or deleting again.
+      expect(await finishPendingCopyDeletions(c.storage, stores, 10)).toEqual(
+        new Set(),
+      );
+      expect(deletes).toBe(1);
+      expect(await pending()).toEqual([{ hash, store_id: second.id }]);
+
+      // An upload of the same bytes is refused rather than kept waiting.
+      const refused = await c.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${c.workingKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: new TextEncoder().encode(content),
+      });
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+
+      // Once the delete ends, the lock goes with it.
+      gate.release();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await upload(c, content)).toBe(hash);
+      await finishPendingCopyDeletions(c.storage, stores, 10);
+      expect(deletes).toBe(2);
+      expect(await pending()).toEqual([]);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.restore();
+    }
+  });
+
+  it("stops asking a store whose delete went unanswered for the rest of the pass, and names it", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const hashes: string[] = [];
+    for (const content of ["first unanswered", "second unanswered"]) {
+      const hash = await upload(c, content);
+      await second.put(hash, {
+        stream: Readable.from([Buffer.from(content)]),
+        size_bytes: content.length,
+      });
+      await c.storage.runInTransaction(async () => {
+        await c.storage.blobs.queueCopyDeletion(hash, second.id);
+      });
+      hashes.push(hash);
+    }
+    const gate = gateDelete(second);
+    let deletes = 0;
+    const gated = second.delete.bind(second);
+    second.delete = (wanted) => {
+      deletes++;
+      return gated(wanted);
+    };
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(await finishPendingCopyDeletions(c.storage, stores, 10)).toEqual(
+        new Set([second.id]),
+      );
+      expect(deletes).toBe(1);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.release();
+      gate.restore();
+    }
+  });
+});
+
+describe("an upload while the disk's queued deletion of its bytes does not answer", () => {
+  it("answers 503 blob_store_unavailable, and stores the bytes once the delete ends", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const content = "a queued disk deletion that does not answer";
+    // Bytes on the disk that no row names, with their deletion queued, as a
+    // refused restore or a strike leaves them.
+    const hash = await upload(c, content);
+    await c.storage.runInTransaction(async () => {
+      await c.storage.blobs.queueCopyDeletion(hash, c.blobs.disk.id);
+    });
+    const gate = gateDelete(c.blobs.disk);
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      const post = () =>
+        c.app.request("/blobs", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${c.workingKey}`,
+            "Content-Type": "application/octet-stream",
+          },
+          body: new TextEncoder().encode(content),
+        });
+      const refused = await post();
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+
+      // The witness: once the delete ends, the same upload is stored.
+      gate.release();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const stored = await post();
+      expect(stored.status).toBe(201);
+      expect(await c.blobs.disk.has(hash)).not.toBeNull();
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.release();
+      gate.restore();
+    }
+  });
+});
+
+describe("a drop that the location log alone would allow", () => {
+  async function twoCopies(c: TestContext, content: string) {
+    const { stores, second } = await withSecondStore(c);
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    return { stores, second, hash };
+  }
+
+  it("drops a copy while the other copy the log names is held", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "both held");
+    await dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id]);
+    expect(await second.has(hash)).toBeNull();
+  });
+
+  it("refuses the drop when the other copy the log names is gone from its store, and keeps the copy", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "one gone");
+    // The disk lost its copy behind the log's back, as a late delete would.
+    await ctx.blobs.disk.delete(hash);
+    const refused = dropBlobCopy(ctx.storage, stores, hash, second.id, 1);
+    await expect(refused).rejects.toBeInstanceOf(CopiesBelowMinimum);
+    await expect(refused).rejects.toMatchObject({ live: 1, minCopies: 1 });
+    expect(
+      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([ctx.blobs.disk.id, second.id].sort());
+    expect(await second.has(hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
+  });
+
+  it("refuses the drop when the store of the other copy does not answer", async () => {
+    ctx = await createTestContext();
+    const { stores, second, hash } = await twoCopies(ctx, "other silent");
+    const has = ctx.blobs.disk.has.bind(ctx.blobs.disk);
+    ctx.blobs.disk.has = () => new Promise(() => undefined);
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      await expect(
+        dropBlobCopy(ctx.storage, stores, hash, second.id, 1),
+      ).rejects.toBeInstanceOf(CopiesBelowMinimum);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      ctx.blobs.disk.has = has;
+    }
+    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    expect(await second.has(hash)).not.toBeNull();
+  });
+});
+
+describe("a drop while a store has not finished a change to the blob", () => {
+  it("answers 503 blob_store_unavailable at once, and drops the copy once the store answers", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { second } = await withSecondStore(c);
+    const content = "dropped while a store's write is out";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    // A write to the second store that its caller stops waiting for, as
+    // replication's is when the store does not answer.
+    let finish: () => void = () => undefined;
+    const write = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await withBlobUploadLock(hash, () =>
+      awaitStoreChange(second, hash, () => write, 50).catch(() => undefined),
+    );
+    const drop = () =>
+      c.app.request(`/blobs/${hash}/locations/${second.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${c.managementKey}` },
+      });
+    try {
+      const refused = await settlesWithin(Promise.resolve(drop()), 1_000);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+      expect(await c.storage.blobs.listLocations(hash)).toHaveLength(2);
+      expect(await second.has(hash)).not.toBeNull();
+    } finally {
+      finish();
+    }
+    // The witness: once the write ends, the same drop goes through.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const dropped = await settlesWithin(Promise.resolve(drop()), 1_000);
+    expect(dropped.status).toBe(200);
+    expect(
+      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([c.blobs.disk.id]);
+  });
+
+  it("waits in turn behind a live drop of the same blob", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "two live drops";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    // The first drop holds the blob while it asks the disk, well within
+    // the store check bound.
+    const has = c.blobs.disk.has.bind(c.blobs.disk);
+    let answer: () => void = () => undefined;
+    const answered = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    let asking: () => void = () => undefined;
+    const asked = new Promise<void>((resolve) => {
+      asking = resolve;
+    });
+    c.blobs.disk.has = async (wanted, cancel) => {
+      asking();
+      await answered;
+      return has(wanted, cancel);
+    };
+    try {
+      const first = dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      await asked;
+      let settled = false;
+      const next = dropBlobCopy(c.storage, stores, hash, c.blobs.disk.id, 1)
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      c.blobs.disk.has = has;
+      answer();
+      await first;
+      // Its turn came after the first committed, so it found one copy.
+      const outcome = await next;
+      expect(outcome).toBeInstanceOf(CopiesBelowMinimum);
+      expect(outcome).toMatchObject({ live: 1, minCopies: 1 });
+    } finally {
+      c.blobs.disk.has = has;
+      answer();
+    }
+    expect(
+      (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    ).toEqual([c.blobs.disk.id]);
+  });
+
+  it("refuses a drop the log alone refuses without asking any store", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "refused by the log";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    let asked = 0;
+    const has = c.blobs.disk.has.bind(c.blobs.disk);
+    c.blobs.disk.has = () => {
+      asked++;
+      return new Promise(() => undefined);
+    };
+    try {
+      // Two copies and a minimum of two: the log refuses the drop.
+      const refused = dropBlobCopy(c.storage, stores, hash, second.id, 2);
+      await expect(settlesWithin(refused, 1_000)).rejects.toBeInstanceOf(
+        CopiesBelowMinimum,
+      );
+      await expect(refused).rejects.toMatchObject({ live: 2, minCopies: 2 });
+      expect(asked).toBe(0);
+    } finally {
+      c.blobs.disk.has = has;
+    }
+    // The witness: a drop the log allows asks the other store.
+    c.blobs.disk.has = (wanted, cancel) => {
+      asked++;
+      return has(wanted, cancel);
+    };
+    try {
+      await dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      expect(asked).toBe(1);
+    } finally {
+      c.blobs.disk.has = has;
+    }
   });
 });

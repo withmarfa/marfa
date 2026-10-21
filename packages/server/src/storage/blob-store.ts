@@ -207,6 +207,12 @@ export async function spoolVerified(
   hash: string,
   source: { stream: Readable; size_bytes: number },
 ): Promise<void> {
+  // A pipeline from a stream destroyed with data still buffered never
+  // settles, and a write its caller gave up on can start after its source
+  // was closed.
+  if (source.stream.destroyed) {
+    throw new Error("the source stream closed before the write began");
+  }
   const hashing = new HashingTransform();
   try {
     await pipeline(source.stream, hashing, createWriteStream(path));

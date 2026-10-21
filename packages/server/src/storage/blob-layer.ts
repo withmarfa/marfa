@@ -12,6 +12,7 @@ import { log } from "../middleware/logger.js";
 import { errorMessage } from "../error-text.js";
 import { withBlobFaults } from "./blob-faults.js";
 import { faultsArmed, storeCheckDeadlineFault } from "../control/faults.js";
+import { outlastBlobUploadLock } from "./blob-upload-lock.js";
 
 /**
  * The stores this instance has attached, built in one place so that every
@@ -51,7 +52,13 @@ export async function recordedStores(
  * in time rather than holding back the answer. Read the bound through
  * {@link storeCheckTimeoutMs}.
  */
-export const storeChecks = { concurrency: 16, timeoutMs: 15_000 };
+export const storeChecks = {
+  concurrency: 16,
+  timeoutMs: 15_000,
+  /** The slowest a store's write may take in a blob's bytes and still be
+   *  waited for: a copy over a slow link is not one that went unanswered. */
+  writeFloorBytesPerSecond: 256 * 1024,
+};
 
 /** How long one question to a store may go unanswered: the bound in
  *  {@link storeChecks}, or the shorter one a `store-check-deadline` fault
@@ -60,6 +67,16 @@ export function storeCheckTimeoutMs(): number {
   return (
     (faultsArmed() ? storeCheckDeadlineFault() : undefined) ??
     storeChecks.timeoutMs
+  );
+}
+
+/** How long a store's write of `sizeBytes` may go unfinished: the store
+ *  check bound, and the time the bytes take at the floor rate in
+ *  {@link storeChecks}. */
+export function storeWriteTimeoutMs(sizeBytes: number): number {
+  return (
+    storeCheckTimeoutMs() +
+    Math.ceil((sizeBytes * 1000) / storeChecks.writeFloorBytesPerSecond)
   );
 }
 
@@ -127,6 +144,70 @@ export async function within<T>(
   } finally {
     clearTimeout(timer);
     outer?.removeEventListener("abort", stop);
+  }
+}
+
+/**
+ * `change`, a write or delete to `store` under `hash`'s upload lock, which
+ * the caller holds, or a {@link BlobStoreUnreachable} once `ms` have passed
+ * without it settling. The call is not cancelled and the lock outlasts it:
+ * a store can still carry out a write or a delete after its caller stops
+ * waiting, and one landing after the lock was let go could remove a copy a
+ * later run had made, or leave bytes in a store after a purge. Until it
+ * settles, housekeeping skips the blob and every request that takes its
+ * lock (an upload, a restore, a drop, an export's re-check) is refused with
+ * `blob_store_unavailable`.
+ */
+export async function awaitStoreChange<T>(
+  store: BlobStore,
+  hash: string,
+  change: () => Promise<T>,
+  ms: number,
+): Promise<T> {
+  const running = change();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const silent = new BlobStoreUnreachable(
+    `the ${store.kind} store did not finish a write or delete within ${String(ms)} ms`,
+  );
+  try {
+    return await Promise.race([
+      running,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(silent);
+        }, ms);
+      }),
+    ]);
+  } catch (error) {
+    if (error !== silent) throw error;
+    outlastBlobUploadLock(hash, running, () =>
+      storeUnavailable(store, hash, silent),
+    );
+    log("error", "blob.store_change_unanswered", {
+      hash,
+      store_id: store.id,
+      kind: store.kind,
+    });
+    running.then(
+      () => {
+        log("info", "blob.store_change_ended", {
+          hash,
+          store_id: store.id,
+          outcome: "done",
+        });
+      },
+      (late: unknown) => {
+        log("error", "blob.store_change_ended", {
+          hash,
+          store_id: store.id,
+          outcome: "failed",
+          error: errorMessage(late),
+        });
+      },
+    );
+    throw silent;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -254,9 +254,39 @@ When a copy has been dropped through `DELETE /blobs/{hash}/locations/{store}`, t
 
 If an attached store leaves unanswered for 15 seconds a question from a run of `blob-replicate` whether it holds a blob, or a read of a blob's bytes, then the server MUST answer the run with the copy it was making counted in `remaining`.
 
-**Reason:** a store that hangs would otherwise hold the run, and every run after it, without end. A later run makes the copy once the store answers. A store's write or delete is not limited here: giving up on one while it can still land would let it undo a later copy.
+**Reason:** a store that hangs would otherwise hold the run, and every run after it, without end. A later run makes the copy once the store answers.
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`.
+
+### `stores/replicate-write-no-answer`
+
+If an attached store leaves a write of a blob's bytes from a run of `blob-replicate` unfinished for 15 seconds and one more second for each 256 KiB of the blob, then the server MUST answer the run with the copy it was making counted in `remaining`.
+
+**Reason:** a write that hangs would otherwise hold the run without end. The time allowed grows with the blob, so a large copy over a slow link is not taken for one that hangs.
+
+**Tests:** `compliance/blob-store-silent.test.ts › finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
+
+### `stores/replicate-skips-unfinished`
+
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST count the blob's copy in `remaining` on each run of `blob-replicate` without asking any store to write or delete the blob.
+
+**Reason:** the store can still carry out the write or the deletion after the server stops waiting. A copy made meanwhile could be removed by the late deletion with the location log still naming it, and a run that waited on the store would hang as the first did.
+
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
+
+### `stores/replicate-after-unfinished`
+
+When an attached store finishes a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST make the copy the blob lacks on a later run of `blob-replicate`.
+
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
+
+### `stores/upload-unfinished`
+
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST answer `POST /blobs` with those bytes with `503 blob_store_unavailable` and store nothing.
+
+**Reason:** a late deletion could remove the bytes the upload would register, and waiting would hang the request on a store that may never answer. The caller still holds the bytes and can send them again.
+
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `› answers 503 blob_store_unavailable, and stores the bytes once the disk answers`.
 
 ## Minimum copies and dropping a copy
 
@@ -296,6 +326,14 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 **Tests:** `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/drop-confirms-copies`
+
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
+
+**Reason:** the location log can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the log could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+
+**Tests:** `compliance/blob-rules.test.ts › refuses a drop the log allows when the other copy is gone from its store, and keeps the copy`.
+
 ### `stores/drop-no-copy`
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_location_not_found`.
@@ -328,13 +366,23 @@ When a caller authorized by `blobs.manage` or direct owner or local authority se
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`.
+**Reason:** the location log is read before any store is asked, so a drop that the log alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the log's answers because it can still change what the log says, so a store that is not attached is also answered `503` while one is out.
+
+**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
+
+### `stores/drop-unfinished`
+
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
+
+**Reason:** the late write or deletion can still change which copies the blob has, so neither the location log nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the store answers.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
 ### `stores/drop-concurrent`
 
-While drops of every copy of one blob are in flight together, the server MUST answer each with `200` or `409 copies_below_minimum` and leave at least `min_copies` copies.
+While drops of every copy of one blob are in flight together, the server MUST answer each with `200`, `409 copies_below_minimum` or, under `stores/drop-unfinished`, `503 blob_store_unavailable`, and leave at least `min_copies` copies.
 
 **Tests:** `compliance/blob-rules.test.ts › never lets two concurrent drops take both copies`.
 
@@ -406,13 +454,29 @@ If an attached store leaves unanswered for 15 seconds a question from a run of `
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, counts each silent store as unreachable, strikes nothing, and checks the copies once the stores answer`.
 
+### `stores/integrity-delete-no-answer`
+
+If an attached store leaves a deletion of a dropped or struck copy's bytes from a run of `blob-integrity` unfinished for 15 seconds, then the server MUST count the store in the run's `unreachable`.
+
+**Reason:** the run finishes the deletions a drop or a strike left before it checks the copies, and removes the bytes of a copy it strikes. A store that hangs on one is a store the run cannot reach, so the run asks it nothing more. The deletion stays queued for a later run, and a struck copy stays struck.
+
+**Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› counts the store as unreachable, asks it nothing more in the run, and keeps the copy struck`.
+
 ### `stores/unreachable-read`
 
-When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob, and no store that holds a recorded copy of it can be reached, the server MUST answer `503 blob_store_unavailable`.
+When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob, and no store that holds a recorded copy of it can be reached or begins to answer the read within 15 seconds, the server MUST answer `503 blob_store_unavailable`.
 
 **Reason:** a store that cannot answer says nothing of the bytes, so `404 blob_not_found` would claim they are gone.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `› strikes nothing while an empty folder stands where the store was, as a mount point does without its drive`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable when no store opens the bytes, and serves them from a store that does`.
+
+### `stores/read-no-answer`
+
+If a store that holds a recorded copy of a blob does not begin to answer a read of the bytes for `GET /blobs/{hash}` or a link the instance serves within 15 seconds, then the server MUST read the bytes from another attached store that holds a recorded copy.
+
+**Reason:** the bound is on the first byte, not the whole body, so a large blob read over a slow link is not cut off.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable when no store opens the bytes, and serves them from a store that does`.
 
 ### `stores/integrity-strike-restored`
 

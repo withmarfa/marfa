@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { holdBlobUploadLocks, withBlobUploadLock } from "./blob-upload-lock.js";
+import {
+  holdBlobUploadLocks,
+  LOCK_HELD,
+  outlastBlobUploadLock,
+  tryBlobUploadLock,
+  withBlobUploadLock,
+} from "./blob-upload-lock.js";
 
 const hashes = (count: number, tag: string): string[] =>
   Array.from({ length: count }, (_, i) => `sha256:${tag}-${String(i)}`);
@@ -28,5 +34,146 @@ describe("blob upload locks over many hashes", () => {
     release();
     await waiting;
     expect(entered).toBe(true);
+  });
+});
+
+/** A promise and the function that settles it. */
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 10));
+
+describe("a hold that outlasts its caller", () => {
+  it("keeps the lock until the call it outlasts ends, after its caller returns", async () => {
+    const [hash = ""] = hashes(1, "outlast");
+    const call = gate();
+    await withBlobUploadLock(hash, () => {
+      outlastBlobUploadLock(hash, call.promise, () => new Error("unanswered"));
+      return Promise.resolve();
+    });
+    await expect(
+      tryBlobUploadLock(hash, () => Promise.resolve("ran")),
+    ).resolves.toBe(LOCK_HELD);
+    call.open();
+    await tick();
+    await expect(
+      tryBlobUploadLock(hash, () => Promise.resolve("ran")),
+    ).resolves.toBe("ran");
+  });
+
+  it("refuses every caller while the call is out, whether asked at once or queued before", async () => {
+    const [hash = ""] = hashes(1, "refuse");
+    const call = gate();
+    const refusal = new Error("a store did not answer");
+    const caller = gate();
+    const holding = withBlobUploadLock(hash, async () => {
+      await caller.promise;
+      outlastBlobUploadLock(hash, call.promise, () => refusal);
+    });
+    // Queued behind an ordinary hold, which then gives up on its call.
+    const queued = withBlobUploadLock(hash, () => Promise.resolve("ran"));
+    await tick();
+    caller.open();
+    await holding;
+    await expect(queued).rejects.toBe(refusal);
+    // Asked while the call is still out.
+    await expect(
+      withBlobUploadLock(hash, () => Promise.resolve("ran")),
+    ).rejects.toBe(refusal);
+    // The witness: once the call ends, the same caller runs.
+    call.open();
+    await tick();
+    await expect(
+      withBlobUploadLock(hash, () => Promise.resolve("ran")),
+    ).resolves.toBe("ran");
+  });
+
+  it("waits in turn behind an ordinary hold without refusing", async () => {
+    const [hash = ""] = hashes(1, "ordinary");
+    const caller = gate();
+    const holding = withBlobUploadLock(hash, () => caller.promise);
+    let entered = false;
+    const queued = withBlobUploadLock(hash, () => {
+      entered = true;
+      return Promise.resolve("ran");
+    });
+    await tick();
+    expect(entered).toBe(false);
+    caller.open();
+    await holding;
+    await expect(queued).resolves.toBe("ran");
+  });
+});
+
+describe("holding many locks while one is held past an unanswered call", () => {
+  it("refuses at once, and lets go the locks it took", async () => {
+    const [first = "", held = "", last = ""] = hashes(3, "many-refuse");
+    const call = gate();
+    const refusal = new Error("a store did not answer");
+    await withBlobUploadLock(held, () => {
+      outlastBlobUploadLock(held, call.promise, () => refusal);
+      return Promise.resolve();
+    });
+    await expect(holdBlobUploadLocks([first, held, last])).rejects.toBe(
+      refusal,
+    );
+    // The lock taken before the refusal is free again.
+    await expect(
+      tryBlobUploadLock(first, () => Promise.resolve("free")),
+    ).resolves.toBe("free");
+    // The witness: once the call ends, the same request takes every lock.
+    call.open();
+    await tick();
+    const release = await holdBlobUploadLocks([first, held, last]);
+    release();
+  });
+
+  it("refuses while queued behind a holder that then gives up on its call", async () => {
+    const [held = "", other = ""] = hashes(2, "many-queued");
+    const call = gate();
+    const caller = gate();
+    const refusal = new Error("a store did not answer");
+    const holding = withBlobUploadLock(held, async () => {
+      await caller.promise;
+      outlastBlobUploadLock(held, call.promise, () => refusal);
+    });
+    const queued = holdBlobUploadLocks([held, other]);
+    await tick();
+    caller.open();
+    await holding;
+    await expect(queued).rejects.toBe(refusal);
+    call.open();
+    await tick();
+    await expect(
+      tryBlobUploadLock(held, () => Promise.resolve("free")),
+    ).resolves.toBe("free");
+  });
+});
+
+describe("taking a lock only when it is free", () => {
+  it("skips a hash that is held, and runs once it is free", async () => {
+    const [hash = ""] = hashes(1, "try");
+    const call = gate();
+    await withBlobUploadLock(hash, () => {
+      outlastBlobUploadLock(hash, call.promise, () => new Error("unanswered"));
+      return Promise.resolve();
+    });
+    let ran = false;
+    const skipped = await tryBlobUploadLock(hash, () => {
+      ran = true;
+      return Promise.resolve("ran");
+    });
+    expect(skipped).toBe(LOCK_HELD);
+    expect(ran).toBe(false);
+    call.open();
+    await tick();
+    await expect(
+      tryBlobUploadLock(hash, () => Promise.resolve("ran")),
+    ).resolves.toBe("ran");
   });
 });

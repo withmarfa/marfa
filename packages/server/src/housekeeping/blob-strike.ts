@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { addAbortSignal } from "node:stream";
-import type { BlobStore } from "../storage/blob-store.js";
+import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
@@ -14,6 +14,11 @@ import { errorMessage } from "../error-text.js";
  * back from another store. Answers whether a row went: a copy dropped
  * between the finding and the strike is not struck again. The caller holds
  * the blob's upload lock.
+ *
+ * A store that does not finish the deletion in time throws
+ * {@link BlobStoreUnreachable} after the strike has committed, so the
+ * caller can stop asking that store; the deletion stays queued. Any other
+ * failure to delete is logged, and the deletion stays queued too.
  */
 export async function strikeCopy(
   storage: Storage,
@@ -53,6 +58,7 @@ export async function strikeCopy(
       store_id: store.id,
       error: errorMessage(err),
     });
+    if (err instanceof BlobStoreUnreachable) throw err;
   }
   return true;
 }

@@ -1007,6 +1007,48 @@ describe("how the copies are placed and removed", () => {
     expect((await fetch(link)).status).toBe(404);
   });
 
+  it("refuses a drop the log allows when the other copy is gone from its store, and keeps the copy", async () => {
+    const hash = await uploadReferencedText(
+      "the log says two, the disk has none",
+    );
+    await replicateToZero();
+    const stores = (await operator.listBlobStores()).data.data;
+    const s3 = stores.find((store) => store.kind === "s3")!;
+    const path = diskPathFor(hash);
+    const bytes = readFileSync(path);
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+      "s3",
+    ]);
+
+    // The disk's copy goes behind the log's back, as a store's late delete
+    // would take it: the log still names two copies.
+    unlinkSync(path);
+    const refused = await operator.deleteBlobLocation(hash, s3.id);
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("copies_below_minimum");
+    expect(refused.error?.error.details).toMatchObject({
+      live: 1,
+      min_copies: 1,
+    });
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+      "s3",
+    ]);
+    expect((await fetch((await client.getBlobUrl(hash)).data.url)).status).toBe(
+      200,
+    );
+
+    // The witness: with the disk's copy back, the same drop goes.
+    writeFileSync(path, bytes);
+    const dropped = await operator.deleteBlobLocation(hash, s3.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(kinds((await client.listBlobLocations(hash)).data.data)).toEqual([
+      "disk",
+    ]);
+    await replicateToZero();
+  });
+
   it("never lets two concurrent drops take both copies", async () => {
     const hash = await uploadReferencedText("two copies, two drops at once");
     await replicateToZero();
