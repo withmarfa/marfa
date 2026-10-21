@@ -1093,6 +1093,28 @@ When a native client's registration names an `http` redirect URI on the loopback
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
+### `keys-and-oauth/register-native-private-use`
+
+When a native client's registration names a redirect URI in a private-use scheme that is a reverse domain name, with a path and no authority, such as `com.example.app:/callback`, the server MUST register it.
+
+**Reason:** RFC 8252 section 7.1: an app on a phone receives its sign-in at a scheme it claims, named for a domain its developer controls, because it cannot listen on the loopback.
+
+**Tests:** `compliance/oauth.test.ts › registers a native client's private-use redirect URI in reverse-domain form, and refuses one in any other form`.
+
+### `keys-and-oauth/register-native-private-form`
+
+If a native client's registration names a redirect URI in a scheme other than `http` or `https` that is not a reverse domain name, or that has an authority, then the server MUST answer `400 invalid_redirect_uri`.
+
+**Tests:** `compliance/oauth.test.ts › registers a native client's private-use redirect URI in reverse-domain form, and refuses one in any other form`.
+
+### `keys-and-oauth/register-web-private-use`
+
+If a web client's registration names a redirect URI in a private-use scheme, then the server MUST answer `400 invalid_redirect_uri`.
+
+**Reason:** Only an app installed on a device can claim a scheme there, so a web client has no way to receive a code sent to one.
+
+**Tests:** `compliance/oauth.test.ts › refuses a web client a private-use redirect URI that a native client may register`.
+
 ### `keys-and-oauth/register-unparseable`
 
 If a registration names a redirect URI that does not parse, then the server MUST answer `400` with an RFC 7591 error object, `error` and `error_description`, rather than the error envelope.
@@ -1251,7 +1273,13 @@ If an authorization request carries no PKCE challenge, then the server MUST send
 
 If an authorization request names a redirect URI the client did not register, then the server MUST send the browser to its own `/auth/error` page with `error=invalid_redirect`, never to that URI.
 
-**Tests:** `compliance/oauth-authorize.test.ts › is sent to the error page, never to a redirect URI the app did not register`.
+**Tests:** `compliance/oauth-authorize.test.ts › is sent to the error page, never to a redirect URI the app did not register`, `› sends a request naming a private-use redirect URI the app did not register to the error page`.
+
+### `keys-and-oauth/authorize-private-use`
+
+When a person accepts an authorization request that names a private-use redirect URI the client registered, the server MUST send the browser to that URI, with the scheme and path as registered, carrying the code and the request's `state`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends the code to the private-use redirect URI the app registered, which the app exchanges there`.
 
 ### `keys-and-oauth/prompt-none-login`
 
@@ -1561,7 +1589,7 @@ When an authorization request naming `prompt=none` from nobody signed in names a
 
 When an app exchanges a code at `POST /auth/oauth2/token` with the verifier that matches its challenge, while the grant the code was issued under stands, the server MUST answer `200` with a bearer `access_token`.
 
-**Tests:** `compliance/oauth-authorize.test.ts › exchanges a code once, and refuses it again with invalid_grant`.
+**Tests:** `compliance/oauth-authorize.test.ts › exchanges a code once, and refuses it again with invalid_grant`, `› sends the code to the private-use redirect URI the app registered, which the app exchanges there`.
 
 ### `keys-and-oauth/code-grant-revoked`
 

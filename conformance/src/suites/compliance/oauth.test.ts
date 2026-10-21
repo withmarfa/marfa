@@ -178,6 +178,45 @@ describe("OAuth provider", () => {
     }
   });
 
+  it("registers a native client's private-use redirect URI in reverse-domain form, and refuses one in any other form", async () => {
+    const register = (application_type: string, uri: string) =>
+      client.registerOAuthClient({
+        client_name: `conformance-private-use-${ctx.runId}`,
+        application_type,
+        redirect_uris: [uri],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      });
+    const accepted = await register("native", "com.example.app:/callback");
+    expect(accepted.status).toBe(201);
+    expect(accepted.data.redirect_uris).toEqual(["com.example.app:/callback"]);
+
+    // A scheme no domain names, and a reverse-domain scheme with an authority.
+    for (const uri of ["exampleapp:/callback", "com.example.app://callback"]) {
+      const refused = await register("native", uri);
+      expect(refused.status, uri).toBe(400);
+      expect((refused.data as { error?: string }).error, uri).toBe(
+        "invalid_redirect_uri",
+      );
+    }
+  });
+
+  it("refuses a web client a private-use redirect URI that a native client may register", async () => {
+    const refused = await client.registerOAuthClient({
+      client_name: `conformance-web-private-use-${ctx.runId}`,
+      application_type: "web",
+      redirect_uris: ["com.example.app:/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+    expect(refused.status).toBe(400);
+    expect((refused.data as { error?: string }).error).toBe(
+      "invalid_redirect_uri",
+    );
+  });
+
   it("refuses an unparseable redirect URI with an RFC 7591 error object", async () => {
     const r = await client.registerOAuthClient({
       redirect_uris: ["not a url"],
