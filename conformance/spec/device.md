@@ -1442,7 +1442,7 @@ If an answer names a contract other than the one the CLI was built for, then the
 
 **Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read.
 
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds every trash command to the contract through its private socket`.
+**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds every trash command to the contract through its private socket`.
 
 ### `device/command-mismatch-prints-nothing`
 
@@ -1474,7 +1474,7 @@ If the answer to a write the CLI sent names another contract, then the CLI MUST 
 
 **Reason:** the contract is named by the answer, so the server acted on the write before the CLI could read that it speaks another contract.
 
-**Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`.
+**Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`, `› holds both app narrowing responses to the contract through its private socket`.
 
 ### `device/command-unnamed-refusal`
 
