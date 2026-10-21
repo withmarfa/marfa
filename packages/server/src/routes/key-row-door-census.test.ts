@@ -59,6 +59,8 @@ const NOT_ROW_ACCESS: Record<string, string> = {
  * on purpose.
  */
 const NOT_A_DOOR: Record<string, string> = {
+  "webhooks/read.ts › webhookMaker › get":
+    "reads only the display name of a subscription maker after webhook read authorization; an ordinary credential sees only itself and direct authority may inspect every maker",
   "routes/key-routes.ts › liveKeys › list":
     "the owner's console reads every key for Home's count and attention and for the API keys pages, behind direct owner authority, which manages every key",
   "routes/keys.ts › refuseOwnSourceClaimedElsewhere › list":

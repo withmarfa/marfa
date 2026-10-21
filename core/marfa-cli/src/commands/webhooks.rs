@@ -7,8 +7,9 @@ use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
-/// Outbound subscriptions that send an instance's events out. Every
-/// operation needs `webhooks.manage`.
+/// Outbound subscriptions that send an instance's events out.
+/// Keys and apps need `webhooks.manage` and reach only their own subscriptions.
+/// With --socket, list, get, deliveries and redeliver reach every subscription.
 #[derive(Debug, Subcommand)]
 pub enum WebhooksCommand {
     /// Register a subscription. The secret is answered once, in plaintext.

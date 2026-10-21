@@ -11,6 +11,8 @@
  * a script needs are written into the markup here, so the script only chooses
  * which to show.
  */
+import { Webhooks } from "../pages/parts/webhooks.js";
+import type { WebhookHistory } from "../pages/webhook-history.js";
 import type { AppKind } from "../auth/connected-apps.js";
 import {
   PAGE_SIZE,
@@ -237,6 +239,7 @@ export interface AppDetail {
 }
 
 export interface AppPageParams extends PageBase {
+  webhooks?: WebhookHistory[] | null;
   id: string;
   name: string;
   details: readonly AppDetail[];
@@ -321,6 +324,7 @@ export function AppPage(props: AppPageParams) {
             )}
           </RowGroup>
         </Section>
+        <Webhooks hooks={props.webhooks ?? null} />
       </form>
       <SaveBar form="app-access-form" />
       <DangerRow

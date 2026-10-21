@@ -1,3 +1,4 @@
+import { initWebhooks } from "./webhooks.js";
 /** The one script every page loads. Each module finds its own markup and does nothing without it. */
 import { initAppAccess } from "./app-access.js";
 import { initAccess } from "./access.js";
@@ -42,6 +43,7 @@ function start(): void {
   initKeys();
   initItems();
   initAppAccess();
+  initWebhooks();
   initGeneral();
   initHealth();
   initSignIns();

@@ -1,3 +1,4 @@
+import { webhookHistories } from "../pages/webhook-history.js";
 /**
  * The API keys pages of the owner console, read from storage and drawn by
  * `key-pages.tsx`. Every page is the owner's: a browser without the owner's
@@ -360,6 +361,10 @@ export function keyRoutes(storage: Storage) {
       renderKeyPage({
         nonce: c.var.cspNonce,
         instanceName,
+        webhooks: await webhookHistories(storage, c, {
+          kind: "key",
+          keyId: key.id,
+        }),
         id: key.id,
         label: key.label,
         madeBy,

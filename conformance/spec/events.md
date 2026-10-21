@@ -811,7 +811,7 @@ When the server answers a read or an update of a subscription, the server MUST r
 
 **Reason:** the plaintext is shown once, on creation.
 
-**Tests:** `compliance/webhooks.test.ts › registers a subscription and returns the secret once`, `compliance/webhook-delivery.test.ts › shows a subscription as its id, url, events, type_filter, secret, active flag and two timestamps, and no more`.
+**Tests:** `compliance/webhooks.test.ts › registers a subscription and returns the secret once`, `compliance/webhook-delivery.test.ts › shows subscription configuration with maker identity on reads`.
 
 ### `events/webhook-secret-generated`
 
@@ -833,17 +833,43 @@ If `POST /webhooks` names a `secret` shorter than 32 characters, the empty strin
 
 ### `events/webhook-shape`
 
-The server MUST answer a subscription with exactly the members `id`, `url`, `events`, `type_filter`, `secret`, `active`, `created_at` and `updated_at`.
+The server MUST answer a subscription with the members `id`, `url`, `events`, `type_filter`, `secret`, `active`, `created_at` and `updated_at`, adding `maker` only on list and get responses.
 
 **Reason:** the subscription's position in the event log and its birth are not part of what an owner sees.
 
-**Tests:** `compliance/webhook-delivery.test.ts › shows a subscription as its id, url, events, type_filter, secret, active flag and two timestamps, and no more`.
+**Tests:** `compliance/webhook-delivery.test.ts › shows subscription configuration with maker identity on reads`.
 
 ### `events/webhook-list`
 
 When a credential holding `webhooks.manage` sends `GET /webhooks`, the server MUST answer the subscriptions the requesting key registered, or for a signed-in app those any token of its grant registered, with `next_cursor` `null`.
 
-**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhook-delivery.test.ts › shows a subscription as its id, url, events, type_filter, secret, active flag and two timestamps, and no more`.
+**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhook-delivery.test.ts › shows subscription configuration with maker identity on reads`.
+
+### `events/webhook-direct-read`
+
+When the owner's browser session or private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries`, the server MUST admit reads across every maker without creating a credential.
+
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+
+### `events/webhook-maker`
+
+When the server lists or gets a subscription, the server MUST include its maker's `kind` (`key` or `app`), `id` (key ID or OAuth client ID) and current `name`, with `null` for a name no longer available.
+
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
+
+### `events/webhook-direct-retry`
+
+When the owner's browser session authenticated within five minutes or private local authority requests redelivery, the server MUST apply the same live subscription, maker, retention and retained-frame checks as a request by the subscription's maker.
+
+**Reason:** direct authority can request another attempt, but cannot restore the maker's revoked access or send content the maker can no longer read.
+
+**Tests:** `compliance/webhooks-owner.test.ts › retries a failed delivery through owner authority without exposing its frame`.
+
+### `events/webhook-direct-mutations`
+
+When direct owner or local authority sends a subscription create, update or delete without the maker's credential, the server MUST refuse it with `401 unauthorized`.
+
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through owner and local authority while ordinary keys stay isolated`.
 
 ### `events/webhook-update`
 
@@ -975,7 +1001,7 @@ If a credential without `webhooks.manage` sends a request to a webhook operation
 
 ### `events/webhook-unauthenticated`
 
-If a request to a webhook operation carries no credential, then the server MUST answer `401 unauthorized`.
+If a request to a webhook operation carries neither a credential nor direct owner or local authority, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/webhooks.test.ts › refuses every door without a credential`.
 
@@ -987,7 +1013,7 @@ When a credential holding `webhooks.manage` registers a subscription, the server
 
 ### `events/webhook-owner-only`
 
-When a request names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
+When a key or app request names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
 
 **Reason:** to another credential the subscription is an id nobody holds.
 
@@ -995,7 +1021,7 @@ When a request names a subscription that neither the requesting key nor the requ
 
 ### `events/webhook-redeliver-owner-only`
 
-When a redelivery names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found`.
+When a key or app redelivery names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › answers a redelivery on a subscription another credential registered 404 webhook_not_found, and accepts the owner's`.
 

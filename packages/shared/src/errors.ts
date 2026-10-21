@@ -495,7 +495,7 @@ export const ERROR_CODES: Record<AnsweredCode, ErrorCodeInfo> = {
   },
   [ErrorCode.WEBHOOK_NOT_FOUND]: {
     status: 404,
-    summary: "No webhook subscription this credential registered has this id.",
+    summary: "No webhook subscription the caller can reach has this id.",
   },
   [ErrorCode.API_KEY_NOT_FOUND]: {
     status: 404,

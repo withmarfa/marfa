@@ -122,6 +122,102 @@ describe("failed delivery reopening and claim fencing", () => {
     }
   });
 
+  it("lets the owner retry a retained failure to a real receiver, attributes the request and refuses inactive, revoked and expired retries", async () => {
+    const received: string[] = [];
+    const server = createServer((req, res) => {
+      let body = "";
+      req.on("data", (chunk: Buffer) => {
+        body += chunk.toString();
+      });
+      req.on("end", () => {
+        received.push(body);
+        res.writeHead(200);
+        res.end();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    if (!address || typeof address === "string")
+      throw new Error("receiver missing");
+    try {
+      const { hook, delivery, path } = await seed();
+      const privateFrame =
+        await ctx.storage.outboundWebhookDeliveries.getPending(
+          new Date().toISOString(),
+          1,
+        );
+      expect(privateFrame).toEqual([]);
+      await request(ctx.app, "PATCH", `/webhooks/${hook.id}`, {
+        key: ctx.workingKey,
+        body: { url: `http://127.0.0.1:${String(address.port)}/hook` },
+      });
+      const history = await ctx.ownerRequest(`/webhooks/${hook.id}/deliveries`);
+      expect(history.status).toBe(200);
+      expect(await history.text()).not.toContain("ordinary retry");
+      const retried = await ctx.ownerRequest(path, { method: "POST" });
+      expect(retried.status).toBe(202);
+      expect(await retried.text()).not.toContain("ordinary retry");
+      await new WebhookPoller({
+        storage: ctx.storage,
+        http: createWebhookHttpClient({ allowPrivateAddresses: true }),
+      }).runOnce();
+      expect(received).toHaveLength(1);
+      expect(received[0]).toContain("ordinary retry");
+      expect(
+        await ctx.storage.outboundWebhookDeliveries.get(hook.id, delivery.id),
+      ).toMatchObject({ status: "success" });
+      const audit = await ctx.ownerRequest(
+        "/audit?action=webhook.delivery.redeliver",
+      );
+      const auditRows = (await audit.json()) as { data: { key_id: string }[] };
+      expect(auditRows.data[0]?.key_id).toMatch(/^owner:/);
+      const second = await seed();
+      await request(ctx.app, "PATCH", `/webhooks/${second.hook.id}`, {
+        key: ctx.workingKey,
+        body: { active: false },
+      });
+      expect(
+        (await ctx.ownerRequest(second.path, { method: "POST" })).status,
+      ).toBe(409);
+      await request(ctx.app, "PATCH", `/webhooks/${second.hook.id}`, {
+        key: ctx.workingKey,
+        body: { active: true },
+      });
+      const raw = ctx.storage as typeof ctx.storage & {
+        __sqliteRun(sql: string, args: unknown[]): Promise<unknown>;
+      };
+      await raw.__sqliteRun(
+        "UPDATE outbound_webhook_deliveries SET created_at='2000-01-01T00:00:00.000Z' WHERE id=?",
+        [second.delivery.id],
+      );
+      expect(
+        (await ctx.ownerRequest(second.path, { method: "POST" })).status,
+      ).toBe(409);
+      const grant = await seedOauthBearer(ctx, [
+        "content:read",
+        "webhooks.manage",
+      ]);
+      const third = await seed(grant.token);
+      await ctx.storage.oauthProvider!.upsertConsent({
+        clientId: grant.clientId,
+        authUserId: ctx.owner.id,
+        scopes: [],
+      });
+      expect(
+        (await ctx.ownerRequest(third.path, { method: "POST" })).status,
+      ).toBe(409);
+      expect(received).toHaveLength(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+    }
+  });
+
   it("queues the same failed row once, keeps last accepted outcome, and uses current URL", async () => {
     const { hook, delivery, path } = await seed();
     await request(ctx.app, "PATCH", `/webhooks/${hook.id}`, {

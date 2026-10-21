@@ -11,6 +11,8 @@
  * made yet, what a refusal says) are written into the markup here, so the
  * script only chooses which to show.
  */
+import { Webhooks } from "../pages/parts/webhooks.js";
+import type { WebhookHistory } from "../pages/webhook-history.js";
 import {
   PAGE_SIZE,
   type PageSize,
@@ -572,6 +574,7 @@ export interface KeyDetail {
 }
 
 export interface KeyPageParams extends PageBase {
+  webhooks?: WebhookHistory[] | null;
   id: string;
   label: string;
   /** The name of the app that made the key, or `undefined` for a key the owner made. */
@@ -704,6 +707,7 @@ export function KeyPage(props: KeyPageParams) {
           </Section>
         )}
       </form>
+      <Webhooks hooks={props.webhooks ?? null} />
       <DangerRow
         title="Revoke this key"
         description="Scripts using it stop working at once. Can't be undone."

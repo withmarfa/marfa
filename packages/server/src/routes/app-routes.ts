@@ -1,3 +1,4 @@
+import { webhookHistories } from "../pages/webhook-history.js";
 /**
  * The connected apps pages of the owner console, read from storage and drawn
  * by `app-pages.tsx`. Every page is the owner's: a browser without the owner's
@@ -156,7 +157,7 @@ export function appRoutes(storage: Storage) {
     const app = await findConnectedApp(storage, owner, id);
     const instanceName = await readInstanceName(storage.settings);
     send(c);
-    if (app === null)
+    if (app === null || owner === null)
       return c.html(
         renderMissingAppPage({ nonce: c.var.cspNonce, instanceName }),
         404,
@@ -206,6 +207,11 @@ export function appRoutes(storage: Storage) {
       renderAppPage({
         nonce: c.var.cspNonce,
         instanceName,
+        webhooks: await webhookHistories(storage, c, {
+          kind: "grant",
+          clientId: app.clientId,
+          authUserId: owner,
+        }),
         id: app.id,
         name: app.name,
         details,

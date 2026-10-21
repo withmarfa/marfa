@@ -1805,7 +1805,7 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns every webhook that belongs to you, with each `secret` shortened to its last four characters.
+         * @description Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.
          */
         get: operations["listWebhooks"];
         put?: never;
@@ -1829,7 +1829,7 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns a webhook, with its `secret` shortened to its last four characters.
+         * @description Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.
          */
         get: operations["getWebhook"];
         put?: never;
@@ -1857,7 +1857,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns a page of a webhook's deliveries, newest first. Marfa deletes a delivery that isn't `pending` once it's older than the instance's audit retention.
+         * @description Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1879,7 +1879,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a failed delivery
-         * @description Sends a `dead_letter` delivery again, to the webhook's current `url`, and returns it as `pending`. The delivery keeps its ID, and Marfa makes up to 8 more attempts.
+         * @description Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -5067,12 +5067,27 @@ export interface components {
             /** @description When the webhook last changed, in UTC. */
             updated_at: string;
         };
-        /** @description A page holding every webhook you own. */
+        /** @description A page holding every webhook you can inspect. */
         WebhookPage: {
-            /** @description Every webhook you own. */
-            data: components["schemas"]["Webhook"][];
-            /** @description Always `null`: Marfa returns every webhook you own in one page. */
+            /** @description Every webhook you can inspect. */
+            data: components["schemas"]["WebhookRead"][];
+            /** @description Always `null`: Marfa returns every webhook you can inspect in one page. */
             next_cursor: string | null;
+        };
+        /** @description A webhook sends the events you choose, as you can read them, to a URL. */
+        WebhookRead: components["schemas"]["Webhook"] & {
+            /** @description The credential that registered this webhook. */
+            maker: {
+                /**
+                 * @description Whether a key or an app registered the webhook.
+                 * @enum {string}
+                 */
+                kind: "key" | "app";
+                /** @description The key ID or OAuth client ID. */
+                id: string;
+                /** @description The maker's current name, or null if it is no longer available. */
+                name: string | null;
+            };
         };
         /** @description An error response. */
         WebhookNotFoundRefusal: {
@@ -26287,7 +26302,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns your webhooks. */
+            /** @description Returns the webhooks you can inspect. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26609,7 +26624,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Webhook"];
+                    "application/json": components["schemas"]["WebhookRead"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -27123,7 +27138,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns a page of deliveries. */
+            /** @description Returns a page of deliveries. Marfa deletes settled deliveries older than the instance's audit retention. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27277,7 +27292,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the delivery as `pending`. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome. */
+            /** @description Returns the delivery as `pending`, keeping its ID. Marfa makes up to 8 more attempts. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome. */
             202: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27321,7 +27336,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
