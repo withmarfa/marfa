@@ -46,6 +46,7 @@ pub mod state;
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -1460,6 +1461,61 @@ enum Files {
     Keep,
 }
 
+/// What a pass has read from the copy before it walks the directory.
+struct ScanStart {
+    report: ScanReport,
+    /// The registry, where the copy's own folder was lost from it.
+    doubt: Option<String>,
+    settings: Settings,
+    catalog: Catalog,
+    edge_types: EdgeTypes,
+    lists: Lists,
+}
+
+/// What a pass holds between its phases.
+struct ScanState {
+    full: bool,
+    settle: Option<Duration>,
+    mode: Files,
+    report: ScanReport,
+    doubt: Option<String>,
+    settings: Settings,
+    catalog: Catalog,
+    edge_types: EdgeTypes,
+    lists: Lists,
+    walked: Walked,
+    /// Whether the walk, or a read after it, left part of the folder unread.
+    incomplete: bool,
+    /// The copy's bindings as the pass began.
+    snapshot: Vec<state::Bound>,
+    /// Every file the walk found, whether or not it is pushed: leaving one
+    /// out journals it missing and deletes the item bound to it.
+    seen: HashSet<String>,
+    paths: Vec<PathBuf>,
+    keys: Vec<String>,
+    /// Files a scan must not call unchanged.
+    unanswered: HashSet<String>,
+    /// Each file's size and time, taken before its read, so a change made
+    /// during the read differs from what is recorded.
+    stats: Vec<(String, String)>,
+    /// Keys of the files a quick pass skips.
+    unchanged: HashSet<String>,
+    /// The bytes of the files read before the rest.
+    early: HashMap<PathBuf, Vec<u8>>,
+    shown: HashMap<String, Vec<(String, embeds::Target)>>,
+    embedded: HashSet<String>,
+    files: Vec<Scanned>,
+    /// Why each stale save waits, by path.
+    stale: HashMap<String, String>,
+}
+
+fn bound_by_path(snapshot: &[state::Bound]) -> HashMap<&str, &state::Bound> {
+    snapshot
+        .iter()
+        .map(|bound| (bound.path.as_str(), bound))
+        .collect()
+}
+
 enum Missing {
     Moved,
     Unsure(String),
@@ -1491,26 +1547,92 @@ impl Folder {
     }
 
     fn scan_as(&self, full: bool, settle: Option<Duration>, mode: Files) -> Result<ScanReport> {
+        let start = match self.scan_root()? {
+            ControlFlow::Break(report) => return Ok(report),
+            ControlFlow::Continue(start) => start,
+        };
+        let mut scan = match self.walk_for_scan(start, full, settle, mode)? {
+            ControlFlow::Break(report) => return Ok(report),
+            ControlFlow::Continue(scan) => scan,
+        };
+        self.read_unchanged_and_documents(&mut scan)?;
+        self.count_unchanged(&mut scan);
+        self.read_rest(&mut scan)?;
+        if self.root_left(&mut scan).is_break() {
+            return Ok(scan.report);
+        }
+        scan.stale =
+            self.fold_stale_saves(&mut scan.files, &scan.snapshot, &mut scan.seen, scan.mode)?;
+        self.refresh_catalog(&mut scan)?;
+        let peers = Peers::of(self, scan.doubt.take());
+        let (claims, waiting) = self.claim_scanned(&scan, &peers)?;
+        let work = match self.queue_scanned(&mut scan, claims, waiting)? {
+            ControlFlow::Break(()) => return Ok(scan.report),
+            ControlFlow::Continue(work) => work,
+        };
+        self.queue_edge_work(&mut scan, work)?;
+        self.record_stats(&scan)?;
+        if self.root_left(&mut scan).is_break() {
+            return Ok(scan.report);
+        }
+        if self.sweep(&mut scan, &peers)?.is_break() {
+            return Ok(scan.report);
+        }
+        scan.report.root_gone = scan.report.root_gone.or_else(|| self.root_gone());
+        Ok(scan.report)
+    }
+
+    /// The pass's first phase: that the folder's root is there, then what
+    /// the pass reads from the copy.
+    fn scan_root(&self) -> Result<ControlFlow<ScanReport, ScanStart>> {
         if let Some(gone) = self.root_gone() {
-            return Ok(ScanReport {
+            return Ok(ControlFlow::Break(ScanReport {
                 root_gone: Some(gone),
                 ..ScanReport::default()
-            });
+            }));
         }
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
-        let mut report = ScanReport {
+        let report = ScanReport {
             registry,
             ..ScanReport::default()
         };
         let settings = self.settings()?;
-        let (mut catalog, mut edge_types) = {
+        let (catalog, edge_types) = {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let lists = settings.lists()?;
+        Ok(ControlFlow::Continue(ScanStart {
+            report,
+            doubt,
+            settings,
+            catalog,
+            edge_types,
+            lists,
+        }))
+    }
+
+    /// Walks the directory, clears what a crashed write left behind, and
+    /// takes the copy's bindings and the file list the later phases work
+    /// through.
+    fn walk_for_scan(
+        &self,
+        start: ScanStart,
+        full: bool,
+        settle: Option<Duration>,
+        mode: Files,
+    ) -> Result<ControlFlow<ScanReport, ScanState>> {
+        let ScanStart {
+            mut report,
+            doubt,
+            settings,
+            catalog,
+            edge_types,
+            lists,
+        } = start;
         if crate::fault::named("replace-root-before-scan-walk").is_some() {
             std::fs::rename(&self.root, self.root.with_extension("original"))
                 .expect("move original root for fault");
@@ -1518,11 +1640,11 @@ impl Folder {
                 .expect("install replacement root for fault");
         }
         let walked = self.walked(&lists);
-        let mut incomplete = walked.incomplete();
+        let incomplete = walked.incomplete();
         swap_root(&self.root, "replace-root-before-capture");
         if let Some(gone) = self.root_gone() {
             report.root_gone = Some(gone);
-            return Ok(report);
+            return Ok(ControlFlow::Break(report));
         }
         let state_left = self
             .state_dir
@@ -1554,23 +1676,57 @@ impl Folder {
             .collect::<Result<Vec<String>>>()?;
         // Every file the walk found, whether or not it is pushed: leaving one
         // out journals it missing and deletes the item bound to it.
-        let mut seen: HashSet<String> = found.iter().cloned().collect();
+        let seen: HashSet<String> = found.iter().cloned().collect();
         let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
-        let by_path: HashMap<&str, &state::Bound> = snapshot
-            .iter()
-            .map(|bound| (bound.path.as_str(), bound))
-            .collect();
         // Files a scan must not call unchanged.
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
         // Each file's size and time, taken before its read, so a change made
         // during the read differs from what is recorded.
-        let mut stats: Vec<(String, String)> = Vec::new();
-        let mut unchanged: HashSet<String> = HashSet::new();
+        let stats: Vec<(String, String)> = Vec::new();
+        let unchanged: HashSet<String> = HashSet::new();
+        Ok(ControlFlow::Continue(ScanState {
+            full,
+            settle,
+            mode,
+            report,
+            doubt,
+            settings,
+            catalog,
+            edge_types,
+            lists,
+            walked,
+            incomplete,
+            snapshot,
+            seen,
+            paths,
+            keys,
+            unanswered,
+            stats,
+            unchanged,
+            early: HashMap::new(),
+            shown: HashMap::new(),
+            embedded: HashSet::new(),
+            files: Vec::new(),
+            stale: HashMap::new(),
+        }))
+    }
+
+    /// With a quick pass (short of `full`), skips the files whose size, time
+    /// and identity are as the last read left them, and reads the Markdown
+    /// files first, so a file only an embed names is sent too. A file
+    /// carrying the item id of a skipped file is read, and so is the skipped
+    /// file, until no skipped file's item is named.
+    fn read_unchanged_and_documents(&self, scan: &mut ScanState) -> Result<()> {
+        let full = scan.full;
+        let by_path = bound_by_path(&scan.snapshot);
+        let (paths, keys, walked) = (&scan.paths, &scan.keys, &scan.walked);
+        let (unchanged, stats) = (&mut scan.unchanged, &mut scan.stats);
+        let (early, shown, embedded) = (&mut scan.early, &mut scan.shown, &mut scan.embedded);
         if !full {
             // Resolved over every file, so a hard link shares no mark.
-            let marks = captured_identities(&paths, &walked);
+            let marks = captured_identities(paths, walked);
             let conn = self.core.conn()?;
-            for (path, key) in paths.iter().zip(&keys) {
+            for (path, key) in paths.iter().zip(keys) {
                 if let Some(bound) = by_path.get(key.as_str())
                     && bound.held.is_none()
                     && bound.writes.refused.is_empty()
@@ -1588,10 +1744,7 @@ impl Folder {
             }
         }
         // Markdown files first, so a file only an embed names is sent too.
-        let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
-        let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
-        let mut embedded: HashSet<String> = HashSet::new();
-        let index = embeds::Files::of(&keys);
+        let index = embeds::Files::of(keys);
         let mut reading: Vec<usize> = (0..paths.len()).collect();
         while !reading.is_empty() {
             let mut named: HashSet<String> = HashSet::new();
@@ -1606,7 +1759,7 @@ impl Folder {
                     .ok_or_else(|| std::io::Error::other("file not opened"))
                     .and_then(Captured::read)
                 else {
-                    incomplete = true;
+                    scan.incomplete = true;
                     continue;
                 };
                 if let Some(stat) = walked
@@ -1658,6 +1811,14 @@ impl Folder {
                 unchanged.remove(&keys[*at]);
             }
         }
+        Ok(())
+    }
+
+    /// Counts the files left unread as unchanged, or as waiting where the
+    /// server has not answered their item's write.
+    fn count_unchanged(&self, scan: &mut ScanState) {
+        let by_path = bound_by_path(&scan.snapshot);
+        let (unchanged, unanswered) = (&scan.unchanged, &scan.unanswered);
         let waiting = unchanged
             .iter()
             .filter(|key| {
@@ -1666,8 +1827,19 @@ impl Folder {
                     .is_some_and(|bound| unanswered.contains(&bound.item_id))
             })
             .count();
-        report.waiting += waiting;
-        report.unchanged += unchanged.len() - waiting;
+        scan.report.waiting += waiting;
+        scan.report.unchanged += unchanged.len() - waiting;
+    }
+
+    /// Reads every file the pass has not skipped or read, and holds what the
+    /// folder pushes, what an embed names and what is already a file item.
+    fn read_rest(&self, scan: &mut ScanState) -> Result<()> {
+        let settle = scan.settle;
+        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        let (snapshot, walked, paths, keys) =
+            (&scan.snapshot, &scan.walked, &scan.paths, &scan.keys);
+        let (unchanged, embedded) = (&scan.unchanged, &scan.embedded);
+        let (early, stats, report) = (&mut scan.early, &mut scan.stats, &mut scan.report);
         // A file already a file item is read whatever the search says, so one
         // no longer embedded, or moved, is followed rather than journaled.
         let files_bound: Vec<&state::Bound> = snapshot
@@ -1690,12 +1862,11 @@ impl Folder {
                     .is_some_and(|found| bound_marks.contains(found.key().as_str()))
         };
         let mut held: Vec<PathBuf> = Vec::new();
-        for (path, key) in paths.iter().zip(&keys) {
+        for (path, key) in paths.iter().zip(keys) {
             if unchanged.contains(key) {
                 continue;
             }
-            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
-            {
+            if self.pushes(path, settings, catalog) || embedded.contains(key) || bound(path, key) {
                 held.push(path.clone());
             } else {
                 report.skipped += 1;
@@ -1703,7 +1874,7 @@ impl Folder {
         }
         // Resolved over pushed files only, so a file the folder never touches
         // cannot withhold a note's identity by sharing it.
-        let identities = captured_identities(&held, &walked);
+        let identities = captured_identities(&held, walked);
         let mut files = Vec::new();
         for path in held {
             // Unread bytes still claim their file's identity before another
@@ -1736,7 +1907,7 @@ impl Folder {
                             continue;
                         }
                         Err(_) => {
-                            incomplete = true;
+                            scan.incomplete = true;
                             files.push(deferred()?);
                             continue;
                         }
@@ -1764,7 +1935,7 @@ impl Folder {
                 None => read.as_ref().and_then(|read| {
                     read.unreadable
                         .clone()
-                        .or_else(|| fields::read(&read.front, &edge_types).err())
+                        .or_else(|| fields::read(&read.front, edge_types).err())
                 }),
                 Some(reason) => Some(reason.to_string()),
             };
@@ -1805,11 +1976,25 @@ impl Folder {
                 path,
             });
         }
-        if let Some(gone) = self.root_gone() {
-            report.root_gone = Some(gone);
-            return Ok(report);
+        scan.files = files;
+        Ok(())
+    }
+
+    /// Whether the root has gone, said on the report.
+    fn root_left(&self, scan: &mut ScanState) -> ControlFlow<()> {
+        match self.root_gone() {
+            Some(gone) => {
+                scan.report.root_gone = Some(gone);
+                ControlFlow::Break(())
+            }
+            None => ControlFlow::Continue(()),
         }
-        let stale = self.fold_stale_saves(&mut files, &snapshot, &mut seen, mode)?;
+    }
+
+    /// Reloads the catalog from the server where a file changed, so a file
+    /// read against an old list is not sent against it.
+    fn refresh_catalog(&self, scan: &mut ScanState) -> Result<()> {
+        let (files, snapshot) = (&scan.files, &scan.snapshot);
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().filter(|file| !file.deferred).any(|file| {
@@ -1823,25 +2008,53 @@ impl Folder {
         {
             let conn = self.core.conn()?;
             crate::store::replace_catalog(&conn, &fresh)?;
-            catalog = Catalog::load(&conn)?;
-            edge_types = EdgeTypes::load(&conn)?;
+            scan.catalog = Catalog::load(&conn)?;
+            scan.edge_types = EdgeTypes::load(&conn)?;
         }
-        let peers = Peers::of(self, doubt);
-        let (mut claims, mut waiting) =
-            self.claim(&files, &snapshot, &settings, &catalog, &peers)?;
+        Ok(())
+    }
+
+    /// Settles which item each read file belongs to, and holds the files
+    /// that wait: a stale save, and what the claim cannot yet give.
+    fn claim_scanned(
+        &self,
+        scan: &ScanState,
+        peers: &Peers<'_>,
+    ) -> Result<(Vec<Option<Claim>>, Waiting)> {
+        let (files, snapshot, stale) = (&scan.files, &scan.snapshot, &scan.stale);
+        let (settings, catalog) = (&scan.settings, &scan.catalog);
+        let (mut claims, mut waiting) = self.claim(files, snapshot, settings, catalog, peers)?;
         for (at, file) in files.iter().enumerate() {
             if let Some(reason) = stale.get(&file.key) {
                 claims[at] = None;
                 waiting.insert(at, reason.clone());
             }
         }
+        Ok((claims, waiting))
+    }
+
+    /// Sends each read file to its item: a create, an update, a rename or a
+    /// follow of an unread file, or flags it. Collects the edge work the
+    /// files leave for the end. Ends the pass where the root goes.
+    fn queue_scanned(
+        &self,
+        scan: &mut ScanState,
+        claims: Vec<Option<Claim>>,
+        mut waiting: Waiting,
+    ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
+        let mode = scan.mode;
+        let by_path = bound_by_path(&scan.snapshot);
+        let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
+        let (files, walked) = (&scan.files, &scan.walked);
+        let (unanswered, embedded) = (&scan.unanswered, &scan.embedded);
+        let report = &mut scan.report;
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
-                return Ok(report);
+                return Ok(ControlFlow::Break(()));
             }
             if let Some(reason) = waiting.remove(&at) {
                 report.flagged.push(Flagged {
@@ -1853,13 +2066,13 @@ impl Folder {
                 continue;
             }
             if file.deferred {
-                self.follow_unread(file, claim, &catalog, &withheld, &mut report)?;
+                self.follow_unread(file, claim, catalog, &withheld, report)?;
                 continue;
             }
             // A file item's file is its bytes, whatever its name says.
             let bytes_item = || -> Result<bool> {
                 match &claim {
-                    Some(claim) => self.file_item(&claim.item_id, &catalog),
+                    Some(claim) => self.file_item(&claim.item_id, catalog),
                     None => Ok(false),
                 }
             };
@@ -1874,7 +2087,7 @@ impl Folder {
                     file.mark.clone(),
                     walked.opened.get(&file.path),
                 )?;
-                self.follow_unread(&unread, claim, &catalog, &withheld, &mut report)?;
+                self.follow_unread(&unread, claim, catalog, &withheld, report)?;
                 report.skipped += 1;
                 continue;
             }
@@ -1916,9 +2129,9 @@ impl Folder {
                 None => {
                     match self.queue_create(
                         file,
-                        (&settings, embedded.contains(&file.key)),
-                        &catalog,
-                        &edge_types,
+                        (settings, embedded.contains(&file.key)),
+                        catalog,
+                        edge_types,
                         &withheld,
                         &mut work,
                     )? {
@@ -1938,15 +2151,15 @@ impl Folder {
                         None,
                         file,
                         None,
-                        &catalog,
-                        &edge_types,
+                        catalog,
+                        edge_types,
                         &mut work,
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
                         report
                             .warnings
-                            .extend(self.size_warning(file, &item_id, &catalog)?);
+                            .extend(self.size_warning(file, &item_id, catalog)?);
                     } else {
                         report.unchanged += 1;
                     }
@@ -1962,10 +2175,10 @@ impl Folder {
                         // were.
                         if let Some(runs) = file.executable
                             && let Some(held) = self.core.get(&item_id)?
-                            && bytes_of(&held, &catalog).is_some()
+                            && bytes_of(&held, catalog).is_some()
                             && executable::held(&held) != runs
                         {
-                            self.queue_update_file(&bound, file, &held, &catalog)?;
+                            self.queue_update_file(&bound, file, &held, catalog)?;
                             report.updated += 1;
                             continue;
                         }
@@ -2003,15 +2216,15 @@ impl Folder {
                         Some(&bound),
                         file,
                         None,
-                        &catalog,
-                        &edge_types,
+                        catalog,
+                        edge_types,
                         &mut work,
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
                         report
                             .warnings
-                            .extend(self.size_warning(file, &item_id, &catalog)?);
+                            .extend(self.size_warning(file, &item_id, catalog)?);
                         // Edited where the pull moved it, it is no longer
                         // the file an old buffer was read from.
                         if !file.folded {
@@ -2029,10 +2242,10 @@ impl Folder {
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
                     // A file item's bytes are no document, whatever its name now.
                     let document = (carries_frontmatter(&file.path)
-                        && !self.file_item(&item_id, &catalog)?)
+                        && !self.file_item(&item_id, catalog)?)
                     .then(|| file.document());
                     let retitle =
-                        self.renamed_title(&item_id, &bound, file, document.as_ref(), &catalog)?;
+                        self.renamed_title(&item_id, &bound, file, document.as_ref(), catalog)?;
                     // A title typed in the line in the same pass goes first,
                     // so the item's history holds it as well as the name's.
                     let typed = retitle
@@ -2045,7 +2258,7 @@ impl Folder {
                         typed
                             .iter()
                             .chain([&retitle.title])
-                            .find_map(|title| retitle.refusal(title, &catalog))
+                            .find_map(|title| retitle.refusal(title, catalog))
                     }) {
                         let held_for = format!("{LOCAL_ADMISSION_REFUSAL}{error}");
                         report.flagged.push(Flagged::of(&file.key, &held_for));
@@ -2078,14 +2291,14 @@ impl Folder {
                         Some(&bound),
                         file,
                         sent_title,
-                        &catalog,
-                        &edge_types,
+                        catalog,
+                        edge_types,
                         &mut work,
                         &mut report.flagged,
                     )? {
                         report
                             .warnings
-                            .extend(self.size_warning(file, &item_id, &catalog)?);
+                            .extend(self.size_warning(file, &item_id, catalog)?);
                     }
                     self.place(&item_id, &file.key, &withheld)?;
                     report.renamed += 1;
@@ -2093,16 +2306,24 @@ impl Folder {
             }
         }
 
+        Ok(ControlFlow::Continue(work))
+    }
+
+    /// Sends the edges the files' links and lines ask for, once every file
+    /// is bound. A failure is its file's alone: the file waits.
+    fn queue_edge_work(&self, scan: &mut ScanState, mut work: Vec<EdgeWork>) -> Result<()> {
+        let (catalog, edge_types) = (&scan.catalog, &scan.edge_types);
+        let (shown, report) = (&mut scan.shown, &mut scan.report);
         // Every file is bound now, so a link or a line naming one that
         // arrived in the same scan resolves.
-        let mut resolver = Resolver::new(&self.core, &catalog, &BoundFiles);
+        let mut resolver = Resolver::new(&self.core, catalog, &BoundFiles);
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
         }
         for pending in work {
             // A failure is this file's alone: it waits, and the scan goes on.
             let outcome = self
-                .queue_edges(&pending, &edge_types, &catalog, &mut resolver)
+                .queue_edges(&pending, edge_types, catalog, &mut resolver)
                 .unwrap_or_else(|error| lines::Outcome {
                     links: pending.had_links.clone(),
                     lines: pending.had_lines.clone(),
@@ -2149,16 +2370,22 @@ impl Folder {
             }
         }
 
-        {
-            let conn = self.core.conn()?;
-            state::set_stats(&conn, &stats, full)?;
-        }
+        Ok(())
+    }
 
-        if let Some(gone) = self.root_gone() {
-            report.root_gone = Some(gone);
-            return Ok(report);
-        }
+    /// Records the size and time each file had before its read.
+    fn record_stats(&self, scan: &ScanState) -> Result<()> {
+        let conn = self.core.conn()?;
+        state::set_stats(&conn, &scan.stats, scan.full)?;
+        Ok(())
+    }
 
+    /// Journals the bound files the walk did not find, rather than deleting
+    /// them, and sweeps the journal where the pass saw the whole folder.
+    fn sweep(&self, scan: &mut ScanState, peers: &Peers<'_>) -> Result<ControlFlow<()>> {
+        let (seen, lists, walked, settings) =
+            (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
+        let (incomplete, report) = (scan.incomplete, &mut scan.report);
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
         let bound = {
@@ -2176,7 +2403,7 @@ impl Folder {
         for row in bound {
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
-                return Ok(report);
+                return Ok(ControlFlow::Break(()));
             }
             let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
             if seen.contains(&row.path) {
@@ -2210,10 +2437,9 @@ impl Folder {
             report.missing += 1;
         }
         if !incomplete && self.root_gone().is_none() {
-            self.sweep_journal(&settings, &peers, &mut report)?;
+            self.sweep_journal(settings, peers, report)?;
         }
-        report.root_gone = report.root_gone.or_else(|| self.root_gone());
-        Ok(report)
+        Ok(ControlFlow::Continue(()))
     }
 
     /// An editor that did not follow a pull's move of a document saves its old
