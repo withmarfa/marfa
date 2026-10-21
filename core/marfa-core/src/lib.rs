@@ -5685,6 +5685,10 @@ mod tests {
             base_version: Some(1),
             ..Default::default()
         };
+        let folder_changes = serde_json::json!({ "title": "Renamed" })
+            .as_object()
+            .unwrap()
+            .clone();
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
@@ -5832,6 +5836,22 @@ mod tests {
                     )
                     .unwrap_err(),
             ),
+            (
+                "create_folder",
+                reader
+                    .create_folder(&serde_json::Map::new(), None)
+                    .unwrap_err(),
+            ),
+            (
+                "change_folder",
+                reader
+                    .change_folder("x", &folder_changes, 1, None)
+                    .unwrap_err(),
+            ),
+            (
+                "revoke_folder",
+                reader.revoke_folder("x", None).unwrap_err(),
+            ),
             ("declare_types", reader.declare_types(&[]).unwrap_err()),
             ("pin", reader.pin("x").unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
@@ -5857,7 +5877,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            40,
+            43,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -5880,6 +5900,10 @@ mod tests {
             (include_str!("sse.rs"), others),
             (include_str!("store.rs"), others),
             (include_str!("wire.rs"), others),
+            (
+                include_str!("folder_settings.rs"),
+                &["send_to_folder_door"][..],
+            ),
             (include_str!("folder/mod.rs"), &["working"][..]),
             (include_str!("folder/document.rs"), others),
             (include_str!("folder/identity.rs"), others),
