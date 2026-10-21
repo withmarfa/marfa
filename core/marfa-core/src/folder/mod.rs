@@ -1604,6 +1604,7 @@ impl Folder {
         // Queued even where the drain stopped, so the copy holds the edge the line asks for.
         self.make_edges_gone_before_their_move()?;
         let gave_way = self.settle_placements(&mut report, watched)?;
+        self.keep_wait(&report)?;
         self.hold_refused()?;
         Ok(Drained {
             report,

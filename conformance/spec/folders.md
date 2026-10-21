@@ -5026,6 +5026,14 @@ When a folder watch's pass leaves a write undelivered and its drain reports `ret
 
 **Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`.
 
+### `folders/watch-rate-limit-handover`
+
+When a folder watch takes back a folder it let go to a command, a device MUST NOT start a pass of that folder before the time named by the `retry_after_seconds` of the most recent drain of that folder that left a write undelivered, whether the watch or the command drained, unless a later drain of the folder has had writes answered with no `retry_after_seconds`.
+
+**Reason:** A hand-over does not reset the server's rate limit, so a watch that forgot the time would send at once and be refused again (`folders/watch-rate-limit-pause`).
+
+**Tests:** `device/folders-handover.test.ts › keeps the server's wait across handing a folder over from $name`.
+
 ### `folders/push-exit-undelivered`
 
 When a folder push ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.

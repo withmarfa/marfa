@@ -259,7 +259,7 @@ impl Folder {
         let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
         let mut last_full: Option<Instant> = None;
-        let mut send_again_at: Option<Instant> = None;
+        let mut send_again_at = self.kept_wait();
         let mut lists = self.settings().and_then(|settings| settings.lists()).ok();
         loop {
             if stop.load(Ordering::SeqCst) {
@@ -561,6 +561,46 @@ fn look(mut requests: Requests, ended: &AtomicBool, asked: &AtomicBool, wakes: m
             return;
         }
         wait_unless_stopped(ended, handover::LOOK);
+    }
+}
+
+/// Where the folder's store keeps, in milliseconds since the Unix epoch on the
+/// engine's wall clock, the time before which the server asked for no write.
+/// Kept in the store rather than the watch, so a watch that hands its folder
+/// to a command, and is started again, waits out what the server last said.
+const SEND_AGAIN_AT: &str = "folder_send_again_at";
+
+impl Folder {
+    /// Keeps the wait a drain of this folder was told, whoever drained: a
+    /// later answer replaces an earlier one, and writes the server took with
+    /// no wait end it.
+    pub(super) fn keep_wait(&self, drain: &crate::DrainReport) -> Result<(), CoreError> {
+        let conn = self.core.conn()?;
+        if let Some(wait) = rate_limit_wait(drain) {
+            let until = crate::clock::system_time() + wait;
+            let millis = until
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_millis());
+            crate::store::meta_set(&conn, SEND_AGAIN_AT, &millis.to_string())
+        } else if drain.answered > 0 && drain.retry_after_seconds.is_none() {
+            crate::store::meta_delete(&conn, SEND_AGAIN_AT)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// When the wait the store keeps ends on the clock the watch runs by.
+    /// Never further off than the longest wait a drain keeps, so a wall
+    /// clock set back cannot hold the watch.
+    fn kept_wait(&self) -> Option<Instant> {
+        let conn = self.core.conn().ok()?;
+        let millis: u64 = crate::store::meta_get(&conn, SEND_AGAIN_AT)
+            .ok()??
+            .parse()
+            .ok()?;
+        let until = std::time::UNIX_EPOCH + Duration::from_millis(millis);
+        let left = until.duration_since(crate::clock::system_time()).ok()?;
+        Some(crate::clock::now() + left.min(crate::error::RETRY_AFTER_MOST))
     }
 }
 
