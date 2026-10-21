@@ -10,7 +10,8 @@
  *
  * - `hold:<point>` makes the server wait at the point until the fault is
  *   cleared. A counted hold selects one reach, optionally by audit action,
- *   with the same arguments as a failure. Other reaches continue.
+ *   with the same arguments as a failure. Other reaches continue. A point
+ *   that takes `every-or-nth` holds every reach when no argument is given.
  * - `fail:<point>` makes the server fail at the point, once: on the nth time
  *   the point is reached after the fault was set (the first, unless the
  *   argument says another). The fault stays in the table afterwards with its
@@ -50,6 +51,8 @@ type ArgShape =
   | "none"
   /** `<n>`: the nth time the point is reached. */
   | "nth"
+  /** Nothing, for a hold on every reach, or `<n>` for the nth alone. */
+  | "every-or-nth"
   /** `<n>`, `<action>` or `<action>@<n>`: the nth write that records the audit action. */
   | "write";
 
@@ -85,8 +88,10 @@ export const POINTS: {
     { name: "export-validation", arg: "none" },
     { name: "write", arg: "write" },
     { name: "export-page", arg: "nth" },
-    { name: "blob-read", arg: "none" },
+    { name: "blob-read", arg: "every-or-nth" },
     { name: "blob-has", arg: "none" },
+    { name: "blob-write", arg: "none" },
+    { name: "blob-delete", arg: "none" },
   ],
   fail: [
     { name: "lock", arg: "nth" },
@@ -239,6 +244,7 @@ function shapeProblem(name: string, arg: string | null): string | undefined {
     if (found === undefined) return `no ${kind} point is named ${rest}`;
     if (kind === "hold" && found.point.arg === "none")
       return arg === null ? undefined : "a hold fault takes no argument";
+    if (found.point.arg === "every-or-nth" && arg === null) return undefined;
     const target = aim(found.point, arg);
     return typeof target === "string" ? target : undefined;
   }
@@ -316,7 +322,9 @@ export function setFault(name: string, arg: string | null): void {
       ? declared(kind, name.slice(kind.length + 1))?.point
       : undefined;
   const target =
-    point === undefined || (kind === "hold" && point.arg === "none")
+    point === undefined ||
+    (kind === "hold" && point.arg === "none") ||
+    (point.arg === "every-or-nth" && arg === null)
       ? undefined
       : aim(point, arg);
   const aimed = typeof target === "object" ? target : undefined;

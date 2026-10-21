@@ -81,3 +81,44 @@ describe("a store made to fail", () => {
     ).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+describe("a store made to hang", () => {
+  const settledSoon = async (work: Promise<unknown>) =>
+    Promise.race([
+      work.then(() => true),
+      new Promise((resolve) => {
+        setTimeout(() => {
+          resolve(false);
+        }, 30);
+      }),
+    ]);
+
+  it("holds a write and a delete until the fault is cleared, and then carries each out", async () => {
+    setFault("hold:blob-write", null);
+    const write = store.put(HASH, source());
+    expect(await settledSoon(write)).toBe(false);
+    expect(await store.has(HASH)).toBeNull();
+    clearFaults();
+    await write;
+    expect(await store.has(HASH)).toEqual({ size_bytes: BYTES.length });
+
+    setFault("hold:blob-delete", null);
+    const removal = store.delete(HASH);
+    expect(await settledSoon(removal)).toBe(false);
+    expect(await store.has(HASH)).not.toBeNull();
+    clearFaults();
+    await removal;
+    expect(await store.has(HASH)).toBeNull();
+  });
+
+  it("holds only the nth read when the hold names one", async () => {
+    await store.put(HASH, source());
+    setFault("hold:blob-read", "2");
+    expect(await store.get(HASH)).not.toBeNull();
+    const second = store.get(HASH);
+    expect(await settledSoon(second)).toBe(false);
+    expect(await store.get(HASH)).not.toBeNull();
+    clearFaults();
+    expect(await second).not.toBeNull();
+  });
+});

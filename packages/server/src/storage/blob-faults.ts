@@ -45,9 +45,11 @@ function endingShort(read: BlobRead): BlobRead {
  * no store otherwise, so the disk store and the object store fail the same
  * way. A read fails or is held before it opens the bytes, or ends short
  * after it opens them, a question of presence is held before it is asked, a
- * write fails before it stores any, and a delete before it removes any. A
- * held read or question gives up when its caller's signal aborts, as a store
- * that honors the signal does.
+ * write fails or is held before it stores any, and a delete before it
+ * removes any. A held read or question gives up when its caller's signal
+ * aborts, as a store that honors the signal does; a held write or delete
+ * takes no signal and goes on once the fault is cleared, as a store's late
+ * answer does.
  */
 export function withBlobFaults<S extends BlobStore>(store: S): S {
   const get = store.get.bind(store);
@@ -64,9 +66,15 @@ export function withBlobFaults<S extends BlobStore>(store: S): S {
     if (holdArmed("blob-has")) await holdAt("blob-has", undefined, signal);
     return has(hash, signal);
   };
-  store.put = (hash, source) =>
-    failAt("blob-write") ? Promise.reject(noRoom()) : put(hash, source);
-  store.delete = (hash) =>
-    failAt("blob-delete") ? Promise.reject(unreadable("delete")) : remove(hash);
+  store.put = async (hash, source) => {
+    if (failAt("blob-write")) throw noRoom();
+    if (holdArmed("blob-write")) await holdAt("blob-write");
+    return put(hash, source);
+  };
+  store.delete = async (hash) => {
+    if (failAt("blob-delete")) throw unreadable("delete");
+    if (holdArmed("blob-delete")) await holdAt("blob-delete");
+    return remove(hash);
+  };
   return store;
 }
