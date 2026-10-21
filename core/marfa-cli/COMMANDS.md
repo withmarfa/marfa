@@ -409,7 +409,7 @@ marfa items trash [OPTIONS] <COMMAND>
 
 ### marfa items trash list
 
-List trash summaries and the retention period, one page at a time.
+List trash summaries, automatic deletion eligibility, and retention, one page at a time.
 
 ```text
 marfa items trash list [OPTIONS]
@@ -472,7 +472,7 @@ marfa items trash purge [OPTIONS] --version <VERSION> <ID>
 
 ### marfa items trash empty
 
-Permanently delete up to 200 trash items. Continue with the returned cursor.
+Permanently delete up to 200 trash items. Continue with the returned cursor unless an outcome is unknown; read the trash again before retrying.
 
 ```text
 marfa items trash empty [OPTIONS] --confirm <CONFIRM>

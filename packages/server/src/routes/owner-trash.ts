@@ -27,9 +27,17 @@ import type { ItemSummary, Storage } from "../storage/interface.js";
 import { resolveTypeSchema } from "../storage/policy.js";
 import { ItemSummarySchema, summaryFilters } from "./item-summaries.js";
 import { pageOf, VersionWriterSchema } from "./_schemas.js";
+import { isWriteOutcomeUnknown } from "./_bulk-rollback.js";
+import { trashEligibleAt } from "../trash-retention.js";
 import { setNoStore } from "./no-store.js";
 
 export const TrashSummarySchema = ItemSummarySchema.extend({
+  eligible_for_deletion_at: z
+    .string()
+    .nullable()
+    .describe(
+      "When automatic deletion becomes eligible under the effective policy, or null when disabled or the date is unknown. The sweep may delete it later.",
+    ),
   trashed_at: z
     .string()
     .nullable()
@@ -89,7 +97,7 @@ const listRoute = createRoute({
                 .number()
                 .int()
                 .describe(
-                  "How many days items remain in the trash before automatic expiry; zero disables expiry.",
+                  "How many days after deletion an item becomes eligible for automatic expiry; zero disables expiry.",
                 ),
             })
             .openapi("TrashPage"),
@@ -108,6 +116,15 @@ const listRoute = createRoute({
   },
 });
 const changeResponses = {
+  500: {
+    description:
+      "`internal_error`: the result could not be confirmed; when details.write_outcome is unknown, refresh before retrying.",
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["internal_error"]),
+      },
+    },
+  },
   200: {
     description: "The action completed. Returns only the item summary.",
     content: { "application/json": { schema: ItemSummarySchema } },
@@ -211,14 +228,14 @@ const emptyRoute = createRoute({
   tags: ["Items"],
   summary: "Empty a page of the trash",
   description:
-    "Deletes up to 200 trash items permanently if their state and version still match. Returns partial failures and a cursor for the next batch. Continue until `next_cursor` is null; items trashed during the operation may remain.",
+    "Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: { query: z.object({ cursor: pageCursor() }) },
   responses: {
     200: {
       description:
-        "Returns the committed purge count, per-item failures and the next batch cursor. A failure leaves that item in place.",
+        "Returns the committed purge count, per-item failures and the next batch cursor. Unknown write outcomes carry `details.write_outcome: unknown` and stop this batch; refresh before retrying. Other failures leave the item in place.",
       content: {
         "application/json": {
           schema: z.object({
@@ -233,12 +250,24 @@ const emptyRoute = createRoute({
                     id: z
                       .string()
                       .describe(
-                        "The ID of the item that could not be deleted.",
+                        "The ID of the item whose purge failed or could not be confirmed.",
                       ),
                     code: z
                       .string()
                       .describe(
-                        "The code describing why this item could not be deleted.",
+                        "The code describing the failure or uncertain outcome.",
+                      ),
+                    details: z
+                      .object({
+                        write_outcome: z
+                          .literal("unknown")
+                          .describe(
+                            "The purge may have committed. Refresh before retrying.",
+                          ),
+                      })
+                      .optional()
+                      .describe(
+                        "Present when the write outcome cannot be confirmed.",
                       ),
                     message: z
                       .string()
@@ -246,14 +275,14 @@ const emptyRoute = createRoute({
                         "A summary of the failure without item content.",
                       ),
                   })
-                  .describe("One item that this batch did not delete."),
+                  .describe("One failed or unconfirmed purge."),
               )
-              .describe("Items this batch could not delete."),
+              .describe("Failed or unconfirmed purges."),
             next_cursor: z
               .string()
               .nullable()
               .describe(
-                "The cursor for the next batch, or null when this traversal has ended.",
+                "The cursor for the next batch, or null when this traversal ended or stopped on an unknown outcome.",
               ),
           }),
         },
@@ -284,7 +313,21 @@ function summary(row: Item): ItemSummary {
     created_at: row.created_at,
   };
 }
-function safeFailure(error: unknown) {
+function safeFailure(error: unknown): {
+  code: string;
+  message: string;
+  details?: { write_outcome: "unknown" };
+} {
+  if (
+    isWriteOutcomeUnknown(error) ||
+    (error instanceof MarfaError && error.details?.write_outcome === "unknown")
+  )
+    return {
+      code: "internal_error",
+      message:
+        "The change may have completed, but its result could not be confirmed. Refresh the page before trying again.",
+      details: { write_outcome: "unknown" },
+    };
   const code = error instanceof MarfaError ? error.code : "internal_error";
   const message =
     code === ErrorCode.INVALID_TRANSITION
@@ -317,13 +360,19 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
   const router = createOpenAPIRouter<AppEnv>();
   router.openapi(snapshotReadRoute(storage, listRoute), async (c) => {
     setNoStore(c);
+    const days = await trashRetention(storage, config);
+    const page = await storage.items.listTrashSummaries({
+      ...c.req.valid("query"),
+      ...(await summaryFilters(storage)),
+    });
     return c.json(
       {
-        ...(await storage.items.listTrashSummaries({
-          ...c.req.valid("query"),
-          ...(await summaryFilters(storage)),
+        ...page,
+        data: page.data.map((row) => ({
+          ...row,
+          eligible_for_deletion_at: trashEligibleAt(row.trashed_at, days),
         })),
-        retention_days: await trashRetention(storage, config),
+        retention_days: days,
       },
       200,
     );
@@ -364,9 +413,10 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
               },
       );
     } catch (error) {
+      if (isWriteOutcomeUnknown(error)) throw error;
       if (!(error instanceof MarfaError)) throw error;
       const safe = safeFailure(error);
-      throw new MarfaError(error.code, safe.message);
+      throw new MarfaError(error.code, safe.message, safe.details);
     }
   };
   for (const [route, op] of [
@@ -375,12 +425,22 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
     [purgeRoute, "purge"],
   ] as const) {
     router.openapi(route, async (c) => {
-      const result = await change(
-        c,
-        c.req.valid("param").id,
-        c.req.valid("query").version,
-        op,
-      );
+      let result;
+      try {
+        result = await change(
+          c,
+          c.req.valid("param").id,
+          c.req.valid("query").version,
+          op,
+        );
+      } catch (error) {
+        if (!isWriteOutcomeUnknown(error)) throw error;
+        c.header("X-Error-Code", "internal_error");
+        return c.json(
+          { error: { ...safeFailure(error), code: "internal_error" as const } },
+          500,
+        );
+      }
       if (result.stale) {
         c.header("X-Error-Code", "version_conflict");
         return c.json(
@@ -411,7 +471,8 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
       { signal: c.req.raw.signal },
     );
     let purged = 0;
-    const failures: { id: string; code: string; message: string }[] = [];
+    const failures: ({ id: string } & ReturnType<typeof safeFailure>)[] = [];
+    let uncertain = false;
     for (const row of page.data) {
       try {
         const result = await change(c, row.id, row.version, "purge");
@@ -423,10 +484,18 @@ export function ownerTrashRoutes(storage: Storage, config: AppConfig) {
           });
         else purged++;
       } catch (error) {
-        failures.push({ id: row.id, ...safeFailure(error) });
+        const failure = safeFailure(error);
+        failures.push({ id: row.id, ...failure });
+        if (failure.details?.write_outcome === "unknown") {
+          uncertain = true;
+          break;
+        }
       }
     }
-    return c.json({ purged, failures, next_cursor: page.next_cursor }, 200);
+    return c.json(
+      { purged, failures, next_cursor: uncertain ? null : page.next_cursor },
+      200,
+    );
   });
   return router;
 }

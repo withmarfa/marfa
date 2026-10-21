@@ -464,6 +464,30 @@ impl Printer {
 fn describe(value: &Value) -> Result<String, CliError> {
     match value {
         Value::Object(map) => {
+            if let (Some(purged), Some(failures)) = (
+                map.get("purged").and_then(Value::as_u64),
+                map.get("failures").and_then(Value::as_array),
+            ) {
+                let mut text = vec![format!("{purged} items deleted")];
+                for failure in failures {
+                    text.push(format!(
+                        "{}: {}",
+                        field(failure, "id"),
+                        field(failure, "message")
+                    ));
+                }
+                if failures.iter().any(|failure| {
+                    failure
+                        .pointer("/details/write_outcome")
+                        .and_then(Value::as_str)
+                        == Some("unknown")
+                }) {
+                    text.push("Stopped: a deletion could not be confirmed. Read the trash again before retrying.".into());
+                } else if let Some(cursor) = map.get("next_cursor").and_then(Value::as_str) {
+                    text.push(format!("more: --cursor {cursor}"));
+                }
+                return Ok(text.join("\n"));
+            }
             for key in ["item", "edge"] {
                 if let Some(record) = map.get(key) {
                     let mut text = describe(record)?;
@@ -588,7 +612,7 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
     }
     if let Some(days) = page.get("retention_days").and_then(Value::as_u64) {
         text.push(if days == 0 {
-            "retention: until deleted".into()
+            "retention: automatic deletion off".into()
         } else {
             format!("retention: {days} days")
         });
@@ -700,6 +724,11 @@ fn record_cells(record: &Value) -> Vec<String> {
             owned("type"),
             format!("v{}", record["version"]),
             owned("trashed_at"),
+            record
+                .get("eligible_for_deletion_at")
+                .and_then(Value::as_str)
+                .map(|at| format!("eligible from {at}"))
+                .unwrap_or_else(|| "automatic deletion date unavailable; see retention".into()),
             owned("name"),
             record
                 .get("trashed_by")
@@ -837,21 +866,30 @@ mod tests {
     }
 
     #[test]
+    fn uncertain_trash_batch_reports_unknown_without_continuation() {
+        let text = describe(&json!({"purged":1,"failures":[{"id":"one","message":"Refresh before retrying", "details":{"write_outcome":"unknown"}}], "next_cursor":"unsafe"})).unwrap();
+        assert!(text.contains("1 items deleted"));
+        assert!(text.contains("deletion could not be confirmed"));
+        assert!(!text.contains("--cursor"));
+    }
+
+    #[test]
     fn trash_lists_show_deletion_identity_version_and_retention() {
-        let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "name":"Shopping list", "trashed_at":"2026-01-02T00:00:00Z", "trashed_by":{"name":"Notes app"}}], "next_cursor":null, "retention_days":30})).unwrap();
+        let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "name":"Shopping list", "trashed_at":"2026-01-02T00:00:00Z", "eligible_for_deletion_at":"2026-02-01T00:00:00Z", "trashed_by":{"name":"Notes app"}}], "next_cursor":null, "retention_days":30})).unwrap();
         for word in [
             "Shopping list",
             "v3",
             "Notes app",
             "2026-01-02",
             "retention: 30 days",
+            "eligible from 2026-02-01T00:00:00Z",
         ] {
             assert!(text.contains(word), "missing {word}: {text}");
         }
         assert!(
             describe(&json!({"data":[], "next_cursor":null, "retention_days":0}))
                 .unwrap()
-                .contains("retention: until deleted")
+                .contains("retention: automatic deletion off")
         );
     }
 

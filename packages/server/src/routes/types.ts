@@ -1204,7 +1204,9 @@ export function typeRoutes(storage: Storage) {
           if (items.data.length > 0) {
             throw new MarfaError(
               ErrorCode.TYPE_IN_USE,
-              `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+              isDirectAuthority(c)
+                ? `Type "${id}" still has items. Remove them before removing the type.`
+                : `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
             );
           }
         }

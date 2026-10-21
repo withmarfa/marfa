@@ -2090,7 +2090,7 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 ### `items/owner-trash-summary`
 
-When the owner or a private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at` and `trashed_by`, with `retention_days` beside the page.
+When the owner or a private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
@@ -2141,3 +2141,19 @@ When a recent owner session or a private local command posts to `/trash/empty`, 
 When a caller runs `marfa --socket PATH items trash list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
 
 **Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every trash command to the contract through its private socket`.
+
+### `items/owner-trash-eligibility`
+
+When a trash summary has a recorded deletion time and effective retention is positive, the server MUST return `eligible_for_deletion_at` as the deletion time plus that many days, or null when the deadline is outside the supported date range.
+
+**Reason:** This is eligibility for a later sweep, not an exact deletion promise. Disabled expiry and missing historical deletion times return null.
+
+**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+
+### `items/owner-trash-unknown-outcome`
+
+If an owner trash write has an unresolved transaction outcome, then the server MUST report `details.write_outcome: unknown` without claiming the item was kept or deleted.
+
+**Reason:** An unavailable commit witness cannot prove rollback. A single-item action answers 500; an empty-trash batch includes the uncertain failure, stops processing and returns no continuation cursor. The caller reads current state before a manual retry.
+
+**Tests:** `cli/item-summaries.test.ts › stops an uncertain trash batch and exposes its outcome through the real socket CLI`.

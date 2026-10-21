@@ -122,10 +122,13 @@ it("preserves a row restored after selection and reports a failed purge alongsid
   expect(result.status).toBe(200);
   const body = (await result.json()) as {
     purged: number;
-    failures: { id: string }[];
+    failures: { id: string; details?: unknown }[];
   };
   expect(body.purged).toBe(1);
   expect(body.failures.map((x) => x.id)).toContain(failed.id);
+  expect(
+    body.failures.find((x) => x.id === failed.id)?.details,
+  ).toBeUndefined();
   expect(JSON.stringify(body)).not.toContain("private-body-witness");
   expect(await ctx.storage.items.get(restored.id)).not.toBeNull();
   expect(await ctx.storage.items.getIncludingTrashed(failed.id)).not.toBeNull();

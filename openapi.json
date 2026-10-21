@@ -1177,7 +1177,7 @@
             "properties": {
               "retention_days": {
                 "type": "integer",
-                "description": "How many days items remain in the trash before automatic expiry; zero disables expiry."
+                "description": "How many days after deletion an item becomes eligible for automatic expiry; zero disables expiry."
               }
             },
             "required": [
@@ -1195,6 +1195,13 @@
           {
             "type": "object",
             "properties": {
+              "eligible_for_deletion_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "When automatic deletion becomes eligible under the effective policy, or null when disabled or the date is unknown. The sweep may delete it later."
+              },
               "trashed_at": {
                 "type": [
                   "string",
@@ -1238,6 +1245,7 @@
               }
             },
             "required": [
+              "eligible_for_deletion_at",
               "trashed_at",
               "trashed_by"
             ]
@@ -1452,6 +1460,41 @@
                 "type": "string",
                 "enum": [
                   "version_conflict"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "InternalErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "internal_error"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
               },
@@ -8059,41 +8102,6 @@
         ],
         "description": "An error response."
       },
-      "InternalErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "internal_error"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "ReadViewChangedRefusal": {
         "type": "object",
         "properties": {
@@ -10165,7 +10173,7 @@
           "Items"
         ],
         "summary": "Empty a page of the trash",
-        "description": "Deletes up to 200 trash items permanently if their state and version still match. Returns partial failures and a cursor for the next batch. Continue until `next_cursor` is null; items trashed during the operation may remain.",
+        "description": "Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
         "security": [
           {
             "ownerSession": []
@@ -10195,7 +10203,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns the committed purge count, per-item failures and the next batch cursor. A failure leaves that item in place.",
+            "description": "Returns the committed purge count, per-item failures and the next batch cursor. Unknown write outcomes carry `details.write_outcome: unknown` and stop this batch; refresh before retrying. Other failures leave the item in place.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10212,11 +10220,27 @@
                         "properties": {
                           "id": {
                             "type": "string",
-                            "description": "The ID of the item that could not be deleted."
+                            "description": "The ID of the item whose purge failed or could not be confirmed."
                           },
                           "code": {
                             "type": "string",
-                            "description": "The code describing why this item could not be deleted."
+                            "description": "The code describing the failure or uncertain outcome."
+                          },
+                          "details": {
+                            "type": "object",
+                            "properties": {
+                              "write_outcome": {
+                                "type": "string",
+                                "enum": [
+                                  "unknown"
+                                ],
+                                "description": "The purge may have committed. Refresh before retrying."
+                              }
+                            },
+                            "required": [
+                              "write_outcome"
+                            ],
+                            "description": "Present when the write outcome cannot be confirmed."
                           },
                           "message": {
                             "type": "string",
@@ -10228,16 +10252,16 @@
                           "code",
                           "message"
                         ],
-                        "description": "One item that this batch did not delete."
+                        "description": "One failed or unconfirmed purge."
                       },
-                      "description": "Items this batch could not delete."
+                      "description": "Failed or unconfirmed purges."
                     },
                     "next_cursor": {
                       "type": [
                         "string",
                         "null"
                       ],
-                      "description": "The cursor for the next batch, or null when this traversal has ended."
+                      "description": "The cursor for the next batch, or null when this traversal ended or stopped on an unknown outcome."
                     }
                   },
                   "required": [

@@ -65,18 +65,32 @@ async function change(button: HTMLButtonElement): Promise<void> {
           root,
           response.status === 409 || response.status === 404
             ? await messageOf(response)
-            : await refusalText(response),
+            : response.status >= 500
+              ? "The result could not be confirmed. Refresh the page to see what remains before trying again."
+              : await refusalText(response),
         );
         return;
       }
       if (action !== "empty") break;
       const result = (await response.json()) as {
         purged: number;
-        failures: unknown[];
+        failures: { details?: { write_outcome?: string } }[];
         next_cursor: string | null;
       };
       purged += result.purged;
-      failed += result.failures.length;
+      const unknown = result.failures.some(
+        (failure) => failure.details?.write_outcome === "unknown",
+      );
+      failed += result.failures.filter(
+        (failure) => failure.details?.write_outcome !== "unknown",
+      ).length;
+      if (unknown) {
+        problem(
+          root,
+          `${String(purged)} items deleted; ${String(failed)} could not be deleted. Another deletion could not be confirmed. The operation stopped. Refresh the page before trying again.`,
+        );
+        return;
+      }
       cursor = result.next_cursor;
     } while (cursor);
     const message =

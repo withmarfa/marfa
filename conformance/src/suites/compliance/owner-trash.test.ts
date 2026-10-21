@@ -71,7 +71,12 @@ it("lists and changes trash as summaries, with exact versions and cascade restor
   const first = await owner("/trash?limit=1");
   expect(first.status).toBe(200);
   const body = (await first.json()) as {
-    data: { id: string; trashed_by: { kind: string }; trashed_at: string }[];
+    data: {
+      id: string;
+      trashed_by: { kind: string };
+      trashed_at: string;
+      eligible_for_deletion_at: string;
+    }[];
     next_cursor: string;
     retention_days: number;
   };
@@ -79,7 +84,34 @@ it("lists and changes trash as summaries, with exact versions and cascade restor
   expect(body.data[0]?.trashed_by.kind).toBe("browser");
   expect(body.data[0]?.trashed_at).toBeTruthy();
   expect(body.retention_days).toBeGreaterThan(0);
+  expect(
+    Date.parse(body.data[0]!.eligible_for_deletion_at) -
+      Date.parse(body.data[0]!.trashed_at),
+  ).toBe(body.retention_days * 86_400_000);
   expect(JSON.stringify(body)).not.toContain("private-trash-body");
+  for (const days of [7, 0, 60]) {
+    expect(
+      (
+        await owner("/config", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ trash_retention_days: days }),
+        })
+      ).status,
+    ).toBe(200);
+    const effective = (await (
+      await owner("/trash?limit=1")
+    ).json()) as typeof body;
+    expect(effective.retention_days).toBe(days);
+    expect(effective.data[0]!.eligible_for_deletion_at).toBe(
+      days === 0
+        ? null
+        : new Date(
+            Date.parse(effective.data[0]!.trashed_at) + days * 86_400_000,
+          ).toISOString(),
+    );
+  }
+
   expect(
     (
       await owner(

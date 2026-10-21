@@ -18,6 +18,7 @@ import {
 } from "../pages/parts/index.js";
 import { renderDocument } from "../pages/render.js";
 import { ChangeNotice, EmptyTrashAction, ItemAction } from "./item-actions.js";
+import { trashEligibleAt } from "../trash-retention.js";
 const HREF = "/auth/owner/trash";
 export function TrashPage({
   nonce,
@@ -57,7 +58,7 @@ export function TrashPage({
           title="Trash"
           lede={
             days
-              ? `Items stay in the trash for ${String(days)} days, then they're deleted for good.`
+              ? `Items stay in the trash for ${String(days)} days before becoming eligible for automatic deletion. A later sweep deletes them for good.`
               : "Items stay in the trash until you delete them."
           }
         />
@@ -103,32 +104,45 @@ export function TrashPage({
               <div class="stack">
                 <RowGroup>
                   {data.length ? (
-                    data.map((row) => (
-                      <Row
-                        title={row.name}
-                        description={
-                          <>
-                            {label(row.type)}. Deleted by{" "}
-                            {row.trashed_by?.name ?? "an unrecorded source"}
-                            {row.trashed_at ? (
-                              <>
-                                {" "}
-                                on <LocalDate at={new Date(row.trashed_at)} />
-                              </>
-                            ) : (
-                              ""
-                            )}
-                            .
-                          </>
-                        }
-                        buttons={
-                          <>
-                            <ItemAction item={row} action="restore" />
-                            <ItemAction item={row} action="purge" />
-                          </>
-                        }
-                      />
-                    ))
+                    data.map((row) => {
+                      const eligibleAt = trashEligibleAt(row.trashed_at, days);
+                      return (
+                        <Row
+                          title={row.name}
+                          description={
+                            <>
+                              {label(row.type)}. Deleted by{" "}
+                              {row.trashed_by?.name ?? "an unrecorded source"}
+                              {row.trashed_at ? (
+                                <>
+                                  {" "}
+                                  on <LocalDate at={new Date(row.trashed_at)} />
+                                </>
+                              ) : (
+                                ""
+                              )}
+                              .{" "}
+                              {days === 0 ? (
+                                "Automatic deletion is off."
+                              ) : eligibleAt ? (
+                                <>
+                                  Eligible for automatic deletion from{" "}
+                                  <LocalDate at={new Date(eligibleAt)} />.
+                                </>
+                              ) : (
+                                "Automatic deletion date unknown."
+                              )}
+                            </>
+                          }
+                          buttons={
+                            <>
+                              <ItemAction item={row} action="restore" />
+                              <ItemAction item={row} action="purge" />
+                            </>
+                          }
+                        />
+                      );
+                    })
                   ) : (
                     <EmptyState
                       title="No results"

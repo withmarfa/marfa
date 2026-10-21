@@ -193,7 +193,7 @@ pub enum ItemsCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum TrashCommand {
-    /// List trash summaries and the retention period, one page at a time.
+    /// List trash summaries, automatic deletion eligibility, and retention, one page at a time.
     List {
         /// Only this exact item type.
         #[arg(long = "type")]
@@ -228,7 +228,7 @@ pub enum TrashCommand {
         #[arg(long)]
         version: u64,
     },
-    /// Permanently delete up to 200 trash items. Continue with the returned cursor.
+    /// Permanently delete up to 200 trash items. Continue with the returned cursor unless an outcome is unknown; read the trash again before retrying.
     Empty {
         /// A cursor from the previous batch. Absent starts with the first batch.
         #[arg(long)]

@@ -115,7 +115,7 @@ export interface paths {
         put?: never;
         /**
          * Empty a page of the trash
-         * @description Deletes up to 200 trash items permanently if their state and version still match. Returns partial failures and a cursor for the next batch. Continue until `next_cursor` is null; items trashed during the operation may remain.
+         * @description Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.
          */
         post: operations["emptyTrash"];
         delete?: never;
@@ -2355,11 +2355,13 @@ export interface components {
         };
         /** @description A page of trashed item summaries. */
         TrashPage: components["schemas"]["TrashSummaryPage"] & {
-            /** @description How many days items remain in the trash before automatic expiry; zero disables expiry. */
+            /** @description How many days after deletion an item becomes eligible for automatic expiry; zero disables expiry. */
             retention_days: number;
         };
         /** @description A trashed item’s summary and recorded deletion identity. */
         TrashSummary: components["schemas"]["ItemSummary"] & {
+            /** @description When automatic deletion becomes eligible under the effective policy, or null when disabled or the date is unknown. The sweep may delete it later. */
+            eligible_for_deletion_at: string | null;
             /** @description When the item entered the trash, or null if not recorded. */
             trashed_at: string | null;
             /** @description The sign-in that moved the item to the trash, captured at that time, or null if not recorded. */
@@ -2467,6 +2469,23 @@ export interface components {
                  * @enum {string}
                  */
                 code: "version_conflict";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        InternalErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "internal_error";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -5012,23 +5031,6 @@ export interface components {
             };
         };
         /** @description An error response. */
-        InternalErrorRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "internal_error";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        /** @description An error response. */
         ReadViewChangedRefusal: {
             /** @description What went wrong. */
             error: {
@@ -6011,7 +6013,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the committed purge count, per-item failures and the next batch cursor. A failure leaves that item in place. */
+            /** @description Returns the committed purge count, per-item failures and the next batch cursor. Unknown write outcomes carry `details.write_outcome: unknown` and stop this batch; refresh before retrying. Other failures leave the item in place. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6025,16 +6027,24 @@ export interface operations {
                     "application/json": {
                         /** @description The number of items this batch permanently deleted. */
                         purged: number;
-                        /** @description Items this batch could not delete. */
+                        /** @description Failed or unconfirmed purges. */
                         failures: {
-                            /** @description The ID of the item that could not be deleted. */
+                            /** @description The ID of the item whose purge failed or could not be confirmed. */
                             id: string;
-                            /** @description The code describing why this item could not be deleted. */
+                            /** @description The code describing the failure or uncertain outcome. */
                             code: string;
+                            /** @description Present when the write outcome cannot be confirmed. */
+                            details?: {
+                                /**
+                                 * @description The purge may have committed. Refresh before retrying.
+                                 * @enum {string}
+                                 */
+                                write_outcome: "unknown";
+                            };
                             /** @description A summary of the failure without item content. */
                             message: string;
                         }[];
-                        /** @description The cursor for the next batch, or null when this traversal has ended. */
+                        /** @description The cursor for the next batch, or null when this traversal ended or stopped on an unknown outcome. */
                         next_cursor: string | null;
                     };
                 };

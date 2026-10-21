@@ -1116,7 +1116,7 @@ Every list and every search answers the same envelope. A hydrated block of edges
 
 When a list or a search answers, the server MUST carry the rows under `data` and the cursor that continues them under `next_cursor`, `null` on the last page, and no other key but a sibling that the operation's own rule names.
 
-**Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys` the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
+**Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys`, the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
 **Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names twenty-eight doors, every one the document publishes as a page`.
 
