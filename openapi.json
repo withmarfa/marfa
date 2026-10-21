@@ -55663,7 +55663,7 @@
         "deleteWebhook",
         "listWebhookDeliveries",
         "redeliverWebhookDelivery",
-        "event"
+        "receiveWebhookEvent"
       ]
     },
     {

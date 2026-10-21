@@ -90,8 +90,7 @@ export interface PublicTag {
   /**
    * The group's operations in the order a developer meets them: create or
    * register, get, list, update, replace, delete, then the group's other
-   * actions. Each is an `operationId`, or, for a request Marfa sends, the
-   * name the top-level `webhooks` gives it.
+   * actions. Each is an `operationId`.
    */
   readonly operations: readonly string[];
 }
@@ -238,7 +237,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "deleteWebhook",
       "listWebhookDeliveries",
       "redeliverWebhookDelivery",
-      "event",
+      "receiveWebhookEvent",
     ],
   },
   {
