@@ -8,6 +8,7 @@ use super::{
 };
 use crate::Result;
 use crate::directory::Directory;
+use crate::drain::Cut;
 use crate::error::CoreError;
 use crate::model::HydrateReport;
 
@@ -21,11 +22,16 @@ pub struct SyncReport {
     /// Every write the sync sent, those the pull queued after the first
     /// drain included.
     pub drain: Drained,
+    /// The hydration the drain took where the server said the copy's read
+    /// view had changed, before it sent the writes still waiting.
+    pub rebuilt: Option<HydrateReport>,
     /// Why the catch-up could not reach the server, where it could not; the
     /// sync goes on to write out the copy it holds.
     pub catch_up: std::result::Result<CaughtUp, CoreError>,
     /// `None` where the catch-up failed after the copy expired, which leaves
-    /// nothing to pull from until a later sync hydrates.
+    /// nothing to pull from until a later sync hydrates. Where the sync
+    /// pulled again after a rebuild, the later pull's, with the files both
+    /// wrote.
     pub pull: Option<PullReport>,
 }
 
@@ -37,13 +43,16 @@ pub struct SendReport {
     pub settings: SettingsFileReport,
     pub scan: ScanReport,
     pub drain: Drained,
+    /// As for `SyncReport`.
+    pub rebuilt: Option<HydrateReport>,
 }
 
 impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
     /// an edit of the settings file, scans, drains, catches up, pulls, and
     /// drains again where the pull queued the placement of a file it wrote, or
-    /// the end of one.
+    /// the end of one. Where that drain rebuilt the copy for a changed read
+    /// view, pulls once more, and drains again where that pull placed a file.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
@@ -117,12 +126,14 @@ impl Folder {
         let hydrated = self.resume()?;
         let settings = self.send_settings_edit()?;
         let scan = self.scan_keeping_files()?;
-        let drain = self.drain()?;
+        let mut rebuilt = None;
+        let drain = self.drain_rebuilding(&mut rebuilt)?;
         Ok(SendReport {
             hydrated,
             settings,
             scan,
             drain,
+            rebuilt,
         })
     }
 
@@ -141,32 +152,87 @@ impl Folder {
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
         let scan = self.scan()?;
-        let mut drain = self.drain()?;
+        let mut rebuilt = None;
+        let mut drain = self.drain_rebuilding(&mut rebuilt)?;
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
             Err(error) => return Err(error),
         };
-        let pull = match self.pull() {
+        let mut pull = match self.pull() {
             Ok(pulled) => Some(pulled),
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
             Err(error) => return Err(error),
         };
-        if sends_again(catch_up.is_ok(), &drain.report)
-            && pull
-                .as_ref()
-                .is_some_and(|pulled| pulled.placed + pulled.ended > 0)
-        {
-            drain.absorb(self.drain()?);
+        if sends_again(catch_up.is_ok(), &drain.report) && pull.as_ref().is_some_and(places) {
+            let rebuilt_before = rebuilt.is_some();
+            let later = self.drain_rebuilding(&mut rebuilt)?;
+            self.absorb(&mut drain, later)?;
+            // The rebuild read the copy under the new view after the pull
+            // wrote it out, so the directory is brought to it once more. The
+            // run has rebuilt already, so a change at the drain after this
+            // pull ends it.
+            if !rebuilt_before && rebuilt.is_some() {
+                let mut again = self.pull()?;
+                let places_again = places(&again);
+                if let Some(first) = &pull {
+                    again.add_writes(first);
+                }
+                if sends_again(true, &drain.report) && places_again {
+                    let last = self.drain_rebuilding(&mut rebuilt)?;
+                    self.absorb(&mut drain, last)?;
+                }
+                pull = Some(again);
+            }
         }
         Ok(SyncReport {
             hydrated,
             settings,
             scan,
             drain,
+            rebuilt,
             catch_up,
             pull,
         })
+    }
+
+    /// A drain that the server ends by saying the copy's read view changed,
+    /// as it does once the folder's key is replaced or narrowed, builds the
+    /// copy again into `rebuilt` and drains once more, so the writes still
+    /// waiting go out in this run rather than the next. What the first drain
+    /// settled is told with what the second sent. Once a run: where `rebuilt`
+    /// holds a rebuild already, a change ends the run. A rebuild that fails
+    /// ends it with its own error, the queue kept.
+    fn drain_rebuilding(&self, rebuilt: &mut Option<HydrateReport>) -> Result<Drained> {
+        match self.drain_keeping(false) {
+            Ok(drained) => Ok(drained),
+            Err(Cut {
+                error: CoreError::CopyExpired { reason },
+                settled,
+            }) if reason == "read_view_changed" && rebuilt.is_none() => {
+                *rebuilt = Some(self.hydrate()?);
+                let mut drained = *settled;
+                self.absorb(&mut drained, self.drain()?)?;
+                Ok(drained)
+            }
+            Err(cut) => Err(cut.error),
+        }
+    }
+
+    /// Takes `later`, a later drain of the same run, into `drained`. A write
+    /// that drain gave way from has left the queue, and the verdict an
+    /// earlier drain told of it goes with it.
+    fn absorb(&self, drained: &mut Drained, later: Drained) -> Result<()> {
+        drained.absorb(later);
+        let conn = self.core.conn()?;
+        let mut kept = Vec::with_capacity(drained.report.verdicts.len());
+        for verdict in std::mem::take(&mut drained.report.verdicts) {
+            if crate::store::queued_write(&conn, &verdict.id)?.is_some() {
+                kept.push(verdict);
+            }
+        }
+        drained.report.verdicts = kept;
+        Ok(())
     }
 
     /// Takes the folder at `dir` off this machine: its own state under
@@ -305,6 +371,11 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         })
 }
 
+/// Whether a pull queued the placement of a file it wrote, or the end of one.
+fn places(pulled: &PullReport) -> bool {
+    pulled.placed + pulled.ended > 0
+}
+
 /// Not where the first drain or the catch-up shows the server cannot take
 /// writes (unreachable, credential refused, a write left undelivered): the
 /// report says why, and the placements wait for the next sync.
@@ -329,6 +400,68 @@ mod tests {
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
+    }
+
+    #[test]
+    fn a_verdict_an_earlier_drain_told_leaves_with_a_write_a_later_drain_withdrew() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let db = dir.path().join(STATE_DIR).join("core.sqlite");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();
+        super::super::settings_file::bind(&core, "folder").unwrap();
+        drop(core);
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let queued = folder
+            .core
+            .create_item(&crate::model::Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": "Kept", "body": "" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        let told = |id: &str| crate::drain::DrainVerdict {
+            id: id.into(),
+            kind: crate::model::WriteKind::CreateEdge,
+            item_id: None,
+            edge_id: None,
+            verdict: Some(crate::model::Verdict::Refused),
+            reason: Some("edge_duplicate".into()),
+            refusal: None,
+            conflicted_copy_id: None,
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+        };
+        let drained = |verdicts| Drained {
+            report: crate::DrainReport {
+                verdicts,
+                ..drained()
+            },
+            rebased: 0,
+            gave_way: 0,
+        };
+        let mut first = drained(vec![told(&queued.id), told("withdrawn")]);
+        folder.absorb(&mut first, drained(Vec::new())).unwrap();
+        assert_eq!(
+            first
+                .report
+                .verdicts
+                .iter()
+                .map(|verdict| verdict.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![queued.id.as_str()],
+            "a write no longer queued kept its verdict, or a queued one lost it"
+        );
     }
 
     #[test]

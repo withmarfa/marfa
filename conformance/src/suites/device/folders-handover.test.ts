@@ -488,6 +488,88 @@ describe("handing a folder to a command", () => {
     }, WAIT);
   });
 
+  it.each([
+    {
+      name: "its own watch, to a command that sends nothing",
+      every: false,
+      command: "scan",
+      waits: [8],
+    },
+    {
+      name: "the watch of every folder, to a push the server names a later wait",
+      every: true,
+      command: "push",
+      waits: [4, 8],
+    },
+  ] as const)(
+    "keeps the server's wait across handing a folder over from $name",
+    async ({ every, command, waits }) => {
+      // A monotonic clock, so an adjustment of the wall clock cannot move the
+      // gaps this measures.
+      const attempts: number[] = [];
+      const harness = await oneFolder(
+        `handover-rate-limit-${command}`,
+        (answer) => {
+          attempts.push(performance.now());
+          const wait = waits[attempts.length - 1];
+          return wait === undefined
+            ? answer
+            : {
+                kind: "json",
+                status: 429,
+                headers: { "retry-after": String(wait) },
+                body: {
+                  error: { code: "rate_limited", message: "Too many requests" },
+                },
+              };
+        },
+      );
+      const watch = hold(
+        every ? harness.folder.watchEvery() : harness.folder.watch(),
+      );
+      await vi.waitFor(
+        () =>
+          expect(
+            lines(watch, every ? harness.dir : undefined).some(
+              (line) => line.watching === true,
+            ) || watch.stderr.includes("watching"),
+            watch.stdout + watch.stderr,
+          ).toBe(true),
+        WAIT,
+      );
+      put(harness, "One.md", note("One"));
+      await vi.waitFor(
+        () => expect(attempts, watch.stderr).toHaveLength(1),
+        WAIT,
+      );
+      const worked =
+        command === "scan"
+          ? await harness.folder.scan()
+          : await harness.folder.push();
+      expect(worked.ok, JSON.stringify(worked)).toBe(true);
+      // The push sent the write once more, and was told to wait longer.
+      expect(attempts).toHaveLength(waits.length);
+      await vi.waitFor(() => {
+        expect(handovers(watch, every ? harness.dir : undefined)).toEqual([
+          "let go",
+          "taken back",
+        ]);
+      }, WAIT);
+      await vi.waitFor(
+        () => expect(attempts, watch.stderr).toHaveLength(waits.length + 1),
+        { timeout: 60_000, interval: 100 },
+      );
+      const last = waits.length - 1;
+      expect(
+        attempts[last + 1]! - attempts[last]!,
+        "the watch taken back sent before the wait the server last named",
+      ).toBeGreaterThanOrEqual(waits[last]! * 1000 - 100);
+      expect(sentTitles(harness)).toEqual(
+        Array.from({ length: waits.length + 1 }, () => "One"),
+      );
+    },
+  );
+
   it("lets a folder go only once the write its pass is sending is answered", async () => {
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => {

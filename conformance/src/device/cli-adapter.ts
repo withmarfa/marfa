@@ -1260,6 +1260,10 @@ export interface PushReport {
     hydrated?: HydrateReport | null;
     failed?: string;
   };
+  /** The hydration the drain took where the server said the copy's read
+   *  view had changed, before it sent the writes still waiting
+   *  (`folders/view-changed-push-rebuilds`). */
+  rebuilt: HydrateReport | null;
   /** `null` where a failed catch-up left no copy to pull from. */
   pull: PullReport | null;
   /** The exit the command ended with: 0; 3 where it left a write
@@ -1277,6 +1281,7 @@ export interface SendOnlyReport {
   settings: SettingsFileReport;
   scan: ScanReport;
   drain: PushReport["drain"];
+  rebuilt: HydrateReport | null;
   /** The exit the command ended with, added by the adapter. */
   exit: number;
 }

@@ -243,12 +243,19 @@ impl Folder {
         }
     }
 
+    /// The version of the settings the copy holds, read whether or not the
+    /// copy can be read: a drain that a changed read view ends remembers its
+    /// refusals before the copy is built again.
+    fn settings_version(&self) -> Result<Option<i64>> {
+        store::held_version(&*self.core.conn()?, &self.folder)
+    }
+
     fn refused(&self) -> Result<Option<Refused>> {
         let Some(json) = store::meta_get(&*self.core.conn()?, META_REFUSED)? else {
             return Ok(None);
         };
         let refused: Option<Refused> = serde_json::from_str(&json).ok();
-        let settings = self.core.get(&self.folder)?.map(|row| row.version);
+        let settings = self.settings_version()?;
         let Some(mut refused) = refused.filter(|refused| Some(refused.settings) == settings) else {
             store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
             return Ok(None);
@@ -304,6 +311,20 @@ impl Folder {
         report: &mut DrainReport,
         watched: bool,
     ) -> Result<usize> {
+        self.remember_refusals(report)?;
+        if report.unavailable.is_some() || report.stopped.is_some() {
+            return Ok(0);
+        }
+        let (gave_way, withdrawn) = self.give_way(watched)?;
+        report
+            .verdicts
+            .retain(|verdict| !withdrawn.contains(&verdict.id));
+        Ok(gave_way)
+    }
+
+    /// Remembers each placement the server refused among the verdicts a
+    /// drain reports, and reads nothing.
+    pub(super) fn remember_refusals(&self, report: &DrainReport) -> Result<()> {
         let mut refused: Vec<(String, Held)> = Vec::new();
         for verdict in &report.verdicts {
             let row = {
@@ -343,14 +364,7 @@ impl Folder {
         if !refused.is_empty() {
             self.remember_refused(refused)?;
         }
-        if report.unavailable.is_some() || report.stopped.is_some() {
-            return Ok(0);
-        }
-        let (gave_way, withdrawn) = self.give_way(watched)?;
-        report
-            .verdicts
-            .retain(|verdict| !withdrawn.contains(&verdict.id));
-        Ok(gave_way)
+        Ok(())
     }
 
     /// Gives way from the latest of this folder's placement writes to each
@@ -516,7 +530,7 @@ impl Folder {
             Some(record) => record,
             None => Refused {
                 key: self.key_state().ok(),
-                settings: self.core.get(&self.folder)?.map_or(0, |row| row.version),
+                settings: self.settings_version()?.unwrap_or(0),
                 placements: Withheld::new(),
             },
         };

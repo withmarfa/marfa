@@ -53,6 +53,21 @@ pub struct DrainReport {
 }
 
 impl DrainReport {
+    pub(crate) fn empty() -> DrainReport {
+        DrainReport {
+            answered: 0,
+            held: 0,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
     /// Whether the pass sent what it could and has no wait, outage or
     /// credential stop to tell.
     fn has_nothing_left(&self) -> bool {
@@ -80,6 +95,24 @@ impl DrainReport {
             }
         }
         self.retry_after_seconds = self.retry_after_seconds.max(later.retry_after_seconds);
+    }
+}
+
+/// A drain that ended in an error, with what it settled before it: the queue
+/// holds each of those verdicts already, so a caller that goes on, as a
+/// folder push does after rebuilding its copy, tells them with its own.
+#[derive(Debug)]
+pub(crate) struct Cut<T = DrainReport> {
+    pub error: CoreError,
+    pub settled: Box<T>,
+}
+
+impl From<CoreError> for Cut {
+    fn from(error: CoreError) -> Cut {
+        Cut {
+            error,
+            settled: Box::new(DrainReport::empty()),
+        }
     }
 }
 
@@ -857,6 +890,14 @@ pub(crate) fn would_send(core: &Core) -> Result<bool> {
 }
 
 pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+    drain_keeping(core, stop).map_err(|cut| cut.error)
+}
+
+/// `drain`, keeping what a drain that ends in an error settled before it.
+pub(crate) fn drain_keeping(
+    core: &Core,
+    stop: &AtomicBool,
+) -> std::result::Result<DrainReport, Cut> {
     let op = telemetry::operation!("drain", answered, held, undelivered, unsent, unmade);
     let result = drain_checked(core, stop);
     // A renewal whose callback found the connection held waits in memory;
@@ -868,7 +909,7 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     if let Ok(report) = &result {
         core.owe_drain(report.undelivered > 0 || report.unavailable.is_some());
     }
-    telemetry::ended!(op, result.as_ref(), |report| {
+    telemetry::ended!(op, result.as_ref().map_err(|cut| &cut.error), |report| {
         outcome = if report.stopped.is_some() {
             "credential_refused"
         } else if report.unavailable.is_some() {
@@ -885,14 +926,14 @@ pub fn drain(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     result
 }
 
-fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+fn drain_checked(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainReport, Cut> {
     // The handle before the server, so a second opener with no server is
     // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
     // Whatever opened the store, a folder's queue holds only what its scan
     // read until the person agrees.
     if crate::folder::waiting(&*core.conn()?)? {
-        return Err(crate::error::CoreError::FirstSyncWaiting);
+        return Err(crate::error::CoreError::FirstSyncWaiting.into());
     }
     // Each answer is read back under the copy's read view, so a copy without
     // one would send a write and then fail to settle it, on every pass.
@@ -900,27 +941,29 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     let result = drain_inner(core, stop);
     // An answer that came in is settled before a stop raised during its
     // request is honored, including for the last write in the queue.
-    crate::catch_up::unless_stopped(result, stop)
+    match crate::catch_up::refuse_if_stopped(stop) {
+        Ok(()) => result,
+        Err(error) => Err(Cut {
+            error,
+            settled: result.map_or_else(|cut| cut.settled, Box::new),
+        }),
+    }
 }
 
-fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
+fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainReport, Cut> {
     crate::catch_up::refuse_if_stopped(stop)?;
     // Queued writes and their natural-key lookups name the copy's instance
     // so a replacement refuses them even after the pass confirmed the origin.
     // Credential renewal uses the exempt authentication endpoints.
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ViewChange::default();
-    let result = match send_queue(core, &http, generation, stop, &mut pass) {
+    let mut report = DrainReport::empty();
+    let result = match send_queue(core, &http, generation, stop, &mut pass, &mut report) {
         // From a request that settled nothing, a lookup among them: a write
         // the refusal answered expired the copy as it settled.
         Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            if read_view::generation(&tx)? == generation {
-                crate::catch_up::expire_for_another_instance(&tx, generation)?;
-            }
-            tx.commit()?;
-            Err(CoreError::CopyExpired { reason })
+            expire_for_another_instance(core, generation)
+                .and(Err(CoreError::CopyExpired { reason }))
         }
         result => result,
     };
@@ -929,12 +972,28 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> Result<DrainReport> {
     // a report that has something to say a caller must act on (a wait, an
     // unavailable server, a credential stopped, a write left undelivered), and
     // the next call is refused `copy_expired`.
-    let expiry = pass.expire(core);
-    let report = result?;
-    match expiry? {
-        Some(expired) if report.has_nothing_left() => Err(expired),
-        _ => Ok(report),
+    let ended = match (result, pass.expire(core)) {
+        (Err(error), _) | (Ok(()), Err(error)) => Some(error),
+        (Ok(()), Ok(Some(expired))) if report.has_nothing_left() => Some(expired),
+        (Ok(()), Ok(_)) => None,
+    };
+    match ended {
+        Some(error) => Err(Cut {
+            error,
+            settled: Box::new(report),
+        }),
+        None => Ok(report),
     }
+}
+
+fn expire_for_another_instance(core: &Core, generation: u64) -> Result<()> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    if read_view::generation(&tx)? == generation {
+        crate::catch_up::expire_for_another_instance(&tx, generation)?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn send_queue(
@@ -943,19 +1002,8 @@ fn send_queue(
     generation: u64,
     stop: &AtomicBool,
     pass: &mut ViewChange,
-) -> Result<DrainReport> {
-    let mut report = DrainReport {
-        answered: 0,
-        held: 0,
-        undelivered: 0,
-        unsent: 0,
-        unmade: 0,
-        unavailable: None,
-        verdicts: Vec::new(),
-        stopped: None,
-        unclaimed_sources: Vec::new(),
-        retry_after_seconds: None,
-    };
+    report: &mut DrainReport,
+) -> Result<()> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
     let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
     let names_wait = crate::body::rule::waiting(&*core.conn()?)?;
@@ -963,7 +1011,7 @@ fn send_queue(
     if waiting.is_empty() && !owed && !names_wait && !body_answers {
         // This pass has no work. Return before later reads could observe a
         // concurrent edit and apply its deferred work without admission.
-        return Ok(report);
+        return Ok(());
     }
     {
         // A relocation must be admitted before this pass changes local queue
@@ -977,8 +1025,8 @@ fn send_queue(
                     "the server could not say which instance it is, so nothing was sent: {error}"
                 ));
                 report.undelivered = waiting.len();
-                waited(&mut report, error.retry_after().map(|wait| wait.as_secs()));
-                return Ok(report);
+                waited(report, error.retry_after().map(|wait| wait.as_secs()));
+                return Ok(());
             }
             Err(error) => return Err(error),
         }
@@ -1019,10 +1067,10 @@ fn send_queue(
     };
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
-    let unconfirmed = owed && !confirm(&mut report)?;
+    let unconfirmed = owed && !confirm(report)?;
     if !unconfirmed && let Some(why) = read_owed_backs(core, stop, pass)? {
         report.unavailable = Some(why.reason);
-        waited(&mut report, why.retry_after_seconds);
+        waited(report, why.retry_after_seconds);
     }
 
     // Before the queue is read, so an edge a name now resolves to goes out in
@@ -1033,7 +1081,7 @@ fn send_queue(
         // pass: they wait for the next, and a write sent later confirms the
         // instance again.
         let (unavailable, retry_after) = (report.unavailable.clone(), report.retry_after_seconds);
-        if confirm(&mut report)? {
+        if confirm(report)? {
             core.settle_bodies(stop)?;
         } else {
             report.unavailable = unavailable;
@@ -1069,7 +1117,7 @@ fn send_queue(
         if report.unavailable.is_some()
             && let Some(stuck) = suspect.take()
         {
-            leave_waiting(&stuck, &mut report);
+            leave_waiting(&stuck, report);
         }
         let mut role = Role::Walk;
         let mut resending: Option<Suspect> = None;
@@ -1104,7 +1152,7 @@ fn send_queue(
                     None => {
                         // No write could test it, so the pass ends here.
                         if let Some(stuck) = suspect.take() {
-                            leave_waiting(&stuck, &mut report);
+                            leave_waiting(&stuck, report);
                         }
                     }
                 }
@@ -1157,7 +1205,7 @@ fn send_queue(
             // since is not for a send again to decide: it waits as it was.
             _ if role == Role::Resend && !matches!(ready, Readiness::Ready) => {
                 if let Some(stuck) = &resending {
-                    leave_waiting(stuck, &mut report);
+                    leave_waiting(stuck, report);
                 }
                 continue;
             }
@@ -1200,7 +1248,7 @@ fn send_queue(
                 report.undelivered += 1;
                 continue;
             }
-            Readiness::RefusedWith(_) | Readiness::Ready if !confirm(&mut report)? => {
+            Readiness::RefusedWith(_) | Readiness::Ready if !confirm(report)? => {
                 waiting.insert(row.id.clone());
                 report.undelivered += 1;
                 continue;
@@ -1226,10 +1274,10 @@ fn send_queue(
                     tx.commit()?;
                 }
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
-                let unread = reconcile(core, row, pass)?;
+                // Told before the read, which can end the pass.
                 report.unsent += 1;
                 put_verdict(
-                    &mut report,
+                    report,
                     replacing,
                     verdict_of(
                         row,
@@ -1237,9 +1285,9 @@ fn send_queue(
                         None,
                     ),
                 );
-                if let Some(unread) = unread {
+                if let Some(unread) = reconcile(core, row, pass)? {
                     report.unavailable = Some(unread.reason);
-                    waited(&mut report, unread.retry_after_seconds);
+                    waited(report, unread.retry_after_seconds);
                 }
                 continue;
             }
@@ -1263,7 +1311,7 @@ fn send_queue(
                     row.id,
                     unavailable_by(&error).unwrap_or_else(|| error.to_string())
                 ));
-                waited(&mut report, error.retry_after().map(|wait| wait.as_secs()));
+                waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 waiting.insert(row.id.clone());
                 report.undelivered += 1;
                 continue;
@@ -1299,7 +1347,7 @@ fn send_queue(
                         answers.insert(row.id.clone(), Some(Verdict::Refused));
                         report.unsent += 1;
                         put_verdict(
-                            &mut report,
+                            report,
                             replacing,
                             verdict_of(
                                 row,
@@ -1314,7 +1362,7 @@ fn send_queue(
                     Err(error) => {
                         report.undelivered += 1;
                         put_verdict(
-                            &mut report,
+                            report,
                             replacing,
                             verdict_of(
                                 row,
@@ -1410,34 +1458,56 @@ fn send_queue(
             answer => answer,
         };
         if let Ok(answer) = &answer {
-            waited(&mut report, answer.retry_after_seconds);
+            waited(report, answer.retry_after_seconds);
         }
         let class = refine(row, &payload, &answer, classify(&answer));
         let environmental = class == Classified::Environmental;
+        let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);
         let taken = match store_fault(row) {
             Some(error) => Err(error),
             None => settle(core, row, &answer, class, shape, pass),
         };
         let settled = match taken {
             Ok(settled) => settled,
-            Err(
-                error @ (CoreError::Redirected { .. }
-                | CoreError::ContractMismatch { .. }
-                | CoreError::RenewalFailed(_)
-                | CoreError::SignedOut { .. }
-                | CoreError::NoKeychain(_)
-                | CoreError::StorageFull(_)
-                | CoreError::CopyExpired { .. }
-                | CoreError::StreamIncomplete { .. }),
-            ) => return Err(error),
-            // The server answered and the copy could not take the answer: a
-            // further attempt may clear it, nothing clears it on its own.
             Err(error) => {
-                if store::queued_write(&*core.conn()?, &row.id)?
-                    .is_some_and(|current| current.verdict.is_some())
+                // A verdict is committed before the read it owes, and that
+                // read can end the pass, as a changed read view does. The
+                // drain began by clearing every verdict a row is sent with, so
+                // one held now is this answer's, and is told.
+                if let Some(current) = store::queued_write(&*core.conn()?, &row.id)?
+                    && current.verdict.is_some()
                 {
+                    if answer.is_ok() {
+                        report.answered += 1;
+                    } else {
+                        report.unmade += 1;
+                    }
+                    put_verdict(
+                        report,
+                        replacing,
+                        verdict_of(
+                            &current,
+                            &committed(&current, answer.as_ref().ok(), shape, landed),
+                            current.answer.as_deref(),
+                        ),
+                    );
                     return Err(error);
                 }
+                if matches!(
+                    error,
+                    CoreError::Redirected { .. }
+                        | CoreError::ContractMismatch { .. }
+                        | CoreError::RenewalFailed(_)
+                        | CoreError::SignedOut { .. }
+                        | CoreError::NoKeychain(_)
+                        | CoreError::StorageFull(_)
+                        | CoreError::CopyExpired { .. }
+                        | CoreError::StreamIncomplete { .. }
+                ) {
+                    return Err(error);
+                }
+                // The server answered and the copy could not take the answer:
+                // a further attempt may clear it, nothing clears it on its own.
                 let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
                 let mut settled = finish_counted(
                     core,
@@ -1481,7 +1551,7 @@ fn send_queue(
         } else if answer.is_err() && settled.unavailable.is_none() {
             report.unmade += 1;
         }
-        waited(&mut report, settled.retry_after_seconds);
+        waited(report, settled.retry_after_seconds);
         answers.insert(row.id.clone(), settled.verdict);
         if row.kind == WriteKind::CreateItem
             && let Some(target) = store::meta_get(&*core.conn()?, &receipt_key(&row.id))?
@@ -1522,7 +1592,7 @@ fn send_queue(
         };
         let answered = settled_row.as_ref().unwrap_or(row);
         put_verdict(
-            &mut report,
+            report,
             replacing,
             verdict_of(answered, &settled, answered.answer.as_deref()),
         );
@@ -1552,7 +1622,7 @@ fn send_queue(
         // Sent again after the test landed and met the failure again: set
         // aside, and the pass goes on.
         if let (Some(failure), Some(stuck)) = (&met_again, &resending) {
-            set_aside(core, stuck, failure, &mut report, &mut answers)?;
+            set_aside(core, stuck, failure, report, &mut answers)?;
             carry_on = true;
         }
         if stop {
@@ -1587,7 +1657,7 @@ fn send_queue(
     }
 
     crate::body::rule::after_answers(&mut *core.conn()?)?;
-    Ok(report)
+    Ok(())
 }
 
 /// What a lookup this pass said of a natural key.
@@ -2197,6 +2267,36 @@ fn verdict_of(row: &QueuedWrite, settled: &Settled, answer: Option<&str>) -> Dra
         refusals: settled.refusals,
         replayed: settled.replayed,
         merged_fields: settled.merged_fields.clone(),
+    }
+}
+
+/// The verdict the queue holds for a write whose settling ended the pass
+/// after it was committed, with what its answer adds. A write `landed`, on a
+/// natural key or a receipt the server no longer keeps whole, was replayed.
+fn committed(row: &QueuedWrite, answer: Option<&Answer>, shape: Shape, landed: bool) -> Settled {
+    let item = answer
+        .filter(|_| shape == Shape::Item)
+        .and_then(|answer| serde_json::from_str::<WireWriteAnswer>(&answer.body).ok());
+    let edge = answer
+        .filter(|_| shape == Shape::Edge)
+        .and_then(|answer| serde_json::from_str::<WireEdgeAnswer>(&answer.body).ok());
+    let succeeded = matches!(
+        row.verdict,
+        Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
+    );
+    Settled {
+        conflicted_copy_id: row.conflicted_copy_id.clone(),
+        replayed: succeeded
+            && (landed
+                || answer.is_some_and(|answer| answer.replayed)
+                || item.as_ref().is_some_and(|item| item.acknowledged)
+                || edge.as_ref().is_some_and(|edge| edge.acknowledged)),
+        merged_fields: item
+            .and_then(|item| item.conflict_resolution)
+            .filter(|_| succeeded)
+            .map(|resolution| resolution.fields)
+            .unwrap_or_default(),
+        ..Settled::plain(row.verdict, row.reason.clone(), row.refusals)
     }
 }
 
@@ -4277,6 +4377,106 @@ mod tests {
             "a write behind was sent after the view changed under a write that moved no source"
         );
         assert!(read_view::expired(&conn).unwrap());
+    }
+
+    #[test]
+    fn a_verdict_whose_own_read_meets_a_changed_view_is_told_with_the_cut() {
+        // The witness: the same answers with the read let through end well
+        // and tell the verdict as any drain does.
+        for (verdict, answer) in [
+            (Verdict::Accepted, edge_answered("e1", "p1", 2)),
+            (
+                Verdict::Refused,
+                crate::scripted::refusal(422, "validation_failed"),
+            ),
+        ] {
+            for changed in [false, true] {
+                let server = crate::scripted::Scripted::start();
+                let (_dir, core) = holding_edges(&server, &["e1"]);
+                let row = rank_edit(&core, "e1");
+                let read = if changed {
+                    crate::scripted::refusal(409, "read_view_changed")
+                } else {
+                    crate::scripted::certified(edge_answered(
+                        "e1",
+                        "p1",
+                        1 + i64::from(verdict == Verdict::Accepted),
+                    ))
+                };
+                server.on("/edges/e1", vec![answer.clone(), read]);
+                let report = match drain_keeping(&core, &AtomicBool::new(false)) {
+                    Ok(report) => {
+                        assert!(
+                            !changed,
+                            "{verdict:?}: the changed view did not end the drain"
+                        );
+                        report
+                    }
+                    Err(cut) => {
+                        assert!(changed, "{verdict:?}: {:?}", cut.error);
+                        assert_eq!(cut.error, view_changed());
+                        *cut.settled
+                    }
+                };
+                assert_eq!(
+                    store::queued_write(&core.conn().unwrap(), &row.id)
+                        .unwrap()
+                        .unwrap()
+                        .verdict,
+                    Some(verdict)
+                );
+                assert_eq!(
+                    report.answered, 1,
+                    "{verdict:?}, view changed {changed}: {report:?}"
+                );
+                assert_eq!(
+                    report
+                        .verdicts
+                        .iter()
+                        .map(|entry| (entry.id.as_str(), entry.verdict))
+                        .collect::<Vec<_>>(),
+                    vec![(row.id.as_str(), Some(verdict))],
+                    "{verdict:?}, view changed {changed}: the verdict the queue holds left the report"
+                );
+                if verdict == Verdict::Refused {
+                    assert_eq!(
+                        report.verdicts[0]
+                            .refusal
+                            .as_ref()
+                            .and_then(|refusal| refusal.code.as_deref()),
+                        Some("validation_failed")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_write_refused_unsent_whose_read_meets_a_changed_view_is_told_with_the_cut() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/items/a",
+            vec![crate::scripted::refusal(409, "read_view_changed")],
+        );
+        let (_dir, core) = deleting(&server, &["a"]);
+        let row = core.queue().unwrap().pop().unwrap();
+        // A delete with no server version is refused before it is sent.
+        core.conn()
+            .unwrap()
+            .execute("UPDATE queue SET base_version = 0 WHERE id = ?1", [&row.id])
+            .unwrap();
+        let cut = drain_keeping(&core, &AtomicBool::new(false)).unwrap_err();
+        assert_eq!(cut.error, view_changed());
+        // The witness: the read the refusal owes was made, and met the change.
+        assert_eq!(server.seen("/items/a").len(), 1);
+        assert_eq!(
+            (cut.settled.unsent, cut.settled.verdicts.len()),
+            (1, 1),
+            "{:?}",
+            cut.settled
+        );
+        assert_eq!(cut.settled.verdicts[0].id, row.id);
+        assert_eq!(cut.settled.verdicts[0].verdict, Some(Verdict::Refused));
     }
 
     fn instance_changed() -> CoreError {

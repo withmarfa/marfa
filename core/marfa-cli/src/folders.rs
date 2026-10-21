@@ -405,6 +405,7 @@ pub fn run(
                 settings,
                 scan: scanned,
                 drain: drained,
+                rebuilt,
             } = folder.send_only()?;
             exit = output::drain_exit(&drained.report);
             output::report(
@@ -415,6 +416,7 @@ pub fn run(
                     "settings": settings,
                     "scan": scanned,
                     "drain": drained,
+                    "rebuilt": rebuilt,
                 }),
                 json,
                 || {
@@ -426,6 +428,7 @@ pub fn run(
                     lines.push(describe_scan(&scanned));
                     lines.extend(flagged_lines(&scanned.flagged));
                     lines.extend(embed_lines(&scanned.embeds));
+                    lines.extend(rebuilt_line(rebuilt.as_ref()));
                     lines.extend(drain_lines(&folder, &drained));
                     lines.push(
                         "send-only run: nothing was pulled, so no item's file was written or removed; the next `folders push` pulls what the server holds"
@@ -445,6 +448,7 @@ pub fn run(
                 settings,
                 scan: scanned,
                 drain: drained,
+                rebuilt,
                 catch_up,
                 pull: pulled,
             } = match folder.sync()? {
@@ -472,6 +476,7 @@ pub fn run(
                     "settings": settings,
                     "scan": scanned,
                     "drain": drained,
+                    "rebuilt": rebuilt,
                     "catch_up": caught,
                     "pull": pulled,
                 }),
@@ -503,6 +508,7 @@ pub fn run(
                             .iter()
                             .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
                     ));
+                    lines.extend(rebuilt_line(rebuilt.as_ref()));
                     lines.extend(drain_lines(&folder, &drained));
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
@@ -647,6 +653,15 @@ fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     let mut answer = String::new();
     std::io::stdin().lock().read_line(&mut answer)?;
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
+}
+
+fn rebuilt_line(rebuilt: Option<&marfa_core::HydrateReport>) -> Option<String> {
+    rebuilt.map(|rebuilt| {
+        format!(
+            "the server's read view changed, so the copy was hydrated again ({} item(s)) before the waiting writes were sent",
+            rebuilt.items
+        )
+    })
 }
 
 /// What a drain sent and what came of it, said once.

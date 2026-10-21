@@ -3626,7 +3626,7 @@ When the person changes or moves a folder file whose row the copy no longer hold
 
 While a folder file whose row the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
 
-**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
+**Tests:** `device/folders-identity.test.ts › queues a file whose row the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads`.
 
 ### `folders/lost-create-not-repeated`
 
@@ -3689,6 +3689,44 @@ While a folder watch runs, a device MUST write the received server changes at a 
 When a folder’s cursor has aged out of the server log, a device MUST hydrate a fresh copy before continuing its push or watch.
 
 **Tests:** `device/folders.test.ts › hydrates again at a push whose cursor the log has aged past`, `device/folders.test.ts › hydrates again while watching when the log ages past its cursor`.
+
+### `folders/view-changed-push-rebuilds`
+
+When any drain of a folder push or a send-only run, the drain after the push's pull included, ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and drain once more in the same run, sending each write still waiting once and reporting the verdict of every write that either drain settled.
+
+**Reason:** A key that is replaced or narrowed changes the read view the copy was built under (`device/view-changed`), and a run that stopped there would leave every write behind it waiting for no cause the person can act on. The rebuild reads under the new view, so nothing the new key cannot read stays in the copy. A verdict the first drain settled is final in the queue, and a report without it would tell the person that a refused write was taken.
+
+**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`, `device/folders.test.ts › reports a refusal from before the view changed with the writes sent after the rebuild`, `device/folders.test.ts › builds the copy again where the drain after the pull meets the changed view, and finishes the push`, `device/folders.test.ts › reports a placement refused where its own read meets the changed view, and does not send it again`.
+
+### `folders/view-changed-push-pulls-again`
+
+When the drain after a folder push's pull hydrates the copy again under `folders/view-changed-push-rebuilds`, a device MUST pull once more in the same run, and drain once more where that pull queued the placement of a file it wrote.
+
+**Reason:** The first pull wrote the directory out from the copy built under the old read view. Pulling from the rebuilt copy writes what the new view holds in the same push, rather than leaving it for the next one. A file bound to a row the new key cannot read is not removed by that pull; the next scan reports it as lost (`folders/lost-row-unchanged-held`).
+
+**Tests:** `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads`.
+
+### `folders/view-changed-push-once`
+
+If a drain of a folder push or a send-only run that has already rebuilt its copy for a changed read view also ends `copy_expired` with the reason `read_view_changed`, then a device MUST end the run `copy_expired` without hydrating again, keeping the writes still waiting.
+
+**Reason:** A view that changes again at once is changing under the run, and rebuilding without end would spend the key's rate limit and never finish.
+
+**Tests:** `device/folders.test.ts › builds the copy again only once in a push, and ends it copy_expired where the view changes again`.
+
+### `folders/view-changed-rebuild-fails`
+
+If the hydration a folder push takes for a changed read view fails, then the CLI MUST end the push with that hydration's own error and exit code, keeping the writes still waiting for the next push.
+
+**Reason:** The person acts on why the rebuild failed, such as a server that cannot be reached, not on the changed view the rebuild was answering.
+
+**Tests:** `device/folders.test.ts › ends the push with the rebuild's own failure, keeping the writes for the next push`.
+
+### `folders/view-changed-watch-rebuilds`
+
+When a folder watch's drain ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and send the writes still waiting without ending the watch.
+
+**Tests:** `device/folders.test.ts › builds the copy again while watching and delivers every waiting write, still watching`.
 
 ### `folders/failed-hydration-retried`
 
@@ -4995,6 +5033,14 @@ When a folder watch's pass leaves a write undelivered and its drain reports `ret
 **Reason:** A write sent before the time has passed is refused again, and spends the key's rate limit.
 
 **Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`.
+
+### `folders/watch-rate-limit-handover`
+
+When a folder watch takes back a folder it let go to a command, a device MUST NOT start a pass of that folder before the time named by the `retry_after_seconds` of the most recent drain of that folder that left a write undelivered, whether the watch or the command drained, unless a later drain of the folder has had writes answered with no `retry_after_seconds`.
+
+**Reason:** A hand-over does not reset the server's rate limit, so a watch that forgot the time would send at once and be refused again (`folders/watch-rate-limit-pause`).
+
+**Tests:** `device/folders-handover.test.ts › keeps the server's wait across handing a folder over from $name`.
 
 ### `folders/push-exit-undelivered`
 

@@ -62,6 +62,7 @@ use serde_json::{Map, Value};
 use crate::catalog::Catalog;
 use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
+use crate::drain::Cut;
 use crate::error::CoreError;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
@@ -1590,26 +1591,85 @@ impl Folder {
     /// `drain`, for a watch where `watched`, which waits out
     /// `placement::GIVE_WAY_REREAD` before it reads again for a give-way.
     pub(super) fn drain_in(&self, watched: bool) -> Result<Drained> {
+        self.drain_keeping(watched).map_err(|cut| cut.error)
+    }
+
+    /// `drain_in`, keeping what a drain that ends in an error settled before
+    /// it. The refusals among them are remembered and their files held, as
+    /// for a drain that ends well; nothing is read from the server for them,
+    /// since the error may say the copy can no longer be read from.
+    pub(super) fn drain_keeping(
+        &self,
+        watched: bool,
+    ) -> std::result::Result<Drained, Cut<Drained>> {
         let one = self.core.one_drain();
-        let mut report = self.core.drain_held(&one)?;
+        let mut report = crate::DrainReport::empty();
         let mut rebased = 0;
-        while report.stopped.is_none() && report.unavailable.is_none() {
-            let now = self.rebase_thinned()? + self.make_edges_gone_before_their_move()?;
-            if now == 0 {
-                break;
-            }
-            rebased += now;
-            report.absorb(self.core.drain_held(&one)?);
+        let ended = self.drain_rebasing(&one, &mut report, &mut rebased).err();
+        if let Some(drain_error) = ended {
+            // A refusal that could not be remembered is told in place of the
+            // drain's own error, since a caller that went on would lose it.
+            let error = self
+                .remember_refusals(&report)
+                .and_then(|()| self.hold_refused())
+                .err()
+                .unwrap_or(drain_error);
+            return Err(Cut {
+                error,
+                settled: Box::new(Drained {
+                    report,
+                    rebased,
+                    gave_way: 0,
+                }),
+            });
         }
-        // Queued even where the drain stopped, so the copy holds the edge the line asks for.
-        self.make_edges_gone_before_their_move()?;
-        let gave_way = self.settle_placements(&mut report, watched)?;
-        self.hold_refused()?;
-        Ok(Drained {
+        let settled = (|| {
+            // Queued even where the drain stopped, so the copy holds the edge the line asks for.
+            self.make_edges_gone_before_their_move()?;
+            let gave_way = self.settle_placements(&mut report, watched)?;
+            self.keep_wait(&report)?;
+            self.hold_refused()?;
+            Ok(gave_way)
+        })();
+        let drained = |report, gave_way| Drained {
             report,
             rebased,
             gave_way,
-        })
+        };
+        match settled {
+            Ok(gave_way) => Ok(drained(report, gave_way)),
+            Err(error) => Err(Cut {
+                error,
+                settled: Box::new(drained(report, 0)),
+            }),
+        }
+    }
+
+    /// Drains, and again for as long as the edits the server could not
+    /// apply are rebased, taking each drain's report into `report`.
+    fn drain_rebasing(
+        &self,
+        one: &std::sync::MutexGuard<'_, ()>,
+        report: &mut crate::DrainReport,
+        rebased: &mut usize,
+    ) -> Result<()> {
+        loop {
+            match self.core.drain_held(one) {
+                Ok(later) => report.absorb(later),
+                Err(cut) => {
+                    report.absorb(*cut.settled);
+                    return Err(cut.error);
+                }
+            }
+            if report.stopped.is_some() || report.unavailable.is_some() {
+                return Ok(());
+            }
+            let now = self.rebase_thinned()? + self.make_edges_gone_before_their_move()?;
+            if now == 0 {
+                return Ok(());
+            }
+            *rebased += now;
+        }
     }
 
     /// Read from the queue rather than this drain's report, so a refusal a plain

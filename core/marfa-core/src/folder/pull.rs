@@ -145,7 +145,7 @@ enum NotWritten {
 }
 
 impl PullReport {
-    fn add_writes(&mut self, other: &PullReport) {
+    pub(super) fn add_writes(&mut self, other: &PullReport) {
         self.written += other.written;
         self.rewritten += other.rewritten;
         self.moved += other.moved;

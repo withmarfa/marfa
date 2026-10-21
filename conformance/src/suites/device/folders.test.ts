@@ -2588,6 +2588,431 @@ describe("files and items", () => {
     }
   });
 
+  describe("a copy whose read view changes under a push", () => {
+    /**
+     * A folder of notes whose server, at the read after the first write it
+     * answers, says the copy's read view has changed, as it does once the
+     * folder's key is replaced. A hydration lists every note created since,
+     * as the server would, and reads the catalog through `catalog` once the
+     * view has changed. Where `again`, every read by id is refused. The create
+     * of the note titled `refused` is refused `validation_error`, and the read
+     * its refusal owes is answered.
+     */
+    async function rekeyed(
+      label: string,
+      {
+        catalog = () => typeCatalog(),
+        again = false,
+        refused,
+      }: { catalog?: () => Answer; again?: boolean; refused?: string } = {},
+    ): Promise<{ harness: FolderHarness; changed: () => boolean }> {
+      const notes: Array<{ item: WireItemOptions }> = [];
+      const made = await folderHarness(label, { rows: { "core.note": notes } });
+      let changed = false;
+      // The refused create's row, which the door must not hold, and whose
+      // read the refusal owes is answered before the view changes.
+      const refusedIds = new Set<string>();
+      const held = scriptFolderWrites(made, {
+        creating: (answer, request) => {
+          const { id, properties } = JSON.parse(request.body) as {
+            id: string;
+            properties: { title?: unknown };
+          };
+          if (refused !== undefined && properties.title === refused) {
+            held.delete(id);
+            refusedIds.add(id);
+            return refusal(
+              400,
+              "validation_error",
+              "That title is not allowed",
+            );
+          }
+          if (answer.kind === "json" && answer.status === 201) {
+            const { item } = answer.body as { item: WireItemOptions };
+            notes.push({ item });
+          }
+          return answer;
+        },
+        reading: (answer, request) => {
+          if (changed && !again) return answer;
+          // A bulk read resolves each id through this door too, and a
+          // hydration's reads are answered: only a read by id is refused.
+          if (!made.server.requests.includes(request)) return answer;
+          if (refusedIds.has(request.pathname.split("/").at(-1) ?? "")) {
+            return answer;
+          }
+          changed = true;
+          return refusal(409, "read_view_changed", "The read view has changed");
+        },
+      });
+      made.server.copyAnswer("GET", "/types", () =>
+        changed ? catalog() : typeCatalog(),
+      );
+      return { harness: made, changed: () => changed };
+    }
+
+    /** The copy-stream bootstraps a hydration starts with. */
+    function hydrations(made: FolderHarness): number {
+      return made.server.requests.filter(
+        (request) =>
+          request.method === "GET" &&
+          request.pathname === "/events" &&
+          request.headers["last-event-id"] === undefined &&
+          request.headers["x-marfa-read-view"] === undefined,
+      ).length;
+    }
+
+    it.each([
+      { run: "push", sendOnly: false },
+      { run: "send-only push", sendOnly: true },
+    ])(
+      "builds the copy again and delivers every waiting write in the same $run",
+      async ({ sendOnly }) => {
+        const made = await rekeyed(
+          `folder-push-view-changed${sendOnly ? "-send-only" : ""}`,
+        );
+        harness = made.harness;
+        for (const title of ["One", "Two"]) {
+          put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+        }
+        const before = hydrations(harness);
+        const pushed = sendOnly
+          ? await harness.folder.pushSendOnly()
+          : await harness.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        if (!pushed.ok) return;
+        // The witness: the server did say the view changed, under this push.
+        expect(made.changed()).toBe(true);
+        expect(
+          hydrations(harness) - before,
+          "the push did not build the copy again",
+        ).toBe(1);
+        expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+        expect(pushed.value.drain.undelivered).toBe(0);
+        expect(pushed.value.rebuilt?.items).toBeGreaterThan(0);
+        expect(
+          sentTitles(harness).sort(),
+          "a write was lost, or sent twice, across the rebuild",
+        ).toEqual(["One", "Two"]);
+
+        const again = await harness.folder.push();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(again.value.exit).toBe(0);
+        expect(again.value.rebuilt).toBeNull();
+        expect(sentTitles(harness).sort()).toEqual(["One", "Two"]);
+      },
+    );
+
+    it("reports a refusal from before the view changed with the writes sent after the rebuild", async () => {
+      const made = await rekeyed("folder-push-view-changed-after-refusal", {
+        refused: "Alpha",
+      });
+      harness = made.harness;
+      for (const title of ["Alpha", "Beta", "Gamma"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      // The witness: the view changed under this push, after the refusal.
+      expect(made.changed()).toBe(true);
+      expect(hydrations(harness) - before).toBe(1);
+      const refusals = pushed.value.drain.verdicts.filter(
+        (verdict) =>
+          verdict.kind === "create_item" && verdict.verdict === "refused",
+      );
+      expect(
+        refusals.map((verdict) => verdict.refusal?.code),
+        `the refusal from before the rebuild left the push's report: ${JSON.stringify(pushed.value.drain)}`,
+      ).toEqual(["validation_error"]);
+      // A refusal is the write's verdict, not a write left waiting.
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(pushed.value.drain.undelivered).toBe(0);
+      expect(
+        sentTitles(harness).sort(),
+        "a write was lost, or sent twice, across the rebuild",
+      ).toEqual(["Alpha", "Beta", "Gamma"]);
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (!queued.ok) return;
+      expect(
+        queued.value
+          .filter(
+            (write) =>
+              write.kind === "create_item" && write.verdict === "refused",
+          )
+          .map((write) => write.reason),
+      ).toEqual(["validation_error"]);
+    });
+
+    it("builds the copy again where the drain after the pull meets the changed view, and finishes the push", async () => {
+      const edges = new EdgeDoor();
+      harness = await folderHarness("folder-push-view-changed-after-pull", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099a1",
+                properties: { title: "One", body: "made elsewhere\n" },
+              },
+            },
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099a2",
+                properties: { title: "Two", body: "made elsewhere\n" },
+              },
+            },
+          ],
+        },
+      });
+      // The read of the first placement the pull queued is refused, as the
+      // server does once the folder's key is replaced.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      scriptFolderWrites(harness, { edges });
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(changed).toBe(true);
+      expect(pushed.value.pull?.written).toBe(2);
+      expect(
+        hydrations(harness) - before,
+        "the push did not build the copy again after the pull",
+      ).toBe(1);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(pushed.value.drain.undelivered).toBe(0);
+      expect(placedPaths(edges)).toEqual(["One.md", "Two.md"]);
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/edges",
+        ),
+        "a placement was sent twice across the rebuild",
+      ).toHaveLength(2);
+
+      const again = await harness.folder.push();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      if (!again.ok) return;
+      expect(again.value.exit).toBe(0);
+      expect(again.value.rebuilt).toBeNull();
+      expect([again.value.drain.answered, again.value.pull?.written]).toEqual([
+        0, 0,
+      ]);
+    });
+
+    it("builds the copy again while watching and delivers every waiting write, still watching", async () => {
+      const made = await rekeyed("folder-watch-view-changed");
+      harness = made.harness;
+      for (const title of ["One", "Two"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(sentTitles(harness!).sort(), watching.stderr).toEqual([
+              "One",
+              "Two",
+            ]),
+          { timeout: 30_000, interval: 100 },
+        );
+        expect(made.changed()).toBe(true);
+        expect(hydrations(harness) - before).toBeGreaterThanOrEqual(1);
+        expect(watching.running(), watching.stderr).toBe(true);
+      } finally {
+        await watching.stop();
+      }
+      expect(sentTitles(harness).sort()).toEqual(["One", "Two"]);
+    });
+
+    it("builds the copy again only once in a push, and ends it copy_expired where the view changes again", async () => {
+      const made = await rekeyed("folder-push-view-changes-twice", {
+        again: true,
+      });
+      harness = made.harness;
+      for (const title of ["One", "Two", "Three"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+      if (pushed.ok) return;
+      expect(pushed.refusal.code).toBe("copy_expired");
+      expect(pushed.refusal.raw).toContain("read_view_changed");
+      expect(hydrations(harness) - before).toBe(1);
+      // The witness: the drain after the rebuild went, and read the answered
+      // write back under the new view, which was refused again.
+      const settingsId = harness.settings.id;
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "GET" &&
+            /^\/items\/[^/]+$/.test(request.pathname) &&
+            request.pathname !== `/items/${settingsId}` &&
+            request.headers["x-marfa-read-view"] !== undefined,
+        ),
+      ).toHaveLength(2);
+      expect(sentTitles(harness)).toEqual(["One"]);
+    });
+
+    it("ends the push with the rebuild's own failure, keeping the writes for the next push", async () => {
+      let failing = true;
+      const made = await rekeyed("folder-push-view-changed-rebuild-fails", {
+        catalog: () => (failing ? answers.serverFault() : typeCatalog()),
+      });
+      harness = made.harness;
+      for (const title of ["One", "Two"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+      if (pushed.ok) return;
+      expect(made.changed()).toBe(true);
+      // The witness for the code: the drain alone ends `copy_expired`.
+      expect(
+        pushed.refusal.code,
+        "the push said the copy expired rather than why the rebuild failed",
+      ).toBe("server");
+      expect(pushed.refusal.raw).toContain('"exit":3');
+      // The first create was taken before the view changed; the second waits.
+      expect(sentTitles(harness)).toHaveLength(1);
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (!queued.ok) return;
+      expect(
+        queued.value.filter(
+          (write) => write.kind === "create_item" && write.verdict === null,
+        ),
+        "the write waiting behind the change was not kept",
+      ).toHaveLength(1);
+
+      failing = false;
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(next.value.exit).toBe(0);
+      expect(
+        sentTitles(harness).sort(),
+        "a write was lost, or sent twice, after the rebuild failed",
+      ).toEqual(["One", "Two"]);
+    });
+
+    it("reports a placement refused where its own read meets the changed view, and does not send it again", async () => {
+      const edges = new EdgeDoor();
+      edges.placing = (edge) =>
+        edge.edge_type === "in-folder"
+          ? refusal(
+              403,
+              "edge_permission_denied",
+              "Write access to edge type denied",
+            )
+          : undefined;
+      // The read the refusal owes, to learn whether the edge was made, is
+      // refused, as the server does once the folder's key is replaced.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      harness = await folderHarness("folder-push-view-changed-refused-read", {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id: "01a00000-0000-7000-8000-0000000099b1",
+                properties: { title: "Elsewhere", body: "made elsewhere\n" },
+              },
+            },
+          ],
+        },
+      });
+      scriptFolderWrites(harness, { edges });
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      // The witness: the refusal's own read was refused under the new view.
+      expect(changed).toBe(true);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(
+        pushed.value.drain.verdicts.map((entry) => [
+          entry.kind,
+          entry.verdict,
+          entry.refusal?.code,
+        ]),
+        "the refusal whose read met the changed view left the push's report",
+      ).toEqual([["create_edge", "refused", "edge_permission_denied"]]);
+      expect(placedPaths(edges)).toEqual([]);
+
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(postedEdges(harness), "a refused placement was sent again").toBe(
+        1,
+      );
+    });
+
+    it("pulls again after a rebuild at the drain after the pull, writing what the new view holds and keeping a file it no longer reads", async () => {
+      const edges = new EdgeDoor();
+      const one = "01a00000-0000-7000-8000-0000000099c1";
+      const two = "01a00000-0000-7000-8000-0000000099c2";
+      const three = "01a00000-0000-7000-8000-0000000099c3";
+      const notes: Array<{ item: WireItemOptions }> = [
+        { item: { id: one, properties: { title: "One", body: "one\n" } } },
+        { item: { id: two, properties: { title: "Two", body: "two\n" } } },
+      ];
+      harness = await folderHarness("folder-push-view-changed-pull-again", {
+        rows: { "core.note": notes },
+      });
+      const rows = scriptFolderWrites(harness, { edges });
+      // At the read of the first placement the pull queued, the view changes:
+      // the new key reads Three and no longer reads Two.
+      let changed = false;
+      edges.reading = () => {
+        if (changed) return undefined;
+        changed = true;
+        const properties = { title: "Three", body: "three\n" };
+        notes.splice(1, 1, { item: { id: three, properties } });
+        const held = rows.get(two);
+        rows.delete(two);
+        if (held !== undefined) rows.set(three, { ...held, properties });
+        return refusal(409, "read_view_changed", "The read view has changed");
+      };
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(changed).toBe(true);
+      expect(pushed.value.rebuilt).not.toBeNull();
+      expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+      expect(
+        existsSync(join(harness.dir, "Three.md")),
+        "the push did not pull what the rebuilt copy holds",
+      ).toBe(true);
+      expect(placedPaths(edges)).toContain("Three.md");
+      expect(readFileSync(join(harness.dir, "Two.md"), "utf8")).toContain(
+        "two\n",
+      );
+
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(next.value.scan.lost).toBe(1);
+      expect(sentTitles(harness)).toEqual([]);
+      expect(readFileSync(join(harness.dir, "Two.md"), "utf8")).toContain(
+        "two\n",
+      );
+    });
+  });
+
   describe("a copy that falls behind the log", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {
