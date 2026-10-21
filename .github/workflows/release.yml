@@ -5,8 +5,12 @@ name: Release
 # from that commit, uploads them to the run, and publishes them: the npm
 # packages `@withmarfa/core` and `@withmarfa/client`, the server image
 # `ghcr.io/withmarfa/marfa-server` for linux/amd64 and linux/arm64, and a
-# GitHub release carrying those tarballs and the binary archive. The binary
-# in the archive is signed with the maintainer's Developer ID and notarized.
+# GitHub release carrying those tarballs and the `marfa` command line as four
+# archives, `marfa-<version>-darwin-arm64`, `-darwin-x86_64`, `-linux-x86_64`
+# and `-linux-aarch64`, with one checksum file for them. The macOS binaries
+# are signed with the maintainer's Developer ID and notarized; the Linux
+# binaries are static, so they run on any distribution. A release is not
+# published unless all four archives built.
 #
 # A dispatch with a `version` is a dry run: it runs the same build a tag
 # would, the image's included, and skips only the publish job and the image's
@@ -210,6 +214,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: x86_64-apple-darwin
 
       - uses: pnpm/action-setup@v6
         with:
@@ -253,18 +258,27 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/release/hold-platform.sh" "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
             darwin arm64
 
-      - name: Build the binary for macOS
+      # The Intel binary is cross-built on this Apple silicon runner and run
+      # under Rosetta, so it is asked its version here as well.
+      - name: Build the binaries for macOS
         working-directory: core
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           cargo build --release -p marfa-cli
+          cargo build --release -p marfa-cli --target x86_64-apple-darwin
           reported=$(target/release/marfa --version)
           if [ "$reported" != "marfa $VERSION" ]; then
-            echo "::error::The binary reports '$reported', not 'marfa $VERSION'."
+            echo "::error::The Apple silicon binary reports '$reported', not 'marfa $VERSION'."
             exit 1
           fi
-          cp target/release/marfa "$RUNNER_TEMP/artifacts/marfa"
+          reported=$(arch -x86_64 target/x86_64-apple-darwin/release/marfa --version)
+          if [ "$reported" != "marfa $VERSION" ]; then
+            echo "::error::The Intel binary reports '$reported', not 'marfa $VERSION'."
+            exit 1
+          fi
+          cp target/release/marfa "$RUNNER_TEMP/artifacts/marfa-darwin-arm64"
+          cp target/x86_64-apple-darwin/release/marfa "$RUNNER_TEMP/artifacts/marfa-darwin-x86_64"
 
       - name: Pack @withmarfa/client
         env:
@@ -274,14 +288,14 @@ jobs:
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
 
-      # The binary goes to the sign job unsigned, beside the two packages.
-      - name: Hold the build to the binary and the two packages
+      # The binaries go to the sign job unsigned, beside the two packages.
+      - name: Hold the build to the two binaries and the two packages
         working-directory: ${{ runner.temp }}/artifacts
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            marfa "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            marfa-darwin-arm64 marfa-darwin-x86_64 "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -295,7 +309,7 @@ jobs:
   # dry run signs and notarizes too, so a change here is proved before a tag
   # depends on it.
   sign:
-    name: Sign the binary
+    name: Sign the binaries
     needs: build
     runs-on: macos-26
     timeout-minutes: 45
@@ -311,7 +325,7 @@ jobs:
           name: build-${{ needs.build.outputs.version }}
           path: ${{ runner.temp }}/artifacts
 
-      - name: Sign and notarize the binary
+      - name: Sign and notarize the binaries
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -320,28 +334,154 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          # An artifact keeps no file modes.
-          chmod +x "$RUNNER_TEMP/artifacts/marfa"
-          bash scripts/release/sign-binary.sh "$RUNNER_TEMP/artifacts/marfa"
+          for arch in darwin-arm64 darwin-x86_64; do
+            # An artifact keeps no file modes.
+            chmod +x "$RUNNER_TEMP/artifacts/marfa-$arch"
+            bash scripts/release/sign-binary.sh "$RUNNER_TEMP/artifacts/marfa-$arch"
+          done
+
+      # Each archive is unpacked and its binary asked its version, the Intel
+      # one under Rosetta.
+      - name: Pack the binaries
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
+            marfa-darwin-arm64 "marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION"
+          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
+            marfa-darwin-x86_64 "marfa-$VERSION-darwin-x86_64.tar.gz" "$VERSION" arch -x86_64
+          rm marfa-darwin-arm64 marfa-darwin-x86_64
+
+      # Exactly the four the collect job reads, by name: an upload that only
+      # refuses an empty folder would carry a run missing one.
+      - name: Hold the artifacts to the four this job makes
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-${{ needs.build.outputs.version }}
+          path: ${{ runner.temp }}/artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  # The command line for Linux, built on a runner of each architecture so the
+  # archive's binary is the one that ran there. It is linked statically
+  # against musl, which needs no particular glibc of the machine it lands on.
+  # Nothing here is signed, so no secret is read.
+  cli-linux:
+    name: Build the binary for Linux (${{ matrix.arch }})
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install the musl C compiler
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Stamp the version into every manifest
+        run: |
+          cargo fetch --locked --manifest-path core/Cargo.toml
+          cargo fetch --locked --manifest-path core/bindings/swift/Cargo.toml
+          bash scripts/release/stamp-version.sh "$VERSION"
+
+      - name: Build the binary
+        working-directory: core
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          export "CC_${TARGET//-/_}=musl-gcc"
+          cargo build --release --locked -p marfa-cli --target "$TARGET"
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          cp "target/$TARGET/release/marfa" "$RUNNER_TEMP/artifacts/marfa-linux-${{ matrix.arch }}"
 
       - name: Pack the binary
         working-directory: ${{ runner.temp }}/artifacts
         run: |
-          reported=$(./marfa --version)
-          if [ "$reported" != "marfa $VERSION" ]; then
-            echo "::error::The signed binary reports '$reported', not 'marfa $VERSION'."
-            exit 1
-          fi
-          tar -czf "marfa-$VERSION-darwin-arm64.tar.gz" marfa
-          rm marfa
+          bash "$GITHUB_WORKSPACE/scripts/release/pack-cli.sh" \
+            "marfa-linux-${{ matrix.arch }}" "marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz" "$VERSION"
+          rm "marfa-linux-${{ matrix.arch }}"
 
-      # Exactly the three the publish job reads, by name: an upload that only
-      # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the three a release carries
+      - name: Hold the artifacts to the archive
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            "marfa-$VERSION-darwin-arm64.tar.gz" "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            "marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ needs.build.outputs.version }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/artifacts/
+          if-no-files-found: error
+          retention-days: 1
+
+  # Everything a release carries, in one folder, with the checksum file for
+  # the four command line archives. Publishing waits for this job, so a
+  # release with an archive missing is never made.
+  collect:
+    name: Collect the release
+    needs: [build, sign, cli-linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: signed-${{ needs.build.outputs.version }}
+          path: ${{ runner.temp }}/artifacts
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: linux-${{ needs.build.outputs.version }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Write the checksums
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/release/write-checksums.sh" "marfa-$VERSION-checksums.txt" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "marfa-$VERSION-linux-aarch64.tar.gz" "marfa-$VERSION-linux-x86_64.tar.gz"
+
+      # Exactly the seven the publish job reads, by name.
+      - name: Hold the artifacts to the seven a release carries
+        working-directory: ${{ runner.temp }}/artifacts
+        run: |
+          bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
+            "marfa-$VERSION-checksums.txt" \
+            "marfa-$VERSION-darwin-arm64.tar.gz" "marfa-$VERSION-darwin-x86_64.tar.gz" \
+            "marfa-$VERSION-linux-aarch64.tar.gz" "marfa-$VERSION-linux-x86_64.tar.gz" \
+            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -490,7 +630,7 @@ jobs:
   # on.
   publish:
     name: Publish
-    needs: [build, sign, image]
+    needs: [build, collect, image]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -654,6 +794,19 @@ jobs:
             cat "$RUNNER_TEMP/release-view.err"
             exit 1
           fi
+
+      # What the release holds, not what this run built: a re-run after a
+      # partial upload rebuilds the archives, and a draft keeps the files it
+      # already has, so the checksum file could describe other archives than
+      # the ones a person downloads.
+      - name: Check the release's archives against its checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir "$RUNNER_TEMP/held"
+          gh release download "v$VERSION" --dir "$RUNNER_TEMP/held" --pattern 'marfa-*'
+          cd "$RUNNER_TEMP/held"
+          sha256sum -c "marfa-$VERSION-checksums.txt"
 
       - uses: actions/download-artifact@v8
         with:
