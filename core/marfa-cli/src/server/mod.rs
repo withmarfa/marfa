@@ -752,6 +752,14 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
     };
 
+    if access == Access::Tailscale {
+        // Before anything is changed: the port may serve something else.
+        tailscale::check_free(
+            https_port.unwrap_or(443),
+            &format!("http://127.0.0.1:{port}"),
+        )?;
+    }
+
     // The backup.
     let backup = backup_from(&args, &name, &prompter, existing.is_some())?;
 
@@ -878,6 +886,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         tailscale::serve(
             https_port.unwrap_or(443),
             &format!("http://127.0.0.1:{port}"),
+            !out.json,
         )?;
     }
 
@@ -1251,6 +1260,7 @@ fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
         unserved = tailscale::unserve(
             state.https_port.unwrap_or(443),
             &format!("http://127.0.0.1:{}", state.port),
+            !out.json,
         )
         .unwrap_or(false);
     }
