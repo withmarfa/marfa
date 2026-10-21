@@ -64,6 +64,12 @@ function LevelControl(props: {
               noun: row.noun,
               ...(row.type === undefined ? {} : { alias: row.type }),
               held: row.held,
+              ...(row.savedScopes
+                ? {
+                    "saved-scopes": JSON.stringify(row.savedScopes),
+                    "saved-value": row.selected,
+                  }
+                : {}),
               ...(row.inherited
                 ? { "inherited-level": row.inherited.level }
                 : {}),

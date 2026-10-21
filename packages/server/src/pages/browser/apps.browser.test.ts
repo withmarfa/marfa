@@ -8,6 +8,7 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { hashApiKey } from "../../middleware/auth.js";
+import { setActivePermissionBundles } from "../../config.js";
 import {
   launchTestBrowser,
   listen,
@@ -34,6 +35,15 @@ beforeAll(async () => {
   browser = launched;
   const reserved = await reserveOrigin();
   origin = reserved.origin.replace("127.0.0.1", "localhost");
+  setActivePermissionBundles([
+    {
+      id: "subtree",
+      label: "Note subtypes",
+      description: "",
+      default_on: true,
+      scopes: ["core.note.*:read"],
+    },
+  ]);
   // Sign-in limits count per address, so each browser context names its own.
   ctx = await createTestContext({
     authBaseUrl: origin,
@@ -47,6 +57,7 @@ afterAll(async () => {
   await browser.close();
   await server.close();
   await ctx.cleanup();
+  setActivePermissionBundles(null);
 });
 
 let nextAddress = 1;
@@ -126,6 +137,93 @@ async function openDisconnect(page: Page, name: string) {
 }
 
 describe("Connected apps", () => {
+  for (const [broad, pattern] of [
+    ["*:read", "core.note"],
+    ["edge.*:read", "edge.parent-of"],
+    ["metadata:read", "metadata.types"],
+    ["profile:read", "profile.name"],
+  ] as const) {
+    inBrowser(
+      `reduces ${pattern} to read while preserving ${broad}`,
+      async () => {
+        const { page, context, errors, violations } = await open();
+        try {
+          const app = await seedOauthBearer(ctx, [broad, `${pattern}:write`]);
+          await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+          await page
+            .locator("#access")
+            .getByText(
+              broad.startsWith("profile") ? "Your profile" : "Your data",
+              { exact: true },
+            )
+            .click();
+          const narrow = page.locator("select[name=scopes]").filter({
+            has: page.locator(`option[value="${pattern}:write"]`),
+          });
+          expect(await narrow.isEnabled()).toBe(true);
+          expect(await narrow.locator("option").allTextContents()).toEqual([
+            "Read only",
+            "Read and edit",
+          ]);
+          await narrow.selectOption(`${pattern}:read`);
+          await page.getByRole("button", { name: "Save", exact: true }).click();
+          await page.getByText("Saved", { exact: true }).waitFor();
+          const response = await page.request.get(`${origin}/auth/grants`);
+          expect(response.ok()).toBe(true);
+          const grants = (await response.json()) as {
+            data: { id: string; scopes: string[] }[];
+          };
+          expect(
+            grants.data
+              .find((grant) => grant.id === app.grantId)
+              ?.scopes.sort(),
+          ).toEqual([broad, `${pattern}:read`].sort());
+          expect(errors).toEqual([]);
+          expect(await violations()).toEqual([]);
+        } finally {
+          await context.close();
+        }
+      },
+    );
+  }
+
+  inBrowser(
+    "removes a subtree while retaining the exact parent literals",
+    async () => {
+      const { page, context, errors } = await open();
+      try {
+        const exact = ["core.note:read", "core.note:write"];
+        const app = await seedOauthBearer(ctx, [...exact, "core.note.*:read"]);
+        await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+        await page
+          .locator("#access")
+          .getByText("Your data", { exact: true })
+          .click();
+        const subtree = page
+          .locator("select[name=scopes]")
+          .filter({ has: page.locator('option[value="core.note.*:read"]') });
+        expect(await subtree.isEnabled()).toBe(true);
+        expect(await subtree.locator('option[value=""]').innerText()).toBe(
+          "Remove this access",
+        );
+        await subtree.selectOption("");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await page.getByText("Saved", { exact: true }).waitFor();
+        const response = await page.request.get(`${origin}/auth/grants`);
+        expect(response.ok()).toBe(true);
+        const grants = (await response.json()) as {
+          data: { id: string; scopes: string[] }[];
+        };
+        expect(
+          grants.data.find((grant) => grant.id === app.grantId)?.scopes.sort(),
+        ).toEqual(exact);
+        expect(errors).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
   for (const [broad, narrow, effective] of [
     ["*:read", "core.note:read", "Read only"],
     ["*:write", "core.note:read", "Read only"],

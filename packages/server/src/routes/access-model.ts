@@ -50,6 +50,7 @@ import {
 } from "./permission-labels.js";
 import type { ChoosableType } from "./access-types.js";
 import { reachLine } from "./scope-openness.js";
+import { scopesAreNarrower } from "../storage/consent-scopes.js";
 import {
   humanizeType,
   isExactTypeScope,
@@ -121,6 +122,8 @@ export interface LevelRow {
   selected: string;
   /** A saved overlapping grant must be reduced before this row can change. */
   inherited?: { level: Level; scopes: string[] };
+  /** Preserve the saved literals if this row is left unchanged. */
+  savedScopes?: string[];
   /** Present on a row for all data when the person may choose types instead. */
   choose?: ChooseTypes;
   /** The item type the row is for, where it is for one item type: the identifier a search matches and a clash names it by. */
@@ -430,17 +433,50 @@ export function buildAccess(given: AccessInput): AccessModel {
       const others = input.narrowing.filter(
         (literal) => !own.includes(literal),
       );
-      if (
-        others.some((literal) =>
-          grantCoversScope([literal], `${ask.scope.typePattern}:read`),
-        )
-      ) {
+      row.savedScopes = own;
+      const coveredByOther = others.some((literal) =>
+        grantCoversScope([literal], `${ask.scope.typePattern}:read`),
+      );
+      const coversOther = others.some((literal) => {
+        const parsed = parseScope(literal);
+        return (
+          parsed !== null &&
+          isLevelKind(parsed) &&
+          grantCoversScope(own, `${parsed.typePattern}:read`)
+        );
+      });
+      row.options = row.options.filter((option) => {
+        // Keep the original choice even when another setting changes its
+        // effective level. Sending it unchanged preserves every saved literal.
+        if (option.value === row.selected) return true;
+        const candidate = [...others, ...(option.value ? [option.value] : [])];
+        if (!scopesAreNarrower(input.narrowing ?? [], candidate)) return false;
+        if (option.value === "") return !coveredByOther;
+        return (
+          levelHeld(candidate, ask.scope.typePattern) ===
+          levelOfValue(option.value, "none")
+        );
+      });
+      if (coversOther) {
+        row.options = row.options.map((option) =>
+          option.value === ""
+            ? { ...option, label: "Remove this access" }
+            : option,
+        );
+        row.description = [
+          row.description,
+          "Other settings still apply within this group.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+      if (row.options.length === 1) {
         const level = levelHeld(input.narrowing, ask.scope.typePattern);
         row.inherited = { level, scopes: own };
         row.options = [{ value: row.selected, label: LEVEL_LABELS[level] }];
         row.description = [
           row.description,
-          "Other access also covers this. Reduce the broader access and save before changing this setting.",
+          "Other access also covers this. Change the broader access and save to see more choices.",
         ]
           .filter(Boolean)
           .join(" ");
