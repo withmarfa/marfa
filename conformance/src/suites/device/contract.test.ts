@@ -788,6 +788,8 @@ class PrivateSocket {
   denies = false;
   contract: string | null = BUILT_FOR;
   answer: unknown;
+  respond?: (method: string) => { body: unknown; contract: string | null };
+  bodies: string[] = [];
   asked: string[] = [];
 
   private constructor(
@@ -804,8 +806,9 @@ class PrivateSocket {
     const server = createServer((request, response) => {
       const socket = holder.socket!;
       socket.requests += 1;
-      const named =
-        socket.contract === null ? {} : { [CONTRACT_HEADER]: socket.contract };
+      const reply = socket.respond?.(request.method ?? "GET");
+      const contract = reply ? reply.contract : socket.contract;
+      const named = contract === null ? {} : { [CONTRACT_HEADER]: contract };
       if (socket.denies) {
         response.writeHead(401, {
           "content-type": "application/json",
@@ -816,14 +819,20 @@ class PrivateSocket {
             error: { code: "unauthorized", message: "Authentication required" },
           }),
         );
-      } else if (socket.answer !== undefined) {
+      } else if (socket.answer !== undefined || reply) {
         socket.asked.push(`${request.method} ${request.url}`);
-        request.resume();
+        let body = "";
+        request.on("data", (chunk: Buffer) => {
+          body += chunk.toString();
+        });
+        request.on("end", () => {
+          socket.bodies.push(body);
+        });
         response.writeHead(200, {
           "content-type": "application/json",
           ...named,
         });
-        response.end(JSON.stringify(socket.answer));
+        response.end(JSON.stringify(reply ? reply.body : socket.answer));
       } else if (request.url?.startsWith("/blobs/")) {
         response.writeHead(200, {
           "content-type": "application/octet-stream",
@@ -991,6 +1000,8 @@ const invocations: Record<string, () => string[]> = {
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
   "profile update": () => ["--name", "Profile"],
+  "apps list": () => [],
+  "apps disconnect": () => [ID],
   "sign-ins list": () => [],
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
@@ -1015,6 +1026,7 @@ const beyondTheTable: Record<string, () => string[]> = {};
 
 /** Table commands that require private machine authority rather than a key. */
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
+  "apps narrow": () => [ID, "--scope", "core.note:read"],
   "items summaries": () => [],
   "items trash list": () => [],
   "items trash move": () => [ID, "--version", "1"],
@@ -1220,6 +1232,63 @@ describe("every command holds the server to the contract", () => {
           expect(outcome.code, label).toBe(1);
           expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
           expect(outcome.stdout, label).toBe("");
+        }
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
+  it("holds both app narrowing responses to the contract through its private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const scopes = ["core.note:read", "core.note:write"];
+    try {
+      for (const stage of ["GET", "PATCH"]) {
+        for (const contract of [BUILT_FOR, String(builtFor + 1), null]) {
+          socket.asked = [];
+          socket.bodies = [];
+          socket.respond = (method) => ({
+            contract: method === stage ? contract : BUILT_FOR,
+            body:
+              method === "GET"
+                ? { data: [{ id: ID, scopes }], next_cursor: null }
+                : { scopes: ["core.note:read"] },
+          });
+          const outcome = await marfa([
+            "--json",
+            "--socket",
+            socket.path,
+            "apps",
+            "narrow",
+            ...PRIVATE_SOCKET_TABLE["apps narrow"]!(),
+          ]);
+          const label = `${stage} ${contract}: ${outcome.stderr}`;
+          const readRefused = stage === "GET" && contract !== BUILT_FOR;
+          expect(socket.asked, label).toEqual(
+            readRefused
+              ? ["GET /auth/grants"]
+              : ["GET /auth/grants", `PATCH /auth/grants/${ID}`],
+          );
+          if (!readRefused) {
+            expect(JSON.parse(socket.bodies[1]!), label).toEqual({
+              scopes: ["core.note:read"],
+              expected_scopes: scopes,
+            });
+          }
+          if (contract === BUILT_FOR) {
+            expect(outcome.code, label).toBe(0);
+            expect(JSON.parse(outcome.stdout), label).toEqual({
+              scopes: ["core.note:read"],
+            });
+          } else {
+            expect(outcome.code, label).toBe(1);
+            expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+            expect(outcome.stdout, label).toBe("");
+            expect(
+              outcome.stderr.includes("may have taken effect"),
+              label,
+            ).toBe(stage === "PATCH");
+          }
         }
       }
     } finally {
