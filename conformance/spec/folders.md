@@ -1458,6 +1458,22 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 **Tests:** `device/folders-placement.test.ts › waits for a file item emptied at a document name, and still sends the rest`.
 
+### `folders/file-item-doc-name-moved-out`
+
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) that is the file of a file item is renamed to a name of no type the folder's search holds, a device MUST keep the file item bound to the file at its new name.
+
+**Reason:** a file item's file is followed whatever the search says, and its kind comes from its item, not from the name it had.
+
+**Tests:** `device/folders-placement.test.ts › follows a file item moved %s to a name its search holds no type for`.
+
+### `folders/file-item-doc-name-replaced`
+
+When a file that names a note's item ID replaces the file of a file item at a document name (`.md`, `.markdown` or `.txt`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
+
+**Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's.
+
+**Tests:** `device/folders-placement.test.ts › keeps a note whose file replaces a file item's at a document name`.
+
 ## Document versions
 
 ### `folders/version-line`
@@ -1989,6 +2005,14 @@ When a document removes an embed, a device MUST retain the embedded file on disk
 When a raw-text document contains embed syntax, a device MUST NOT create an attachment edge for that syntax.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads embeds in a Markdown body only, and none shown in code`, `device/folders-frontmatter.test.ts › writes no file a .txt file's text embeds`.
+
+### `folders/embed-file-item-bytes`
+
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is the file of a file item and its bytes contain embed syntax, a device MUST NOT treat that syntax as an embed.
+
+**Reason:** a file item's bytes are not read as text, and a pull can place a file item at a document name or a person can rename one to it. A file that only that syntax names stays unsent, as `folders/binary-outside-search` says.
+
+**Tests:** `device/folders-placement.test.ts › follows no embed in a file item's bytes at a document name, and still a note's`.
 
 ### `folders/embed-raw-no-file`
 
@@ -5674,6 +5698,22 @@ When a new folder document is not UTF-8, a device MUST report its status as `hel
 
 **Tests:** `device/folders-identity.test.ts › holds a document that is not UTF-8, and never sends or rewrites it`.
 
+### `folders/status-file-item-doc-name`
+
+When a device reads a folder's status and a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is the file of a file item and names no note's item ID, a device MUST NOT report it as `held` for what its bytes hold.
+
+**Reason:** the status says what the next scan does, and the scan sends a file item's bytes whatever they hold (`folders/file-item-doc-name-sent`). The file is the file item's when it is bound to one, or when the scan would bind it to one by its file identity, before any scan has followed a rename. A new document that is not UTF-8 is still reported by `folders/status-encoding`. A file that names a note's item ID is read as that note's file, because the status does not settle which of two files wins a note; the scan does.
+
+**Tests:** `device/folders-placement.test.ts › reports a file item at a document name by its item, not by its bytes`.
+
+### `folders/status-file-item-doc-name-size`
+
+When a device reads a folder's status and a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) is the file of a file item, a device MUST NOT report a size warning for it.
+
+**Reason:** a file item's bytes go up outside the request whose size the warning measures.
+
+**Tests:** `device/folders-placement.test.ts › reports a file item at a document name by its item, not by its bytes`.
+
 ### `folders/status-outside`
 
 When a non-document file has no type held by the folder search, a device MUST report its status as `outside`.
@@ -5845,6 +5885,14 @@ When five seconds have elapsed since a folder watch’s previous pass ended, a d
 When a non-document file changes within the folder watch’s 250-millisecond settle window, a device MUST defer reading its bytes until a later pass after it settles.
 
 **Tests:** `device/folders.test.ts › sends a file being copied in only once it stops changing, while every other file goes on`.
+
+### `folders/file-item-doc-name-settle`
+
+When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case) that is the file of a file item changes within the folder watch's 250-millisecond settle window, a device MUST defer sending its bytes until a later pass after it settles.
+
+**Reason:** a file item's file is copied or downloaded as any file that is not a document is, whatever its name, and a half-written file sent is a half-written item.
+
+**Tests:** `device/folders-placement.test.ts › waits for a file item at a document name to stop changing, while every other file goes on`.
 
 ### `folders/settling-rename-identity`
 

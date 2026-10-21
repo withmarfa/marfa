@@ -3,9 +3,10 @@ use super::{
     EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, OnceCell, Path, PathBuf, Peers, RENAME_GRACE, Resolver,
     Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside, bytes_of,
-    carries_frontmatter, document, embeds, executable, fields, identity, in_nested_folder,
-    is_document, landing, line_of, lines, local_properties_refusal, name_of, near_limit,
-    one_per_name, placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
+    captured_identities, carries_frontmatter, changed_within, document, embeds, executable, fields,
+    id_named, identity, in_nested_folder, is_document, landing, line_of, lines,
+    local_properties_refusal, name_of, named_by_its_file, near_limit, one_per_name, placement,
+    stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
 
 /// The text the scan keeps of a file. A document whose bytes are not UTF-8
@@ -22,19 +23,6 @@ fn kept_text(path: &Path, bytes: &[u8]) -> (String, Option<&'static str>) {
         Ok(text) => (text.to_string(), None),
         Err(reason) => (String::new(), Some(reason)),
     }
-}
-
-fn captured_identities(paths: &[PathBuf], walked: &Walked) -> HashMap<PathBuf, identity::Identity> {
-    identity::resolve(paths.iter().map(|path| {
-        (
-            path,
-            walked
-                .opened
-                .get(path)
-                .and_then(|capture| identity::of(&capture.metadata.borrow()))
-                .or_else(|| walked.unread.get(path).copied()),
-        )
-    }))
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +87,8 @@ struct ScanState {
     early: HashMap<PathBuf, Vec<u8>>,
     shown: HashMap<String, Vec<(String, embeds::Target)>>,
     embedded: HashSet<String>,
+    /// Files read only because an embed names them.
+    only_embedded: HashSet<String>,
     files: Vec<Scanned>,
     /// Why each stale save waits, by path.
     stale: HashMap<String, String>,
@@ -147,9 +137,9 @@ impl Folder {
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
     /// identity are as the last read left them, which a full pass catches.
-    /// Either way it leaves for a later pass a file that is not a document
-    /// and changed within `settle`, which a copy or a download may still be
-    /// writing.
+    /// Either way it leaves for a later pass a file that is not a document,
+    /// or is a file item at a document name, and changed within `settle`,
+    /// which a copy or a download may still be writing.
     pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
         self.scan_as(full, Some(settle), Files::Write)
     }
@@ -174,6 +164,7 @@ impl Folder {
         self.refresh_catalog(&mut scan)?;
         let peers = Peers::of(self, scan.doubt.take());
         let (claims, waiting) = self.claim_scanned(&scan, &peers)?;
+        self.follow_embeds_of_documents(&mut scan, &claims)?;
         let work = match self.queue_scanned(&mut scan, claims, waiting)? {
             ControlFlow::Break(()) => return Ok(scan.report),
             ControlFlow::Continue(work) => work,
@@ -307,6 +298,7 @@ impl Folder {
             early: HashMap::new(),
             shown: HashMap::new(),
             embedded: HashSet::new(),
+            only_embedded: HashSet::new(),
             files: Vec::new(),
             stale: HashMap::new(),
         }))
@@ -441,33 +433,44 @@ impl Folder {
             (&scan.snapshot, &scan.walked, &scan.paths, &scan.keys);
         let (unchanged, embedded) = (&scan.unchanged, &scan.embedded);
         let (early, stats, report) = (&mut scan.early, &mut scan.stats, &mut scan.report);
+        let only_embedded = &mut scan.only_embedded;
         // A file already a file item is read whatever the search says, so one
-        // no longer embedded, or moved, is followed rather than journaled.
-        let files_bound: Vec<&state::Bound> = snapshot
+        // no longer embedded, or moved, is followed rather than journaled. A
+        // file item may be bound at a document name, which the item says.
+        let bound_paths: HashSet<&str> = snapshot
             .iter()
-            .filter(|row| !is_document(Path::new(&row.path)))
+            .map(|row| row.path.as_str())
+            .filter(|path| !is_document(Path::new(path)))
             .collect();
-        let bound_paths: HashSet<&str> = files_bound.iter().map(|row| row.path.as_str()).collect();
-        let bound_marks: HashSet<&str> = files_bound
+        let by_mark: HashMap<&str, &state::Bound> = snapshot
             .iter()
-            .filter_map(|row| row.identity.as_deref())
+            .filter_map(|row| Some((row.identity.as_deref()?, row)))
             .collect();
-        let bound = |path: &Path, key: &str| {
-            bound_paths.contains(key)
-                || walked
-                    .opened
-                    .get(path)
-                    .map(|captured| captured.metadata.borrow().clone())
-                    .and_then(|metadata| identity::of(&metadata))
-                    .or_else(|| walked.unread.get(path).copied())
-                    .is_some_and(|found| bound_marks.contains(found.key().as_str()))
+        let bound = |path: &Path, key: &str| -> Result<bool> {
+            if bound_paths.contains(key) {
+                return Ok(true);
+            }
+            let Some(row) = walked
+                .opened
+                .get(path)
+                .map(|captured| captured.metadata.borrow().clone())
+                .and_then(|metadata| identity::of(&metadata))
+                .or_else(|| walked.unread.get(path).copied())
+                .and_then(|found| by_mark.get(found.key().as_str()))
+            else {
+                return Ok(false);
+            };
+            Ok(!is_document(Path::new(&row.path)) || self.file_item(&row.item_id, catalog)?)
         };
         let mut held: Vec<PathBuf> = Vec::new();
         for (path, key) in paths.iter().zip(keys) {
             if unchanged.contains(key) {
                 continue;
             }
-            if self.pushes(path, settings, catalog) || embedded.contains(key) || bound(path, key) {
+            if self.pushes(path, settings, catalog) || bound(path, key)? {
+                held.push(path.clone());
+            } else if embedded.contains(key) {
+                only_embedded.insert(key.clone());
                 held.push(path.clone());
             } else {
                 report.skipped += 1;
@@ -541,16 +544,7 @@ impl Folder {
                 Some(reason) => Some(reason.to_string()),
             };
             // An unreadable file still names its item, so a move keeps it.
-            let id = match &read {
-                _ if !decodes && carries_frontmatter(&path) => document::id_line_of(&bytes),
-                Some(read) if read.unreadable.is_some() => document::id_line(&text),
-                Some(read) => read
-                    .front
-                    .get(ID_FIELD)
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                None => None,
-            };
+            let id = id_named(&path, &bytes, read.as_ref());
             let line = read
                 .as_ref()
                 .filter(|read| read.unreadable.is_none())
@@ -634,6 +628,37 @@ impl Folder {
         Ok((claims, waiting))
     }
 
+    /// Embeds are read by name, before the claim says whose each file is. A
+    /// file item's bytes are no document, so the embeds of a file the claim
+    /// gives a file item are dropped, with the files only they named.
+    fn follow_embeds_of_documents(
+        &self,
+        scan: &mut ScanState,
+        claims: &[Option<Claim>],
+    ) -> Result<()> {
+        if scan.shown.is_empty() {
+            return Ok(());
+        }
+        for (file, claim) in scan.files.iter().zip(claims) {
+            if let Some(claim) = claim
+                && scan.shown.contains_key(&file.key)
+                && self.file_item(&claim.item_id, &scan.catalog)?
+            {
+                scan.shown.remove(&file.key);
+            }
+        }
+        scan.embedded = scan
+            .shown
+            .values()
+            .flatten()
+            .filter_map(|(_, target)| match target {
+                embeds::Target::At(at) => Some(at.clone()),
+                _ => None,
+            })
+            .collect();
+        Ok(())
+    }
+
     /// Sends each read file to its item: a create, an update, a rename or a
     /// follow of an unread file, or flags it. Collects the edge work the
     /// files leave for the end. Ends the pass where the root goes.
@@ -643,19 +668,26 @@ impl Folder {
         claims: Vec<Option<Claim>>,
         mut waiting: Waiting,
     ) -> Result<ControlFlow<(), Vec<EdgeWork>>> {
-        let mode = scan.mode;
+        let (mode, settle) = (scan.mode, scan.settle);
         let by_path = bound_by_path(&scan.snapshot);
         let (settings, catalog, edge_types) = (&scan.settings, &scan.catalog, &scan.edge_types);
         let (files, walked) = (&scan.files, &scan.walked);
         let (unanswered, embedded) = (&scan.unanswered, &scan.embedded);
+        let only_embedded = &scan.only_embedded;
         let report = &mut scan.report;
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
+        let mut unsettled: HashSet<String> = HashSet::new();
 
         for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
                 return Ok(ControlFlow::Break(()));
+            }
+            if only_embedded.contains(&file.key) && !embedded.contains(&file.key) {
+                report.settling.retain(|path| *path != file.key);
+                report.skipped += 1;
+                continue;
             }
             if let Some(reason) = waiting.remove(&at) {
                 report.flagged.push(Flagged {
@@ -677,11 +709,21 @@ impl Folder {
                     None => Ok(false),
                 }
             };
+            // A file at a document name is read at once, since the claim needs
+            // its id line, so only the claim says whether it is a file item's,
+            // which a copy or a download may still be writing.
+            let settling = settle.is_some_and(|settle| {
+                walked
+                    .opened
+                    .get(&file.path)
+                    .is_some_and(|captured| changed_within(&captured.metadata.borrow(), settle))
+            });
             // No blob the server holds is empty, so a file item emptied in
             // place, as an editor does before it writes, keeps its bytes until
             // there are some. The item decides, not the name: a note may be
             // empty.
-            if file.source.as_deref().is_some_and(<[u8]>::is_empty) && bytes_item()? {
+            let emptied = file.source.as_deref().is_some_and(<[u8]>::is_empty);
+            if (settling || emptied) && bytes_item()? {
                 let unread = Scanned::deferred(
                     &self.root,
                     &file.path,
@@ -689,7 +731,12 @@ impl Folder {
                     walked.opened.get(&file.path),
                 )?;
                 self.follow_unread(&unread, claim, catalog, &withheld, report)?;
-                report.skipped += 1;
+                if settling {
+                    report.settling.push(file.key.clone());
+                    unsettled.insert(file.key.clone());
+                } else {
+                    report.skipped += 1;
+                }
                 continue;
             }
             if let Some(reason) = &file.unreadable
@@ -906,6 +953,8 @@ impl Folder {
                 }
             }
         }
+        // Without its stat, the next quick pass reads it again.
+        scan.stats.retain(|(key, _)| !unsettled.contains(key));
 
         Ok(ControlFlow::Continue(work))
     }
@@ -1337,11 +1386,11 @@ impl Folder {
                     Arrival::Here => {}
                 }
             }
-            // A file item's file is its bytes, never a document naming it, and
-            // no `system.*` row is a file's item.
-            if self.core.get(id)?.is_some_and(|item| {
-                bytes_of(&item, catalog).is_none() && !item.r#type.starts_with("system.")
-            }) {
+            if self
+                .core
+                .get(id)?
+                .is_some_and(|item| named_by_its_file(&item, catalog))
+            {
                 contests.entry(id).or_default().push(at);
             }
         }

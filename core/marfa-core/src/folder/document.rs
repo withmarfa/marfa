@@ -214,17 +214,21 @@ pub fn id_line_of(bytes: &[u8]) -> Option<String> {
         if std::str::from_utf8(line).is_ok_and(|line| line.trim_end() == FENCE) {
             return None;
         }
-        if let Some(id) = line.strip_prefix(b"marfa_id:") {
-            let id = id.trim_ascii();
-            if id.len() > ID_LIMIT {
-                return None;
-            }
-            let id = String::from_utf8_lossy(id);
-            return Some(id.trim().trim_matches(['"', '\'']).to_string())
-                .filter(|id| !id.is_empty());
+        if let Some(value) = line.strip_prefix(b"marfa_id:") {
+            return id_value(value);
         }
     }
     None
+}
+
+/// The id a `marfa_id:` line names, given what follows its colon.
+pub(super) fn id_value(value: &[u8]) -> Option<String> {
+    let id = value.trim_ascii();
+    if id.len() > ID_LIMIT {
+        return None;
+    }
+    let id = String::from_utf8_lossy(id);
+    Some(id.trim().trim_matches(['"', '\'']).to_string()).filter(|id| !id.is_empty())
 }
 
 pub fn read_body(text: &str) -> Document {

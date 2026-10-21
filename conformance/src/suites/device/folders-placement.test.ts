@@ -50,6 +50,7 @@ import {
   type DoorRow,
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
+import { writeSteadily } from "../../device/steady-writer.js";
 import type { Answer } from "../../device/scripted-server.js";
 import type {
   WireEdgeOptions,
@@ -6637,5 +6638,279 @@ describe("a file that is not a document", () => {
     expect(text).toMatch(/^marfa_id: .+$/m);
     expect(text).toContain("tags: [kept]");
     expect(text).toContain("the body\n");
+  });
+
+  it("reports a file item at a document name by its item, not by its bytes", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000fe";
+    // Latin-1, which is no UTF-8: an accent is one byte, 0xE9.
+    const latin1 = Buffer.from("caf\xe9 archive\n", "latin1");
+    // Control characters, each sent as six bytes in a document's JSON body:
+    // past the size warning as text, and nothing as a file item's bytes.
+    const large = Buffer.alloc(200_000, 1);
+    const made = await pulledFileItem(
+      "folder-file-doc-name-status",
+      id,
+      "archive.bin",
+      latin1,
+    );
+    writeFileSync(join(made.dir, "large.bin"), large);
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(sentTitles(made)).toContain("large.bin");
+    renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
+    renameSync(join(made.dir, "large.bin"), join(made.dir, "large.txt"));
+    // The witnesses: new documents holding the same bytes are held, and
+    // warned of.
+    writeFileSync(join(made.dir, "Witness.md"), latin1);
+    writeFileSync(join(made.dir, "Large.md"), large);
+
+    const status = await made.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    const of = (path: string) => {
+      const file = status.value.files.find((one) => one.path === path);
+      return [file?.status, file?.flag ?? null, file?.warning !== undefined];
+    };
+    expect(
+      [of("notes.md"), of("large.txt")],
+      "a file item at a document name was reported by its bytes",
+    ).toEqual([
+      ["waiting", null, false],
+      ["waiting", null, false],
+    ]);
+    expect(of("Witness.md")).toEqual(["held", "encoding", false]);
+    expect(
+      of("Large.md")[2],
+      "a new document this size was not warned of",
+    ).toBe(true);
+
+    rmSync(join(made.dir, "Witness.md"));
+    rmSync(join(made.dir, "Large.md"));
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.renamed).toBe(2);
+    expect(pushed.value.scan.flagged).toEqual([]);
+    expect(pushed.value.scan.warnings).toEqual([]);
+  });
+
+  it("waits for a file item at a document name to stop changing, while every other file goes on", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000ff";
+    const made = await pulledFileItem(
+      "folder-file-doc-name-settle",
+      id,
+      "archive.bin",
+      Buffer.from("bytes a server holds as a file\n"),
+    );
+    renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
+    expect((await made.folder.push()).ok).toBe(true);
+    const uploads = () =>
+      made.server.requests
+        .filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/blobs",
+        )
+        .map((request) => request.raw);
+    const before = uploads().length;
+
+    const copying = join(made.dir, "notes.md");
+    // Faster than the watch's debounce, for longer than it waits for the
+    // folder to settle, so passes run while the file is written.
+    const writing = writeSteadily(copying, 50);
+    const watching = made.folder.watch();
+    let whole: Buffer;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      put(made, "other.md", "---\ntitle: Other\n---\nwritten beside it\n");
+      // The witness: a pass ran, and sent a file, while the writing went on.
+      await vi.waitFor(
+        () => {
+          expect(
+            sentTitles(made),
+            "no pass ran while the file was written, so nothing below shows a pass passing it over",
+          ).toContain("Other");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      await writing.stop();
+      whole = readFileSync(copying);
+      await vi.waitFor(
+        () => {
+          expect(
+            sentUpdates(made)
+              .filter((sent) => sent.id === id)
+              .map(
+                (sent) =>
+                  (sent.body.properties as Record<string, unknown>).blob_ref,
+              ),
+          ).toContain(hashOf(whole));
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      try {
+        await writing.stop();
+      } finally {
+        await watching.stop();
+      }
+    }
+    expect(
+      uploads()
+        .slice(before)
+        .map((bytes) => bytes.length),
+      "a file item at a document name was uploaded half-written",
+    ).toEqual([whole.length]);
+  });
+
+  it("follows no embed in a file item's bytes at a document name, and still a note's", async () => {
+    const id = "01a00000-0000-7000-8000-000000000100";
+    const made = await pulledFileItem(
+      "folder-file-doc-name-embeds",
+      id,
+      "archive.png",
+      Buffer.from("![[x.bin]]\n"),
+      {
+        type: "core.file.image",
+        mime: "image/png",
+        settings: { search: { types: ["core.note", "core.file.image"] } },
+      },
+    );
+    writeFileSync(join(made.dir, "x.bin"), Buffer.from([7, 7, 7]));
+    renameSync(join(made.dir, "archive.png"), join(made.dir, "notes.md"));
+    // The witness: a note's embed in the same scan is followed.
+    writeFileSync(join(made.dir, "note.md"), "a note\n![[y.bin]]\n");
+    writeFileSync(join(made.dir, "y.bin"), Buffer.from([7, 7, 8]));
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.renamed).toBe(1);
+    expect(pushed.value.scan.embeds).toEqual([]);
+    expect(sentTitles(made), "the note's embed was not followed").toContain(
+      "y.bin",
+    );
+    expect(
+      sentTitles(made),
+      "an embed in a file item's bytes was followed",
+    ).not.toContain("x.bin");
+  });
+
+  it.each([
+    ["from a name that is no document", undefined],
+    ["from a document name", "notes.md"],
+  ])(
+    "follows a file item moved %s to a name its search holds no type for",
+    async (_label, via) => {
+      const id = "01a00000-0000-7000-8000-000000000102";
+      const made = await pulledFileItem(
+        "folder-file-doc-name-moved-out",
+        id,
+        "archive.png",
+        Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+        {
+          type: "core.file.image",
+          mime: "image/png",
+          settings: { search: { types: ["core.note", "core.file.image"] } },
+        },
+      );
+      let at = "archive.png";
+      if (via !== undefined) {
+        renameSync(join(made.dir, at), join(made.dir, via));
+        expect((await made.folder.push()).ok).toBe(true);
+        at = via;
+      }
+      const updates = sentUpdates(made).length;
+      renameSync(join(made.dir, at), join(made.dir, "archive.bin"));
+      const pushed = await made.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect([pushed.value.scan.renamed, pushed.value.scan.missing]).toEqual([
+        1, 0,
+      ]);
+      expect(
+        sentUpdates(made)
+          .slice(updates)
+          .filter((sent) => sent.id === id)
+          .map(
+            (sent) => (sent.body.properties as Record<string, unknown>).title,
+          ),
+        "the file item did not follow its file",
+      ).toEqual(["archive.bin"]);
+    },
+  );
+
+  it("keeps a note whose file replaces a file item's at a document name", async () => {
+    const id = "01a00000-0000-7000-8000-000000000101";
+    const made = await pulledFileItem(
+      "folder-file-doc-name-replaced",
+      id,
+      "archive.bin",
+      Buffer.from([0x84, 0x84, 0x84, 0x84]),
+    );
+    writeFileSync(join(made.dir, "note.md"), "a note\n");
+    expect((await made.folder.push()).ok).toBe(true);
+    renameSync(join(made.dir, "archive.bin"), join(made.dir, "notes.md"));
+    expect((await made.folder.push()).ok).toBe(true);
+    const note = readFileSync(join(made.dir, "note.md"));
+    const noteId = /^marfa_id: (.+)$/m.exec(note.toString("utf8"))?.[1];
+    expect(noteId, "the note's file names no id").toBeDefined();
+
+    // The note's file, written whole at another path and put over the file
+    // item's file: a new inode at `notes.md`. The note's old file is gone.
+    const updates = sentUpdates(made).length;
+    const uploads = made.server.requests.length;
+    writeFileSync(join(made.dir, "note.tmp"), note);
+    renameSync(join(made.dir, "note.tmp"), join(made.dir, "notes.md"));
+    rmSync(join(made.dir, "note.md"));
+    // A watch pass first, which waits for changing files that are not
+    // documents, then a plain scan.
+    const watching = made.folder.watch();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            sentUpdates(made)
+              .slice(updates)
+              .map((sent) => sent.id),
+          ).toContain(noteId);
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    const pushed = await made.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.missing).toBe(0);
+    expect(pushed.value.scan.flagged).toEqual([]);
+    expect(
+      made.server.requests
+        .slice(uploads)
+        .filter((request) => request.pathname === "/blobs")
+        .map((request) => request.raw),
+      "the note's file was uploaded as the file item's bytes",
+    ).toEqual([]);
+    expect(
+      sentUpdates(made)
+        .slice(updates)
+        .filter((sent) => sent.id === noteId)
+        .map((sent) => (sent.body.properties as Record<string, unknown>).body)
+        .filter((body) => body !== undefined),
+      "the note lost its body",
+    ).not.toContain("");
+    expect(
+      made.server.requests
+        .slice(uploads)
+        .filter(
+          (request) =>
+            request.method === "DELETE" &&
+            request.pathname === `/items/${noteId}`,
+        ),
+      "the note was deleted",
+    ).toEqual([]);
+    const kept = readFileSync(join(made.dir, "notes.md"), "utf8");
+    expect(kept).toContain(`marfa_id: ${noteId}\n`);
+    expect(kept).toMatch(/\na note\n$/);
   });
 });
