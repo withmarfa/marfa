@@ -77,9 +77,9 @@ The watch writes its output to `folder-watch.log` beside the folder registry, re
 Run the CLI as the server's operating-system account, using the absolute path in `MARFA_CONTROL_SOCKET`:
 
 ```sh
-marfa --socket /run/marfa/control.sock setup open
-marfa --socket /run/marfa/control.sock setup claim --email owner@example.com
-marfa --socket /run/marfa/control.sock owner recover
+marfa --socket "$MARFA_CONTROL_SOCKET" setup open
+marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --email owner@example.com
+marfa --socket "$MARFA_CONTROL_SOCKET" owner recover
 ```
 
 `setup open` issues a five-minute, single-use handoff and opens the browser. Use `--no-browser` to print the link. `setup claim` and `owner recover` ask for a hidden password. For automation, add `--stdin` and send a JSON object containing `email` and `password` for claim, or `password` for recovery. For a remote terminal claim, use `--url https://marfa.example setup claim`; its JSON input also needs `code`. Secrets are never command-line options. Recovery ends browser sessions and keeps ordinary keys, apps and passkeys.
