@@ -6,10 +6,12 @@ import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { storeChecks } from "../storage/blob-layer.js";
 import {
   CopiesBelowMinimum,
   LocationNotFound,
   dropBlobCopy,
+  finishPendingCopyDeletions,
   purgeBlob,
 } from "./blob-delete.js";
 
@@ -285,5 +287,108 @@ describe("purgeBlob", () => {
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
     // Kept, and out of the report.
     expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+  });
+});
+
+describe("a store's delete that does not answer", () => {
+  it("leaves the deletion queued and the blob held until the delete ends, skips the blob meanwhile, and refuses an upload of its bytes", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const content = "a delete that does not answer";
+    const hash = await upload(c, content);
+    await second.put(hash, {
+      stream: Readable.from([Buffer.from(content)]),
+      size_bytes: content.length,
+    });
+    await c.storage.blobs.recordLocation(hash, second.id);
+    const gate = gateDelete(second);
+    let deletes = 0;
+    const gated = second.delete.bind(second);
+    second.delete = (wanted) => {
+      deletes++;
+      return gated(wanted);
+    };
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      // The drop stands although its delete has not answered.
+      await dropBlobCopy(c.storage, stores, hash, second.id, 1);
+      expect(deletes).toBe(1);
+      expect(
+        (await c.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      ).toEqual([c.blobs.disk.id]);
+      const pending = () => c.storage.blobs.listPendingCopyDeletions(10);
+      expect(await pending()).toEqual([{ hash, store_id: second.id }]);
+
+      // A later pass skips the blob rather than waiting or deleting again.
+      expect(await finishPendingCopyDeletions(c.storage, stores, 10)).toEqual(
+        new Set(),
+      );
+      expect(deletes).toBe(1);
+      expect(await pending()).toEqual([{ hash, store_id: second.id }]);
+
+      // An upload of the same bytes is refused rather than kept waiting.
+      const refused = await c.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${c.workingKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: new TextEncoder().encode(content),
+      });
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "blob_store_unavailable" },
+      });
+
+      // Once the delete ends, the lock goes with it.
+      gate.release();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(await upload(c, content)).toBe(hash);
+      await finishPendingCopyDeletions(c.storage, stores, 10);
+      expect(deletes).toBe(2);
+      expect(await pending()).toEqual([]);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.restore();
+    }
+  });
+
+  it("stops asking a store whose delete went unanswered for the rest of the pass, and names it", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    const { stores, second } = await withSecondStore(c);
+    const hashes: string[] = [];
+    for (const content of ["first unanswered", "second unanswered"]) {
+      const hash = await upload(c, content);
+      await second.put(hash, {
+        stream: Readable.from([Buffer.from(content)]),
+        size_bytes: content.length,
+      });
+      await c.storage.runInTransaction(async () => {
+        await c.storage.blobs.queueCopyDeletion(hash, second.id);
+      });
+      hashes.push(hash);
+    }
+    const gate = gateDelete(second);
+    let deletes = 0;
+    const gated = second.delete.bind(second);
+    second.delete = (wanted) => {
+      deletes++;
+      return gated(wanted);
+    };
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(await finishPendingCopyDeletions(c.storage, stores, 10)).toEqual(
+        new Set([second.id]),
+      );
+      expect(deletes).toBe(1);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      gate.release();
+      gate.restore();
+    }
   });
 });

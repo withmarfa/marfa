@@ -1,7 +1,7 @@
 import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
-import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import { LOCK_HELD, tryBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   finishCopyDeletion,
@@ -9,7 +9,12 @@ import {
 } from "./blob-delete.js";
 import type { Stores } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
-import { storeCheckTimeoutMs, within } from "../storage/blob-layer.js";
+import {
+  awaitStoreChange,
+  storeCheckTimeoutMs,
+  storeWriteTimeoutMs,
+  within,
+} from "../storage/blob-layer.js";
 
 export interface ReplicationBounds {
   /** Most blobs one run copies. */
@@ -41,6 +46,12 @@ export type ReplicationResult = {
  * because the log does not care which kind holds a copy. A location is
  * recorded only after the target's `put` has verified that the bytes hash
  * to their name.
+ *
+ * A blob whose upload lock is held, such as one whose earlier write or
+ * delete a store has not finished, is skipped and left in `remaining`. A
+ * target's `put` or `delete` that goes past its bound counts the target
+ * unreachable for the rest of the run, and the lock is kept until the call
+ * ends (`awaitStoreChange`).
  */
 export class BlobReplicator {
   constructor(
@@ -50,7 +61,7 @@ export class BlobReplicator {
   ) {}
 
   async runOnce(): Promise<ReplicationResult> {
-    await finishPendingCopyDeletions(
+    const unanswered = await finishPendingCopyDeletions(
       this.storage,
       this.stores,
       this.bounds.maxBlobs,
@@ -58,6 +69,7 @@ export class BlobReplicator {
     let copied = 0;
     let bytes = 0;
     for (const target of this.stores.stores) {
+      if (unanswered.has(target.id)) continue;
       if (copied >= this.bounds.maxBlobs || bytes >= this.bounds.maxBytes) {
         break;
       }
@@ -72,9 +84,9 @@ export class BlobReplicator {
         // Under the per-hash lock a purge takes, and only while the row
         // stands: a copy put after a purge removed the row and the bytes
         // would be bytes in a store that nothing names and nothing sweeps.
-        let placed: boolean;
+        let placed: boolean | typeof LOCK_HELD;
         try {
-          placed = await withBlobUploadLock(blob.hash, () =>
+          placed = await tryBlobUploadLock(blob.hash, () =>
             this.copy(blob.hash, target),
           );
         } catch (err) {
@@ -93,7 +105,7 @@ export class BlobReplicator {
           });
           break;
         }
-        if (!placed) continue;
+        if (placed !== true) continue;
         copied += 1;
         bytes += blob.size_bytes;
         if (copied >= this.bounds.maxBlobs) break;
@@ -133,12 +145,19 @@ export class BlobReplicator {
       return false;
     }
     try {
-      await target.put(hash, {
-        stream: read.stream,
-        size_bytes: read.size_bytes,
-      });
+      await awaitStoreChange(
+        target,
+        hash,
+        () =>
+          target.put(hash, {
+            stream: read.stream,
+            size_bytes: read.size_bytes,
+          }),
+        storeWriteTimeoutMs(read.size_bytes),
+      );
     } catch (err) {
       read.stream.destroy();
+      if (err instanceof BlobStoreUnreachable) throw err;
       log("error", "blob.replicate_failed", {
         hash,
         from: source.id,
@@ -168,7 +187,12 @@ export class BlobReplicator {
               (location) => location.store_id === target.id,
             )
           )
-            await target.delete(hash);
+            await awaitStoreChange(
+              target,
+              hash,
+              () => target.delete(hash),
+              storeCheckTimeoutMs(),
+            );
         } catch (cleanupErr) {
           log("error", "blob.orphaned_after_refused_replication", {
             hash,

@@ -6,11 +6,12 @@
 import { createHash } from "node:crypto";
 import { rename } from "node:fs/promises";
 import { Readable } from "node:stream";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { createTestContext, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { BlobStore } from "../storage/blob-store.js";
 import { storeChecks } from "../storage/blob-layer.js";
+import { LOCK_HELD, tryBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { BlobReplicator } from "./blob-replicate.js";
 
 let ctx: TestContext | undefined;
@@ -525,5 +526,137 @@ describe("BlobReplicator.runOnce while a store cannot be reached", () => {
         .map((l) => l.store_id)
         .sort(),
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
+  });
+});
+
+describe("BlobReplicator.runOnce while a store's write or delete does not answer", () => {
+  /** Holds `store`'s `method` until released, counting the calls. */
+  function hold(store: BlobStore, method: "put" | "delete") {
+    const put = store.put.bind(store);
+    const remove = store.delete.bind(store);
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = {
+      calls: 0,
+      release,
+      restore: () => {
+        store.put = put;
+        store.delete = remove;
+      },
+    };
+    if (method === "put") {
+      store.put = async (hash, source) => {
+        held.calls++;
+        await released;
+        return put(hash, source);
+      };
+    } else {
+      store.delete = async (hash) => {
+        held.calls++;
+        await released;
+        return remove(hash);
+      };
+    }
+    return held;
+  }
+
+  it("gives up a write past its bound, skips the blob while the write is out, and copies the blob once the write ends", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const content = "a write that does not answer";
+    const hash = await upload(ctx, content);
+    const put = hold(second, "put");
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(
+        await quietly(() => settlesWithin(replicator.runOnce(), 5_000)),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+      expect(put.calls).toBe(1);
+      // A later run skips the blob rather than waiting on the write.
+      expect(
+        await quietly(() => settlesWithin(replicator.runOnce(), 5_000)),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+      expect(put.calls).toBe(1);
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      put.release();
+      put.restore();
+    }
+    // The given-up call ends on its own once released, and the lock with it.
+    await vi.waitFor(async () => {
+      expect(
+        await tryBlobUploadLock(hash, () => Promise.resolve("free")),
+      ).not.toBe(LOCK_HELD);
+    });
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+    expect(await bytesOf(second, hash)).toBe(content);
+    expect(
+      (await ctx.storage.blobs.listLocations(hash))
+        .map((l) => l.store_id)
+        .sort(),
+    ).toEqual([ctx.blobs.disk.id, second.id].sort());
+  });
+
+  it("makes no copy while a delete of the blob is out, so the late delete cannot take a copy made after it", async () => {
+    ctx = await createTestContext();
+    const { stores, second } = await withSecondStore(ctx);
+    const content = "a copy struck while its delete hangs";
+    const hash = await upload(ctx, content);
+    const replicator = new BlobReplicator(ctx.storage, stores, {
+      maxBlobs: 100,
+      maxBytes: 1024 * 1024,
+    });
+    expect(await replicator.runOnce()).toMatchObject({ copied: 1 });
+    // The copy is struck, as an integrity check does, with its delete held.
+    await ctx.storage.runInTransaction(async () => {
+      await ctx!.storage.blobs.removeLocation(hash, second.id);
+      await ctx!.storage.blobs.queueCopyDeletion(hash, second.id);
+    });
+    const removal = hold(second, "delete");
+    const put = hold(second, "put");
+    const timeout = storeChecks.timeoutMs;
+    storeChecks.timeoutMs = 50;
+    try {
+      expect(
+        await quietly(() => settlesWithin(replicator.runOnce(), 5_000)),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+      expect(removal.calls).toBe(1);
+      expect(
+        await quietly(() => settlesWithin(replicator.runOnce(), 5_000)),
+      ).toMatchObject({ copied: 0, remaining: 1 });
+      // The witness for the skip: no write was even started.
+      expect(put.calls).toBe(0);
+      expect(removal.calls).toBe(1);
+      put.restore();
+      // The late delete lands, and only then is the copy made again.
+      removal.release();
+    } finally {
+      storeChecks.timeoutMs = timeout;
+      put.restore();
+      removal.release();
+    }
+    // The given-up call ends on its own once released, and the lock with it.
+    await vi.waitFor(async () => {
+      expect(
+        await tryBlobUploadLock(hash, () => Promise.resolve("free")),
+      ).not.toBe(LOCK_HELD);
+    });
+    removal.restore();
+    expect(await replicator.runOnce()).toMatchObject({
+      copied: 1,
+      remaining: 0,
+    });
+    expect(await bytesOf(second, hash)).toBe(content);
+    expect(await ctx.storage.blobs.listPendingCopyDeletions(10)).toEqual([]);
   });
 });

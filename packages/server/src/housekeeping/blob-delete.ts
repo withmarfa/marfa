@@ -1,9 +1,17 @@
-import type { BlobStore } from "../storage/blob-store.js";
+import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { log } from "../middleware/logger.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
-import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
+import {
+  LOCK_HELD,
+  tryBlobUploadLock,
+  withBlobUploadLock,
+} from "../storage/blob-upload-lock.js";
 import { errorMessage } from "../error-text.js";
+import {
+  awaitStoreChange,
+  storeCheckTimeoutMs,
+} from "../storage/blob-layer.js";
 
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
@@ -19,6 +27,11 @@ import { errorMessage } from "../error-text.js";
  * Upload, archive restore and replication also call a store's `delete` to
  * take back bytes this request wrote when the row that would have named
  * them was refused, under the same lock and before any row exists.
+ *
+ * A store's `delete` here is waited on for the store check bound and no
+ * longer, and the lock is kept until it ends (`awaitStoreChange`).
+ * Housekeeping takes a blob's lock only when it is free, so a later run
+ * skips a blob whose delete is still out rather than waiting on it.
  */
 export interface Stores {
   readonly stores: readonly BlobStore[];
@@ -114,7 +127,8 @@ export async function dropBlobCopy(
  * because a copy the log did not know about would otherwise outlive its
  * row; a purge record covers the gap, so a failure between the two leaves
  * the next sweep a purge to finish (`finishPurge`) rather than a row naming
- * bytes that are gone. Answers whether the blob was purged.
+ * bytes that are gone. Answers whether the blob was purged; a blob whose
+ * lock is held is left for a later sweep.
  */
 export async function purgeBlob(
   storage: Storage,
@@ -122,7 +136,7 @@ export async function purgeBlob(
   hash: string,
   due: { before: string; runStartedAt: string },
 ): Promise<boolean> {
-  return withBlobUploadLock(hash, async () => {
+  const purged = await tryBlobUploadLock(hash, async () => {
     const claimed = await runAuditedTransaction(
       storage,
       () => storage.blobs.claimOrphanPurge(hash, due.before, due.runStartedAt),
@@ -140,6 +154,7 @@ export async function purgeBlob(
     await deleteEverywhere(storage, stores, hash);
     return true;
   });
+  return purged === true;
 }
 
 /**
@@ -147,14 +162,14 @@ export async function purgeBlob(
  * from every attached store and clear the record. An upload of the same
  * bytes clears the record in the transaction that registers them, so a
  * record gone by the time the lock is held means the bytes are stored
- * again and stay.
+ * again and stay. A blob whose lock is held is left for a later sweep.
  */
 export async function finishPurge(
   storage: Storage,
   stores: Stores,
   hash: string,
 ): Promise<void> {
-  await withBlobUploadLock(hash, async () => {
+  await tryBlobUploadLock(hash, async () => {
     if (!(await storage.blobs.purgePending(hash))) return;
     await deleteEverywhere(storage, stores, hash);
   });
@@ -166,7 +181,12 @@ async function deleteEverywhere(
   hash: string,
 ): Promise<void> {
   for (const store of stores.stores) {
-    await store.delete(hash);
+    await awaitStoreChange(
+      store,
+      hash,
+      () => store.delete(hash),
+      storeCheckTimeoutMs(),
+    );
     await storage.blobs.settleCopyDeletion(hash, store.id);
   }
   await storage.blobs.settlePurge(hash);
@@ -179,24 +199,37 @@ export async function finishCopyDeletion(
   hash: string,
 ): Promise<void> {
   if (!(await storage.blobs.beginCopyDeletionAttempt(hash, store.id))) return;
-  await store.delete(hash);
+  await awaitStoreChange(
+    store,
+    hash,
+    () => store.delete(hash),
+    storeCheckTimeoutMs(),
+  );
   await storage.blobs.settleCopyDeletion(hash, store.id);
 }
 
-/** Retry committed cleanup without creating a second domain mutation or audit. */
+/**
+ * Retry committed cleanup without creating a second domain mutation or
+ * audit. A blob whose lock is held is skipped, and so is every deletion in
+ * a store once one there went unanswered. Answers the ids of the stores
+ * that did not answer.
+ */
 export async function finishPendingCopyDeletions(
   storage: Storage,
   stores: Stores,
   limit: number,
-): Promise<void> {
+): Promise<Set<string>> {
+  const unanswered = new Set<string>();
   for (const copy of await storage.blobs.listPendingCopyDeletions(limit)) {
     const store = stores.byId(copy.store_id);
-    if (!store) continue;
+    if (!store || unanswered.has(store.id)) continue;
     try {
-      await withBlobUploadLock(copy.hash, () =>
+      const done = await tryBlobUploadLock(copy.hash, () =>
         finishCopyDeletion(storage, store, copy.hash),
       );
+      if (done === LOCK_HELD) continue;
     } catch (err) {
+      if (err instanceof BlobStoreUnreachable) unanswered.add(store.id);
       log("error", "blob.copy_deletion_unfinished", {
         hash: copy.hash,
         store_id: copy.store_id,
@@ -204,4 +237,5 @@ export async function finishPendingCopyDeletions(
       });
     }
   }
+  return unanswered;
 }
