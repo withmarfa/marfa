@@ -296,13 +296,13 @@ fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
 fn copy_expired(reason: &str) -> String {
     let cause_and_advice = match reason {
         "credential_ended" => {
-            "the credential it reads with has ended; sign in or approve this app again".to_string()
+            "the credential it reads with has ended; sign in or approve this app again, then rebuild the copy from the server (changes not yet sent are kept)".to_string()
         }
         "read_view_changed" => "what the credential may read, or how the server arranges items and types, has changed; rebuild the copy from the server (changes not yet sent are kept)".to_string(),
         crate::http::INSTANCE_CHANGED => {
             "another Marfa now answers at this address; rebuild the copy from it".to_string()
         }
-        "read_view_invalid" => "the server sent an answer this copy cannot accept as proof of what it may read; rebuild the copy from the server".to_string(),
+        "read_view_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
         sentence => format!("{sentence}; rebuild the copy from the server"),
     };
     format!("this working copy can no longer be kept current: {cause_and_advice}")
@@ -368,7 +368,8 @@ mod tests {
     fn an_expired_copy_says_what_to_do_for_the_reason_it_expired() {
         let ended = said("credential_ended");
         assert!(
-            ended.contains("sign in or approve this app again"),
+            ended.contains("sign in or approve this app again")
+                && ended.contains("then rebuild the copy from the server"),
             "{ended}"
         );
         let changed = said("read_view_changed");
@@ -385,7 +386,7 @@ mod tests {
         let other = said("instance_changed");
         assert!(other.contains("another Marfa now answers"), "{other}");
         let invalid = said("read_view_invalid");
-        assert!(invalid.contains("cannot accept as proof"), "{invalid}");
+        assert!(invalid.contains("holds no proof it can accept"), "{invalid}");
         // A reason that is a sentence is shown as it is.
         let sentence = said("the server's event log ends at 5");
         assert!(
