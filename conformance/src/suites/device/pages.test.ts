@@ -85,6 +85,8 @@ class Door {
   single?: (entry: ItemEntry) => Answer | undefined;
   /** An answer standing in for a read by id's, where it gives one. */
   reading?: (id: string) => Answer | undefined;
+  /** An answer standing in for a read of an edge by id's, where it gives one. */
+  edgeReading?: (id: string) => Answer | undefined;
   /** Edges a read of their source leaves out of its first page, as one
    *  past the first page of its type is. */
   readonly unlisted = new Set<string>();
@@ -165,7 +167,10 @@ class Door {
       return answers.updated({ ...item, edges: this.edgesFrom(id) });
     });
     server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {
-      const edge = this.edges.get(request.pathname.split("/").at(-1) ?? "");
+      const id = request.pathname.split("/").at(-1) ?? "";
+      const standIn = this.edgeReading?.(id);
+      if (standIn !== undefined) return standIn;
+      const edge = this.edges.get(id);
       return edge === undefined
         ? refusal(404, "edge_not_found", "No such edge")
         : writeAnswers.edge(edge, 200);
@@ -825,6 +830,90 @@ describe("creates in pages", () => {
     expect(queued.find((row) => row.id === edited?.id)?.verdict).toBe(
       "accepted",
     );
+  });
+
+  it("keeps the read of an edge owed where the server refuses it, and sends the rest of the queue", async () => {
+    const made = await start("pages-owed-edge-refused");
+    harness = made.harness;
+    const { door } = made;
+    const { edges } = await queue(harness, 50, { edges: true });
+    const [unread] = edges as [QueuedWrite];
+    const edgeId = unread.edge_id ?? "";
+    let paged = false;
+    let limited = false;
+    door.page = (request) => {
+      if (request.pathname === "/edges/bulk") paged = true;
+      return undefined;
+    };
+    door.reading = () => {
+      if (!paged || limited) return undefined;
+      limited = true;
+      return answers.rateLimited();
+    };
+    let refusing = false;
+    let refusals = 0;
+    door.edgeReading = (id) => {
+      if (id !== edgeId || !refusing) return undefined;
+      refusals += 1;
+      return answers.validation("validation_error", "The read was refused");
+    };
+
+    const first = await drain(harness);
+
+    expect(limited).toBe(true);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    door.unlisted.add(edgeId);
+    refusing = true;
+    const late = value(
+      await harness.device.create({
+        type: "core.note",
+        properties: { title: "Late", body: "text" },
+      }),
+    );
+
+    const second = await drain(harness);
+
+    // The witness: the source was read without the edge, and the read of the
+    // edge itself was refused.
+    expect(bulkReads(door).at(-1)).toContain(unread.item_id ?? "");
+    expect(refusals).toBeGreaterThan(0);
+    expect(second.unavailable, JSON.stringify(second)).toBeNull();
+    expect(second.stopped).toBeNull();
+    expect(
+      door
+        .requests("POST", "/items")
+        .map((request) => (JSON.parse(request.body) as ItemEntry).id),
+    ).toEqual([late.item_id]);
+    expect(door.requests("POST", "/edges")).toHaveLength(0);
+    const kept = value(await harness.device.queue());
+    expect(kept.find((row) => row.id === unread.id)?.verdict).toBe("accepted");
+
+    refusing = false;
+    const refused = refusals;
+    const readsBefore = door.requests("GET", `/edges/${edgeId}`).length;
+
+    const third = await drain(harness);
+
+    expect(third.unavailable, JSON.stringify(third)).toBeNull();
+    // Still owed after the refusal, so this drain made the read again, and
+    // the server answered it.
+    expect(refusals).toBe(refused);
+    expect(door.requests("GET", `/edges/${edgeId}`).length).toBeGreaterThan(
+      readsBefore,
+    );
+    expect(door.requests("POST", "/edges")).toHaveLength(0);
+    const queued = value(await harness.device.queue());
+    expect(queued.find((row) => row.id === unread.id)?.verdict).toBe(
+      "accepted",
+    );
+
+    const readsAfter = door.requests("GET", `/edges/${edgeId}`).length;
+
+    const fourth = await drain(harness);
+
+    // Settled by that read: nothing is owed to be read a fourth time.
+    expect(fourth.unavailable, JSON.stringify(fourth)).toBeNull();
+    expect(door.requests("GET", `/edges/${edgeId}`).length).toBe(readsAfter);
   });
 
   it("sends an edit queued behind a page's create on the version the page made, so another device's edit since meets a conflict", async () => {

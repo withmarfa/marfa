@@ -230,7 +230,7 @@ If the server refuses the read that writes a page created owe, other than by an 
 
 **Reason:** a read owed by a write on its own door is kept the same way: the refusal is of the read, not of the writes the server took, and a write sent again would be a second attempt (`queue-and-verdicts/page-never-sent`).
 
-**Tests:** `device/pages.test.ts › keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue`.
+**Tests:** `device/pages.test.ts › keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue`, `› keeps the read of an edge owed where the server refuses it, and sends the rest of the queue`.
 
 ## The version a write carries
 
