@@ -7,6 +7,8 @@ export default defineConfig({
     // ./dist/instrumentation.js` before the main entry so HTTP
     // instrumentation patches modules before they load.
     instrumentation: "src/instrumentation.ts",
+    // Run by `deploy/entrypoint.sh` before replication starts, on its own.
+    "replica-check": "src/replica-check.ts",
   },
   format: ["esm"],
   // Every entry is a program: nothing imports the server, so no

@@ -290,6 +290,14 @@ Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` s
 
 **Tests:** `backup/replica-paths.test.ts › streams the database under the default prefix's db when S3_PREFIX is unset, and a fresh volume restores it`, `› keeps the replicas of two instances on one bucket apart, and each fresh volume restores only its own`, `› reads a prefix with a slash at either end as the same prefix, for the replica and for the server`.
 
+### `instance/replica-not-older`
+
+Where the server runs in the image `deploy/Dockerfile` builds with `S3_BUCKET` set and `MARFA_REPLACE_NEWER_REPLICA` not true, if it starts on a volume that already holds a database older than the database last replicated under its own `<S3_PREFIX>/db/`, then the server MUST leave that replica unchanged.
+
+**Reason:** replicating the older database would make it the replica's newest state, and the writes after it would remain only in the replica's history, which expires. `deploy/README.md` says how to start an older database under a new prefix, or to replace the replica on purpose.
+
+**Tests:** `backup/older-database.test.ts › refuses a volume copied before the replica's newest transaction, and leaves the bucket unchanged`, `› refuses an older database copied without Litestream's record, and leaves the bucket unchanged`, `› refuses an older database put in place of the one the volume replicated, and leaves the bucket unchanged`.
+
 ### `instance/replica-other-prefix`
 
 Where two instances run in the image `deploy/Dockerfile` builds with the same `S3_BUCKET` and `S3_PREFIX` values that differ as the settings table reads them, the server MUST NOT read or write the other instance's database replica.

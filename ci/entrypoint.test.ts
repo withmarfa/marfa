@@ -49,14 +49,24 @@ interface Run {
   dir: string;
 }
 
+/** What `litestream ltx -json` lists for a replica of one snapshot. */
+const LISTING =
+  '[{"level":9,"min_txid":"0000000000000001","max_txid":"0000000000000007","size":4096,"timestamp":"2026-01-01T00:00:00Z"}]';
+
 /**
  * Starts the entrypoint with `node` (and, with a bucket, `litestream`)
  * replaced by `body`, a shell script that stands for whichever one the
- * entrypoint runs last.
+ * entrypoint runs last. `node dist/replica-check.js` runs `check` instead,
+ * which by default writes down its arguments and input and passes;
+ * `litestream ltx` prints `listing`, or fails when it is `null`. With
+ * `database`, the volume holds a database before the entrypoint starts.
  */
 function start(options: {
   body: string;
   bucket?: boolean;
+  database?: boolean;
+  check?: string;
+  listing?: string | null;
   env?: Record<string, string>;
 }): Run {
   const dir = mkdtempSync(join(tmpdir(), "marfa-entrypoint-"));
@@ -67,6 +77,18 @@ function start(options: {
     `#!/bin/sh\nmarker="${dir}"\n${options.body}\n`,
   );
   chmodSync(join(dir, "stand-in.sh"), 0o755);
+  writeFileSync(
+    join(dir, "check.sh"),
+    `#!/bin/sh\nmarker="${dir}"\n${
+      options.check ??
+      'printf "%s\\n" "$@" > "$marker/check-args"\ncat > "$marker/check-input"'
+    }\n`,
+  );
+  chmodSync(join(dir, "check.sh"), 0o755);
+  if (options.database) {
+    mkdirSync(join(dir, "data"));
+    writeFileSync(join(dir, "data/marfa.db"), "");
+  }
   // `node`, run by the entrypoint or by Litestream's `-exec`, is the stand-in
   // too; `litestream restore` does nothing.
   const wrapper = (name: string, script: string) => {
@@ -74,7 +96,16 @@ function start(options: {
     chmodSync(join(dir, name), 0o755);
   };
   mkdirSync(bin);
-  wrapper("bin/node", `#!/bin/sh\nexec "${join(dir, "stand-in.sh")}" "$@"\n`);
+  wrapper(
+    "bin/node",
+    [
+      "#!/bin/sh",
+      `if [ "$1" = dist/replica-check.js ]; then shift; exec "${join(dir, "check.sh")}" "$@"; fi`,
+      `exec "${join(dir, "stand-in.sh")}" "$@"`,
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(join(dir, "listing"), options.listing ?? "");
   // Litestream's `replicate -exec` runs the command, forwards the signals
   // that stop it, and ends 1 whatever status the command ended with
   // (verified against 0.5.17): so a status cannot travel through it.
@@ -82,7 +113,13 @@ function start(options: {
     "bin/litestream",
     [
       "#!/bin/sh",
+      `echo "$1" >> "${join(dir, "litestream-commands")}"`,
       'case "$1" in restore) exit 0 ;; esac',
+      `case "$1" in ltx) ${
+        options.listing === null
+          ? 'echo "cannot reach the bucket" >&2; exit 1'
+          : `cat "${join(dir, "listing")}"; exit 0`
+      } ;; esac`,
       'while [ $# -gt 0 ]; do if [ "$1" = -exec ]; then command=$2; break; fi; shift; done',
       "signalled=0",
       `trap 'signalled=1; kill -TERM "$child" 2>/dev/null' TERM INT`,
@@ -320,5 +357,128 @@ describe("deploy/entrypoint.sh", () => {
 
     expect(await run.exited).toBe(3);
     expect(readFileSync(join(run.dir, "stopped"), "utf8")).toBe("stopped\n");
+  });
+});
+
+describe("deploy/entrypoint.sh, before replication starts", () => {
+  const SERVER_STARTED = 'echo started > "$marker/started"';
+  const commands = (run: Run): string[] => {
+    const path = join(run.dir, "litestream-commands");
+    return existsSync(path)
+      ? readFileSync(path, "utf8").trim().split("\n")
+      : [];
+  };
+
+  it("checks a database that was on the volume against the replica's listing, and starts when the check passes", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      listing: LISTING,
+      env: { S3_PREFIX: "trial/blobs" },
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(0);
+    expect(readFileSync(join(run.dir, "check-args"), "utf8")).toBe(
+      `${join(run.dir, "data/marfa.db")}\na-bucket\ntrial/blobs\n`,
+    );
+    expect(readFileSync(join(run.dir, "check-input"), "utf8")).toBe(LISTING);
+    expect(commands(run)).toEqual(["restore", "ltx", "replicate"]);
+    expect(existsSync(join(run.dir, "started"))).toBe(true);
+  });
+
+  it("does not check a database the restore wrote, which is the replica's newest state", async () => {
+    const run = start({ bucket: true, listing: LISTING, body: SERVER_STARTED });
+
+    expect(await run.exited).toBe(0);
+    expect(existsSync(join(run.dir, "check-args"))).toBe(false);
+    expect(commands(run)).toEqual(["restore", "replicate"]);
+    expect(existsSync(join(run.dir, "started"))).toBe(true);
+  });
+
+  it("ends 1 without replicating or starting the server when the check refuses", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      listing: LISTING,
+      check: 'echo "The database is older than the replica." >&2\nexit 1',
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(1);
+    expect(run.output()).toContain("The database is older than the replica.");
+    expect(commands(run)).toEqual(["restore", "ltx"]);
+    expect(existsSync(join(run.dir, "started"))).toBe(false);
+  });
+
+  it("ends 1 without replicating or starting the server when the bucket cannot be listed, and names the override", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      listing: null,
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(1);
+    expect(run.output()).toContain("Could not list the replica at blobs/db");
+    expect(run.output()).toContain("MARFA_REPLACE_NEWER_REPLICA=true");
+    expect(existsSync(join(run.dir, "check-args"))).toBe(false);
+    expect(commands(run)).toEqual(["restore", "ltx"]);
+    expect(existsSync(join(run.dir, "started"))).toBe(false);
+  });
+
+  it("starts without the check when MARFA_REPLACE_NEWER_REPLICA is a true word, and says so", async () => {
+    for (const value of ["true", "TRUE", "1", "yes", "On"]) {
+      const run = start({
+        bucket: true,
+        database: true,
+        listing: null,
+        check: "exit 1",
+        env: { MARFA_REPLACE_NEWER_REPLICA: value },
+        body: SERVER_STARTED,
+      });
+
+      expect(await run.exited, value).toBe(0);
+      expect(run.output(), value).toContain(
+        "MARFA_REPLACE_NEWER_REPLICA is set",
+      );
+      expect(commands(run), value).toEqual(["restore", "replicate"]);
+      expect(existsSync(join(run.dir, "started")), value).toBe(true);
+    }
+  });
+
+  it("checks as usual when MARFA_REPLACE_NEWER_REPLICA is a false word or empty", async () => {
+    for (const value of ["false", "0", "no", "OFF", ""]) {
+      const run = start({
+        bucket: true,
+        database: true,
+        listing: LISTING,
+        check: "exit 1",
+        env: { MARFA_REPLACE_NEWER_REPLICA: value },
+        body: SERVER_STARTED,
+      });
+
+      expect(await run.exited, value).toBe(1);
+      expect(run.output(), value).not.toContain(
+        "MARFA_REPLACE_NEWER_REPLICA is set",
+      );
+      expect(commands(run), value).toEqual(["restore", "ltx"]);
+    }
+  });
+
+  it("refuses a MARFA_REPLACE_NEWER_REPLICA that is not a flag word, before anything runs", async () => {
+    const run = start({
+      bucket: true,
+      database: true,
+      listing: LISTING,
+      env: { MARFA_REPLACE_NEWER_REPLICA: "please" },
+      body: SERVER_STARTED,
+    });
+
+    expect(await run.exited).toBe(1);
+    expect(run.output()).toContain(
+      "MARFA_REPLACE_NEWER_REPLICA must be true or false",
+    );
+    expect(commands(run)).toEqual([]);
   });
 });
