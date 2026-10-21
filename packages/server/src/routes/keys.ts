@@ -359,9 +359,9 @@ const currentKeyRoute = createRoute({
   method: "get",
   path: "/current",
   tags: ["API keys"],
-  summary: "Get the current key",
+  summary: "Get the current API key",
   description:
-    "Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
+    "Returns the API key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
   security: [{ bearerAuth: [] }],
   middleware: keysOnly,
   responses: {

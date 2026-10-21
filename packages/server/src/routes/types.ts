@@ -698,7 +698,7 @@ const normalizeTypeRoute = createRoute({
   method: "post",
   path: "/normalize",
   tags: ["Types"],
-  summary: "Normalize a type",
+  summary: "Normalize a type definition",
   description:
     "Normalizes a candidate definition and returns its declared form, the registered declared definition and the registered resolved definition. It does not register or replace a type.",
   security: [{ bearerAuth: [] }],

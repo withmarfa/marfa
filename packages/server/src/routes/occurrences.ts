@@ -893,7 +893,7 @@ const occurrencesRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Items"],
-  summary: "List occurrences",
+  summary: "List event occurrences",
   description:
     "Returns the events that overlap a time window, with each recurring event expanded into one entry per occurrence. Marfa computes occurrences when you read them and doesn't store them.",
   security: [{ bearerAuth: [] }],

@@ -22,7 +22,7 @@ const READS: Record<string, string> = {
   SearchStore: "search",
   KeyStore: "list get validate count",
   BlobRegistry:
-    "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores copiesClaimedAt listLocations storeIdsOf listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
+    "get listAll readableThrough lendingHashesOf lendingHashesOfEdges lendingHashesOfExtensions uploadedBy count listStores copiesClaimedAt listCopies storeIdsOf listPendingCopyDeletions listMissingFrom countMissingFrom listToVerify listOrphans listOrphansToPurge listPendingPurges purgePending",
   WebhookStore: "checkpoint listAfter list get count",
   WebhookDeliveryStore: "list get",
   OauthProviderStore:
@@ -51,13 +51,13 @@ const WRITES: Record<string, string> = {
   MetadataStore:
     "set merge addTags removeTag setExtension setExtensions deleteExtension",
   VersionStore: "create restore deleteByIds",
-  TypeStore: "create update delete seedPlatformTypes deletePlatformType",
+  TypeStore: "create update delete seedPlatformTypes deleteRetiredPlatformType",
   EdgeTypeStore: "create replace delete",
   SearchStore: "index setTags remove",
   KeyStore:
     "create update revoke revokeLapsedHolders updateLastUsed deleteDeadKeysOlderThan",
   BlobRegistry:
-    "register recordUploader attachStore detachStoresExcept recordLocation queueCopyDeletion beginCopyDeletionAttempt settleCopyDeletion removeLocation dropLocationKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
+    "register recordUploader attachStore detachStoresExcept recordCopy queueCopyDeletion beginCopyDeletionAttempt settleCopyDeletion removeCopy dropCopyKeeping markVerified retainOrphans claimOrphanPurge settlePurge",
   WebhookStore: "acknowledge create update delete",
   WebhookDeliveryStore:
     "schedule getPending reopen markSuccess markFailed markCanceled cancelPending cancelUnselected cleanup",

@@ -278,7 +278,7 @@ export interface BlobStoreRow {
   detached_at: string | null;
 }
 
-export interface BlobLocationRow {
+export interface BlobCopyRow {
   store_id: string;
   kind: "disk" | "s3";
   policy: string;

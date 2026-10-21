@@ -194,7 +194,7 @@ async function held(
   copies: number,
 ): Promise<void> {
   expect(await c.storage.blobs.get(hash)).not.toBeNull();
-  expect(await c.storage.blobs.listLocations(hash)).toHaveLength(copies);
+  expect(await c.storage.blobs.listCopies(hash)).toHaveLength(copies);
   expect(c.blobs.stores).toHaveLength(copies);
   for (const store of c.blobs.stores) {
     const physical = await store.has(hash);

@@ -347,9 +347,9 @@ describe("blob correctness", () => {
     const link = await client.getBlobUrl(bare);
     expect(link.status).toBe(200);
     expect((await fetchLink(link.data.url)).bytes).toEqual(content);
-    const locations = await client.listBlobLocations(bare);
-    expect(locations.status).toBe(200);
-    expect(locations.data.data.length).toBeGreaterThan(0);
+    const copies = await client.listBlobCopies(bare);
+    expect(copies.status).toBe(200);
+    expect(copies.data.data.length).toBeGreaterThan(0);
 
     const malformed = [
       bare.slice(1),
@@ -369,9 +369,9 @@ describe("blob correctness", () => {
       const url = await client.getBlobUrl(form);
       expect(url.status, `url ${form}`).toBe(400);
       expect(url.error?.error.code, `url ${form}`).toBe("validation_error");
-      const where = await client.listBlobLocations(form);
-      expect(where.status, `locations ${form}`).toBe(400);
-      expect(where.error?.error.code, `locations ${form}`).toBe(
+      const where = await client.listBlobCopies(form);
+      expect(where.status, `copies ${form}`).toBe(400);
+      expect(where.error?.error.code, `copies ${form}`).toBe(
         "validation_error",
       );
     }
@@ -459,10 +459,8 @@ describe("blob correctness", () => {
     expect(served.headers.get("content-type")).toBe(fixed);
     expect(hashOf(new Uint8Array(served.data))).toBe(hash);
     // One blob, one row per store holding it.
-    const locations = (await client.listBlobLocations(hash)).data.data;
-    expect(new Set(locations.map((row) => row.store_id)).size).toBe(
-      locations.length,
-    );
+    const copies = (await client.listBlobCopies(hash)).data.data;
+    expect(new Set(copies.map((row) => row.store_id)).size).toBe(copies.length);
   });
 
   it("serves a range open at the end or running past it, and refuses one that starts past the end or ends before it starts", async () => {
@@ -588,7 +586,7 @@ describe("blob correctness", () => {
     expect((await call("GET", `/blobs/${hash}?${own}`)).status).toBe(200);
     expect((await call("HEAD", `/blobs/${hash}?${own}`)).status).toBe(200);
     expect((await call("GET", `/blobs/${hash}/url?${own}`)).status).toBe(200);
-    expect((await call("GET", `/blobs/${hash}/locations?${own}`)).status).toBe(
+    expect((await call("GET", `/blobs/${hash}/copies?${own}`)).status).toBe(
       200,
     );
 
@@ -597,7 +595,7 @@ describe("blob correctness", () => {
       ["GET", `/blobs/${hash}?${stray}`],
       ["HEAD", `/blobs/${hash}?${stray}`],
       ["GET", `/blobs/${hash}/url?ttl=60&${stray}`],
-      ["GET", `/blobs/${hash}/locations?${stray}`],
+      ["GET", `/blobs/${hash}/copies?${stray}`],
     ] as const) {
       const refused = await call(method, path);
       expect(refused.status, `${method} ${path}`).toBe(400);

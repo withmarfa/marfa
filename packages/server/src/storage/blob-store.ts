@@ -24,10 +24,10 @@ import type { BlobStoreKind } from "./interface.js";
 
 /**
  * A place bytes live. Four verbs on a content hash, so a new kind of store
- * is four functions; plus the identity the location log keys on, and a
+ * is four functions; plus the identity the copy record keys on, and a
  * link where the store can mint one itself.
  *
- * A store never lists what it holds. The location log says which stores
+ * A store never lists what it holds. The copy record says which stores
  * hold which blob, so a question about a store's contents is a question
  * to the log answered by `has`, and nothing here needs an enumeration that
  * an object store would page and a disk would walk.

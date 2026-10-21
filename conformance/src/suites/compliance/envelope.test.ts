@@ -168,12 +168,12 @@ describe("one envelope for every list and search", () => {
       operator: true,
     },
     {
-      template: "/blobs/{hash}/locations",
-      path: () => `/blobs/${blobHash}/locations`,
+      template: "/blobs/{hash}/copies",
+      path: () => `/blobs/${blobHash}/copies`,
     },
     {
-      template: "/platform-types/drift",
-      path: () => "/platform-types/drift",
+      template: "/platform-types/retired",
+      path: () => "/platform-types/retired",
       operator: true,
     },
     {

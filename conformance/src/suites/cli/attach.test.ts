@@ -97,11 +97,11 @@ describe("attaching a file", () => {
     const again = await c.cli.json<{ hash: string }>(["blobs", "upload", path]);
     expect(again.hash).toBe(attached.blob.hash);
 
-    // The location log names the store the bytes went to.
-    const locations = await c.cli.json<{
+    // The copy record names the store the bytes went to.
+    const copies = await c.cli.json<{
       data: { store_id: string; kind: string }[];
-    }>(["blobs", "locations", attached.blob.hash]);
-    expect(locations.data.map((copy) => copy.kind)).toContain("disk");
+    }>(["blobs", "copies", attached.blob.hash]);
+    expect(copies.data.map((copy) => copy.kind)).toContain("disk");
 
     // A link to the bytes, for a reader that cannot carry the key.
     const link = await c.cli.json<{ url: string; expires_in: number }>([
@@ -115,14 +115,14 @@ describe("attaching a file", () => {
     expect(link.expires_in).toBe(120);
 
     // The last copy cannot be dropped: the door answers its own refusal
-    // with the floor it holds, and the log still names the copy after. A
+    // with the floor it holds, and the copy record still names it after. A
     // server with an object store may have replicated the upload by now, so
     // copies above the floor go first.
     let kept: { store: string; code: number; envelope: Refusal } | undefined;
     for (let tries = 0; tries < 5 && kept === undefined; tries += 1) {
       const now = await c.cli.json<{ data: { store_id: string }[] }>([
         "blobs",
-        "locations",
+        "copies",
         attached.blob.hash,
       ]);
       const store = now.data[0]?.store_id;
@@ -130,7 +130,7 @@ describe("attaching a file", () => {
       const outcome = await c.operator.run([
         "--json",
         "blobs",
-        "delete-location",
+        "delete-copy",
         attached.blob.hash,
         "--store",
         store,
@@ -148,7 +148,7 @@ describe("attaching a file", () => {
     expect(kept!.envelope.error.server?.code).toBe("copies_below_minimum");
     const still = await c.cli.json<{ data: { store_id: string }[] }>([
       "blobs",
-      "locations",
+      "copies",
       attached.blob.hash,
     ]);
     expect(still.data.map((copy) => copy.store_id)).toContain(kept!.store);

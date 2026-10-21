@@ -45,15 +45,15 @@ So each operation, parameter, field and response says what it needs to on its ow
 
   When none fits, use the plain verb for the act, such as Restore, Upload or Search. These verbs stay on purpose, because a generic one would lose what happens:
 
-  | Verb   | Meaning                                                             |
-  | ------ | ------------------------------------------------------------------- |
-  | Revoke | Ends access that was given: a folder, a key or an app grant.        |
-  | Trash  | Moves an item to the trash, where you can restore it.               |
-  | Purge  | Deletes permanently what is in the trash.                           |
-  | Retire | Stops a webhook endpoint accepting deliveries, and keeps it listed. |
-  | End    | Ends a sign-in at once.                                             |
-  | Rename | Changes only a name.                                                |
-  | Take   | Takes or renews a connector's hold. Release gives the hold back.    |
+  | Verb   | Meaning                                                              |
+  | ------ | -------------------------------------------------------------------- |
+  | Revoke | Ends access that was given: a folder, a key or an app grant.         |
+  | Trash  | Moves an item to the trash, where you can restore it.                |
+  | Purge  | Deletes permanently what is in the trash.                            |
+  | Retire | Stops an inbound endpoint accepting deliveries, and keeps it listed. |
+  | End    | Ends a sign-in at once.                                              |
+  | Rename | Changes only a name.                                                 |
+  | Take   | Takes or renews a connector's hold. Release gives the hold back.     |
 
 ### Description
 

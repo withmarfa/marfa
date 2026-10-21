@@ -544,9 +544,9 @@ const redeliverRoute = createRoute({
   method: "post",
   path: "/{id}/deliveries/{delivery_id}/redeliver",
   tags: ["Webhooks"],
-  summary: "Redeliver a failed delivery",
+  summary: "Redeliver a webhook delivery",
   description:
-    "Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
+    "Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {

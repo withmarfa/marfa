@@ -220,7 +220,7 @@ const READING = [
 
 /** Doors requiring management grants or direct authority. */
 const MANAGEMENT_OR_DIRECT = [
-  "GET /platform-types/drift",
+  "GET /platform-types/retired",
   "DELETE /platform-types/:id",
   "POST /restore",
 ];
@@ -251,7 +251,7 @@ function schemaDoors(): string[] {
  * a new writer fails until it is named.
  */
 const REGISTRY_WRITE =
-  /\b(?:types\.(?:create|update|delete|deletePlatformType)|edgeTypes\.(?:create|delete)|(?:un)?registerTypeSchema|(?:un)?registerEdgeTypeSchema)\(/;
+  /\b(?:types\.(?:create|update|delete|deleteRetiredPlatformType)|edgeTypes\.(?:create|delete)|(?:un)?registerTypeSchema|(?:un)?registerEdgeTypeSchema)\(/;
 
 const REGISTRY_WRITERS: Record<string, string> = {
   "routes/types.ts": "POST, PUT and DELETE /types, held to the type map",

@@ -74,7 +74,7 @@ it("connectors.manage grants administration to keys and apps without connector i
   });
   expect(registered.status).toBe(201);
   let id = registered.data.id;
-  expect((await working.heartbeatConnector(id)).status).toBe(200);
+  expect((await working.sendConnectorHeartbeat(id)).status).toBe(200);
   for (const manager of await callers("connectors.manage")) {
     expect((await manager.getConnector(id)).status).toBe(200);
     expect((await manager.listConnectorRuns(id)).status).toBe(200);
@@ -84,13 +84,13 @@ it("connectors.manage grants administration to keys and apps without connector i
       (await manager.retireInboundEndpoint(id, endpoint.data.id)).status,
     ).toBe(200);
     expect((await manager.deleteConnectorState(id)).status).toBe(200);
-    expect((await manager.heartbeatConnector(id)).status).toBe(403);
+    expect((await manager.sendConnectorHeartbeat(id)).status).toBe(403);
     expect(
       (await manager.rawRequest(`/connectors/${id}/deliveries`)).status,
     ).toBe(403);
-    expect((await manager.holdConnector(id, crypto.randomUUID())).status).toBe(
-      403,
-    );
+    expect(
+      (await manager.takeConnectorHold(id, crypto.randomUUID())).status,
+    ).toBe(403);
     expect((await manager.deleteConnector(id)).status).toBe(200);
     const renewed = await working.registerConnector({
       name: "management witness",
@@ -117,11 +117,11 @@ it("blobs.manage grants unreferenced bytes to keys and apps while preserving cop
       ).status,
     ).toBe(201);
     expect((await manager.downloadBlob(uploaded.data.hash)).status).toBe(200);
-    const locations = await manager.listBlobLocations(uploaded.data.hash);
-    expect(locations.status).toBe(200);
-    const dropped = await manager.deleteBlobLocation(
+    const copies = await manager.listBlobCopies(uploaded.data.hash);
+    expect(copies.status).toBe(200);
+    const dropped = await manager.deleteBlobCopy(
       uploaded.data.hash,
-      locations.data.data[0]!.store_id,
+      copies.data.data[0]!.store_id,
     );
     expect(dropped.status).toBe(409);
     expect(dropped.error?.error.code).toBe("copies_below_minimum");

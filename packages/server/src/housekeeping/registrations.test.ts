@@ -241,7 +241,7 @@ describe("the copy rules' wakes", () => {
       size_bytes: content.length,
     });
     await ctx.storage.blobs.register(hash, "text/plain", content.length);
-    await ctx.storage.blobs.recordLocation(hash, disk.id);
+    await ctx.storage.blobs.recordCopy(hash, disk.id);
     return hash;
   }
 

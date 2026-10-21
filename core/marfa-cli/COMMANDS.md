@@ -1319,20 +1319,20 @@ marfa types delete [OPTIONS] <ID>
 | --- | --- |
 | `--force` | Remove it even where items of the type exist. |
 
-### marfa types drift
+### marfa types retired
 
-Shipped types this instance carries that the build no longer does. Requires `instance.read`.
+The retired platform types: shipped types this instance carries that the build no longer does. Requires `instance.read`.
 
 ```text
-marfa types drift [OPTIONS]
+marfa types retired [OPTIONS]
 ```
 
-### marfa types prune
+### marfa types delete-retired
 
-Remove one shipped type the build no longer carries. Requires `instance.maintain`.
+Delete one retired platform type. Requires `instance.maintain`.
 
 ```text
-marfa types prune [OPTIONS] <ID>
+marfa types delete-retired [OPTIONS] <ID>
 ```
 
 | Argument | Description |
@@ -1567,24 +1567,24 @@ Every store the instance has attached, and the copies a blob keeps at the least.
 marfa blobs stores [OPTIONS]
 ```
 
-### marfa blobs locations
+### marfa blobs copies
 
-The stores recorded as holding one blob's bytes, and when each copy was last found intact.
+The copies of one blob: the stores recorded as holding its bytes, and when each copy was last found intact.
 
 ```text
-marfa blobs locations [OPTIONS] <HASH>
+marfa blobs copies [OPTIONS] <HASH>
 ```
 
 | Argument | Description |
 | --- | --- |
 | `<HASH>` | The blob hash, `sha256:<hex>`. |
 
-### marfa blobs delete-location
+### marfa blobs delete-copy
 
-Remove one store's copy of a blob, where enough live copies remain. Requires `blobs.manage`.
+Delete one store's copy of a blob, where enough live copies remain. Requires `blobs.manage`.
 
 ```text
-marfa blobs delete-location [OPTIONS] --store <STORE> <HASH>
+marfa blobs delete-copy [OPTIONS] --store <STORE> <HASH>
 ```
 
 | Argument | Description |

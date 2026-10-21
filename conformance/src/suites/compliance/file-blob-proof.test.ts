@@ -85,12 +85,12 @@ async function readingDoors(
   const bytes = await reader.downloadBlob(hash);
   const head = await reader.headBlob(hash);
   const link = await reader.getBlobUrl(hash);
-  const locations = await reader.listBlobLocations(hash);
+  const copies = await reader.listBlobCopies(hash);
   return {
     bytes: [bytes.status, bytes.error?.error.code],
     head: [head.status, undefined],
     link: [link.status, link.error?.error.code],
-    locations: [locations.status, locations.error?.error.code],
+    copies: [copies.status, copies.error?.error.code],
   };
 }
 
@@ -98,14 +98,14 @@ const UNKNOWN = {
   bytes: [404, "blob_not_found"],
   head: [404, undefined],
   link: [404, "blob_not_found"],
-  locations: [404, "blob_not_found"],
+  copies: [404, "blob_not_found"],
 };
 
 const SERVED = {
   bytes: [200, undefined],
   head: [200, undefined],
   link: [200, undefined],
-  locations: [200, undefined],
+  copies: [200, undefined],
 };
 
 /** Every row the source holds, in any state, tracked for cleanup. */

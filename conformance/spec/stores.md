@@ -14,7 +14,7 @@ When a caller authorized by `instance.read` or direct owner or local authority s
 
 The server MUST list the disk store on every instance, whatever its settings.
 
-**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
+**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one copy as the disk store, unverified`, `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
 
 ### `stores/list-kind`
 
@@ -52,7 +52,7 @@ When a key or app token lacking `instance.read` sends `GET /blobs/stores`, the s
 
 ### `stores/folder-keeps-store`
 
-When the server starts over a disk folder that holds the marker of a store, the server MUST list that store as still attached, with the copies the location log names for it.
+When the server starts over a disk folder that holds the marker of a store, the server MUST list that store as still attached, with the copies the copy record names for it.
 
 **Reason:** a store's identity is read from a marker the store holds, not from the configuration that named it.
 
@@ -66,7 +66,7 @@ When the server starts over a disk folder that holds no marker, and `stores/miss
 
 ### `stores/missing-folder-refused`
 
-Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the location log records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
+Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
 
 **Reason:** a folder or marker missing where the log records copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
 
@@ -88,7 +88,7 @@ When the configuration no longer names a store, the server MUST go on listing it
 
 ### `stores/detached-row`
 
-While a copy sits in a store the configuration no longer names, the server MUST answer its location row with `detached` true.
+While a copy sits in a store the configuration no longer names, the server MUST answer its copy row with `detached` true.
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
@@ -118,43 +118,43 @@ When a caller authorized by `instance.read` or direct owner or local authority s
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
-## The location log
+## The copy record
 
-The location log records which stores hold which blob.
+The copy record says which stores hold which blob.
 
 ### `stores/locations-listed`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/locations`, the server MUST answer `200` with a row for each copy the log holds, each naming its `store_id`, `kind` and `policy`, and carrying `detached`, `recorded_at` and `verified_at`.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the log holds, each naming its `store_id`, `kind` and `policy`, and carrying `detached`, `recorded_at` and `verified_at`.
 
 **Reason:** which credentials may read a blob is `blobs/read-no-type`, `blobs/read-unreadable` and the rules about lending.
 
-**Tests:** `compliance/blob-stores.test.ts › records a new blob's location as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`.
+**Tests:** `compliance/blob-stores.test.ts › records a new blob's copy as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one copy as the disk store, unverified`, `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`.
 
 ### `stores/locations-oldest-first`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/locations`, the server MUST answer its rows with the oldest `recorded_at` first.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer its rows with the oldest `recorded_at` first.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates an upload on its own, each copy with its own recorded time`.
 
 ### `stores/upload-locates-disk`
 
-When a credential that may upload sends `POST /blobs` and the server answers `201`, the server MUST list the disk store among the blob's locations, whether or not the server already held the bytes.
+When a credential that may upload sends `POST /blobs` and the server answers `201`, the server MUST list the disk store among the blob's copies, whether or not the server already held the bytes.
 
-**Tests:** `compliance/blob-stores.test.ts › records a new blob's location as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`, `› keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
+**Tests:** `compliance/blob-stores.test.ts › records a new blob's copy as the disk store`, `compliance/blob-store-folders.test.ts › records a new blob's one copy as the disk store, unverified`, `› keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/upload-one-location`
 
-Where only the disk store is attached, when a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record that one location and no other.
+Where only the disk store is attached, when a credential that may upload sends `POST /blobs` with bytes the server does not yet hold, the server MUST record that one copy and no other.
 
-**Reason:** with an object store attached, an upload wakes replication, so a second location soon follows.
+**Reason:** with an object store attached, an upload wakes replication, so a second copy soon follows.
 
-**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`.
+**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one copy as the disk store, unverified`.
 
 ### `stores/location-unverified`
 
 When the server records a copy that no check has yet found, the server MUST answer its `verified_at` as null.
 
-**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one location as the disk store, unverified`.
+**Tests:** `compliance/blob-store-folders.test.ts › records a new blob's one copy as the disk store, unverified`.
 
 ### `stores/location-recorded-at`
 
@@ -170,17 +170,17 @@ When a credential that may upload sends `POST /blobs` with bytes whose copy the 
 
 ### `stores/no-location`
 
-While the log holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/locations` for it with `200` and no rows.
+While the log holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/copies` for it with `200` and no rows.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`.
 
 ### `stores/no-bytes-not-found`
 
-While the location log records no copy of a registered blob in an attached store, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `404 blob_not_found`.
+While the copy record records no copy of a registered blob in an attached store, the server MUST answer `GET /blobs/{hash}` and `HEAD /blobs/{hash}` for it, with no `Range` or with one the blob's size satisfies, with `404 blob_not_found`.
 
 **Reason:** the bytes of a copy struck or dropped can stay in their store until a later run deletes them, and they are not the blob's.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `› answers HEAD as GET does for a blob that lost its last copy`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`, `› answers HEAD as GET does for a blob that lost its last copy`.
 
 ## Links
 
@@ -206,7 +206,7 @@ The `blob-replicate` housekeeping job gives every attached store every blob, bec
 
 ### `stores/replicate-every-store`
 
-When `blob-replicate` has run to `remaining: 0`, the server MUST list a location for every attached store in the locations of each blob.
+When `blob-replicate` has run to `remaining: 0`, the server MUST list a copy in every attached store among the copies of each blob.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`, `› drops a copy while the minimum holds and refuses the drop that would break it`.
 
@@ -218,7 +218,7 @@ When a run of `blob-replicate` finds a blob that an attached store lacks and ano
 
 ### `stores/replicate-verifies`
 
-When a run of `blob-replicate` copies bytes that do not hash to the blob's name, the server MUST NOT record a location for the receiving store.
+When a run of `blob-replicate` copies bytes that do not hash to the blob's name, the server MUST NOT record a copy in the receiving store.
 
 **Reason:** the receiving store hashes the bytes it is sent before it names them, so a corrupt copy in one store does not spread to another.
 
@@ -262,7 +262,7 @@ When a credential that may upload sends `POST /blobs` and the server answers `20
 
 ### `stores/replicate-undoes-drop`
 
-When a copy has been dropped through `DELETE /blobs/{hash}/locations/{store}`, the server MUST copy the blob back to that store on the next run of `blob-replicate`.
+When a copy has been dropped through `DELETE /blobs/{hash}/copies/{store}`, the server MUST copy the blob back to that store on the next run of `blob-replicate`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› removes a dropped copy's bytes from its store`.
 
@@ -286,7 +286,7 @@ If an attached store leaves a write of a blob's bytes from a run of `blob-replic
 
 While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, the server MUST count the blob's copy in `remaining` on each run of `blob-replicate` without asking any store to write or delete the blob.
 
-**Reason:** the store can still carry out the write or the deletion after the server stops waiting. A copy made meanwhile could be removed by the late deletion with the location log still naming it, and a run that waited on the store would hang as the first did.
+**Reason:** the store can still carry out the write or the deletion after the server stops waiting. A copy made meanwhile could be removed by the late deletion with the copy record still naming it, and a run that waited on the store would hang as the first did.
 
 **Tests:** `compliance/blob-store-silent.test.ts › leaves the deletion queued, skips the blob in later runs without waiting, refuses an upload and a restore of its bytes, and keeps the copy made once the delete ends`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`.
 
@@ -308,13 +308,13 @@ While an attached store has not finished a write or a deletion of a blob's bytes
 
 ### `stores/drop-allowed`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`.
 
 ### `stores/drop-removes-row`
 
-When the server answers a drop with `200`, the server MUST remove the copy's row from the location log.
+When the server answers a drop with `200`, the server MUST remove the copy's row from the copy record.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`.
 
@@ -326,7 +326,7 @@ When the server answers a drop with `200`, the server MUST remove the copy's byt
 
 ### `stores/drop-below-minimum`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` and fewer than `min_copies` live copies would remain, then the server MUST answer `409 copies_below_minimum`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` and fewer than `min_copies` live copies would remain, then the server MUST answer `409 copies_below_minimum`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
@@ -344,27 +344,27 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 ### `stores/drop-confirms-copies`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the location log can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the log could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+**Reason:** the copy record can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the log could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the log allows when the other copy is gone from its store, and keeps the copy`.
 
 ### `stores/drop-no-copy`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_location_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming an attached store that holds no copy of the blob, then the server MUST answer `404 blob_copy_not_found`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/drop-not-attached`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming a store that is not attached, an unknown id and a detached store among them, then the server MUST answer `404 blob_location_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming a store that is not attached, an unknown id and a detached store among them, then the server MUST answer `404 blob_copy_not_found`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
 ### `stores/drop-operator-only`
 
-If a key or app token lacking `blobs.manage` sends `DELETE /blobs/{hash}/locations/{store}`, then the server MUST answer `403 forbidden`.
+If a key or app token lacking `blobs.manage` sends `DELETE /blobs/{hash}/copies/{store}`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
@@ -376,23 +376,23 @@ When the server refuses a drop to a key or app token lacking `blobs.manage`, the
 
 ### `stores/drop-bare-hash`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` naming the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST answer as it does for the same hash with the prefix.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming the blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:`, the server MUST answer as it does for the same hash with the prefix.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`.
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/locations/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_location_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
-**Reason:** the location log is read before any store is asked, so a drop that the log alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the log's answers because it can still change what the log says, so a store that is not attached is also answered `503` while one is out.
+**Reason:** the copy record is read before any store is asked, so a drop that the log alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the log's answers because it can still change what the log says, so a store that is not attached is also answered `503` while one is out.
 
-**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-location doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
+**Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
 ### `stores/drop-unfinished`
 
-While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/locations/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
+While an attached store has not finished a write or a deletion of a blob's bytes that the server stopped waiting for, if a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}` for that blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
 
-**Reason:** the late write or deletion can still change which copies the blob has, so neither the location log nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the store answers.
+**Reason:** the late write or deletion can still change which copies the blob has, so neither the copy record nor the stores can yet say whether enough copies would remain. Waiting would hang the request on a store that may never answer. The drop can be sent again once the store answers.
 
 **Tests:** `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
@@ -410,7 +410,7 @@ The `blob-integrity` housekeeping job checks the copies the log claims.
 
 When a caller authorized by `instance.maintain` or direct owner or local authority runs `blob-integrity`, the server MUST answer the run's `result` as `verified`, the copies it found intact, `struck`, the copies it struck, `bytes`, the total size of the blobs whose copies it checked, counted once per copy whether it read the copy, asked the object store about it or found it missing, and `unreachable`, the attached stores it could not reach.
 
-**Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`.
+**Tests:** `compliance/blob-store-folders.test.ts › stamps each intact copy with the time of the check, and moves the stamp on the next check`, `› strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`.
 
 ### `stores/integrity-stamps`
 
@@ -422,7 +422,7 @@ When a run of `blob-integrity` finds a copy present and intact, the server MUST 
 
 When a run of `blob-integrity` checks a disk copy whose bytes are as long as the blob but do not hash to the blob's name, the server MUST strike the copy.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`, `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`.
 
 ### `stores/integrity-asks-object-store`
 
@@ -434,15 +434,15 @@ When a run of `blob-integrity` checks an object-store copy whose object is missi
 
 ### `stores/integrity-strikes`
 
-When a run of `blob-integrity` finds a copy altered, or missing from a store it can reach, the server MUST remove the copy from the location log.
+When a run of `blob-integrity` finds a copy altered, or missing from a store it can reach, the server MUST remove the copy from the copy record.
 
 **Reason:** a store that cannot be reached is not evidence that its copies are missing (`stores/integrity-unreachable-keeps`).
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `› still strikes a copy missing from a folder that is there`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`, `› still strikes a copy missing from a folder that is there`.
 
 ### `stores/integrity-unreachable-keeps`
 
-When a run of `blob-integrity` cannot reach a store, such as a disk store whose folder or `.marfa-store` marker is missing, the server MUST leave every copy the location log names in that store as it was.
+When a run of `blob-integrity` cannot reach a store, such as a disk store whose folder or `.marfa-store` marker is missing, the server MUST leave every copy the copy record names in that store as it was.
 
 **Reason:** a store that cannot be reached is not evidence that its copies are missing. A folder that went away, a drive that did not mount and a mount point left empty each answer that every name is absent. Striking those copies would leave the blobs unreadable through the server after the store returns, with nothing to bring them back.
 
@@ -704,7 +704,7 @@ While `POST /restore` of an archive that carries a blob the orphan report names 
 
 When a run of `blob-integrity` strikes a copy, the server MUST write an audit entry with `action` `blob.copy_struck`, `resource_id` the blob's hash and `details` naming the `store_id` and the store's `kind`.
 
-**Tests:** `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`, `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location`, `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
+**Tests:** `compliance/blob-rules.test.ts › stamps a good copy and strikes a corrupt one, which replication then restores`, `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`, `compliance/blob-store-bounds.test.ts › strikes an object-store copy that is missing or not as long as the blob`.
 
 ### `stores/audit-replicate`
 
@@ -812,7 +812,7 @@ When a digest sits in the filter, the tags or another input of a queued or in-pr
 
 If a store cannot delete the bytes of a copy the server dropped, struck or purged, then the server MUST retry the deletion on a later run once the store can.
 
-**Reason:** the copy left the location log when it was dropped, struck or purged, so only the retry removes bytes that nothing names.
+**Reason:** the copy left the copy record when it was dropped, struck or purged, so only the retry removes bytes that nothing names.
 
 **Tests:** `compliance/blob-cleanup-faults.test.ts › are deleted on a later run once the store can, when it could not delete them at the drop`.
 

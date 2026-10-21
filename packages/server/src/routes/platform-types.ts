@@ -36,13 +36,13 @@ import { standingPermission, authorityId } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import {
-  forgetPlatformDrift,
-  platformDrift,
-} from "../storage/platform-drift.js";
+  forgetRetiredPlatformType,
+  retiredPlatformTypes,
+} from "../storage/retired-platform-types.js";
 
-const DriftedTypeSchema = z
+const RetiredTypeSchema = z
   .object({
-    id: z.string().describe("The identifier of the stale type."),
+    id: z.string().describe("The identifier of the retired type."),
     item_count: z
       .number()
       .describe("How many items carry this type, counted when you ask."),
@@ -56,31 +56,31 @@ const DriftedTypeSchema = z
       ),
   })
   .describe("A platform type that this build no longer ships.")
-  .openapi("DriftedPlatformType");
+  .openapi("RetiredPlatformType");
 
-const listDriftRoute = createRoute({
-  operationId: "listPlatformTypeDrift",
+const listRetiredRoute = createRoute({
+  operationId: "listRetiredPlatformTypes",
   method: "get",
-  path: "/drift",
+  path: "/retired",
   tags: ["Health and maintenance"],
-  summary: "List stale platform types",
+  summary: "List retired platform types",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.read"),
   description:
-    "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.",
+    "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires `instance.read`.",
   responses: {
     200: {
       content: {
         "application/json": {
           schema: wholeListOf(
-            DriftedTypeSchema,
-            "DriftedPlatformTypePage",
-            "stale type",
+            RetiredTypeSchema,
+            "RetiredPlatformTypePage",
+            "retired type",
           ),
         },
       },
       description:
-        "Returns the stale types. A type you delete drops out of the list at once.",
+        "Returns the retired types. A type you delete drops out of the list at once.",
     },
     401: {
       content: {
@@ -101,19 +101,19 @@ const listDriftRoute = createRoute({
   },
 });
 
-const deletePlatformTypeRoute = createRoute({
-  operationId: "deletePlatformType",
+const deleteRetiredRoute = createRoute({
+  operationId: "deleteRetiredPlatformType",
   method: "delete",
   path: "/{id}",
   tags: ["Health and maintenance"],
-  summary: "Delete a stale platform type",
+  summary: "Delete a retired platform type",
   security: [{ bearerAuth: [] }],
   middleware: standingPermission("instance.maintain"),
   description:
-    "Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.",
+    "Deletes one retired platform type: a type this build no longer ships. The type stops resolving at once. Requires `instance.maintain`.",
   request: {
     params: z.object({
-      id: z.string().describe("The identifier of the stale type to delete."),
+      id: z.string().describe("The identifier of the retired type to delete."),
     }),
   },
   responses: {
@@ -190,8 +190,8 @@ async function declaredChildrenOf(
 export function platformTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listDriftRoute, async (c) => {
-    const ids = platformDrift();
+  router.openapi(listRetiredRoute, async (c) => {
+    const ids = retiredPlatformTypes();
     const types = await Promise.all(
       ids.map(async (id) => {
         const itemCount = await storage.items.countByType(id);
@@ -210,13 +210,13 @@ export function platformTypeRoutes(storage: Storage) {
     return c.json({ data: types, next_cursor: null }, 200);
   });
 
-  router.openapi(deletePlatformTypeRoute, async (c) => {
+  router.openapi(deleteRetiredRoute, async (c) => {
     const { id } = c.req.valid("param");
 
     // Asked of this boot's derived set rather than of the row, and the
     // difference is the guard: a row exists for every shipped type too, so
     // testing existence alone would make this able to remove a live one.
-    if (!platformDrift().includes(id)) {
+    if (!retiredPlatformTypes().includes(id)) {
       // **Two refusals, told apart by whether there is a row at all.** An
       // identifier nothing carries is absent, which is `404`, and one a
       // row does carry is present and not removable here, which is a
@@ -244,7 +244,7 @@ export function platformTypeRoutes(storage: Storage) {
       async () => {
         // Recomputed, never the listing's copy. This is the one part of the
         // report that changes without a restart, and a removal reasoning from
-        // a stale count is the failure this route exists to avoid.
+        // an out-of-date count is the failure this route exists to avoid.
         const itemCount = await storage.items.countByType(id);
         if (itemCount > 0) {
           throw new MarfaError(
@@ -274,7 +274,7 @@ export function platformTypeRoutes(storage: Storage) {
             { type: id, dependent_type_ids: dependents },
           );
         }
-        const removed = await storage.types.deletePlatformType(id);
+        const removed = await storage.types.deleteRetiredPlatformType(id);
         if (!removed) {
           throw new MarfaError(
             ErrorCode.NOT_FOUND,
@@ -294,7 +294,7 @@ export function platformTypeRoutes(storage: Storage) {
     );
 
     // After the commit, so a removal that rolled back stays listed.
-    forgetPlatformDrift(id);
+    forgetRetiredPlatformType(id);
 
     return c.json({ removed: true as const, id }, 200);
   });

@@ -2,7 +2,7 @@
 
 Content-addressed binary storage beside the items that reference it. A blob is bytes stored under the digest of their content, and an item references one by naming that digest. Where the bytes live, and the rules that keep them, are `stores.md`'s.
 
-A blob is read through `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, and is uploaded through `POST /blobs`.
+A blob is read through `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`, and is uploaded through `POST /blobs`.
 
 ## Download lifetime
 
@@ -310,7 +310,7 @@ A hash is `sha256:` and the 64 lowercase hexadecimal characters of a digest. The
 
 ### `blobs/hash-bare`
 
-When a credential names a blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST answer as it does for the same hash with the prefix.
+When a credential names a blob by the 64 lowercase hexadecimal characters of its hash with no `sha256:` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST answer as it does for the same hash with the prefix.
 
 **Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`.
 
@@ -322,9 +322,9 @@ When a request to the instance's link names the blob by the 64 lowercase hexadec
 
 ### `blobs/hash-malformed`
 
-If a credential names a blob on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` by anything but a hash with its `sha256:` or its bare 64 lowercase hexadecimal characters, a hash in capitals, another prefix and a hash of 63 or 65 characters among them, then the server MUST answer `400 validation_error`.
+If a credential names a blob on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` by anything but a hash with its `sha256:` or its bare 64 lowercase hexadecimal characters, a hash in capitals, another prefix and a hash of 63 or 65 characters among them, then the server MUST answer `400 validation_error`.
 
-**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`, `› refuses a malformed hash and an empty upload`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`.
+**Tests:** `correctness/blob-correctness.test.ts › takes a bare 64-character hash on every hash operation and refuses any other malformed one`, `› refuses a malformed hash and an empty upload`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/blob-stores.test.ts › answers 404 for the copies of an unknown hash and 400 for a malformed one`.
 
 ### `blobs/hash-malformed-link`
 
@@ -334,21 +334,21 @@ If a request to the instance's link names a blob by a malformed hash, then the s
 
 ### `blobs/hash-unknown`
 
-If a caller authorized by `blobs.manage` or direct owner or local authority, or a working key or an access token lacking `blobs.manage` whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `404 blob_not_found`.
+If a caller authorized by `blobs.manage` or direct owner or local authority, or a working key or an access token lacking `blobs.manage` whose type map reaches a type, names a well-formed hash that no blob holds on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, then the server MUST answer `404 blob_not_found`.
 
-**Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the locations of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the management key the blob doors although it holds no type map`.
+**Tests:** `correctness/blob-correctness.test.ts › download with an unknown hash returns 404`, `› answers 404 for a link to an unknown hash and 400 for a malformed one`, `compliance/error-codes.test.ts › returns 404 for non-existent blob`, `compliance/blob-stores.test.ts › answers 404 for the copies of an unknown hash and 400 for a malformed one`, `compliance/blob-reach.test.ts › serves the management key the blob doors although it holds no type map`.
 
 ## Query keys
 
 ### `blobs/query-key-refused`
 
-If a request to `POST /blobs`, `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/locations` or the instance's link carries a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error`.
+If a request to `POST /blobs`, `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/copies` or the instance's link carries a query key the operation does not declare and that does not start with an underscore, then the server MUST answer `400 validation_error`.
 
 **Tests:** `correctness/blob-correctness.test.ts › refuses a query key a blob operation does not declare and ignores one that starts with an underscore`, `compliance/blob-served.test.ts › serves an instance link under a bare hash and refuses a malformed hash or a stray key on it`, `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`.
 
 ### `blobs/query-key-named`
 
-When the server refuses a query key on `POST /blobs`, `GET /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/locations` or the instance's link, the server MUST name each such key in `details.unknown_parameters`.
+When the server refuses a query key on `POST /blobs`, `GET /blobs/{hash}`, `GET /blobs/{hash}/url`, `GET /blobs/{hash}/copies` or the instance's link, the server MUST name each such key in `details.unknown_parameters`.
 
 **Reason:** a `HEAD` answer has no body to carry the names.
 
@@ -490,7 +490,7 @@ A reference is a digest anywhere in a string, as `stores/reference-digest-anywhe
 
 ### `blobs/read-no-type`
 
-If a working key or an app's access token lacking `blobs.manage` whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
+If a working key or an app's access token lacking `blobs.manage` whose type map reaches no type sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, then the server MUST answer `403 type_not_permitted`, whether the hash names a held blob or an unknown one, or is malformed.
 
 **Reason:** a credential that reaches no type is not one with nothing to see (`keys-and-oauth/permissions-no-content`), and the refusal comes before the hash is looked at. A `HEAD` answer has no body, so only its status shows.
 
@@ -498,7 +498,7 @@ If a working key or an app's access token lacking `blobs.manage` whose type map 
 
 ### `blobs/read-operator-key`
 
-When a caller authorized by `blobs.manage` or direct owner or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
+When a caller authorized by `blobs.manage` or direct owner or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
 
 **Tests:** `compliance/blob-reach.test.ts › serves the management key every blob and takes its uploads`, `› serves the management key the blob doors although it holds no type map`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
@@ -512,7 +512,7 @@ If a working key or an app's access token lacking `blobs.manage` whose type map 
 
 ### `blobs/read-unreferenced`
 
-While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token lacking `blobs.manage` that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`, the credential that uploaded it included.
+While no row references a blob, the server MUST answer `404 blob_not_found` to every working key and app's access token lacking `blobs.manage` that reads it on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`, the credential that uploaded it included.
 
 **Reason:** an upload's answer carries the hash, the type and the size, and the uploader holds the bytes already, so the blob is read only once a row that lends names it.
 
@@ -528,13 +528,13 @@ If a working key or an access token lacking `blobs.manage` reads a blob that onl
 
 ### `blobs/lend-item`
 
-While an item of a type a working key or an access token may read references a blob through a reference that lends, in any lifecycle state, the server MUST serve the blob to that credential on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While an item of a type a working key or an access token may read references a blob through a reference that lends, in any lifecycle state, the server MUST serve the blob to that credential on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`.
 
 **Tests:** `compliance/blob-reach.test.ts › serves a blob to a key that may read an item referencing it, in any lifecycle state`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
 
 ### `blobs/lend-earlier-version`
 
-While only an earlier version of an item references a blob, the server MUST answer a working key or an app's access token lacking `blobs.manage` `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While only an earlier version of an item references a blob, the server MUST answer a working key or an app's access token lacking `blobs.manage` `404 blob_not_found` on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`.
 
 **Reason:** the `blob-orphans` housekeeping job keeps such a blob (`stores/orphan-keeps-versions`), so only the read is withheld.
 
@@ -548,7 +548,7 @@ When a row stops naming a digest, because an item, an edge or an extension names
 
 ### `blobs/lend-edge`
 
-While a working key or an app's access token may read an edge's type by its edge map and may read the type of the edge's source item, in any lifecycle state, the server MUST serve it each blob the edge's properties reference through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While a working key or an app's access token may read an edge's type by its edge map and may read the type of the edge's source item, in any lifecycle state, the server MUST serve it each blob the edge's properties reference through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`.
 
 **Reason:** otherwise no working credential can read a blob named only in an edge's properties, and a working key's export archive would leave its bytes out. The target's type is not asked.
 
@@ -568,7 +568,7 @@ While the source item of an edge is in the bin, the server MUST go on serving a 
 
 ### `blobs/lend-extension`
 
-While a working key may read an extension namespace by its extension map and may read the type of the item it sits on, in any lifecycle state, the server MUST serve it each blob the namespace references through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/locations`.
+While a working key may read an extension namespace by its extension map and may read the type of the item it sits on, in any lifecycle state, the server MUST serve it each blob the namespace references through a reference that lends, on `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` and `GET /blobs/{hash}/copies`.
 
 **Reason:** otherwise no working credential can read a blob named only in an extension, and a working key's export archive would leave its bytes out.
 
@@ -722,7 +722,7 @@ When the enrichment sweep writes onto a file item, the server MUST NOT make a di
 
 ### `blobs/read-order`
 
-If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/locations` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token lacking `blobs.manage` whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
+If a request to `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies` meets more than one refusal, then the server MUST answer the first in this order: no credential, or one it does not hold, `401 unauthorized`; a working key or an app's access token lacking `blobs.manage` whose type map reaches no type, `403 type_not_permitted`; a query key the operation does not declare, `400 validation_error`; on `GET /blobs/{hash}/url`, a `ttl` that is not a whole number of at least 1, `400 validation_error`; a malformed hash, `400 validation_error`; a blob the credential may not read, or an unknown one, `404 blob_not_found`.
 
 **Reason:** a blob the credential may not read and an unknown one answer alike, so their order cannot be told.
 

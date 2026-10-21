@@ -413,7 +413,7 @@ describe("a field the door does not declare, against the key and the fence", () 
   it("answers a field the door does not declare 400 before the fence's 409", async () => {
     const { client: own, id } = await freshConnector("fence");
     const holder = randomUUID();
-    expect((await own.holdConnector(id, holder)).status).toBe(200);
+    expect((await own.takeConnectorHold(id, holder)).status).toBe(200);
     for (const { label, call, fence } of strays) {
       if (label !== "PUT state" && label !== "POST agreements") continue;
       const other = {
@@ -439,7 +439,7 @@ describe("a field the door does not declare, against the key and the fence", () 
     const { client: own, id } = await freshConnector("fence-bodies");
     const holder = randomUUID();
     const other = "another-process";
-    expect((await own.holdConnector(id, holder)).status).toBe(200);
+    expect((await own.takeConnectorHold(id, holder)).status).toBe(200);
     const row = uuidv7();
     const refused: { label: string; call: Call; fence: Call }[] = [
       {

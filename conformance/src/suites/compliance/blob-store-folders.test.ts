@@ -32,7 +32,7 @@ import {
 } from "../../utils/own-blob-server.js";
 
 /**
- * The location log and the stores behind it, on a server of the fixture's
+ * The copy record and the stores behind it, on a server of the fixture's
  * own that keeps its bytes on one disk and has no object store.
  *
  * **Why a server of its own.** With an object store attached, an upload wakes
@@ -79,8 +79,8 @@ async function upload(name: keyof typeof content): Promise<void> {
   hashes[name] = res.data.hash;
 }
 
-async function locations(hash: string) {
-  const res = await operator.listBlobLocations(hash);
+async function copies(hash: string) {
+  const res = await operator.listBlobCopies(hash);
   expect(res.status, JSON.stringify(res.error)).toBe(200);
   return res.data.data;
 }
@@ -94,12 +94,12 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
-describe("the location log on an instance with one disk store", () => {
-  it("records a new blob's one location as the disk store, unverified", async () => {
+describe("the copy record on an instance with one disk store", () => {
+  it("records a new blob's one copy as the disk store, unverified", async () => {
     await upload("first");
     const stores = (await operator.listBlobStores()).data.data;
     expect(stores.map((store) => store.kind)).toEqual(["disk"]);
-    expect(await locations(hashes.first)).toEqual([
+    expect(await copies(hashes.first)).toEqual([
       expect.objectContaining({
         store_id: stores[0]!.id,
         kind: "disk",
@@ -120,7 +120,7 @@ describe("the location log on an instance with one disk store", () => {
       unreachable: 0,
     });
     const afterFirst = await Promise.all(
-      [hashes.first, hashes.second].map(async (hash) => locations(hash)),
+      [hashes.first, hashes.second].map(async (hash) => copies(hash)),
     );
     for (const [row] of afterFirst) {
       expect(row!.verified_at).not.toBeNull();
@@ -134,19 +134,19 @@ describe("the location log on an instance with one disk store", () => {
     const second = await runJob(operator, "blob-integrity");
     expect(second.result.verified).toBe(2);
     for (const [index, hash] of [hashes.first, hashes.second].entries()) {
-      const [row] = await locations(hash);
+      const [row] = await copies(hash);
       expect(row!.verified_at! > [stamps.first, stamps.second][index]!).toBe(
         true,
       );
       expect(row!.verified_at! >= second.started_at).toBe(true);
       expect(row!.verified_at! <= second.finished_at).toBe(true);
     }
-    stamps.first = (await locations(hashes.first))[0]!.verified_at!;
-    stamps.second = (await locations(hashes.second))[0]!.verified_at!;
+    stamps.first = (await copies(hashes.first))[0]!.verified_at!;
+    stamps.second = (await copies(hashes.second))[0]!.verified_at!;
   });
 
   it("keeps a copy's recorded and verified times when the same bytes are uploaded again", async () => {
-    const [before] = await locations(hashes.first);
+    const [before] = await copies(hashes.first);
     expect(before!.verified_at).toBe(stamps.first);
     await pastInstant(before!.recorded_at);
 
@@ -154,10 +154,10 @@ describe("the location log on an instance with one disk store", () => {
     expect(again.status).toBe(201);
     expect(again.data.hash).toBe(hashes.first);
 
-    expect(await locations(hashes.first)).toEqual([before]);
+    expect(await copies(hashes.first)).toEqual([before]);
   });
 
-  it("strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with no location", async () => {
+  it("strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded", async () => {
     await upload("altered");
     await upload("missing");
     // The witness: every copy is intact, so the strikes below are about
@@ -170,7 +170,7 @@ describe("the location log on an instance with one disk store", () => {
       unreachable: 0,
     });
     for (const hash of [hashes.altered, hashes.missing]) {
-      expect(await locations(hash)).toHaveLength(1);
+      expect(await copies(hash)).toHaveLength(1);
     }
 
     // The same length, so only the digest can tell.
@@ -188,7 +188,7 @@ describe("the location log on an instance with one disk store", () => {
     });
 
     for (const hash of [hashes.altered, hashes.missing]) {
-      expect(await locations(hash)).toEqual([]);
+      expect(await copies(hash)).toEqual([]);
       const audited = await working.listAudit({
         action: "blob.copy_struck",
         resource_id: hash,
@@ -201,7 +201,7 @@ describe("the location log on an instance with one disk store", () => {
       expect(download.status).toBe(404);
       expect(download.error?.error.code).toBe("blob_not_found");
     }
-    expect((await locations(hashes.first))[0]!.verified_at).not.toBeNull();
+    expect((await copies(hashes.first))[0]!.verified_at).not.toBeNull();
   });
 });
 
@@ -227,7 +227,7 @@ describe("a blob that lost its last copy", () => {
     unlinkSync(diskPath(server!, hash));
     const struck = await runJob(operator, "blob-integrity");
     expect(struck.result.struck).toBe(1);
-    expect(await locations(hash)).toEqual([]);
+    expect(await copies(hash)).toEqual([]);
 
     const download = await operator.downloadBlob(hash);
     expect(download.status).toBe(404);
@@ -249,7 +249,7 @@ describe("a store is its folder", () => {
     const before = (await operator.listBlobStores()).data.data;
     expect(before).toHaveLength(1);
     const original = before[0]!;
-    const lastChecked = (await locations(hashes.second))[0]!.verified_at;
+    const lastChecked = (await copies(hashes.second))[0]!.verified_at;
     const folder = blobFolder(server!);
 
     // The folder emptied of every blob but not of its marker: the same
@@ -266,7 +266,7 @@ describe("a store is its folder", () => {
     expect(kept.map((store) => [store.id, store.detached_at])).toEqual([
       [original.id, null],
     ]);
-    expect(await locations(hashes.first)).toEqual([
+    expect(await copies(hashes.first)).toEqual([
       expect.objectContaining({ store_id: original.id, detached: false }),
     ]);
     expect(existsSync(diskPath(server!, hashes.first))).toBe(false);
@@ -288,7 +288,7 @@ describe("a store is its folder", () => {
 
     // A blob uploaded before keeps its row in the store it was recorded in,
     // now detached, and no row in the new one.
-    expect(await locations(hashes.first)).toEqual([
+    expect(await copies(hashes.first)).toEqual([
       expect.objectContaining({ store_id: original.id, detached: true }),
     ]);
 
@@ -298,7 +298,7 @@ describe("a store is its folder", () => {
     expect(replication.result).toMatchObject({ copied: 0, remaining: 0 });
     const integrity = await runJob(operator, "blob-integrity");
     expect(integrity.result).toMatchObject({ verified: 0, struck: 0 });
-    expect((await locations(hashes.second))[0]).toMatchObject({
+    expect((await copies(hashes.second))[0]).toMatchObject({
       store_id: original.id,
       detached: true,
       verified_at: lastChecked,
@@ -308,7 +308,7 @@ describe("a store is its folder", () => {
     // detached copy, which does not count toward the minimum a drop keeps.
     const again = await working.uploadBlob(content.first, "text/plain");
     expect(again.status).toBe(201);
-    const rows = await locations(hashes.first);
+    const rows = await copies(hashes.first);
     expect(rows.map((row) => [row.store_id, row.detached])).toEqual([
       [original.id, true],
       [fresh.id, false],
@@ -316,23 +316,23 @@ describe("a store is its folder", () => {
     const checked = await runJob(operator, "blob-integrity");
     expect(checked.result).toMatchObject({ verified: 1, struck: 0 });
 
-    const detachedDrop = await operator.deleteBlobLocation(
+    const detachedDrop = await operator.deleteBlobCopy(
       hashes.first,
       original.id,
     );
     expect(detachedDrop.status).toBe(404);
-    expect(detachedDrop.error?.error.code).toBe("blob_location_not_found");
-    const notHeld = await operator.deleteBlobLocation(hashes.second, fresh.id);
+    expect(detachedDrop.error?.error.code).toBe("blob_copy_not_found");
+    const notHeld = await operator.deleteBlobCopy(hashes.second, fresh.id);
     expect(notHeld.status).toBe(404);
-    expect(notHeld.error?.error.code).toBe("blob_location_not_found");
-    const refused = await operator.deleteBlobLocation(hashes.first, fresh.id);
+    expect(notHeld.error?.error.code).toBe("blob_copy_not_found");
+    const refused = await operator.deleteBlobCopy(hashes.first, fresh.id);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("copies_below_minimum");
     expect(refused.error?.error.details).toMatchObject({
       live: 1,
       min_copies: 1,
     });
-    expect((await locations(hashes.first)).map((row) => row.store_id)).toEqual([
+    expect((await copies(hashes.first)).map((row) => row.store_id)).toEqual([
       original.id,
       fresh.id,
     ]);
@@ -367,7 +367,7 @@ describe("a store whose folder is away", () => {
     expect(sound.result).toMatchObject({ struck: 0, unreachable: 0 });
     expect(sound.result.verified).toBeGreaterThanOrEqual(1);
     expect((await operator.downloadBlob(hash)).status).toBe(200);
-    const recorded = await locations(hash);
+    const recorded = await copies(hash);
     expect(recorded).toHaveLength(1);
 
     renameSync(blobFolder(server!), away());
@@ -378,7 +378,7 @@ describe("a store whose folder is away", () => {
       bytes: 0,
       unreachable: 1,
     });
-    expect(await locations(hash)).toEqual(recorded);
+    expect(await copies(hash)).toEqual(recorded);
     const refused = await operator.downloadBlob(hash);
     expect(refused.status).toBe(503);
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
@@ -396,7 +396,7 @@ describe("a store whose folder is away", () => {
     ).toBe(true);
     const again = await runJob(operator, "blob-integrity");
     expect(again.result).toMatchObject({ struck: 0, unreachable: 0 });
-    expect((await locations(hash))[0]!.verified_at).not.toBeNull();
+    expect((await copies(hash))[0]!.verified_at).not.toBeNull();
   });
 
   it("strikes nothing while an empty folder stands where the store was, as a mount point does without its drive", async () => {
@@ -409,7 +409,7 @@ describe("a store whose folder is away", () => {
     mkdirSync(blobFolder(server!));
     const empty = await runJob(operator, "blob-integrity");
     expect(empty.result).toMatchObject({ struck: 0, unreachable: 1 });
-    expect(await locations(hash)).toHaveLength(1);
+    expect(await copies(hash)).toHaveLength(1);
     expect((await operator.downloadBlob(hash)).status).toBe(503);
 
     rmSync(blobFolder(server!), { recursive: true });
@@ -428,7 +428,7 @@ describe("a store whose folder is away", () => {
     unlinkSync(diskPath(server!, hash));
     const run = await runJob(operator, "blob-integrity");
     expect(run.result).toMatchObject({ struck: 1, unreachable: 0 });
-    expect(await locations(hash)).toEqual([]);
+    expect(await copies(hash)).toEqual([]);
   });
 });
 
@@ -442,7 +442,7 @@ describe("a store whose folder is missing at start", () => {
       );
       expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
       const hash = uploaded.data.hash;
-      const [copy] = await locations(hash);
+      const [copy] = await copies(hash);
       const folder = blobFolder(server!);
       const away = `${folder}.away`;
       const database = join(

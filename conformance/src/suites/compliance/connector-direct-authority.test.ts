@@ -28,7 +28,7 @@ beforeAll(async () => {
   });
   expect(item.status).toBe(201);
   itemId = item.data.item.id;
-  expect((await own.holdConnector(id, holder)).status).toBe(200);
+  expect((await own.takeConnectorHold(id, holder)).status).toBe(200);
   expect(
     (
       await own.replaceConnectorState(id, {
@@ -144,7 +144,7 @@ async function refusesDirectAuthority(
   const registration = await own.getConnector(id);
   expect(registration.data.last_heartbeat_at).toBeNull();
   expect(registration.data.last_run).toBeNull();
-  expect((await own.holdConnector(id, holder)).data.renewed).toBe(true);
+  expect((await own.takeConnectorHold(id, holder)).data.renewed).toBe(true);
 }
 
 describe("direct authority on own-key connector operations", () => {

@@ -54,10 +54,10 @@ async function instanceLink(hash: string): Promise<string> {
   // Replication first, so no copy of its own can arrive between the drop
   // below and the link.
   await replicateToZero();
-  const locations = (await operator.listBlobLocations(hash)).data.data;
-  for (const location of locations) {
-    if (location.kind !== "s3") continue;
-    const dropped = await operator.deleteBlobLocation(hash, location.store_id);
+  const copies = (await operator.listBlobCopies(hash)).data.data;
+  for (const copy of copies) {
+    if (copy.kind !== "s3") continue;
+    const dropped = await operator.deleteBlobCopy(hash, copy.store_id);
     expect(dropped.status).toBe(200);
   }
   const link = await client.getBlobUrl(hash);

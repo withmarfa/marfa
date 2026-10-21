@@ -299,7 +299,7 @@ export class SqliteTypeStore implements TypeStore {
     });
   }
 
-  async deletePlatformType(id: string): Promise<boolean> {
+  async deleteRetiredPlatformType(id: string): Promise<boolean> {
     return this.db.transaction(async (tx) => {
       const shapes = indexShapes(id);
       const deleted = await tx

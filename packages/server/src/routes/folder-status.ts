@@ -251,9 +251,9 @@ const put = createRoute({
   path: "/{id}/status",
   operationId: "reportFolderStatus",
   tags: ["Folders"],
-  summary: "Replace a folder status",
+  summary: "Report a folder status",
   description:
-    "Replaces your sign-in's report for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.",
+    "Reports your sign-in's status for one folder copy, replacing its earlier report, and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.",
   security: [{ bearerAuth: [] }],
   middleware: readsFolderStatus,
   request: {

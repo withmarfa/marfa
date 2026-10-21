@@ -284,10 +284,12 @@ describe("registration", () => {
   it("carries no hold over from a removed registration to the next one its key makes", async () => {
     const old = await register(client, `${ctx.runId} held before removal`);
     const holder = `${ctx.runId}-holder`;
-    expect((await client.holdConnector(old.data.id, holder)).status).toBe(200);
+    expect((await client.takeConnectorHold(old.data.id, holder)).status).toBe(
+      200,
+    );
     // The witness: while the registration stands, another process is kept
     // out by the hold.
-    const kept = await client.holdConnector(old.data.id, `${holder}-other`);
+    const kept = await client.takeConnectorHold(old.data.id, `${holder}-other`);
     expect(kept.status).toBe(409);
     expect(kept.error?.error.code).toBe("connector_held");
     expect((await client.deleteConnector(old.data.id)).status).toBe(200);
@@ -297,7 +299,10 @@ describe("registration", () => {
     });
     expect(next.status).toBe(201);
     expect(next.data.hold_expires_at).toBeNull();
-    const taken = await client.holdConnector(next.data.id, `${holder}-other`);
+    const taken = await client.takeConnectorHold(
+      next.data.id,
+      `${holder}-other`,
+    );
     expect(taken.status).toBe(200);
     expect(taken.data.renewed).toBe(false);
     expect((await client.deleteConnector(next.data.id)).status).toBe(200);
@@ -306,7 +311,9 @@ describe("registration", () => {
   it("answers 404 for an unknown connector, where a registered one answers", async () => {
     const real = await register(client, `${ctx.runId} real`);
     expect((await client.getConnector(real.data.id)).status).toBe(200);
-    expect((await client.heartbeatConnector(real.data.id)).status).toBe(200);
+    expect((await client.sendConnectorHeartbeat(real.data.id)).status).toBe(
+      200,
+    );
     const at = new Date().toISOString();
     const run = {
       outcome: "succeeded" as const,
@@ -317,7 +324,9 @@ describe("registration", () => {
       201,
     );
     expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
-    expect((await client.holdConnector(real.data.id, "p")).status).toBe(200);
+    expect((await client.takeConnectorHold(real.data.id, "p")).status).toBe(
+      200,
+    );
     expect((await client.getConnectorState(real.data.id)).status).toBe(200);
     expect((await client.listConnectorAgreements(real.data.id)).status).toBe(
       200,
@@ -347,14 +356,17 @@ describe("registration", () => {
       ["GET /connectors/{id}", await client.getConnector(unknown)],
       [
         "POST /connectors/{id}/heartbeat",
-        await client.heartbeatConnector(unknown),
+        await client.sendConnectorHeartbeat(unknown),
       ],
       [
         "POST /connectors/{id}/runs",
         await client.reportConnectorRun(unknown, run),
       ],
       ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
-      ["POST /connectors/{id}/hold", await client.holdConnector(unknown, "p")],
+      [
+        "POST /connectors/{id}/hold",
+        await client.takeConnectorHold(unknown, "p"),
+      ],
       [
         "DELETE /connectors/{id}/hold",
         await client.releaseConnectorHold(unknown, "p"),
@@ -414,16 +426,16 @@ describe("registration", () => {
       name: `${ctx.runId} short-lived reader`,
     });
     expect(mine.status).toBe(201);
-    expect((await shortLived.heartbeatConnector(mine.data.id)).status).toBe(
+    expect((await shortLived.sendConnectorHeartbeat(mine.data.id)).status).toBe(
       200,
     );
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const lastBeat = await shortLived.heartbeatConnector(mine.data.id);
+    const lastBeat = await shortLived.sendConnectorHeartbeat(mine.data.id);
     expect(lastBeat.status).toBe(200);
 
     const operator = getManagementClient();
     expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
-    const refused = await shortLived.heartbeatConnector(mine.data.id);
+    const refused = await shortLived.sendConnectorHeartbeat(mine.data.id);
     expect(refused.status).toBe(401);
     const standing = await operator.getConnector(mine.data.id);
     expect(standing.status).toBe(200);
@@ -446,14 +458,14 @@ describe("heartbeats and runs", () => {
   it("takes a heartbeat from the connector's key alone", async () => {
     const mine = await register(client, `${ctx.runId} beats`);
     for (const c of [other, getManagementClient()]) {
-      const refused = await c.heartbeatConnector(mine.data.id);
+      const refused = await c.sendConnectorHeartbeat(mine.data.id);
       expect(refused.status).toBe(403);
       expect(refused.error?.error.code).toBe("forbidden");
     }
     expect(
       (await client.getConnector(mine.data.id)).data.last_heartbeat_at,
     ).toBeNull();
-    const beat = await client.heartbeatConnector(mine.data.id);
+    const beat = await client.sendConnectorHeartbeat(mine.data.id);
     expect(beat.status).toBe(200);
     await expectMatchesSchema(
       "POST",
@@ -475,7 +487,7 @@ describe("heartbeats and runs", () => {
         .last_heartbeat_at,
     ).toBe(beat.data.last_heartbeat_at);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const again = await client.heartbeatConnector(mine.data.id);
+    const again = await client.sendConnectorHeartbeat(mine.data.id);
     expect(again.status).toBe(200);
     expect(Date.parse(again.data.last_heartbeat_at)).toBeGreaterThan(
       Date.parse(beat.data.last_heartbeat_at),
@@ -865,7 +877,9 @@ describe("heartbeats and runs", () => {
     expect(mine.status).toBe(201);
     const again = await register(client, `${ctx.runId} audited, renamed`);
     expect(again.status).toBe(200);
-    expect((await client.heartbeatConnector(mine.data.id)).status).toBe(200);
+    expect((await client.sendConnectorHeartbeat(mine.data.id)).status).toBe(
+      200,
+    );
     const at = new Date().toISOString();
     const run = await client.reportConnectorRun(mine.data.id, {
       outcome: "succeeded",

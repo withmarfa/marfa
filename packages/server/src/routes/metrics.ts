@@ -53,11 +53,11 @@ const MetricsResponseSchema = z.object({
 });
 
 const getMetricsRoute = createRoute({
-  operationId: "getServerMetrics",
+  operationId: "getInstanceMetrics",
   method: "get",
   path: "/",
   tags: ["Health and maintenance"],
-  summary: "Get server metrics",
+  summary: "Get instance metrics",
   description:
     "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
   security: [{ bearerAuth: [] }],

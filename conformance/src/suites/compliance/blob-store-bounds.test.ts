@@ -93,9 +93,7 @@ describe("a replication run that is bounded by count", () => {
       sizes.map((size) => bytesOf(`blob of ${String(size)}`, size)),
     );
     for (const hash of hashes) {
-      expect((await operator.listBlobLocations(hash)).data.data).toHaveLength(
-        1,
-      );
+      expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(1);
     }
 
     const run = await runJob(operator, "blob-replicate");
@@ -127,7 +125,7 @@ describe("a replication run that is bounded by count", () => {
     const stamped = async () => {
       const found = new Map<string, string>();
       for (const hash of hashes) {
-        for (const row of (await operator.listBlobLocations(hash)).data.data) {
+        for (const row of (await operator.listBlobCopies(hash)).data.data) {
           if (row.verified_at !== null) {
             found.set(`${hash} ${row.store_id}`, row.verified_at);
           }
@@ -249,7 +247,7 @@ describe("an integrity run that is bounded by bytes", () => {
   }
 
   async function unverified(hash: string): Promise<number> {
-    const rows = (await operator.listBlobLocations(hash)).data.data;
+    const rows = (await operator.listBlobCopies(hash)).data.data;
     return rows.filter((row) => row.verified_at === null).length;
   }
 
@@ -344,7 +342,7 @@ describe("an integrity run while the disk store cannot be reached", () => {
         renameSync(`${folder}.away`, folder);
       }
       for (const hash of hashes) {
-        const rows = (await operator.listBlobLocations(hash)).data.data;
+        const rows = (await operator.listBlobCopies(hash)).data.data;
         expect(rows.map((row) => row.store_id).sort()).toEqual(
           [disk.id, s3.id].sort(),
         );
@@ -377,7 +375,7 @@ describe("a replication run over a copy that does not hash to its name", () => {
       const stores = (await operator.listBlobStores()).data.data;
       const s3 = stores.find((store) => store.kind === "s3")!;
       const disk = stores.find((store) => store.kind === "disk")!;
-      expect((await operator.deleteBlobLocation(hash, s3.id)).status).toBe(200);
+      expect((await operator.deleteBlobCopy(hash, s3.id)).status).toBe(200);
 
       // The disk file, at its own length, now holds other bytes: the object
       // store would be handed a copy that is not the blob.
@@ -386,7 +384,7 @@ describe("a replication run over a copy that does not hash to its name", () => {
       expect(refused.result.copied).toBe(0);
       expect(refused.result.bytes).toBe(0);
       expect(
-        (await operator.listBlobLocations(hash)).data.data.map(
+        (await operator.listBlobCopies(hash)).data.data.map(
           (row) => row.store_id,
         ),
       ).toEqual([disk.id]);
@@ -397,7 +395,7 @@ describe("a replication run over a copy that does not hash to its name", () => {
       const placed = await runJob(operator, "blob-replicate");
       expect(placed.result).toEqual({ copied: 1, bytes: 120, remaining: 0 });
       expect(
-        (await operator.listBlobLocations(hash)).data.data
+        (await operator.listBlobCopies(hash)).data.data
           .map((row) => row.store_id)
           .sort(),
       ).toEqual([disk.id, s3.id].sort());
@@ -494,7 +492,7 @@ describe("an integrity run over the object store's copies", () => {
       // hash.
       for (const name of ["intact", "sameLength"] as const) {
         expect(await struck(hashes[name]), name).toHaveLength(0);
-        const copy = (await operator.listBlobLocations(hashes[name])).data.data
+        const copy = (await operator.listBlobCopies(hashes[name])).data.data
           .filter((row) => row.store_id === s3.id)
           .at(0);
         expect(copy?.verified_at, name).not.toBeNull();

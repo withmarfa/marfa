@@ -20,7 +20,7 @@ import { waitFor } from "../../utils/wait.js";
  * What the server does with the bytes of a copy it dropped when the store
  * cannot delete them, on a server of the fixture's own that keeps its bytes
  * on a disk and in the run's object store, and runs an integrity check of one
- * copy at a time. A drop commits, takes the copy out of the location log and
+ * copy at a time. A drop commits, takes the copy out of the copy record and
  * then deletes the bytes; the target interface's `fail:blob-delete` fault
  * (`conformance/README.md`, "Faults") makes the store refuse that deletion
  * once. What is left is the intent to delete the bytes, which the next run of
@@ -91,7 +91,7 @@ async function replicated(words: string): Promise<string> {
   });
   expect(note.status, JSON.stringify(note.error)).toBe(201);
   await waitFor(`the object store's copy of ${hash}`, async () =>
-    (await operator.listBlobLocations(hash)).data.data.length === 2
+    (await operator.listBlobCopies(hash)).data.data.length === 2
       ? true
       : undefined,
   );
@@ -109,11 +109,11 @@ async function fired(): Promise<number | undefined> {
 /** Drops the disk's copy while the store refuses to delete its bytes. The drop stands. */
 async function dropWithTheStoreFailing(hash: string): Promise<void> {
   await server.setFault("fail:blob-delete");
-  const dropped = await operator.deleteBlobLocation(hash, diskStoreId);
+  const dropped = await operator.deleteBlobCopy(hash, diskStoreId);
   expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
   expect(await fired()).toBe(1);
-  const locations = (await operator.listBlobLocations(hash)).data.data;
-  expect(locations.map((location) => location.kind)).toEqual(["s3"]);
+  const copies = (await operator.listBlobCopies(hash)).data.data;
+  expect(copies.map((copy) => copy.kind)).toEqual(["s3"]);
   // The copy is out of the log and its bytes are still on the disk.
   expect(existsSync(diskPath(server, hash))).toBe(true);
 }
@@ -121,7 +121,7 @@ async function dropWithTheStoreFailing(hash: string): Promise<void> {
 describe("the bytes of a copy that was dropped", () => {
   it("are deleted when nothing stops the drop, which is the witness for the cases below", async () => {
     const hash = await replicated("dropped without a fault");
-    const dropped = await operator.deleteBlobLocation(hash, diskStoreId);
+    const dropped = await operator.deleteBlobCopy(hash, diskStoreId);
     expect(dropped.status).toBe(200);
     expect(existsSync(diskPath(server, hash))).toBe(false);
   });

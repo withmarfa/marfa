@@ -1105,19 +1105,19 @@ describe("the instance from the terminal", () => {
   });
 
   it("reaches management operations with named permissions and refuses a content key", async () => {
-    const drift = await c.operator.json<{
+    const retired = await c.operator.json<{
       data: Array<{ id: string; item_count: number; removable: boolean }>;
-    }>(["types", "drift"]);
+    }>(["types", "retired"]);
     // **What this asserts is that the door answers and who it answers to**,
-    // and nothing about how many rows it holds. Drift is a platform row an
-    // older build seeded and this one no longer ships, computed once at
+    // and nothing about how many rows it holds. A retired platform type is a
+    // row an older build seeded and this one no longer ships, computed once at
     // boot: no door on a running server can make one, so a report read here
     // is empty on every server this suite could be pointed at and an
     // assertion that it is empty would pass against a handler that reports
     // nothing. The server's own suite is where the populated report is
-    // proved, because seeding a drifted row is in-process work.
-    expect(Array.isArray(drift.data)).toBe(true);
-    const refused = await c.cli.refused(["types", "drift"]);
+    // proved, because seeding a retired type is in-process work.
+    expect(Array.isArray(retired.data)).toBe(true);
+    const refused = await c.cli.refused(["types", "retired"]);
     expect(refused.code).toBe(1);
     expect(refused.envelope.error.server?.status).toBe(403);
 

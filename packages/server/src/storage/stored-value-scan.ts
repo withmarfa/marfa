@@ -14,7 +14,7 @@
  * sees.
  *
  * **This reports and does not refuse to boot, which is the whole design.**
- * The reasoning is `platform-drift.ts`'s and `platform-family.ts`'s,
+ * The reasoning is `retired-platform-types.ts`'s and `platform-family.ts`'s,
  * twenty lines from where this goes, and it is stronger here rather than
  * weaker:
  *
@@ -37,7 +37,7 @@
  * build wrote to anyone who asks.
  *
  * **Derived, never stored.** Recomputed at every boot from the rows, for
- * the reason `platform-drift.ts` gives: a stored flag would be a second
+ * the reason `retired-platform-types.ts` gives: a stored flag would be a second
  * source of truth with nothing keeping it honest, and it would go stale in
  * precisely the case that matters.
  */
@@ -107,7 +107,7 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     castType: "Tier",
     allowed: TIERS,
   },
-  // A store this build cannot attach still has rows in the location log,
+  // A store this build cannot attach still has rows in the copy record,
   // and a copy count that silently ignored them would be wrong in the
   // unsafe direction. The count is what says a build was rolled back past
   // a kind of store it had attached.
@@ -282,7 +282,7 @@ export interface UnrecognizedStoredValue {
  * What one boot's scan concluded.
  *
  * `scanned` exists because `values` being empty has three meanings and
- * `/health` publishes one number over all of them. `platform-drift.ts`,
+ * `/health` publishes one number over all of them. `retired-platform-types.ts`,
  * whose reader contract this otherwise copies, has only two — nothing
  * recorded yet, or nothing found — and no failure path at all. This has a
  * third: looked and could not read. The scenario is the one the feature
@@ -441,7 +441,7 @@ let lastScan: StoredValueScan = { scanned: false, values: [] };
 
 /**
  * Record what this boot concluded. Called once at boot, on the same pass
- * that records platform drift.
+ * that records the retired platform types.
  */
 export function setStoredValueScan(scan: StoredValueScan): void {
   lastScan = { scanned: scan.scanned, values: [...scan.values] };

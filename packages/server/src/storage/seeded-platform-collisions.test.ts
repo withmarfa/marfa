@@ -9,7 +9,7 @@
  * Every mechanism that would have surfaced it was disabled by the same write:
  * `listRegistered` filters `origin != 'platform'`, so the type left their own
  * registrations and their archive export; `isLockedPlatformType` then refused
- * both `PUT` and `DELETE`; and `computePlatformDrift` could never report it,
+ * both `PUT` and `DELETE`; and `computeRetiredPlatformTypes` could never report it,
  * because afterwards the row genuinely matched a shipped id.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";

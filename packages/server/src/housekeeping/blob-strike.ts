@@ -9,7 +9,7 @@ import { finishCopyDeletion } from "./blob-delete.js";
 import { errorMessage } from "../error-text.js";
 
 /**
- * Strike `store`'s copy of `hash` from the location log, with an audit row
+ * Strike `store`'s copy of `hash` from the copy record, with an audit row
  * and an error line, and remove its bytes, so replication can put the copy
  * back from another store. Answers whether a row went: a copy dropped
  * between the finding and the strike is not struck again. The caller holds
@@ -28,7 +28,7 @@ export async function strikeCopy(
   const removed = await runAuditedTransaction(
     storage,
     async () => {
-      if (!(await storage.blobs.removeLocation(hash, store.id))) return false;
+      if (!(await storage.blobs.removeCopy(hash, store.id))) return false;
       await storage.blobs.queueCopyDeletion(hash, store.id);
       return true;
     },

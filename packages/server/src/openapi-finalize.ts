@@ -215,8 +215,8 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "uploadBlob",
       "downloadBlob",
       "getBlobUrl",
-      "listBlobLocations",
-      "deleteBlobLocation",
+      "listBlobCopies",
+      "deleteBlobCopy",
       "listBlobStores",
       "listBlobOrphans",
     ],
@@ -262,7 +262,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "getConnector",
       "listConnectors",
       "deleteConnector",
-      "heartbeatConnector",
+      "sendConnectorHeartbeat",
       "reportConnectorRun",
       "listConnectorRuns",
     ],
@@ -272,7 +272,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
     description:
       "What the instance keeps for a connector's source: its hold, its state document and its agreements.",
     operations: [
-      "holdConnector",
+      "takeConnectorHold",
       "releaseConnectorHold",
       "getConnectorState",
       "replaceConnectorState",
@@ -329,11 +329,11 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
       "The browsers, apps and keys that can reach the instance, and the owner's passkeys.",
     operations: [
       "listSignIns",
-      "updateSignIn",
+      "renameSignIn",
       "endSignIn",
       "listOwnerPasskeys",
       "updateOwnerPasskey",
-      "removeOwnerPasskey",
+      "deleteOwnerPasskey",
     ],
   },
   {
@@ -344,21 +344,21 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Health and maintenance",
     description:
-      "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and the platform types this build no longer ships.",
+      "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
     operations: [
       "listAttention",
-      "getServerMetrics",
+      "getInstanceMetrics",
       "listAuditLog",
       "listHousekeeping",
       "runHousekeeping",
-      "listPlatformTypeDrift",
-      "deletePlatformType",
+      "listRetiredPlatformTypes",
+      "deleteRetiredPlatformType",
     ],
   },
   {
     name: "Export and restore",
     description: "Export the instance's data, and restore it from an archive.",
-    operations: ["exportData", "restoreArchive"],
+    operations: ["exportArchive", "restoreArchive"],
   },
 ];
 
@@ -1119,7 +1119,7 @@ function webhookRequests(): Record<string, unknown> {
       post: {
         operationId: "receiveWebhookEvent",
         tags: ["Webhooks"],
-        summary: "Receive an event",
+        summary: "Receive a webhook event",
         description:
           "Marfa sends this request to a webhook's `url` for each event it subscribes to, with only what the webhook's credential can read when it's sent. A delivery can arrive more than once: use `delivery_id` to recognize a repeat.",
         parameters: [

@@ -122,15 +122,15 @@ const rename = createRoute({
   },
 });
 const remove = createRoute({
-  operationId: "removeOwnerPasskey",
+  operationId: "deleteOwnerPasskey",
   method: "delete",
   path: "/{id}",
   tags: ["Sign-ins and passkeys"],
-  summary: "Remove a passkey",
+  summary: "Delete a passkey",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   description:
-    "Removes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
+    "Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
   request: { params },
   responses: {
     200: {
@@ -189,7 +189,7 @@ export function ownerPasskeyRoutes(storage: Storage, auth: MarfaAuth) {
   router.openapi(remove, async (c) => {
     requireRecentOwnerAuthentication(c);
     if (
-      !(await auth.removeOwnerPasskey(
+      !(await auth.deleteOwnerPasskey(
         await ownerId(),
         c.req.valid("param").id,
         c.get("clientIp") ?? null,

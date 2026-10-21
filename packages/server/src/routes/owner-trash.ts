@@ -187,7 +187,7 @@ const trashRoute = createRoute({
   path: "/items/summaries/{id}/trash",
   operationId: "trashItemSummary",
   tags: ["Trash"],
-  summary: "Move an item to the trash",
+  summary: "Trash an item by summary",
   description:
     "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.",
   security: [{ ownerSession: [] }],
@@ -200,7 +200,7 @@ const restoreRoute = createRoute({
   path: "/items/summaries/{id}/restore",
   operationId: "restoreItemSummary",
   tags: ["Trash"],
-  summary: "Restore an item from the trash",
+  summary: "Restore an item by summary",
   description:
     "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.",
   security: [{ ownerSession: [] }],
@@ -213,9 +213,9 @@ const purgeRoute = createRoute({
   path: "/items/summaries/{id}/purge",
   operationId: "purgeItemSummary",
   tags: ["Trash"],
-  summary: "Purge a trashed item",
+  summary: "Purge an item by summary",
   description:
-    "Deletes one item permanently if it is still in the trash at the listed version. Returns only a summary.",
+    "Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: changeRequest,
@@ -226,9 +226,9 @@ const emptyRoute = createRoute({
   path: "/trash/empty",
   operationId: "emptyTrash",
   tags: ["Trash"],
-  summary: "Empty a page of the trash",
+  summary: "Empty the trash",
   description:
-    "Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
+    "Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
   security: [{ ownerSession: [] }],
   middleware: directAuthorityOnly,
   request: { query: z.object({ cursor: pageCursor() }) },

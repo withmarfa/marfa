@@ -20,7 +20,7 @@ import {
 } from "../../test-utils.js";
 import { runAuditedTransaction } from "../audited-transaction.js";
 import { afterCommit } from "../commit-hooks.js";
-import { setPlatformDrift } from "../platform-drift.js";
+import { setRetiredPlatformTypes } from "../retired-platform-types.js";
 import { createSqliteStorage } from "./index.js";
 import * as registryContext from "./registry-context.js";
 import { sqliteRequestContext } from "./request-context.js";
@@ -101,7 +101,7 @@ afterEach(async () => {
   fault.readFailed = false;
   fault.entered = undefined;
   fault.release = undefined;
-  setPlatformDrift([]);
+  setRetiredPlatformTypes([]);
   vi.restoreAllMocks();
   __resetEventLogForTests();
   observer.close();
@@ -336,7 +336,7 @@ it.each([false, true])(
       fields: { name: { type: "string" as const } },
     };
     await ctx.storage.types.create(retired, { origin: "platform" });
-    setPlatformDrift([retired.id]);
+    setRetiredPlatformTypes([retired.id]);
     const map = TYPE_REGISTRY,
       set = SYSTEM_TYPE_IDS;
     expect(map.has(retired.id)).toBe(true);

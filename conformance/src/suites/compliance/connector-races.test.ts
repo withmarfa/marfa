@@ -91,7 +91,7 @@ describe("registrations and holds taken together", () => {
       const { client, id } = await registered(`hold-${String(round)}`);
       const processes = [randomUUID(), randomUUID()];
       const answers = await Promise.all(
-        processes.map((process) => client.holdConnector(id, process)),
+        processes.map((process) => client.takeConnectorHold(id, process)),
       );
       expect(answers.map((a) => a.status).sort()).toEqual([200, 409]);
       const won = answers.find((a) => a.status === 200);
@@ -107,7 +107,9 @@ describe("registrations and holds taken together", () => {
       // one that took it renews.
       const winner = processes[answers.indexOf(won!)];
       expect(winner).toBeDefined();
-      expect((await client.holdConnector(id, winner!)).data.renewed).toBe(true);
+      expect((await client.takeConnectorHold(id, winner!)).data.renewed).toBe(
+        true,
+      );
     }
   });
 

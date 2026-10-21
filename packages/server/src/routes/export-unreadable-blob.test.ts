@@ -232,9 +232,9 @@ describe("an archive export of a blob it cannot read", () => {
     const ctx = await context();
     const hash = await upload(ctx, "a blob with no copy left");
     await noteNaming(ctx, hash);
-    expect(
-      await ctx.storage.blobs.removeLocation(hash, ctx.blobs.disk.id),
-    ).toBe(true);
+    expect(await ctx.storage.blobs.removeCopy(hash, ctx.blobs.disk.id)).toBe(
+      true,
+    );
     await rm(diskPath(ctx, hash));
 
     const { entries, manifest } = await exported(ctx);
@@ -248,7 +248,7 @@ describe("an archive export of a blob it cannot read", () => {
     const hash = await upload(ctx, "bytes that outlive their copy");
     await noteNaming(ctx, hash);
     // The log no longer records the copy, though the file is still there.
-    await ctx.storage.blobs.removeLocation(hash, ctx.blobs.disk.id);
+    await ctx.storage.blobs.removeCopy(hash, ctx.blobs.disk.id);
 
     const { entries, manifest } = await exported(ctx);
     expect(Object.keys(manifest.missing_blobs)).toEqual([hash]);
@@ -283,7 +283,7 @@ describe("an archive export of a blob it cannot read", () => {
     const { second } = await withSecondStore(ctx);
     const hash = await upload(ctx, "bytes only a hanging store holds");
     await noteNaming(ctx, hash);
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     await rm(diskPath(ctx, hash));
     vi.spyOn(second, "has").mockImplementation(
       () => new Promise(() => undefined),
@@ -298,13 +298,13 @@ describe("an archive export of a blob it cannot read", () => {
     }
   });
 
-  it("checks the copies of many blobs a few at a time, with one location read a page", async () => {
+  it("checks the copies of many blobs a few at a time, with one copy read a page", async () => {
     const ctx = await context();
     const { second } = await withSecondStore(ctx);
     const hashes: string[] = [];
     for (let i = 0; i < 60; i++) {
       const hash = await upload(ctx, `bytes number ${String(i)} of many`);
-      await ctx.storage.blobs.recordLocation(hash, second.id);
+      await ctx.storage.blobs.recordCopy(hash, second.id);
       await rm(diskPath(ctx, hash));
       hashes.push(hash);
     }
@@ -325,13 +325,13 @@ describe("an archive export of a blob it cannot read", () => {
       running--;
       return null;
     });
-    const listLocations = vi.spyOn(ctx.storage.blobs, "listLocations");
+    const listCopies = vi.spyOn(ctx.storage.blobs, "listCopies");
 
     const { manifest } = await exported(ctx);
     expect(Object.keys(manifest.missing_blobs)).toHaveLength(60);
     expect(most).toBeGreaterThan(1);
     expect(most).toBeLessThanOrEqual(storeChecks.concurrency);
-    expect(listLocations).not.toHaveBeenCalled();
+    expect(listCopies).not.toHaveBeenCalled();
   });
 
   it("strikes a copy whose bytes do not hash to its name, and the next export reads another store's", async () => {
@@ -350,7 +350,7 @@ describe("an archive export of a blob it cannot read", () => {
     expect(cut.status).toBe(200);
     await expect(cut.arrayBuffer()).rejects.toThrow();
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).not.toContain(ctx.blobs.disk.id);
 
     const { entries, manifest } = await exported(ctx);
@@ -365,7 +365,7 @@ describe("an archive export of a blob it cannot read", () => {
     const get = ctx.blobs.disk.get.bind(ctx.blobs.disk);
     vi.spyOn(ctx.blobs.disk, "get").mockImplementation(async (wanted) => {
       if (wanted === hash) {
-        await ctx.storage.blobs.removeLocation(hash, ctx.blobs.disk.id);
+        await ctx.storage.blobs.removeCopy(hash, ctx.blobs.disk.id);
         return null;
       }
       return get(wanted);
@@ -386,7 +386,7 @@ describe("an archive export of a blob it cannot read", () => {
       maxBlobs: 100,
       maxBytes: 1024 * 1024,
     }).runOnce();
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(2);
 
     await rm(diskPath(ctx, hash));
     const { entries, manifest } = await exported(ctx);
@@ -525,7 +525,7 @@ describe("an archive export of a blob it cannot read", () => {
       const { second } = await withSecondStore(ctx);
       const hash = await upload(ctx, "bytes only a hanging store holds");
       await noteNaming(ctx, hash);
-      await ctx.storage.blobs.recordLocation(hash, second.id);
+      await ctx.storage.blobs.recordCopy(hash, second.id);
       await rm(diskPath(ctx, hash));
       const open = { count: 0 };
       vi.spyOn(second, "has").mockImplementation(hanging(open));
@@ -541,7 +541,7 @@ describe("an archive export of a blob it cannot read", () => {
       const hashes: string[] = [];
       for (let i = 0; i < 20; i++) {
         const hash = await upload(ctx, `bytes number ${String(i)} of some`);
-        await ctx.storage.blobs.recordLocation(hash, second.id);
+        await ctx.storage.blobs.recordCopy(hash, second.id);
         await rm(diskPath(ctx, hash));
         hashes.push(hash);
       }
@@ -641,7 +641,7 @@ describe("an archive export of a blob it cannot read", () => {
       expect(reads).toBe(2);
       expect(open.count).toBe(0);
       expect(
-        (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+        (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
       ).toEqual([ctx.blobs.disk.id]);
     });
 
@@ -720,9 +720,7 @@ describe("an archive export of a blob it cannot read", () => {
       const res = await exportArchive(ctx);
       expect(res.status).toBe(200);
       await expect(res.arrayBuffer()).rejects.toThrow();
-      return (await ctx.storage.blobs.listLocations(hash)).map(
-        (l) => l.store_id,
-      );
+      return (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id);
     }
 
     it("does not strike a copy whose read fails partway", async () => {

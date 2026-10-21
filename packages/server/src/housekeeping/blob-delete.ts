@@ -1,11 +1,7 @@
 import { BlobStoreUnreachable, type BlobStore } from "../storage/blob-store.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import { log } from "../middleware/logger.js";
-import type {
-  AuditLogEntry,
-  BlobLocation,
-  Storage,
-} from "../storage/interface.js";
+import type { AuditLogEntry, BlobCopy, Storage } from "../storage/interface.js";
 import {
   LOCK_HELD,
   tryBlobUploadLock,
@@ -20,7 +16,7 @@ import {
 
 /**
  * Where bytes leave a store once a row has named them. The copy rules are
- * written over the location log, and every deletion here answers to it: a
+ * written over the copy record, and every deletion here answers to it: a
  * drop goes only if the log's count of live copies allows it, decided in
  * the one statement that removes the row, and the stores confirm enough of
  * the copies that remain; a purge takes a blob to zero only because the
@@ -58,13 +54,13 @@ export class CopiesBelowMinimum extends Error {
   }
 }
 
-export class LocationNotFound extends Error {
+export class CopyNotFound extends Error {
   constructor(
     readonly hash: string,
     readonly storeId: string,
   ) {
     super(`no attached store ${storeId} holds a copy of ${hash}`);
-    this.name = "LocationNotFound";
+    this.name = "CopyNotFound";
   }
 }
 
@@ -73,7 +69,7 @@ export class LocationNotFound extends Error {
  * would remain and their stores confirm they hold them. The log alone can
  * name a copy that is gone, such as one a store's late delete removed, and
  * a drop trusting it could take the last real copy. The log is asked first,
- * so a drop it refuses answers without waiting on any store. Location
+ * so a drop it refuses answers without waiting on any store. Copy
  * removal, audit and cleanup intent commit together before bytes are
  * deleted, so a store failure leaves a retryable intent and the drop still
  * succeeds.
@@ -92,32 +88,32 @@ export async function dropBlobCopy(
 ): Promise<void> {
   await withBlobUploadLock(hash, async () => {
     const store = stores.byId(storeId);
-    if (!store) throw new LocationNotFound(hash, storeId);
-    const live = (await storage.blobs.listLocations(hash)).filter(
-      (location) => !location.detached,
+    if (!store) throw new CopyNotFound(hash, storeId);
+    const live = (await storage.blobs.listCopies(hash)).filter(
+      (copy) => !copy.detached,
     );
-    if (!live.some((location) => location.store_id === storeId))
-      throw new LocationNotFound(hash, storeId);
+    if (!live.some((copy) => copy.store_id === storeId))
+      throw new CopyNotFound(hash, storeId);
     if (live.length - 1 < minCopies)
       throw new CopiesBelowMinimum(hash, live.length, minCopies);
     const confirmed = await confirmedOthers(
       storage,
       stores,
       hash,
-      live.filter((location) => location.store_id !== storeId),
+      live.filter((copy) => copy.store_id !== storeId),
     );
     await runAuditedTransaction(
       storage,
       async () => {
-        const outcome = await storage.blobs.dropLocationKeeping(
+        const outcome = await storage.blobs.dropCopyKeeping(
           hash,
           storeId,
           minCopies,
         );
-        if (outcome === "absent") throw new LocationNotFound(hash, storeId);
+        if (outcome === "absent") throw new CopyNotFound(hash, storeId);
         if (outcome === "below_minimum") {
-          const live = (await storage.blobs.listLocations(hash)).filter(
-            (location) => !location.detached,
+          const live = (await storage.blobs.listCopies(hash)).filter(
+            (copy) => !copy.detached,
           ).length;
           throw new CopiesBelowMinimum(hash, live, minCopies);
         }
@@ -161,13 +157,13 @@ async function confirmedOthers(
   storage: Storage,
   stores: Stores,
   hash: string,
-  others: readonly BlobLocation[],
+  others: readonly BlobCopy[],
 ): Promise<number> {
   const record = await storage.blobs.get(hash);
   if (!record) return 0;
   const answers = await Promise.all(
-    others.map(async (location) => {
-      const other = stores.byId(location.store_id);
+    others.map(async (copy) => {
+      const other = stores.byId(copy.store_id);
       if (!other) return false;
       try {
         const held = await within(

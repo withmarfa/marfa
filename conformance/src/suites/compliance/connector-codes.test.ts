@@ -103,7 +103,9 @@ describe("a revoked key", () => {
     const row = await client.createItem(createNote());
     expect(row.ok).toBe(true);
     trackItem(ctx, row.data.item.id);
-    expect((await own.client.holdConnector(own.id, process)).status).toBe(200);
+    expect((await own.client.takeConnectorHold(own.id, process)).status).toBe(
+      200,
+    );
     expect(
       (
         await own.client.replaceConnectorState(own.id, {
@@ -122,7 +124,7 @@ describe("a revoked key", () => {
     ).toBe(200);
     const made = await address(own);
     const delivery = idOf(await send(apiUrl, made.path, "kept"));
-    const beat = await own.client.heartbeatConnector(own.id);
+    const beat = await own.client.sendConnectorHeartbeat(own.id);
     expect(beat.status).toBe(200);
 
     expect((await client.revokeKey(own.keyId)).status).toBe(200);
@@ -308,7 +310,9 @@ describe("the bounds of a page", () => {
       trackItem(ctx, id);
     }
     const process = randomUUID();
-    expect((await own.client.holdConnector(own.id, process)).status).toBe(200);
+    expect((await own.client.takeConnectorHold(own.id, process)).status).toBe(
+      200,
+    );
     const written = await own.client.writeConnectorAgreements(own.id, {
       process,
       set: rows.map((item_id) => ({ item_id, waiting: false, record: {} })),
@@ -393,7 +397,7 @@ describe("what the server stamps", () => {
     };
 
     let before = Date.now();
-    const beat = await own.client.heartbeatConnector(own.id);
+    const beat = await own.client.sendConnectorHeartbeat(own.id);
     within(beat.data.last_heartbeat_at, before, Date.now());
 
     // A run's own times say nothing of when it was reported.
@@ -493,7 +497,9 @@ describe("a body field no operation declares", () => {
     const process = randomUUID();
     const row = uuidv7();
     const when = at();
-    expect((await own.client.holdConnector(own.id, process)).status).toBe(200);
+    expect((await own.client.takeConnectorHold(own.id, process)).status).toBe(
+      200,
+    );
 
     interface Door {
       label: string;

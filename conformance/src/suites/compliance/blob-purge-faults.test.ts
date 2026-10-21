@@ -99,11 +99,11 @@ async function reportedBlob(words: string): Promise<Bytes> {
 async function listed(hash: string): Promise<boolean> {
   const read = await operator.downloadBlob(hash);
   const link = await operator.getBlobUrl(hash);
-  const locations = await operator.listBlobLocations(hash);
+  const copies = await operator.listBlobCopies(hash);
   // Listed and linked are one answer: a blob the registry has left is neither.
   expect(read.status === 200, "download").toBe(link.status === 200);
-  expect(read.status === 200, "locations").toBe(
-    locations.status === 200 && locations.data.data.length > 0,
+  expect(read.status === 200, "copies").toBe(
+    copies.status === 200 && copies.data.data.length > 0,
   );
   return read.status === 200;
 }

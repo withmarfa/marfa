@@ -123,7 +123,7 @@ export function requestBlobProof(
 /**
  * The registered blob `hash` names, if the credential may read it, and
  * `blob_not_found`, exactly as an unknown hash answers, otherwise. Every
- * door that serves a blob's bytes, a link to them or its location log asks
+ * door that serves a blob's bytes, a link to them or its copy record asks
  * `mayReadBlob`, through here or directly; `blob-door-census.test.ts` fails
  * on one that does not.
  */

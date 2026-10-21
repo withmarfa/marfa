@@ -11,8 +11,8 @@ import { Cli, requireBinary } from "./harness.js";
  * moved first.
  *
  * One command is reached by nothing in this suite but its help: `types
- * prune`, which needs a drifted platform type that a fresh server does not
- * have and a client cannot make.
+ * delete-retired`, which needs a retired platform type that a fresh server
+ * does not have and a client cannot make.
  */
 
 interface Row {

@@ -48,7 +48,9 @@ beforeAll(async () => {
   const row = await minter.createItem(createNote());
   expect(row.ok, JSON.stringify(row.error)).toBe(true);
   rowId = row.data.item.id;
-  expect((await own.holdConnector(registrationId, holder)).status).toBe(200);
+  expect((await own.takeConnectorHold(registrationId, holder)).status).toBe(
+    200,
+  );
   expect(
     (
       await own.replaceConnectorState(registrationId, {
@@ -265,9 +267,9 @@ describe("an app's session token on the connector doors", () => {
     );
     expect((await own.listConnectorRuns(registrationId)).data.data).toEqual([]);
     // The witness for the refused hold and release: the holder still renews.
-    expect((await own.holdConnector(registrationId, holder)).data.renewed).toBe(
-      true,
-    );
+    expect(
+      (await own.takeConnectorHold(registrationId, holder)).data.renewed,
+    ).toBe(true);
   });
 
   it("lists nothing to an app's session token, and hides a registration from it", async () => {

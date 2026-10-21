@@ -672,7 +672,7 @@ const MISSED: &[&str] = &[
     // and `device/contract.test.ts` checks their socket response contract.
     "listOwnerPasskeys",
     "updateOwnerPasskey",
-    "removeOwnerPasskey",
+    "deleteOwnerPasskey",
     // `owner update`: the private-socket transport is driven by cli/profile.test.ts.
     "updateOwner",
     // `apps narrow` reads the grant before sending the guarded update.

@@ -64,7 +64,7 @@ describe("a minimum of copies above the default", () => {
       // default minimum of one, the same drop answers 200
       // (`blob-rules.test.ts`).
       for (const store of stores.data.data) {
-        const refused = await operator.deleteBlobLocation(
+        const refused = await operator.deleteBlobCopy(
           upload.data.hash,
           store.id,
         );
@@ -75,7 +75,7 @@ describe("a minimum of copies above the default", () => {
           min_copies: 2,
         });
       }
-      const kept = await operator.listBlobLocations(upload.data.hash);
+      const kept = await operator.listBlobCopies(upload.data.hash);
       expect(kept.data.data.map((row) => row.kind).sort()).toEqual([
         "disk",
         "s3",
@@ -229,7 +229,7 @@ describe("an app's access token", () => {
       const refusals = {
         stores: await app.listBlobStores(),
         orphans: await app.listBlobOrphans(),
-        drop: await app.deleteBlobLocation(hash, s3.id),
+        drop: await app.deleteBlobCopy(hash, s3.id),
         run: await app.runHousekeeping("blob-replicate"),
       };
       for (const [name, refusal] of Object.entries(refusals)) {
@@ -237,13 +237,11 @@ describe("an app's access token", () => {
         expect(refusal.error?.error.code, name).toBe("forbidden");
       }
       expect(
-        (await operator.listBlobLocations(hash)).data.data.map(
-          (row) => row.kind,
-        ),
+        (await operator.listBlobCopies(hash)).data.data.map((row) => row.kind),
       ).toHaveLength(2);
 
       // The same drop, from the management key, is the one the minimum allows.
-      const dropped = await operator.deleteBlobLocation(hash, s3.id);
+      const dropped = await operator.deleteBlobCopy(hash, s3.id);
       expect(dropped.status).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,

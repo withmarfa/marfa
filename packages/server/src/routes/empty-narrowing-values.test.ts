@@ -86,7 +86,7 @@ describe("an empty type, source, tags or filter", () => {
     const found = (await doors()).map((d) => d.operationId).sort();
     expect(found).toEqual(
       [
-        "exportData",
+        "exportArchive",
         "getItemStats",
         "listItems",
         "listItemSummaries",

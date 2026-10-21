@@ -103,13 +103,13 @@ async function readingDoors(
   const bytes = await reader.downloadBlob(hash);
   const head = await reader.headBlob(hash);
   const link = await reader.getBlobUrl(hash);
-  const locations = await reader.listBlobLocations(hash);
+  const copies = await reader.listBlobCopies(hash);
   return {
     bytes: [bytes.status, bytes.error?.error.code],
     // A HEAD answer has no body to carry a code.
     head: [head.status, undefined],
     link: [link.status, link.error?.error.code],
-    locations: [locations.status, locations.error?.error.code],
+    copies: [copies.status, copies.error?.error.code],
   };
 }
 
@@ -117,14 +117,14 @@ const UNKNOWN = {
   bytes: [404, "blob_not_found"],
   head: [404, undefined],
   link: [404, "blob_not_found"],
-  locations: [404, "blob_not_found"],
+  copies: [404, "blob_not_found"],
 };
 
 const SERVED = {
   bytes: [200, undefined],
   head: [200, undefined],
   link: [200, undefined],
-  locations: [200, undefined],
+  copies: [200, undefined],
 };
 
 describe("who may read and upload a blob", () => {
@@ -140,7 +140,7 @@ describe("who may read and upload a blob", () => {
       bytes: [403, "type_not_permitted"],
       head: [403, undefined],
       link: [403, "type_not_permitted"],
-      locations: [403, "type_not_permitted"],
+      copies: [403, "type_not_permitted"],
     });
     // The same refusal for a hash nothing holds, so the refusal is not an
     // answer about the blob.
@@ -968,9 +968,9 @@ describe("who may read and upload a blob", () => {
       const link = await empty.client.getBlobUrl(hash);
       expect(link.status, `url ${hash}`).toBe(refused[1]);
       expect(link.error?.error.code, `url ${hash}`).toBe(refused[0]);
-      const locations = await empty.client.listBlobLocations(hash);
-      expect(locations.status, `locations ${hash}`).toBe(refused[1]);
-      expect(locations.error?.error.code, `locations ${hash}`).toBe(refused[0]);
+      const copies = await empty.client.listBlobCopies(hash);
+      expect(copies.status, `copies ${hash}`).toBe(refused[1]);
+      expect(copies.error?.error.code, `copies ${hash}`).toBe(refused[0]);
     }
   });
 });

@@ -50,13 +50,13 @@ export const EXPORT_EXCLUDED_STATES = ["trashed"] as const;
 // ---------------------------------------------------------------------------
 
 const exportRoute = createRoute({
-  operationId: "exportData",
+  operationId: "exportArchive",
   method: "get",
   path: "/",
   tags: ["Export and restore"],
-  summary: "Export items and edges",
+  summary: "Export an archive",
   description:
-    "Exports readable items, metadata and edges, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
+    "Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
   security: ownerItemReadSecurity,
   middleware: readsOwnerItems,
   request: {

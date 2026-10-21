@@ -142,7 +142,7 @@ describe("an archive export on an instance with one disk store", () => {
     );
     const struck = await runJob(operator, "blob-integrity");
     expect(struck.result.struck).toBeGreaterThanOrEqual(1);
-    expect((await operator.listBlobLocations(hash)).data.data).toEqual([]);
+    expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
 
     const { manifest, entries } = await archiveOf(working);
     expect(Object.keys(manifest.missing_blobs)).toContain(hash);
@@ -174,7 +174,7 @@ describe("an archive export on an instance with one disk store", () => {
 
     // Struck as the integrity check would strike it, so the next export,
     // with no other store to read, names it instead of cutting again.
-    expect((await operator.listBlobLocations(hash)).data.data).toEqual([]);
+    expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
     const { manifest } = await archiveOf(working);
     expect(Object.keys(manifest.missing_blobs)).toContain(hash);
   });
@@ -426,7 +426,7 @@ describe("an archive export on an instance with an object store", () => {
     const hash = await upload(working, content);
     await noteNaming(working, hash);
     await runJob(operator, "blob-replicate");
-    const kinds = (await operator.listBlobLocations(hash)).data.data
+    const kinds = (await operator.listBlobCopies(hash)).data.data
       .map((row) => row.kind)
       .sort();
     expect(kinds).toEqual(["disk", "s3"]);
@@ -448,7 +448,7 @@ describe("an archive export on an instance with an object store", () => {
     const hash = await upload(working, content);
     await noteNaming(working, hash);
     await runJob(operator, "blob-replicate");
-    const kinds = (await operator.listBlobLocations(hash)).data.data
+    const kinds = (await operator.listBlobCopies(hash)).data.data
       .map((row) => row.kind)
       .sort();
     expect(kinds).toEqual(["disk", "s3"]);

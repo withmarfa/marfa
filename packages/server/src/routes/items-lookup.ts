@@ -178,9 +178,9 @@ const tombstonesRoute = createRoute({
   path: "/tombstones",
   operationId: "settleTombstones",
   tags: ["Items"],
-  summary: "Move tombstones' settled time",
+  summary: "Settle tombstones",
   description:
-    "Moves the `settled_at` of tombstones later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
+    "Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {

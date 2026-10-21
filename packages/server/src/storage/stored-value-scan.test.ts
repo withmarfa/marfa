@@ -12,7 +12,7 @@
  * code and the realistic population is a rollback, where refusing makes
  * the recovery action the thing that cannot complete.
  *
- * `setStoredValueScan` is module state, exactly as `setPlatformDrift` is,
+ * `setStoredValueScan` is module state, exactly as `setRetiredPlatformTypes` is,
  * so it is reset in `afterEach`. Without that one test decides the next
  * one's answer, and the reader case is the one that would silently pass on
  * somebody else's recording.

@@ -150,14 +150,14 @@ export async function leaveBacklog(
   }
   for (const hash of hashes) {
     await waitFor(`the object store's copy of ${hash}`, async () =>
-      (await operator.listBlobLocations(hash)).data.data.length === 2
+      (await operator.listBlobCopies(hash)).data.data.length === 2
         ? true
         : undefined,
     );
   }
   await replicationIdle(operator);
   for (const hash of hashes) {
-    const dropped = await operator.deleteBlobLocation(hash, s3.id);
+    const dropped = await operator.deleteBlobCopy(hash, s3.id);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
   }
   return hashes;
@@ -170,7 +170,7 @@ export async function whenCopied(
 ): Promise<void> {
   for (const hash of hashes) {
     await waitFor(`the object store's copy of ${hash}`, async () =>
-      (await operator.listBlobLocations(hash)).data.data.length === 2
+      (await operator.listBlobCopies(hash)).data.data.length === 2
         ? true
         : undefined,
     );

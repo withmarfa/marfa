@@ -17,7 +17,7 @@ import type {
   BlobUploadResponse,
   BlobOrphanRow,
   BlobStoreRow,
-  BlobLocationRow,
+  BlobCopyRow,
   HousekeepingJobRow,
   HousekeepingRun,
   ConnectorAgreementRow,
@@ -875,12 +875,12 @@ export class MarfaClient {
     );
   }
 
-  /** `DELETE /blobs/{hash}/locations/{store}`: drop one store's copy. */
-  async deleteBlobLocation(
+  /** `DELETE /blobs/{hash}/copies/{store}`: delete one store's copy. */
+  async deleteBlobCopy(
     hash: string,
     store: string,
   ): Promise<ApiResponse<{ ok: true }>> {
-    return this.request<{ ok: true }>(`/blobs/${hash}/locations/${store}`, {
+    return this.request<{ ok: true }>(`/blobs/${hash}/copies/${store}`, {
       method: "DELETE",
     });
   }
@@ -892,13 +892,11 @@ export class MarfaClient {
     return this.request<PaginatedResult<BlobOrphanRow>>("/blobs/orphans");
   }
 
-  /** `GET /blobs/{hash}/locations`: the location log for one blob. */
-  async listBlobLocations(
+  /** `GET /blobs/{hash}/copies`: the copy record for one blob. */
+  async listBlobCopies(
     hash: string,
-  ): Promise<ApiResponse<PaginatedResult<BlobLocationRow>>> {
-    return this.request<PaginatedResult<BlobLocationRow>>(
-      `/blobs/${hash}/locations`,
-    );
+  ): Promise<ApiResponse<PaginatedResult<BlobCopyRow>>> {
+    return this.request<PaginatedResult<BlobCopyRow>>(`/blobs/${hash}/copies`);
   }
 
   /** `GET /housekeeping`: the jobs the server runs on itself. */
@@ -941,7 +939,7 @@ export class MarfaClient {
     });
   }
 
-  async heartbeatConnector(
+  async sendConnectorHeartbeat(
     id: string,
   ): Promise<ApiResponse<{ last_heartbeat_at: string }>> {
     return this.request<{ last_heartbeat_at: string }>(
@@ -970,7 +968,7 @@ export class MarfaClient {
   }
 
   /** `POST /connectors/{id}/hold`: take or renew the hold for `process`. */
-  async holdConnector(
+  async takeConnectorHold(
     id: string,
     process: string,
   ): Promise<ApiResponse<ConnectorHoldTaken>> {
@@ -1422,8 +1420,8 @@ export class MarfaClient {
     return this.request<Owner>("/owner", { method: "POST", body });
   }
 
-  /** `GET /platform-types/drift`: requires instance.read. */
-  async listPlatformTypeDrift(): Promise<
+  /** `GET /platform-types/retired`: requires `instance.read`. */
+  async listRetiredPlatformTypes(): Promise<
     ApiResponse<
       PaginatedResult<{
         id: string;
@@ -1433,17 +1431,17 @@ export class MarfaClient {
       }>
     >
   > {
-    return this.request("/platform-types/drift");
+    return this.request("/platform-types/retired");
   }
 
   /**
-   * `DELETE /platform-types/{id}`: requires instance.maintain.
+   * `DELETE /platform-types/{id}`: requires `instance.maintain`.
    *
    * Encoded because the identifier is the last segment: a `?` or a `#`
    * in one would otherwise end the path early and the door would answer a
    * plausible refusal about a shorter identifier than the fixture sent.
    */
-  async deletePlatformType(
+  async deleteRetiredPlatformType(
     id: string,
   ): Promise<ApiResponse<{ removed: true; id: string }>> {
     return this.request<{ removed: true; id: string }>(

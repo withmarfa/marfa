@@ -43,7 +43,7 @@ export type ReplicationResult = {
  * less is not consulted, because `all` is the one policy this build
  * defines and every row carries it. One sweep in both directions, disk to
  * bucket on an ordinary instance and bucket to disk after a restore,
- * because the log does not care which kind holds a copy. A location is
+ * because the log does not care which kind holds a copy. A copy is
  * recorded only after the target's `put` has verified that the bytes hash
  * to their name.
  *
@@ -169,7 +169,7 @@ export class BlobReplicator {
     try {
       await runAuditedTransaction(
         this.storage,
-        () => this.storage.blobs.recordLocation(hash, target.id),
+        () => this.storage.blobs.recordCopy(hash, target.id),
         {
           action: "blob.copy_replicated",
           resource_type: "blob",
@@ -181,10 +181,10 @@ export class BlobReplicator {
     } catch (err) {
       if (!present) {
         try {
-          // A committed or uncertain location keeps its bytes.
+          // A committed or uncertain copy keeps its bytes.
           if (
-            !(await this.storage.blobs.listLocations(hash)).some(
-              (location) => location.store_id === target.id,
+            !(await this.storage.blobs.listCopies(hash)).some(
+              (copy) => copy.store_id === target.id,
             )
           )
             await awaitStoreChange(
@@ -212,11 +212,11 @@ export class BlobReplicator {
     hash: string,
     targetId: string,
   ): Promise<BlobStore | null> {
-    const locations = await this.storage.blobs.listLocations(hash);
-    const candidates = locations
-      .filter((location) => !location.detached)
-      .filter((location) => location.store_id !== targetId)
-      .map((location) => this.stores.byId(location.store_id))
+    const copies = await this.storage.blobs.listCopies(hash);
+    const candidates = copies
+      .filter((copy) => !copy.detached)
+      .filter((copy) => copy.store_id !== targetId)
+      .map((copy) => this.stores.byId(copy.store_id))
       .filter((store): store is BlobStore => store !== undefined);
     return (
       candidates.find((store) => store.kind === "disk") ?? candidates[0] ?? null

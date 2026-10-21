@@ -130,7 +130,7 @@ async function holding(
   mine: Connector,
   process: string = randomUUID(),
 ): Promise<string> {
-  const held = await mine.client.holdConnector(mine.id, process);
+  const held = await mine.client.takeConnectorHold(mine.id, process);
   expect(held.status).toBe(200);
   return process;
 }
@@ -143,14 +143,14 @@ describe("the hold", () => {
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
     // A heartbeat takes no hold.
-    const beat = await mine.client.heartbeatConnector(mine.id);
+    const beat = await mine.client.sendConnectorHeartbeat(mine.id);
     expect(beat.status).toBe(200);
     expect(
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
 
     const before = Date.now();
-    const taken = await mine.client.holdConnector(mine.id, process);
+    const taken = await mine.client.takeConnectorHold(mine.id, process);
     expect(taken.status).toBe(200);
     await expectMatchesSchema("POST", "/connectors/{id}/hold", 200, taken.data);
     expect(taken.data.expires_at).toMatch(ISO);
@@ -174,7 +174,7 @@ describe("the hold", () => {
     ).toBe(taken.data.expires_at);
 
     await sleep(5);
-    const renewed = await mine.client.holdConnector(mine.id, process);
+    const renewed = await mine.client.takeConnectorHold(mine.id, process);
     expect(renewed.status).toBe(200);
     expect(renewed.data.renewed).toBe(true);
     expect(renewed.data.ttl_ms).toBe(180_000);
@@ -189,13 +189,13 @@ describe("the hold", () => {
   it("stamps a renewed hold's expires_at as the server's clock at the renewal plus the window", async () => {
     const mine = await connector("hold-renew-clock");
     const process = randomUUID();
-    const taken = await mine.client.holdConnector(mine.id, process);
+    const taken = await mine.client.takeConnectorHold(mine.id, process);
     expect(taken.status).toBe(200);
     expect(taken.data.renewed).toBe(false);
 
     await sleep(20);
     const before = Date.now();
-    const renewed = await mine.client.holdConnector(mine.id, process);
+    const renewed = await mine.client.takeConnectorHold(mine.id, process);
     const after = Date.now();
     expect(renewed.status).toBe(200);
     expect(renewed.data.renewed).toBe(true);
@@ -217,7 +217,7 @@ describe("the hold", () => {
   it("refuses a process outside its bounds", async () => {
     const mine = await connector("hold-bounds");
     for (const process of ["", "p".repeat(101)]) {
-      const taken = await mine.client.holdConnector(mine.id, process);
+      const taken = await mine.client.takeConnectorHold(mine.id, process);
       expect(taken.status, `take ${String(process.length)}`).toBe(400);
       expect(taken.error?.error.code).toBe("validation_error");
       const released = await mine.client.releaseConnectorHold(mine.id, process);
@@ -241,7 +241,7 @@ describe("the hold", () => {
     ).toBeNull();
 
     const longest = "p".repeat(100);
-    expect((await mine.client.holdConnector(mine.id, longest)).status).toBe(
+    expect((await mine.client.takeConnectorHold(mine.id, longest)).status).toBe(
       200,
     );
     expect(
@@ -253,10 +253,10 @@ describe("the hold", () => {
     const mine = await connector("hold-held");
     const first = randomUUID();
     const second = randomUUID();
-    const taken = await mine.client.holdConnector(mine.id, first);
+    const taken = await mine.client.takeConnectorHold(mine.id, first);
     expect(taken.status).toBe(200);
 
-    const refused = await mine.client.holdConnector(mine.id, second);
+    const refused = await mine.client.takeConnectorHold(mine.id, second);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("connector_held");
     expect(refused.error?.error.details?.["expires_at"]).toBe(
@@ -277,7 +277,7 @@ describe("the hold", () => {
     const mine = await connector("hold-release");
     const first = randomUUID();
     const second = randomUUID();
-    const taken = await mine.client.holdConnector(mine.id, first);
+    const taken = await mine.client.takeConnectorHold(mine.id, first);
     expect(taken.status).toBe(200);
 
     const notTheirs = await mine.client.releaseConnectorHold(mine.id, second);
@@ -302,21 +302,23 @@ describe("the hold", () => {
     expect(
       (await mine.client.releaseConnectorHold(mine.id, first)).status,
     ).toBe(200);
-    expect((await mine.client.holdConnector(mine.id, second)).status).toBe(200);
+    expect((await mine.client.takeConnectorHold(mine.id, second)).status).toBe(
+      200,
+    );
   });
 
   it("holds for the connector's own key alone", async () => {
     const mine = await connector("hold-own");
     const process = randomUUID();
     for (const c of [other, getManagementClient()]) {
-      const taken = await c.holdConnector(mine.id, process);
+      const taken = await c.takeConnectorHold(mine.id, process);
       expect(taken.status).toBe(403);
       expect(taken.error?.error.code).toBe("forbidden");
     }
     expect(
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
-    const held = await mine.client.holdConnector(mine.id, process);
+    const held = await mine.client.takeConnectorHold(mine.id, process);
     expect(held.status).toBe(200);
     for (const c of [other, getManagementClient()]) {
       const released = await c.releaseConnectorHold(mine.id, process);
@@ -411,12 +413,12 @@ describe("the hold on an instance that names its window", () => {
     const second = randomUUID();
 
     const before = Date.now();
-    const taken = await own.holdConnector(id, first);
+    const taken = await own.takeConnectorHold(id, first);
     expect(taken.status).toBe(200);
     const window = Date.parse(taken.data.expires_at) - before;
     expect(window).toBeGreaterThanOrEqual(WINDOW_MS - 1_000);
     expect(window).toBeLessThanOrEqual(WINDOW_MS + 1_000);
-    const live = await own.holdConnector(id, second);
+    const live = await own.takeConnectorHold(id, second);
     expect(live.status).toBe(409);
     expect(live.error?.error.code).toBe("connector_held");
     for (const fenced of await write(reg, second, "early")) {
@@ -435,7 +437,7 @@ describe("the hold on an instance that names its window", () => {
     }
     expect(await kept(reg)).toEqual({ state: {}, records: [] });
 
-    const retaken = await own.holdConnector(id, second);
+    const retaken = await own.takeConnectorHold(id, second);
     expect(retaken.status).toBe(200);
     for (const written of await write(reg, second, "after")) {
       expect(written.status).toBe(200);
@@ -444,7 +446,7 @@ describe("the hold on an instance that names its window", () => {
       state: { cursor: "after" },
       records: [{ cursor: "after" }],
     });
-    const displaced = await own.holdConnector(id, first);
+    const displaced = await own.takeConnectorHold(id, first);
     expect(displaced.status).toBe(409);
     expect(displaced.error?.error.details?.["expires_at"]).toBe(
       retaken.data.expires_at,
@@ -457,13 +459,13 @@ describe("the hold on an instance that names its window", () => {
     const first = randomUUID();
     const second = randomUUID();
 
-    const taken = await own.holdConnector(id, first);
+    const taken = await own.takeConnectorHold(id, first);
     expect(taken.status).toBe(200);
     for (const written of await write(reg, first, "first")) {
       expect(written.status).toBe(200);
     }
     await lapse(taken.data);
-    const successor = await own.holdConnector(id, second);
+    const successor = await own.takeConnectorHold(id, second);
     expect(successor.status).toBe(200);
     for (const written of await write(reg, second, "second")) {
       expect(written.status).toBe(200);
@@ -489,7 +491,7 @@ describe("the hold on an instance that names its window", () => {
     }
     expect(await kept(reg)).toEqual(theirs);
 
-    const again = await own.holdConnector(id, second);
+    const again = await own.takeConnectorHold(id, second);
     expect(again.status).toBe(200);
     await lapse(again.data);
     for (const process of [first, second]) {
@@ -507,24 +509,24 @@ describe("the hold on an instance that names its window", () => {
     const first = randomUUID();
     const second = randomUUID();
 
-    const taken = await own.holdConnector(id, first);
+    const taken = await own.takeConnectorHold(id, first);
     expect(taken.status).toBe(200);
     expect(taken.data.renewed).toBe(false);
     expect(taken.data.ttl_ms).toBe(WINDOW_MS);
     // The witness: a renewal while the hold is live says so.
-    const unbroken = await own.holdConnector(id, first);
+    const unbroken = await own.takeConnectorHold(id, first);
     expect(unbroken.status).toBe(200);
     expect(unbroken.data.renewed).toBe(true);
 
     // Lapsed with nothing between, the same process's take is not a renewal.
     await lapse(unbroken.data);
-    const alone = await own.holdConnector(id, first);
+    const alone = await own.takeConnectorHold(id, first);
     expect(alone.status).toBe(200);
     expect(alone.data.renewed).toBe(false);
 
     // Lapsed while another process took it, wrote and gave it up.
     await lapse(alone.data);
-    const between = await own.holdConnector(id, second);
+    const between = await own.takeConnectorHold(id, second);
     expect(between.status).toBe(200);
     expect(between.data.renewed).toBe(false);
     const written = await own.replaceConnectorState(id, {
@@ -533,7 +535,7 @@ describe("the hold on an instance that names its window", () => {
     });
     expect(written.status).toBe(200);
     expect((await own.releaseConnectorHold(id, second)).status).toBe(200);
-    const back = await own.holdConnector(id, first);
+    const back = await own.takeConnectorHold(id, first);
     expect(back.status).toBe(200);
     expect(back.data.renewed).toBe(false);
     // What it re-reads before writing again: the other process's work.
@@ -1497,7 +1499,7 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(await found(mine, [row.id])).toEqual([]);
 
-    const held = await mine.client.holdConnector(mine.id, holder);
+    const held = await mine.client.takeConnectorHold(mine.id, holder);
     expect(held.status).toBe(200);
 
     const state = await mine.client.replaceConnectorState(mine.id, {
@@ -1847,7 +1849,7 @@ describe("what a connector keeps on the instance", () => {
 
     // The operator's clear through the first registration takes the
     // successor's live state too, and no hold fences it.
-    const held = await next.client.holdConnector(next.id, process);
+    const held = await next.client.takeConnectorHold(next.id, process);
     expect(held.status).toBe(200);
     const live = await next.client.replaceConnectorState(next.id, {
       process,

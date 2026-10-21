@@ -73,14 +73,14 @@ describe("POST /blobs", () => {
     });
   });
 
-  it("records the disk store as the blob's location", async () => {
+  it("records the disk store as the blob's copy", async () => {
     const data = new TextEncoder().encode("located on disk");
     await upload(data);
-    const locations = await ctx.storage.blobs.listLocations(hashOf(data));
-    expect(locations).toHaveLength(1);
-    expect(locations[0]?.store_id).toBe(ctx.blobs.disk.id);
-    expect(locations[0]?.kind).toBe("disk");
-    expect(locations[0]?.detached).toBe(false);
+    const copies = await ctx.storage.blobs.listCopies(hashOf(data));
+    expect(copies).toHaveLength(1);
+    expect(copies[0]?.store_id).toBe(ctx.blobs.disk.id);
+    expect(copies[0]?.kind).toBe("disk");
+    expect(copies[0]?.detached).toBe(false);
   });
 
   it("has no size cap: a body far over the JSON cap is stored whole", async () => {
@@ -162,14 +162,14 @@ describe("POST /blobs", () => {
   it("takes its own bytes back when the registration is refused", async () => {
     const data = new TextEncoder().encode("bytes nothing will name");
     const registry = ctx.storage.blobs;
-    const original = registry.recordLocation.bind(registry);
-    registry.recordLocation = () =>
+    const original = registry.recordCopy.bind(registry);
+    registry.recordCopy = () =>
       Promise.reject(new Error("the row could not be written"));
     try {
       const refused = await upload(data);
       expect(refused.status).toBe(500);
     } finally {
-      registry.recordLocation = original;
+      registry.recordCopy = original;
     }
     // The file this request wrote is gone: a file no row names would be
     // unreachable and nothing would sweep it.
@@ -405,7 +405,7 @@ describe("GET /blobs/:hash/url", () => {
       ),
     );
     const listed = vi
-      .spyOn(ctx.storage.blobs, "listLocations")
+      .spyOn(ctx.storage.blobs, "listCopies")
       .mockResolvedValueOnce([
         {
           store_id: "signer",
@@ -639,16 +639,13 @@ describe("GET /blobs/stores", () => {
   });
 });
 
-describe("GET /blobs/:hash/locations", () => {
+describe("GET /blobs/:hash/copies", () => {
   it("lists the log for a blob and 404s for one not registered", async () => {
-    const data = new TextEncoder().encode("locations listed");
+    const data = new TextEncoder().encode("copies listed");
     await uploadReferenced(data);
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/blobs/${hashOf(data)}/locations`,
-      { key: ctx.workingKey },
-    );
+    const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/copies`, {
+      key: ctx.workingKey,
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: {
@@ -670,7 +667,7 @@ describe("GET /blobs/:hash/locations", () => {
     const missing = await request(
       ctx.app,
       "GET",
-      `/blobs/sha256:${"0".repeat(64)}/locations`,
+      `/blobs/sha256:${"0".repeat(64)}/copies`,
       { key: ctx.workingKey },
     );
     expect(missing.status).toBe(404);
@@ -740,7 +737,7 @@ describe("GET /blobs/orphans", () => {
   });
 });
 
-describe("DELETE /blobs/:hash/locations/:store", () => {
+describe("DELETE /blobs/:hash/copies/:store", () => {
   it("drops a copy while the minimum holds, refuses the one that would break it, and audits the drop", async () => {
     const { second } = await withSecondStore(ctx);
     const data = new TextEncoder().encode("two copies, then one");
@@ -752,29 +749,29 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
       stream: Readable.from([Buffer.from(data)]),
       size_bytes: data.length,
     });
-    await ctx.storage.blobs.recordLocation(hash, second.id);
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(2);
 
     // A working key is refused a drop the minimum would allow, and the
     // copy stays for the operator to drop.
     const working = await request(
       ctx.app,
       "DELETE",
-      `/blobs/${hash}/locations/${second.id}`,
+      `/blobs/${hash}/copies/${second.id}`,
       { key: ctx.workingKey },
     );
     expect(working.status).toBe(403);
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(2);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(2);
     const dropped = await request(
       ctx.app,
       "DELETE",
-      `/blobs/${hash}/locations/${second.id}`,
+      `/blobs/${hash}/copies/${second.id}`,
       { key: ctx.managementKey },
     );
     expect(dropped.status).toBe(200);
     expect(await dropped.json()).toEqual({ ok: true });
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     expect(await second.has(hash)).toBeNull();
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
@@ -788,7 +785,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
     const refused = await request(
       ctx.app,
       "DELETE",
-      `/blobs/${hash}/locations/${ctx.blobs.disk.id}`,
+      `/blobs/${hash}/copies/${ctx.blobs.disk.id}`,
       { key: ctx.managementKey },
     );
     expect(refused.status).toBe(409);
@@ -797,24 +794,24 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
     };
     expect(body.error.code).toBe("copies_below_minimum");
     expect(body.error.details).toMatchObject({ live: 1, min_copies: 1 });
-    expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
+    expect(await ctx.storage.blobs.listCopies(hash)).toHaveLength(1);
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
 
     // A store that holds no copy, and a store that is not attached.
     const nowhere = await request(
       ctx.app,
       "DELETE",
-      `/blobs/${hash}/locations/${second.id}`,
+      `/blobs/${hash}/copies/${second.id}`,
       { key: ctx.managementKey },
     );
     expect(nowhere.status).toBe(404);
     expect(
       ((await nowhere.json()) as { error: { code: string } }).error.code,
-    ).toBe("blob_location_not_found");
+    ).toBe("blob_copy_not_found");
     const unattached = await request(
       ctx.app,
       "DELETE",
-      `/blobs/${hash}/locations/no-such-store`,
+      `/blobs/${hash}/copies/no-such-store`,
       { key: ctx.managementKey },
     );
     expect(unattached.status).toBe(404);
@@ -822,7 +819,7 @@ describe("DELETE /blobs/:hash/locations/:store", () => {
     const unknown = await request(
       ctx.app,
       "DELETE",
-      `/blobs/sha256:${"0".repeat(64)}/locations/${ctx.blobs.disk.id}`,
+      `/blobs/sha256:${"0".repeat(64)}/copies/${ctx.blobs.disk.id}`,
       { key: ctx.managementKey },
     );
     expect(unknown.status).toBe(404);

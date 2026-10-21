@@ -161,7 +161,7 @@ export const IdParam = z.object({
 
 const InboundEndpointSchema = z
   .object({
-    id: z.string().describe("Unique identifier for the webhook endpoint."),
+    id: z.string().describe("Unique identifier for the inbound endpoint."),
     connector_id: z
       .string()
       .describe(
@@ -189,7 +189,7 @@ const InboundEndpointSchema = z
       .describe("When the endpoint was retired; `null` while it is live."),
   })
   .describe(
-    "A webhook endpoint is an address where a sender posts to a connector without a credential: the address is the credential.",
+    "An inbound endpoint is an address where a sender posts to a connector without a credential: the address is the credential.",
   )
   .openapi("InboundEndpoint");
 
@@ -250,12 +250,12 @@ const InboundDeliverySchema = z
     ),
   })
   .describe(
-    "A delivery is one request that arrived at a webhook endpoint, stored as it came until the connector marks it handled.",
+    "A delivery is one request that arrived at an inbound endpoint, stored as it came until the connector marks it handled.",
   )
   .openapi("InboundDelivery");
 
 const EndpointParam = IdParam.extend({
-  endpoint_id: z.string().describe("The ID of the webhook endpoint."),
+  endpoint_id: z.string().describe("The ID of the inbound endpoint."),
 });
 
 const DeliveryParam = IdParam.extend({
@@ -468,7 +468,7 @@ const deleteConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Delete a connector",
   description:
-    "Deletes the connector, its runs and hold, and its webhook endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.",
+    "Deletes the connector, its runs and hold, and its inbound endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -483,13 +483,13 @@ const deleteConnectorRoute = createRoute({
 });
 
 const heartbeatRoute = createRoute({
-  operationId: "heartbeatConnector",
+  operationId: "sendConnectorHeartbeat",
   method: "post",
   path: "/{id}/heartbeat",
   tags: ["Connectors"],
-  summary: "Send a heartbeat",
+  summary: "Send a connector heartbeat",
   description:
-    "Sets `last_heartbeat_at` to the current time and returns it. Marfa takes no action when heartbeats stop.",
+    "Sends a heartbeat, which sets the connector's `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -514,9 +514,9 @@ const reportRunRoute = createRoute({
   method: "post",
   path: "/{id}/runs",
   tags: ["Connectors"],
-  summary: "Report a run",
+  summary: "Report a connector run",
   description:
-    "Records one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
+    "Reports one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -581,9 +581,9 @@ const createEndpointRoute = createRoute({
   method: "post",
   path: "/{id}/endpoints",
   tags: ["Inbound webhooks"],
-  summary: "Create a webhook endpoint",
+  summary: "Create an inbound endpoint",
   description:
-    "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
+    "Creates an inbound endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -620,9 +620,9 @@ const listEndpointsRoute = createRoute({
   method: "get",
   path: "/{id}/endpoints",
   tags: ["Inbound webhooks"],
-  summary: "List webhook endpoints",
+  summary: "List inbound endpoints",
   description:
-    "Returns the connector's webhook endpoints, newest first, retired ones included.",
+    "Returns the connector's inbound endpoints, newest first, retired ones included.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -632,7 +632,7 @@ const listEndpointsRoute = createRoute({
           schema: wholeListOf(
             InboundEndpointSchema,
             "InboundEndpointPage",
-            "webhook endpoint of the connector",
+            "inbound endpoint of the connector",
           ),
         },
       },
@@ -648,9 +648,9 @@ const retireEndpointRoute = createRoute({
   method: "delete",
   path: "/{id}/endpoints/{endpoint_id}",
   tags: ["Inbound webhooks"],
-  summary: "Retire a webhook endpoint",
+  summary: "Retire an inbound endpoint",
   description:
-    "Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
+    "Retires an inbound endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
   security: [{ bearerAuth: [] }],
   request: { params: EndpointParam },
   responses: {

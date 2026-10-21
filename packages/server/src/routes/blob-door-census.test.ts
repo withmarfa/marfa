@@ -31,14 +31,14 @@ afterAll(async () => {
 const READING = [
   "GET /blobs/:hash",
   "GET /blobs/:hash/url",
-  "GET /blobs/:hash/locations",
+  "GET /blobs/:hash/copies",
 ];
 
 /** Doors requiring instance.read or blobs.manage. */
 const MANAGEMENT_DOORS = [
   "GET /blobs/orphans",
   "GET /blobs/stores",
-  "DELETE /blobs/:hash/locations/:store",
+  "DELETE /blobs/:hash/copies/:store",
 ];
 
 /**

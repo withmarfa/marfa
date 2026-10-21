@@ -17,7 +17,7 @@ import { outlastBlobUploadLock } from "./blob-upload-lock.js";
 /**
  * The stores this instance has attached, built in one place so that every
  * caller that boots an app has stores with ids and rows. A store that was
- * constructed and never attached has no id, records no location and would
+ * constructed and never attached has no id, records no copy and would
  * make the log lie by omission.
  */
 export interface BlobLayer {
@@ -31,7 +31,7 @@ export interface BlobLayer {
 }
 
 /**
- * The attached stores the location log records a copy of `hash` in, the disk
+ * The attached stores the copy record records a copy of `hash` in, the disk
  * first. A copy struck or dropped can linger in its store until its deletion
  * is retried, and those bytes are not the blob's.
  */
@@ -41,7 +41,7 @@ export async function recordedStores(
   hash: string,
 ): Promise<BlobStore[]> {
   const holding = new Set(
-    (await storage.blobs.listLocations(hash)).map((l) => l.store_id),
+    (await storage.blobs.listCopies(hash)).map((l) => l.store_id),
   );
   return blobs.stores.filter((store) => holding.has(store.id));
 }
@@ -317,7 +317,7 @@ export type BlobLayerConfig = Pick<
 >;
 
 /**
- * Refuses a new disk store at a folder where the location log still records
+ * Refuses a new disk store at a folder where the copy record still records
  * copies in the store that was there: a drive that did not mount leaves the
  * folder or its marker missing, and a new store over it would hide every
  * saved file and take every new one where the drive, once back, hides it.

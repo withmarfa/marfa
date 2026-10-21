@@ -78,7 +78,7 @@ describe("BlobReplicator.runOnce", () => {
     const two = await upload(ctx, "replicated two");
     expect(await second.has(one)).toBeNull();
     expect(
-      (await ctx.storage.blobs.listLocations(one)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(one)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
 
     const replicator = new BlobReplicator(ctx.storage, stores, {
@@ -94,14 +94,14 @@ describe("BlobReplicator.runOnce", () => {
       expect(await bytesOf(second, hash)).toBe(
         await bytesOf(ctx.blobs.disk, hash),
       );
-      const locations = await ctx.storage.blobs.listLocations(hash);
-      expect(locations.map((l) => l.store_id).sort()).toEqual(
+      const copies = await ctx.storage.blobs.listCopies(hash);
+      expect(copies.map((l) => l.store_id).sort()).toEqual(
         [ctx.blobs.disk.id, second.id].sort(),
       );
       // Recorded unverified: the stamp is the integrity check's to write,
       // which is what makes it a fact about the copy rather than a default.
       expect(
-        locations.find((l) => l.store_id === second.id)?.verified_at,
+        copies.find((l) => l.store_id === second.id)?.verified_at,
       ).toBeNull();
       await ctx.storage.blobs.markVerified(
         hash,
@@ -109,7 +109,7 @@ describe("BlobReplicator.runOnce", () => {
         "2026-09-21T00:00:00.000Z",
       );
       expect(
-        (await ctx.storage.blobs.listLocations(hash)).find(
+        (await ctx.storage.blobs.listCopies(hash)).find(
           (l) => l.store_id === second.id,
         )?.verified_at,
       ).toBe("2026-09-21T00:00:00.000Z");
@@ -132,7 +132,7 @@ describe("BlobReplicator.runOnce", () => {
       size_bytes: content.length,
     });
     await ctx.storage.blobs.register(hash, "text/plain", content.length);
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
 
     const replicator = new BlobReplicator(ctx.storage, stores, {
@@ -145,9 +145,7 @@ describe("BlobReplicator.runOnce", () => {
     });
     expect(await bytesOf(ctx.blobs.disk, hash)).toBe(content);
     expect(
-      (await ctx.storage.blobs.listLocations(hash))
-        .map((l) => l.store_id)
-        .sort(),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id).sort(),
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 
@@ -162,7 +160,7 @@ describe("BlobReplicator.runOnce", () => {
       size_bytes: content.length,
     });
     await ctx.storage.blobs.register(onSecond, "text/plain", content.length);
-    await ctx.storage.blobs.recordLocation(onSecond, second.id);
+    await ctx.storage.blobs.recordCopy(onSecond, second.id);
     const has = second.has.bind(second);
     second.has = () => Promise.reject(new Error("store unreachable"));
     try {
@@ -213,7 +211,7 @@ describe("BlobReplicator.runOnce", () => {
     expect(open).toBe(0);
     expect(await second.has(hash)).toBeNull();
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     // The lock is free and nothing stands in the way of the copy.
     expect(await replicator.runOnce()).toMatchObject({
@@ -233,7 +231,7 @@ describe("BlobReplicator.runOnce", () => {
       size_bytes: content.length,
     });
     await ctx.storage.blobs.register(hash, "text/plain", content.length);
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     const get = second.get.bind(second);
     let late: Readable | undefined;
     let opened!: () => void;
@@ -272,7 +270,7 @@ describe("BlobReplicator.runOnce", () => {
     expect(late?.destroyed).toBe(true);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([second.id]);
   });
 
@@ -344,7 +342,7 @@ describe("BlobReplicator.runOnce", () => {
     }
     expect(refusals).toBe(1);
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     // The witness: once the store takes the bytes, the copy is recorded.
     expect(await replicator.runOnce()).toMatchObject({
@@ -384,7 +382,7 @@ describe("BlobReplicator.runOnce", () => {
       kind: stub.kind,
       locator: stub.locator,
     });
-    await ctx.storage.blobs.recordLocation(hash, stub.id);
+    await ctx.storage.blobs.recordCopy(hash, stub.id);
     const all = [...stores.stores, stub];
     const replicator = new BlobReplicator(
       ctx.storage,
@@ -403,8 +401,8 @@ describe("BlobReplicator.runOnce", () => {
       ctx,
       "read from the far copy when it is all there is",
     );
-    await ctx.storage.blobs.recordLocation(third, stub.id);
-    await ctx.storage.blobs.removeLocation(third, ctx.blobs.disk.id);
+    await ctx.storage.blobs.recordCopy(third, stub.id);
+    await ctx.storage.blobs.removeCopy(third, ctx.blobs.disk.id);
     await ctx.blobs.disk.delete(third);
     stub.get = () => {
       reads += 1;
@@ -444,7 +442,7 @@ describe("BlobReplicator.runOnce", () => {
     });
     expect(await second.has(hash)).toBeNull();
     expect(
-      (await ctx.storage.blobs.listLocations(hash)).map((l) => l.store_id),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id),
     ).toEqual([ctx.blobs.disk.id]);
     // The witness: with the bytes back, the same run copies them.
     await ctx.blobs.disk.put(hash, {
@@ -469,7 +467,7 @@ describe("BlobReplicator.runOnce", () => {
       size_bytes: content.length,
     });
     await ctx.storage.blobs.register(hash, "text/plain", content.length);
-    await ctx.storage.blobs.recordLocation(hash, second.id);
+    await ctx.storage.blobs.recordCopy(hash, second.id);
     const replicator = new BlobReplicator(ctx.storage, stores, {
       maxBlobs: 100,
       maxBytes: 1024 * 1024,
@@ -501,7 +499,7 @@ describe("BlobReplicator.runOnce while a store cannot be reached", () => {
     // The disk's copy struck as the integrity check leaves it: the row gone
     // and the deletion queued.
     await ctx.storage.runInTransaction(async () => {
-      await ctx!.storage.blobs.removeLocation(hash, ctx!.blobs.disk.id);
+      await ctx!.storage.blobs.removeCopy(hash, ctx!.blobs.disk.id);
       await ctx!.storage.blobs.queueCopyDeletion(hash, ctx!.blobs.disk.id);
     });
     const folder = ctx.blobs.disk.locator;
@@ -522,9 +520,7 @@ describe("BlobReplicator.runOnce while a store cannot be reached", () => {
       "struck from a disk that goes away",
     );
     expect(
-      (await ctx.storage.blobs.listLocations(hash))
-        .map((l) => l.store_id)
-        .sort(),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id).sort(),
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 });
@@ -601,9 +597,7 @@ describe("BlobReplicator.runOnce while a store's write or delete does not answer
     });
     expect(await bytesOf(second, hash)).toBe(content);
     expect(
-      (await ctx.storage.blobs.listLocations(hash))
-        .map((l) => l.store_id)
-        .sort(),
+      (await ctx.storage.blobs.listCopies(hash)).map((l) => l.store_id).sort(),
     ).toEqual([ctx.blobs.disk.id, second.id].sort());
   });
 
@@ -619,7 +613,7 @@ describe("BlobReplicator.runOnce while a store's write or delete does not answer
     expect(await replicator.runOnce()).toMatchObject({ copied: 1 });
     // The copy is struck, as an integrity check does, with its delete held.
     await ctx.storage.runInTransaction(async () => {
-      await ctx!.storage.blobs.removeLocation(hash, second.id);
+      await ctx!.storage.blobs.removeCopy(hash, second.id);
       await ctx!.storage.blobs.queueCopyDeletion(hash, second.id);
     });
     const removal = hold(second, "delete");

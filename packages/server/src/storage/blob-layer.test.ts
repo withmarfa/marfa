@@ -151,7 +151,7 @@ describe("createBlobLayer", () => {
     ).toEqual(audits);
   });
 
-  it("marks a copy in a detached store as such in the location log", async () => {
+  it("marks a copy in a detached store as such in the copy record", async () => {
     ctx = await createTestContext();
     const res = await ctx.app.request("/blobs", {
       method: "POST",
@@ -163,11 +163,11 @@ describe("createBlobLayer", () => {
     });
     expect(res.status).toBe(201);
     const { hash } = (await res.json()) as { hash: string };
-    const before = await ctx.storage.blobs.listLocations(hash);
+    const before = await ctx.storage.blobs.listCopies(hash);
     expect(before.map((row) => row.detached)).toEqual([false]);
 
     await createBlobLayer(ctx.storage, await diskAt());
-    const after = await ctx.storage.blobs.listLocations(hash);
+    const after = await ctx.storage.blobs.listCopies(hash);
     expect(after.map((row) => [row.store_id, row.detached])).toEqual([
       [ctx.blobs.disk.id, true],
     ]);
@@ -229,7 +229,7 @@ describe("createBlobLayer", () => {
       expect(existsSync(marker)).toBe(false);
       expect(await ctx.storage.blobs.listStores()).toEqual(before);
       expect(
-        (await ctx.storage.blobs.listLocations(hash)).map((row) => [
+        (await ctx.storage.blobs.listCopies(hash)).map((row) => [
           row.store_id,
           row.detached,
         ]),

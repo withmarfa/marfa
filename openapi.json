@@ -4803,7 +4803,7 @@
           },
           "min_copies": {
             "type": "integer",
-            "description": "The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/locations/{store}` won't delete a copy that would leave fewer."
+            "description": "The fewest live copies Marfa keeps of each blob. `DELETE /blobs/{hash}/copies/{store}` won't delete a copy that would leave fewer."
           }
         },
         "required": [
@@ -4928,31 +4928,31 @@
         ],
         "description": "An error response."
       },
-      "BlobLocationPage": {
+      "BlobCopyPage": {
         "type": "object",
         "properties": {
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/BlobLocation"
+              "$ref": "#/components/schemas/BlobCopy"
             },
-            "description": "Every location."
+            "description": "Every copy."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Always `null`: Marfa returns every location in one page."
+            "description": "Always `null`: Marfa returns every copy in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
         ],
-        "description": "A page holding every location."
+        "description": "A page holding every copy."
       },
-      "BlobLocation": {
+      "BlobCopy": {
         "type": "object",
         "properties": {
           "store_id": {
@@ -4995,9 +4995,9 @@
           "recorded_at",
           "verified_at"
         ],
-        "description": "A location is one store's copy of a blob."
+        "description": "One store's copy of a blob."
       },
-      "BlobLocationNotFoundOrBlobNotFoundRefusal": {
+      "BlobCopyNotFoundOrBlobNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -5006,7 +5006,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "blob_location_not_found",
+                  "blob_copy_not_found",
                   "blob_not_found"
                 ],
                 "description": "A machine-readable code for the error. Use it in your logic."
@@ -5590,7 +5590,7 @@
         "properties": {
           "id": {
             "type": "string",
-            "description": "Unique identifier for the webhook endpoint."
+            "description": "Unique identifier for the inbound endpoint."
           },
           "connector_id": {
             "type": "string",
@@ -5635,7 +5635,7 @@
           "created_at",
           "retired_at"
         ],
-        "description": "A webhook endpoint is an address where a sender posts to a connector without a credential: the address is the credential."
+        "description": "An inbound endpoint is an address where a sender posts to a connector without a credential: the address is the credential."
       },
       "InboundEndpointPage": {
         "type": "object",
@@ -5645,21 +5645,21 @@
             "items": {
               "$ref": "#/components/schemas/InboundEndpoint"
             },
-            "description": "Every webhook endpoint of the connector."
+            "description": "Every inbound endpoint of the connector."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Always `null`: Marfa returns every webhook endpoint of the connector in one page."
+            "description": "Always `null`: Marfa returns every inbound endpoint of the connector in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
         ],
-        "description": "A page holding every webhook endpoint of the connector."
+        "description": "A page holding every inbound endpoint of the connector."
       },
       "ConnectorNotFoundOrEndpointNotFoundRefusal": {
         "type": "object",
@@ -5831,7 +5831,7 @@
           "handled_at",
           "outcome"
         ],
-        "description": "A delivery is one request that arrived at a webhook endpoint, stored as it came until the connector marks it handled."
+        "description": "A delivery is one request that arrived at an inbound endpoint, stored as it came until the connector marks it handled."
       },
       "ConnectorNotFoundOrDeliveryNotFoundRefusal": {
         "type": "object",
@@ -6777,7 +6777,7 @@
           "blobs.manage",
           "keys.manage"
         ],
-        "description": "A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, platform type drift, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob."
+        "description": "A permission a credential can hold, for an operation the type, edge, extension, metadata and profile maps don't cover. `schema.write` replaces and deletes types and edge types; `keys.mint` mints keys and lists, changes and revokes those within the caller's reach; `keys.manage` lists and revokes every key and changes one without widening it; `items.purge` purges trashed items; `webhooks.manage` manages webhooks; `config.manage` reads and replaces `/config`; `audit.read` reads the audit log; `grants.manage` lists and revokes other apps' access; `instance.read` reads health, metrics, housekeeping, retired platform types, blob storage reports and every bulk job's status; `instance.maintain` runs housekeeping, resets platform type definitions and cancels bulk jobs; `connectors.manage` administers connector registrations and their endpoints, and clears their retained state; and `blobs.manage` manages every blob."
       },
       "TypePermissionLevel": {
         "type": "string",
@@ -7214,36 +7214,36 @@
         ],
         "description": "An error response."
       },
-      "DriftedPlatformTypePage": {
+      "RetiredPlatformTypePage": {
         "type": "object",
         "properties": {
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/DriftedPlatformType"
+              "$ref": "#/components/schemas/RetiredPlatformType"
             },
-            "description": "Every stale type."
+            "description": "Every retired type."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Always `null`: Marfa returns every stale type in one page."
+            "description": "Always `null`: Marfa returns every retired type in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
         ],
-        "description": "A page holding every stale type."
+        "description": "A page holding every retired type."
       },
-      "DriftedPlatformType": {
+      "RetiredPlatformType": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string",
-            "description": "The identifier of the stale type."
+            "description": "The identifier of the retired type."
           },
           "item_count": {
             "type": "number",
@@ -15243,7 +15243,7 @@
         "tags": [
           "Items"
         ],
-        "summary": "List occurrences",
+        "summary": "List event occurrences",
         "description": "Returns the events that overlap a time window, with each recurring event expanded into one entry per occurrence. Marfa computes occurrences when you read them and doesn't store them.",
         "security": [
           {
@@ -15532,8 +15532,8 @@
         "tags": [
           "Items"
         ],
-        "summary": "Move tombstones' settled time",
-        "description": "Moves the `settled_at` of tombstones later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
+        "summary": "Settle tombstones",
+        "description": "Settles tombstones, moving their `settled_at` later, never earlier, and returns them. A connector calls it after changing the vendor's copy to carry out a purge, so that change doesn't bring the item back as a new row.",
         "security": [
           {
             "bearerAuth": []
@@ -16213,7 +16213,7 @@
         "tags": [
           "Trash"
         ],
-        "summary": "Move an item to the trash",
+        "summary": "Trash an item by summary",
         "description": "Moves the item and its cascading children to the trash. Returns only a summary. Requires the version from the listing.",
         "security": [
           {
@@ -16592,7 +16592,7 @@
         "tags": [
           "Trash"
         ],
-        "summary": "Restore an item from the trash",
+        "summary": "Restore an item by summary",
         "description": "Restores the item and the children its trash took. Returns only a summary. Requires the version from the listing.",
         "security": [
           {
@@ -16971,8 +16971,8 @@
         "tags": [
           "Trash"
         ],
-        "summary": "Purge a trashed item",
-        "description": "Deletes one item permanently if it is still in the trash at the listed version. Returns only a summary.",
+        "summary": "Purge an item by summary",
+        "description": "Purges one item, deleting it permanently, if it is still in the trash at the listed version. Returns only a summary.",
         "security": [
           {
             "ownerSession": []
@@ -17350,8 +17350,8 @@
         "tags": [
           "Trash"
         ],
-        "summary": "Empty a page of the trash",
-        "description": "Deletes up to 200 trash items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
+        "summary": "Empty the trash",
+        "description": "Empties one page of the trash: deletes up to 200 items permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed during the operation may remain.",
         "security": [
           {
             "ownerSession": []
@@ -18399,7 +18399,7 @@
           "Bulk actions"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of instance.read, can read it.",
+        "description": "Returns a bulk-action job's status and counts, and its `result` once it has finished. Only the credential that queued the job, or the holder of `instance.read`, can read it.",
         "security": [
           {
             "bearerAuth": []
@@ -18506,7 +18506,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours lacks instance.read.",
+            "description": "- `forbidden`: another credential queued the job, and yours lacks `instance.read`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -18815,7 +18815,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: another credential queued the job, and yours lacks instance.maintain.",
+            "description": "- `forbidden`: another credential queued the job, and yours lacks `instance.maintain`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -28379,7 +28379,7 @@
         "tags": [
           "Types"
         ],
-        "summary": "Normalize a type",
+        "summary": "Normalize a type definition",
         "description": "Normalizes a candidate definition and returns its declared form, the registered declared definition and the registered resolved definition. It does not register or replace a type.",
         "security": [
           {
@@ -30134,10 +30134,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob.",
             "name": "hash",
             "in": "path"
           }
@@ -30552,10 +30552,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob.",
             "name": "hash",
             "in": "path"
           },
@@ -30860,13 +30860,13 @@
         }
       }
     },
-    "/blobs/{hash}/locations": {
+    "/blobs/{hash}/copies": {
       "get": {
-        "operationId": "listBlobLocations",
+        "operationId": "listBlobCopies",
         "tags": [
           "Blobs"
         ],
-        "summary": "List a blob's locations",
+        "summary": "List a blob's copies",
         "description": "Returns the stores that hold a copy of the blob, with when each copy was recorded and when a check last found it intact.",
         "security": [
           {
@@ -30877,21 +30877,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob."
+              "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob."
             },
             "required": true,
-            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The blobs.manage permission reads every blob.",
+            "description": "The blob's hash, `sha256:<hex>`. You can read a blob only if an item, edge or extension you can read references its hash, and whoever wrote that reference had uploaded the bytes or could read them. The `blobs.manage` permission reads every blob.",
             "name": "hash",
             "in": "path"
           }
         ],
         "responses": {
           "200": {
-            "description": "Returns every location, in one page.",
+            "description": "Returns every copy, in one page.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BlobLocationPage"
+                  "$ref": "#/components/schemas/BlobCopyPage"
                 }
               }
             },
@@ -31159,14 +31159,14 @@
         }
       }
     },
-    "/blobs/{hash}/locations/{store}": {
+    "/blobs/{hash}/copies/{store}": {
       "delete": {
-        "operationId": "deleteBlobLocation",
+        "operationId": "deleteBlobCopy",
         "tags": [
           "Blobs"
         ],
-        "summary": "Delete a blob's copy in a store",
-        "description": "Deletes the copy of a blob that one store holds, and its row in the location log. Requires blobs.manage.",
+        "summary": "Delete one copy of a blob",
+        "description": "Deletes one store's copy of a blob, and Marfa's record of it. Requires `blobs.manage`.",
         "security": [
           {
             "bearerAuth": []
@@ -31206,7 +31206,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns `ok: true`. The store no longer holds the copy, and the location log no longer lists it.",
+            "description": "Returns `ok: true`. The store no longer holds the copy, and `GET /blobs/{hash}/copies` no longer lists it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31323,11 +31323,11 @@
             }
           },
           "404": {
-            "description": "- `blob_not_found`: no blob has this hash.\n- `blob_location_not_found`: the store holds no copy of the blob, or isn't attached.",
+            "description": "- `blob_not_found`: no blob has this hash.\n- `blob_copy_not_found`: the store holds no copy of the blob, or isn't attached.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BlobLocationNotFoundOrBlobNotFoundRefusal"
+                  "$ref": "#/components/schemas/BlobCopyNotFoundOrBlobNotFoundRefusal"
                 }
               }
             },
@@ -31522,7 +31522,7 @@
           "Blobs"
         ],
         "summary": "List blob stores",
-        "description": "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires instance.read.",
+        "description": "Returns every store the instance has attached, including any it has since detached, and `min_copies`, the fewest live copies Marfa keeps of a blob. Requires `instance.read`.",
         "security": [
           {
             "bearerAuth": []
@@ -31779,7 +31779,7 @@
           "Blobs"
         ],
         "summary": "List orphaned blobs",
-        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires instance.read.",
+        "description": "Returns the blobs that nothing references, as the last run of the `blob-orphans` housekeeping job found them, oldest first. Requires `instance.read`.",
         "security": [
           {
             "bearerAuth": []
@@ -34398,8 +34398,8 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Redeliver a failed delivery",
-        "description": "Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
+        "summary": "Redeliver a webhook delivery",
+        "description": "Redelivers a failed delivery, queuing it again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -36445,8 +36445,8 @@
         "tags": [
           "Folders"
         ],
-        "summary": "Replace a folder status",
-        "description": "Replaces your sign-in's report for one folder copy and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.",
+        "summary": "Report a folder status",
+        "description": "Reports your sign-in's status for one folder copy, replacing its earlier report, and returns the latest accepted sequence and receipt time. An equal or older sequence leaves the stored report unchanged.",
         "security": [
           {
             "bearerAuth": []
@@ -38019,7 +38019,7 @@
           "Connectors"
         ],
         "summary": "Delete a connector",
-        "description": "Deletes the connector, its runs and hold, and its webhook endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.",
+        "description": "Deletes the connector, its runs and hold, and its inbound endpoints with every delivery they stored. Its state document and agreements stay with its source, for a later key with the same source.",
         "security": [
           {
             "bearerAuth": []
@@ -38374,12 +38374,12 @@
     },
     "/connectors/{id}/heartbeat": {
       "post": {
-        "operationId": "heartbeatConnector",
+        "operationId": "sendConnectorHeartbeat",
         "tags": [
           "Connectors"
         ],
-        "summary": "Send a heartbeat",
-        "description": "Sets `last_heartbeat_at` to the current time and returns it. Marfa takes no action when heartbeats stop.",
+        "summary": "Send a connector heartbeat",
+        "description": "Sends a heartbeat, which sets the connector's `last_heartbeat_at` to the current time, and returns that time. Marfa takes no action when heartbeats stop.",
         "security": [
           {
             "bearerAuth": []
@@ -38747,8 +38747,8 @@
         "tags": [
           "Connectors"
         ],
-        "summary": "Report a run",
-        "description": "Records one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
+        "summary": "Report a connector run",
+        "description": "Reports one run of the connector, with its outcome and times, and returns it. Marfa keeps the last 100 runs and drops older ones.",
         "security": [
           {
             "bearerAuth": []
@@ -39437,11 +39437,11 @@
     },
     "/connectors/{id}/hold": {
       "post": {
-        "operationId": "holdConnector",
+        "operationId": "takeConnectorHold",
         "tags": [
           "Connector state"
         ],
-        "summary": "Take or renew a hold",
+        "summary": "Take a connector hold",
         "description": "Takes the connector's hold for `process`, or renews it if `process` already holds it. Only the process holding a live hold can replace the state document or write agreements.",
         "security": [
           {
@@ -39847,7 +39847,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Release a hold",
+        "summary": "Release a connector hold",
         "description": "Releases the hold if `process` holds it, so another process can take it at once. Returns the same either way, and leaves another process's hold in place.",
         "security": [
           {
@@ -40219,7 +40219,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Get the state document",
+        "summary": "Get a connector's state",
         "description": "Returns the state document of the connector's source. A later key with the same source reads the same document.",
         "security": [
           {
@@ -40516,7 +40516,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Replace the state document",
+        "summary": "Replace a connector's state",
         "description": "Replaces the whole state document of the connector's source. Only the process holding a live hold can write it.",
         "security": [
           {
@@ -40945,7 +40945,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Delete the state document",
+        "summary": "Delete a connector's state",
         "description": "Deletes the state document, current problems and every agreement of the connector's source, which every registration of that source reads. No hold is needed.",
         "security": [
           {
@@ -41305,7 +41305,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Write agreements",
+        "summary": "Write connector agreements",
         "description": "Writes and clears the connector's agreements, its records of what it and its vendor last agreed about each item. Only the process holding a live hold can write them.",
         "security": [
           {
@@ -41754,7 +41754,7 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "List a connector's agreements",
+        "summary": "List connector agreements",
         "description": "Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.",
         "security": [
           {
@@ -42090,8 +42090,8 @@
         "tags": [
           "Connector state"
         ],
-        "summary": "Look up agreements",
-        "description": "Returns the agreements of the named items that have one, each item once, in the order you first named it. An item whose type you can't read is left out.",
+        "summary": "Look up connector agreements",
+        "description": "Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.",
         "security": [
           {
             "bearerAuth": []
@@ -42489,8 +42489,8 @@
         "tags": [
           "Inbound webhooks"
         ],
-        "summary": "Create a webhook endpoint",
-        "description": "Creates a webhook endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
+        "summary": "Create an inbound endpoint",
+        "description": "Creates an inbound endpoint for the connector and returns it. Save its `path`: this is the only response that shows it in full.",
         "security": [
           {
             "bearerAuth": []
@@ -42878,8 +42878,8 @@
         "tags": [
           "Inbound webhooks"
         ],
-        "summary": "List webhook endpoints",
-        "description": "Returns the connector's webhook endpoints, newest first, retired ones included.",
+        "summary": "List inbound endpoints",
+        "description": "Returns the connector's inbound endpoints, newest first, retired ones included.",
         "security": [
           {
             "bearerAuth": []
@@ -43177,8 +43177,8 @@
         "tags": [
           "Inbound webhooks"
         ],
-        "summary": "Retire a webhook endpoint",
-        "description": "Retires a webhook endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
+        "summary": "Retire an inbound endpoint",
+        "description": "Retires an inbound endpoint, so its address stops accepting deliveries. It stays listed with `retired_at`, and deliveries it already stored stay readable until they age out.",
         "security": [
           {
             "bearerAuth": []
@@ -43198,10 +43198,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "The ID of the webhook endpoint."
+              "description": "The ID of the inbound endpoint."
             },
             "required": true,
-            "description": "The ID of the webhook endpoint.",
+            "description": "The ID of the inbound endpoint.",
             "name": "endpoint_id",
             "in": "path"
           },
@@ -45307,8 +45307,8 @@
         "tags": [
           "API keys"
         ],
-        "summary": "Get the current key",
-        "description": "Returns the key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
+        "summary": "Get the current API key",
+        "description": "Returns the API key that sends the request, without its plaintext. Any key can read itself, whatever it holds, so a process can check what it was given.",
         "security": [
           {
             "bearerAuth": []
@@ -48758,7 +48758,7 @@
         "tags": [
           "Owner"
         ],
-        "summary": "Update the profile",
+        "summary": "Update the owner's profile",
         "description": "Updates the owner's name or avatar and returns `ok: true`. Requires profile write permission for every submitted field; email cannot be changed here. All fields commit together.",
         "security": [
           {
@@ -49389,17 +49389,17 @@
     },
     "/owner/sign-ins/{id}": {
       "patch": {
-        "operationId": "updateSignIn",
+        "operationId": "renameSignIn",
         "tags": [
           "Sign-ins and passkeys"
         ],
-        "summary": "Update a sign-in",
+        "summary": "Rename a sign-in",
         "security": [
           {
             "ownerSession": []
           }
         ],
-        "description": "Gives an app or a key a new name and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
+        "description": "Renames an app or a key and returns the sign-in. A key's name is its `label`. Requires the owner's browser session, signed in within the last five minutes, or the local command.",
         "parameters": [
           {
             "schema": {
@@ -50781,17 +50781,17 @@
         }
       },
       "delete": {
-        "operationId": "removeOwnerPasskey",
+        "operationId": "deleteOwnerPasskey",
         "tags": [
           "Sign-ins and passkeys"
         ],
-        "summary": "Remove a passkey",
+        "summary": "Delete a passkey",
         "security": [
           {
             "ownerSession": []
           }
         ],
-        "description": "Removes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
+        "description": "Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session authenticated within five minutes or private local authority.",
         "parameters": [
           {
             "schema": {
@@ -51145,8 +51145,8 @@
         "tags": [
           "Instance"
         ],
-        "summary": "Describe the instance",
-        "description": "Describes the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
+        "summary": "Get the instance",
+        "description": "Returns a description of the instance: its display name, `instance_id`, the build it runs, the release it was made as when it is one, the contract version it speaks and the features it serves. Needs no credential.",
         "responses": {
           "200": {
             "description": "Returns the instance's description. A request whose `Accept` header prefers `text/html` gets an HTML page instead.",
@@ -52685,11 +52685,11 @@
     },
     "/metrics": {
       "get": {
-        "operationId": "getServerMetrics",
+        "operationId": "getInstanceMetrics",
         "tags": [
           "Health and maintenance"
         ],
-        "summary": "Get server metrics",
+        "summary": "Get instance metrics",
         "description": "Returns instance-wide counters and process uptime. Requires `instance.read`; the counters include records outside your content permissions.",
         "security": [
           {
@@ -53395,7 +53395,7 @@
           "Health and maintenance"
         ],
         "summary": "List housekeeping jobs",
-        "description": "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires instance.read.",
+        "description": "Returns every housekeeping job Marfa runs: its interval, when it's next due, whether a run holds it, and what its last run did. A job a server setting switches off isn't listed. Requires `instance.read`.",
         "security": [
           {
             "bearerAuth": []
@@ -53652,7 +53652,7 @@
           "Health and maintenance"
         ],
         "summary": "Run a housekeeping job",
-        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires instance.maintain.",
+        "description": "Runs a housekeeping job now, waits for it to finish, and returns what the run did. A failed run still returns `200`, with the failure in `outcome` and `error`. Requires `instance.maintain`.",
         "security": [
           {
             "bearerAuth": []
@@ -54013,26 +54013,26 @@
         }
       }
     },
-    "/platform-types/drift": {
+    "/platform-types/retired": {
       "get": {
-        "operationId": "listPlatformTypeDrift",
+        "operationId": "listRetiredPlatformTypes",
         "tags": [
           "Health and maintenance"
         ],
-        "summary": "List stale platform types",
+        "summary": "List retired platform types",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires instance.read.",
+        "description": "Returns the platform types that this instance still carries but this build no longer ships, with how many items use each. They stay in `GET /types` until removed. Requires `instance.read`.",
         "responses": {
           "200": {
-            "description": "Returns the stale types. A type you delete drops out of the list at once.",
+            "description": "Returns the retired types. A type you delete drops out of the list at once.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DriftedPlatformTypePage"
+                  "$ref": "#/components/schemas/RetiredPlatformTypePage"
                 }
               }
             },
@@ -54272,25 +54272,25 @@
     },
     "/platform-types/{id}": {
       "delete": {
-        "operationId": "deletePlatformType",
+        "operationId": "deleteRetiredPlatformType",
         "tags": [
           "Health and maintenance"
         ],
-        "summary": "Delete a stale platform type",
+        "summary": "Delete a retired platform type",
         "security": [
           {
             "bearerAuth": []
           }
         ],
-        "description": "Deletes one platform type that this build no longer ships. The type stops resolving at once. Requires instance.maintain.",
+        "description": "Deletes one retired platform type: a type this build no longer ships. The type stops resolving at once. Requires `instance.maintain`.",
         "parameters": [
           {
             "schema": {
               "type": "string",
-              "description": "The identifier of the stale type to delete."
+              "description": "The identifier of the retired type to delete."
             },
             "required": true,
-            "description": "The identifier of the stale type to delete.",
+            "description": "The identifier of the retired type to delete.",
             "name": "id",
             "in": "path"
           },
@@ -54654,12 +54654,12 @@
     },
     "/export": {
       "get": {
-        "operationId": "exportData",
+        "operationId": "exportArchive",
         "tags": [
           "Export and restore"
         ],
-        "summary": "Export items and edges",
-        "description": "Exports readable items, metadata and edges, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
+        "summary": "Export an archive",
+        "description": "Exports an archive of the items, metadata and edges you can read, excluding trash unless requested. The owner can use their browser session. An archive can be read by `POST /restore`.",
         "security": [
           {
             "bearerAuth": []
@@ -55470,7 +55470,7 @@
         "tags": [
           "Webhooks"
         ],
-        "summary": "Receive an event",
+        "summary": "Receive a webhook event",
         "description": "Marfa sends this request to a webhook's `url` for each event it subscribes to, with only what the webhook's credential can read when it's sent. A delivery can arrive more than once: use `delivery_id` to recognize a repeat.",
         "parameters": [
           {
@@ -55639,8 +55639,8 @@
         "uploadBlob",
         "downloadBlob",
         "getBlobUrl",
-        "listBlobLocations",
-        "deleteBlobLocation",
+        "listBlobCopies",
+        "deleteBlobCopy",
         "listBlobStores",
         "listBlobOrphans"
       ]
@@ -55686,7 +55686,7 @@
         "getConnector",
         "listConnectors",
         "deleteConnector",
-        "heartbeatConnector",
+        "sendConnectorHeartbeat",
         "reportConnectorRun",
         "listConnectorRuns"
       ]
@@ -55695,7 +55695,7 @@
       "name": "Connector state",
       "description": "What the instance keeps for a connector's source: its hold, its state document and its agreements.",
       "x-operation-order": [
-        "holdConnector",
+        "takeConnectorHold",
         "releaseConnectorHold",
         "getConnectorState",
         "replaceConnectorState",
@@ -55753,11 +55753,11 @@
       "description": "The browsers, apps and keys that can reach the instance, and the owner's passkeys.",
       "x-operation-order": [
         "listSignIns",
-        "updateSignIn",
+        "renameSignIn",
         "endSignIn",
         "listOwnerPasskeys",
         "updateOwnerPasskey",
-        "removeOwnerPasskey"
+        "deleteOwnerPasskey"
       ]
     },
     {
@@ -55772,22 +55772,22 @@
     },
     {
       "name": "Health and maintenance",
-      "description": "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and the platform types this build no longer ships.",
+      "description": "How the instance is doing: what needs attention, its metrics and audit log, its housekeeping jobs and its retired platform types, which this build no longer ships.",
       "x-operation-order": [
         "listAttention",
-        "getServerMetrics",
+        "getInstanceMetrics",
         "listAuditLog",
         "listHousekeeping",
         "runHousekeeping",
-        "listPlatformTypeDrift",
-        "deletePlatformType"
+        "listRetiredPlatformTypes",
+        "deleteRetiredPlatformType"
       ]
     },
     {
       "name": "Export and restore",
       "description": "Export the instance's data, and restore it from an archive.",
       "x-operation-order": [
-        "exportData",
+        "exportArchive",
         "restoreArchive"
       ]
     }

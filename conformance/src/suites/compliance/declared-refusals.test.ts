@@ -388,7 +388,7 @@ describe("a malformed identifier", () => {
     );
   });
 
-  it("is refused 400 on the key and blob-location doors", async () => {
+  it("is refused 400 on the key and blob-copy doors", async () => {
     await expectRefusal(
       "DELETE",
       "/keys/{id}",
@@ -398,8 +398,8 @@ describe("a malformed identifier", () => {
     );
     await expectRefusal(
       "DELETE",
-      "/blobs/{hash}/locations/{store}",
-      await call("DELETE", `/blobs/${MALFORMED}/locations/disk`, {
+      "/blobs/{hash}/copies/{store}",
+      await call("DELETE", `/blobs/${MALFORMED}/copies/disk`, {
         key: process.env.MARFA_MANAGEMENT_KEY,
       }),
       400,

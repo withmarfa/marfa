@@ -1,5 +1,5 @@
 /**
- * Drift is a pure function of the build and the rows, so most of this is a
+ * The retired set is a pure function of the build and the rows, so most of this is a
  * unit test. The one case that is not asks the real storage layer, because
  * the derivation is only worth anything if it is fed by the query the boot
  * actually runs.
@@ -7,11 +7,11 @@
 import { describe, expect, it } from "vitest";
 import { shippedPlatformTypes } from "@withmarfa/shared";
 import {
-  computePlatformDrift,
-  forgetPlatformDrift,
-  setPlatformDrift,
-} from "./platform-drift.js";
-import { platformDrift } from "./platform-drift.js";
+  computeRetiredPlatformTypes,
+  forgetRetiredPlatformType,
+  retiredPlatformTypes,
+  setRetiredPlatformTypes,
+} from "./retired-platform-types.js";
 import { createTestContext } from "../test-utils.js";
 import type { LoadedType } from "./interface.js";
 
@@ -28,11 +28,11 @@ function row(id: string, origin: LoadedType["origin"]): LoadedType {
 
 describe("which shipped types an instance carries that the build does not", () => {
   it("reports a platform row the build has stopped shipping", () => {
-    const drift = computePlatformDrift(
+    const found = computeRetiredPlatformTypes(
       [{ schema: row("core.note", "platform").schema, family: "core" }],
       [row("core.note", "platform"), row("core.retired", "platform")],
     );
-    expect(drift).toEqual(["core.retired"]);
+    expect(found).toEqual(["core.retired"]);
   });
 
   it("reports nothing when the rows and the build agree", () => {
@@ -40,7 +40,7 @@ describe("which shipped types an instance carries that the build does not", () =
       { schema: row("core.note", "platform").schema, family: "core" as const },
     ];
     expect(
-      computePlatformDrift(shipped, [row("core.note", "platform")]),
+      computeRetiredPlatformTypes(shipped, [row("core.note", "platform")]),
     ).toEqual([]);
   });
 
@@ -48,15 +48,15 @@ describe("which shipped types an instance carries that the build does not", () =
     // A runtime registration and a restored row nobody recorded are not
     // the build's to have an opinion about. Scoping on origin is what keeps
     // a prune built on this from reaching either.
-    const drift = computePlatformDrift(
+    const found = computeRetiredPlatformTypes(
       [],
       [row("jonah.recipe", "user"), row("salvage.thing", "unknown")],
     );
-    expect(drift).toEqual([]);
+    expect(found).toEqual([]);
   });
 
   it("is sorted and free of duplicates", () => {
-    const drift = computePlatformDrift(
+    const found = computeRetiredPlatformTypes(
       [],
       [
         row("core.zebra", "platform"),
@@ -64,7 +64,7 @@ describe("which shipped types an instance carries that the build does not", () =
         row("core.apple", "platform"),
       ],
     );
-    expect(drift).toEqual(["core.apple", "core.zebra"]);
+    expect(found).toEqual(["core.apple", "core.zebra"]);
   });
 
   it("finds a real row through the query the boot uses", async () => {
@@ -83,15 +83,15 @@ describe("which shipped types an instance carries that the build does not", () =
         { origin: "platform" },
       );
 
-      const drift = computePlatformDrift(
+      const found = computeRetiredPlatformTypes(
         shippedPlatformTypes(),
         await ctx.storage.types.loadAll(),
       );
-      expect(drift).toContain(retired);
+      expect(found).toContain(retired);
       // And every type the build does ship is absent, which is the half
       // that would make this dangerous if it were wrong.
       for (const shipped of shippedPlatformTypes()) {
-        expect(drift).not.toContain(shipped.schema.id);
+        expect(found).not.toContain(shipped.schema.id);
       }
     } finally {
       await ctx.cleanup();
@@ -99,18 +99,18 @@ describe("which shipped types an instance carries that the build does not", () =
   });
 
   it("reports what the last boot recorded, and nothing until one has", () => {
-    setPlatformDrift(["core.retired"]);
-    expect(platformDrift()).toEqual(["core.retired"]);
-    setPlatformDrift([]);
-    expect(platformDrift()).toEqual([]);
+    setRetiredPlatformTypes(["core.retired"]);
+    expect(retiredPlatformTypes()).toEqual(["core.retired"]);
+    setRetiredPlatformTypes([]);
+    expect(retiredPlatformTypes()).toEqual([]);
   });
 
   it("forgets one identifier and leaves the rest", () => {
-    setPlatformDrift(["core.a", "core.b"]);
-    forgetPlatformDrift("core.a");
-    expect(platformDrift()).toEqual(["core.b"]);
-    forgetPlatformDrift("core.unknown");
-    expect(platformDrift()).toEqual(["core.b"]);
-    setPlatformDrift([]);
+    setRetiredPlatformTypes(["core.a", "core.b"]);
+    forgetRetiredPlatformType("core.a");
+    expect(retiredPlatformTypes()).toEqual(["core.b"]);
+    forgetRetiredPlatformType("core.unknown");
+    expect(retiredPlatformTypes()).toEqual(["core.b"]);
+    setRetiredPlatformTypes([]);
   });
 });
