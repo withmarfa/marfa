@@ -158,7 +158,7 @@ When a drain finds 50 or more item creates, or 50 or more edge creates, that it 
 
 **Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path.
 
-**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `› sends its files and their placements in pages, in one push`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
 
 ### `queue-and-verdicts/page-never-sent`
 
