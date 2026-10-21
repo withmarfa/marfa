@@ -80,13 +80,17 @@ const release = parse(
 
 const version = "0.0.9";
 const releaseArtifacts = [
+  `marfa-${version}-checksums.txt`,
   `marfa-${version}-darwin-arm64.tar.gz`,
+  `marfa-${version}-darwin-x86_64.tar.gz`,
+  `marfa-${version}-linux-aarch64.tar.gz`,
+  `marfa-${version}-linux-x86_64.tar.gz`,
   `withmarfa-client-${version}.tgz`,
   `withmarfa-core-${version}.tgz`,
 ];
 
 function holdArtifacts(names: string[]): void {
-  const guard = release.jobs?.sign?.steps?.find((step) =>
+  const guard = release.jobs?.collect?.steps?.find((step) =>
     step.name?.startsWith("Hold the artifacts"),
   )?.run;
   expect(typeof guard).toBe("string");
@@ -108,12 +112,12 @@ function holdArtifacts(names: string[]): void {
   }
 }
 
-describe("a release carries the binary and two npm packages", () => {
+describe("a release carries the command line archives, their checksums and two npm packages", () => {
   it("publishes only on a tag push, so a dispatch builds without publishing", () => {
     expect(release.jobs?.publish?.if).toBe("github.event_name == 'push'");
   });
 
-  it("accepts exactly the three product artifacts", () => {
+  it("accepts exactly the seven product artifacts", () => {
     expect(() => {
       holdArtifacts(releaseArtifacts);
     }).not.toThrow();

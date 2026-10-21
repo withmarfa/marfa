@@ -36,11 +36,14 @@ const NIGHTLY_MAC_JOBS = new Set([
   "ci.yml:cli-scenarios",
 ]);
 
-// The server image is built on a runner of each platform it ships for, and
-// both are standard GitHub-hosted runners.
-const IMAGE_JOB = "release.yml:image";
-const IMAGE_RUNNER = "${{ matrix.runner }}";
-const IMAGE_RUNNERS = new Set(["ubuntu-latest", "ubuntu-24.04-arm"]);
+// The server image and the Linux command line are built on a runner of each
+// architecture they ship for, and both are standard GitHub-hosted runners.
+const PER_ARCHITECTURE_JOBS = new Set([
+  "release.yml:image",
+  "release.yml:cli-linux",
+]);
+const PER_ARCHITECTURE_RUNNER = "${{ matrix.runner }}";
+const PER_ARCHITECTURE_RUNNERS = new Set(["ubuntu-latest", "ubuntu-24.04-arm"]);
 
 interface Workflow {
   jobs: Record<
@@ -86,15 +89,15 @@ describe("jobs use standard GitHub-hosted runners", () => {
         continue;
       }
       const key = `${file}:${job}`;
-      if (key === IMAGE_JOB) {
-        expect(config["runs-on"], key).toEqual(IMAGE_RUNNER);
+      if (PER_ARCHITECTURE_JOBS.has(key)) {
+        expect(config["runs-on"], key).toEqual(PER_ARCHITECTURE_RUNNER);
         const runners = (config.strategy?.matrix?.include ?? []).map(
           (entry) => entry.runner,
         );
         expect(runners.length, key).toBeGreaterThan(0);
         for (const runner of runners) {
           expect(
-            IMAGE_RUNNERS.has(runner ?? ""),
+            PER_ARCHITECTURE_RUNNERS.has(runner ?? ""),
             `${key}: ${runner ?? ""}`,
           ).toBe(true);
         }
@@ -140,11 +143,14 @@ describe("jobs use standard GitHub-hosted runners", () => {
     });
   });
 
-  it("finds the image job named by the policy", () => {
-    const [file = "", job = ""] = IMAGE_JOB.split(":");
-    expect(
-      jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],
-    ).toBeDefined();
+  it("finds every per-architecture job named by the policy", () => {
+    for (const key of PER_ARCHITECTURE_JOBS) {
+      const [file = "", job = ""] = key.split(":");
+      expect(
+        jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],
+        key,
+      ).toBeDefined();
+    }
   });
 
   it("finds every macOS job named by the policy", () => {
