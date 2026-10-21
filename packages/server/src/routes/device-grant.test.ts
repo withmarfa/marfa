@@ -642,6 +642,54 @@ describe("the device authorization grant through the provider plugin", () => {
     expect(await grants(c)).toHaveLength(0);
   });
 
+  it("says a code that expired and was then removed by the device's poll is wrong or expired, never only wrong", async () => {
+    ctx = await createTestContext({});
+    const c = ctx;
+    const clientId = await registerClient(c, [DEVICE_CODE_GRANT_TYPE]);
+    const init = await initiate(c, clientId, "core.note:read");
+
+    const lookUp = async (): Promise<string> => {
+      const res = await request(c.app, "POST", "/auth/device", {
+        form: { user_code: init.user_code },
+        headers: { origin: ORIGIN },
+      });
+      expect(res.status).toBe(302);
+      return res.headers.get("location") ?? "";
+    };
+    // The witness: while the server still holds the code, it is a live one.
+    expect(await lookUp()).toContain("/auth/device/consent");
+
+    const schema = await import("../storage/sqlite/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = c.storage.betterAuthDb as {
+      update: (t: unknown) => {
+        set: (v: Record<string, unknown>) => {
+          where: (w: unknown) => Promise<unknown>;
+        };
+      };
+    };
+    await db
+      .update(schema.auth_oauth_device_code)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(
+        eq(
+          schema.auth_oauth_device_code.deviceCode,
+          storedDeviceCode(init.device_code),
+        ),
+      );
+
+    // The device polls after the end, and the provider deletes the code.
+    const polled = await poll(c, init.device_code, clientId);
+    expect(polled.body.error).toBe("expired_token");
+
+    const location = await lookUp();
+    expect(location).toContain("error=invalid_code");
+    const page = await request(c.app, "GET", location);
+    expect(visibleText(await page.text())).toContain(
+      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
+    );
+  });
+
   it("sends a code that was already used back to the code page, and grants nothing a second time", async () => {
     ctx = await createTestContext({});
     const c = ctx;

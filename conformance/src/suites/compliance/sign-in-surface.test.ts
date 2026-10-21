@@ -434,18 +434,26 @@ describe("the pages a person reads at sign-in", () => {
     expect(none).not.toMatch(/\d+ minutes?/);
   });
 
-  it("says a code that is wrong or has ended in one way, and how long codes last", async () => {
-    for (const error of ["invalid_code", "expired_code"]) {
-      const text = visibleText(
+  it("says an unknown code as wrong or expired, and a code the server holds as expired as expired", async () => {
+    const said = async (error: string): Promise<string> =>
+      visibleText(
         await (
           await fetch(`${server!.apiUrl}/auth/device?error=${error}`)
         ).text(),
       );
-      expect(text, error).toContain(
-        "That code isn't right or has ended. Check your device for a new one.",
-      );
-    }
-    // The witness: with no error the page says how long a code lasts.
+    const wrong = await said("invalid_code");
+    expect(wrong).toContain(
+      "That code isn't right or has expired. Check it against your device, or start again there to get a new one.",
+    );
+    // The witness: the other error is the one that says only expired.
+    const expired = await said("expired_code");
+    expect(expired).toContain(
+      "That code has expired. Start again on your device to get a new one.",
+    );
+    expect(expired).not.toContain("isn't right");
+  });
+
+  it("says how long codes last", async () => {
     const plain = visibleText(
       await (await fetch(`${server!.apiUrl}/auth/device`)).text(),
     );

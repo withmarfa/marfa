@@ -755,10 +755,10 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     }
     let reason = match held {
         Some(held) => format!(
-            "the server at this address is instance {served}, and this copy was hydrated from instance {held}"
+            "the server at this address is instance {served}, and this copy was built from instance {held}"
         ),
         None => format!(
-            "this copy does not name the instance it was hydrated from, and the server at this address is instance {served}"
+            "this copy does not name the instance it was built from, and the server at this address is instance {served}"
         ),
     };
     read_view::expire(&tx)?;

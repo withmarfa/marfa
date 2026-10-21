@@ -44,7 +44,8 @@ export interface PasswordPageParams {
   addressProblem: boolean;
 }
 
-const UNNAMED = "Passkey";
+/** The `marfa` command line lists an unnamed passkey by the same words. */
+const UNNAMED = "Unnamed passkey";
 
 function Cancel() {
   return (
@@ -146,7 +147,6 @@ function ManageDialogs(props: { passkey: PasskeyView; index: number }) {
   const { passkey, index } = props;
   const manage = `passkey-manage-${String(index)}`;
   const remove = `passkey-remove-${String(index)}`;
-  const name = passkey.name ?? UNNAMED;
   return (
     <>
       <Dialog
@@ -197,7 +197,11 @@ function ManageDialogs(props: { passkey: PasskeyView; index: number }) {
       </Dialog>
       <Dialog
         id={remove}
-        title={`Remove ${name}?`}
+        title={
+          passkey.name === null
+            ? "Remove this passkey?"
+            : `Remove ${passkey.name}?`
+        }
         description="You can still sign in with your password."
         actions={
           <>
