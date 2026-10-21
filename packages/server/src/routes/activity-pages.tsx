@@ -92,8 +92,11 @@ function EntryLine(props: { entry: AuditEntry }) {
       : `${entry.resource_type} ${entry.resource_id}`;
   return (
     <>
-      On {on}.{entry.key_id !== null && ` By key ${entry.key_id}.`}
-      {entry.client_ip !== null && ` From ${entry.client_ip}.`}{" "}
+      On {on}. By {entry.actor?.name ?? "an unknown sign-in"}
+      {entry.actor &&
+        ["key", "app", "browser"].includes(entry.actor.kind) &&
+        ` (${entry.actor.kind})`}
+      .{entry.client_ip !== null && ` From ${entry.client_ip}.`}{" "}
       <LocalDate at={new Date(entry.created_at)} />
     </>
   );
@@ -190,7 +193,7 @@ export function ActivityPage(props: ActivityParams) {
             </>
           }
         />
-        <RowGroup oneLine>
+        <RowGroup>
           {props.rows.length === 0 ? (
             <EmptyState
               title={filtered ? "No activity matches" : "No activity yet"}

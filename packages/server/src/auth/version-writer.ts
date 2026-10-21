@@ -75,6 +75,14 @@ async function credentialWriter(
       name: storedName(keySignInName(key.label, key.id), "A key"),
     };
   }
+  return grantWriter(storage, grant);
+}
+
+/** A verified app grant, named by the same record as the sign-in list. */
+export async function grantWriter(
+  storage: Storage,
+  grant: { clientId: string; authUserId: string },
+): Promise<VersionWriter> {
   const recordId = await storage.oauthProvider?.findGrantItemId(grant);
   const record = recordId ? await storage.items.get(recordId) : null;
   if (record) return appWriter(storage, record);

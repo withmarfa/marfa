@@ -787,7 +787,7 @@
                   "key",
                   "local"
                 ],
-                "description": "What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+                "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
               },
               "id": {
                 "type": "string",
@@ -796,7 +796,7 @@
               },
               "name": {
                 "type": "string",
-                "description": "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
                 "example": "Safari on macOS"
               }
             },
@@ -992,6 +992,59 @@
         },
         "additionalProperties": {},
         "description": "How long Marfa keeps the feed items of a type. A part you leave out comes from the parent type. A type that no type in its chain gives a window keeps its items."
+      },
+      "TypeProvenance": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "enum": [
+              "platform",
+              "user",
+              "unknown"
+            ],
+            "description": "Where the type came from: shipped by Marfa, registered by a caller, or unknown."
+          },
+          "created_by": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "browser",
+                  "app",
+                  "key",
+                  "local"
+                ],
+                "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+              },
+              "id": {
+                "type": "string",
+                "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
+                "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+              },
+              "name": {
+                "type": "string",
+                "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                "example": "Safari on macOS"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "name"
+            ],
+            "description": "The sign-in that first registered the type, or null when none is recorded."
+          }
+        },
+        "required": [
+          "origin",
+          "created_by"
+        ],
+        "description": "Whether Marfa ships the type, and the sign-in that first registered it when known."
       },
       "ConnectorProblems": {
         "type": "object",
@@ -1223,7 +1276,7 @@
                       "key",
                       "local"
                     ],
-                    "description": "What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+                    "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
                   },
                   "id": {
                     "type": "string",
@@ -1232,7 +1285,7 @@
                   },
                   "name": {
                     "type": "string",
-                    "description": "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                    "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
                     "example": "Safari on macOS"
                   }
                 },
@@ -3611,7 +3664,7 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/TypeDefinition"
+              "$ref": "#/components/schemas/RegisteredType"
             },
             "description": "Every type."
           },
@@ -3628,6 +3681,111 @@
           "next_cursor"
         ],
         "description": "A page holding every type."
+      },
+      "RegisteredType": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/TypeDefinition"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "provenance": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/TypeProvenance"
+                  },
+                  {
+                    "description": "The type's recorded origin and creator."
+                  }
+                ]
+              }
+            },
+            "required": [
+              "provenance"
+            ]
+          }
+        ],
+        "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
+      },
+      "TypeRole": {
+        "type": "string",
+        "enum": [
+          "container"
+        ],
+        "description": "A structural role a type plays. `container`: the type can be the target of an `in-collection` edge."
+      },
+      "FieldDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "enum",
+              "array",
+              "object",
+              "thumbnail"
+            ],
+            "description": "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the field holds."
+          },
+          "required": {
+            "type": "boolean",
+            "description": "`true` if an item of the type must have a value for it."
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The values an `enum` field allows."
+          },
+          "items_type": {
+            "type": "string",
+            "description": "The type of each element of an `array` field. A write is refused if an element is not a value of that type."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "thumbnail",
+              "bcp47",
+              "iso3166"
+            ],
+            "description": "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`."
+          },
+          "searchable": {
+            "type": "boolean",
+            "description": "`false` if full-text search should skip the field. Items still return it."
+          },
+          "maxLength": {
+            "type": "integer",
+            "description": "The longest value a `string` or `enum` field allows."
+          },
+          "maxItems": {
+            "type": "integer",
+            "description": "The most elements an `array` field allows."
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {},
+        "description": "One field of a type: its type, and how items may fill it."
       },
       "TypeDefinition": {
         "type": "object",
@@ -3725,85 +3883,6 @@
           "version"
         ],
         "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
-      },
-      "TypeRole": {
-        "type": "string",
-        "enum": [
-          "container"
-        ],
-        "description": "A structural role a type plays. `container`: the type can be the target of an `in-collection` edge."
-      },
-      "FieldDefinition": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "string",
-              "number",
-              "integer",
-              "boolean",
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "enum",
-              "array",
-              "object",
-              "thumbnail"
-            ],
-            "description": "The field's type. A `thumbnail` holds an image of at most 16 KiB, as a base64 `data:` URI of type `image/png`, `image/jpeg` or `image/webp`. A type has at most one, never as an array's `items_type` or under `title`, `body`, `description` or `name`."
-          },
-          "description": {
-            "type": "string",
-            "description": "What the field holds."
-          },
-          "required": {
-            "type": "boolean",
-            "description": "`true` if an item of the type must have a value for it."
-          },
-          "enum_values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The values an `enum` field allows."
-          },
-          "items_type": {
-            "type": "string",
-            "description": "The type of each element of an `array` field. A write is refused if an element is not a value of that type."
-          },
-          "format": {
-            "type": "string",
-            "enum": [
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "thumbnail",
-              "bcp47",
-              "iso3166"
-            ],
-            "description": "A refinement of a `string` field, or of an array of strings. `url`, `email`, `datetime`, `date` and `thumbnail` become the field's `type`, and all but `thumbnail` an array's `items_type`. `bcp47` and `iso3166` stay as `format`."
-          },
-          "searchable": {
-            "type": "boolean",
-            "description": "`false` if full-text search should skip the field. Items still return it."
-          },
-          "maxLength": {
-            "type": "integer",
-            "description": "The longest value a `string` or `enum` field allows."
-          },
-          "maxItems": {
-            "type": "integer",
-            "description": "The most elements an `array` field allows."
-          }
-        },
-        "required": [
-          "type"
-        ],
-        "additionalProperties": {},
-        "description": "One field of a type: its type, and how items may fill it."
       },
       "TypeNotFoundRefusal": {
         "type": "object",
@@ -4109,7 +4188,7 @@
           "type": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/TypeDefinition"
+                "$ref": "#/components/schemas/RegisteredType"
               },
               {
                 "description": "The type."
@@ -4326,6 +4405,16 @@
               },
               {
                 "description": "How long Marfa keeps the type's items in the feed tier."
+              }
+            ]
+          },
+          "provenance": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TypeProvenance"
+              },
+              {
+                "description": "The recorded origin and creator, accepted when replacing a read response. This field cannot change either value."
               }
             ]
           },
@@ -6424,7 +6513,7 @@
               },
               "name": {
                 "type": "string",
-                "description": "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
                 "example": "Safari on macOS"
               }
             },
@@ -8238,6 +8327,75 @@
       "AuditEntry": {
         "type": "object",
         "properties": {
+          "actor": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "browser",
+                      "app",
+                      "key",
+                      "local"
+                    ],
+                    "description": "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.",
+                    "example": "Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+                    "example": "Safari on macOS"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "server"
+                    ],
+                    "description": "Marfa acting without a sign-in."
+                  },
+                  "id": {
+                    "type": "string",
+                    "enum": [
+                      "server"
+                    ],
+                    "description": "The server actor identifier."
+                  },
+                  "name": {
+                    "type": "string",
+                    "enum": [
+                      "Marfa"
+                    ],
+                    "description": "The server actor name."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The sign-in name and kind recorded when the action happened, Marfa for server work, or null when unknown."
+          },
           "id": {
             "type": "string",
             "description": "Unique identifier for the entry."
@@ -8282,6 +8440,7 @@
           }
         },
         "required": [
+          "actor",
           "id",
           "created_at",
           "key_id",
@@ -27231,7 +27390,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeDefinition"
+                  "$ref": "#/components/schemas/RegisteredType"
                 }
               }
             },

@@ -393,6 +393,10 @@ it("requires a durable failed-sign-in observation without creating a session", a
   await db.__sqliteRun("DROP TRIGGER reject_failed_signin", []);
   expect((await signin()).status).toBe(401);
   expect(
+    (await ctx.storage.audit.list({ action: "auth.sign_in.failed" })).data[0]
+      ?.actor,
+  ).toBeNull();
+  expect(
     (await ctx.storage.audit.list({ action: "auth.sign_in.failed" })).data,
   ).toHaveLength(1);
 });

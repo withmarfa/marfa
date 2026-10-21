@@ -582,7 +582,7 @@ export const VersionWriterSchema = z.object({
   kind: z
     .enum(VERSION_WRITER_KINDS)
     .describe(
-      "What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.",
+      "The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.",
     ),
   id: z
     .string()
@@ -593,7 +593,7 @@ export const VersionWriterSchema = z.object({
   name: z
     .string()
     .describe(
-      "The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.",
+      "The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.",
     )
     .openapi({ example: "Safari on macOS" }),
 });

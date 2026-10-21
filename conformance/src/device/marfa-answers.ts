@@ -141,6 +141,8 @@ export function wireType(
     mergePolicy?: { fields: Record<string, string>; default: string };
   } = {},
 ): Record<string, unknown> {
+  // Core and system roots are shipped; the other fixture roots model registrations.
+  const shipped = id.startsWith("core.") || id.startsWith("system.");
   return {
     id,
     ...(options.parent === undefined ? {} : { parent: options.parent }),
@@ -165,6 +167,12 @@ export function wireType(
       fields: { body: "keep_both_copies" },
       default: "last_writer_wins",
     },
+    provenance: shipped
+      ? { origin: "platform", created_by: null }
+      : {
+          origin: "user",
+          created_by: { kind: "key", id: "fixture-key", name: "Fixture key" },
+        },
   };
 }
 

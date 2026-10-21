@@ -1337,3 +1337,34 @@ describe("a restore refused after it began", () => {
     });
   });
 });
+
+describe("type creator provenance in archives", () => {
+  it("preserves a recorded creator and leaves an absent creator unknown", async () => {
+    const recorded = `user.restoremaker${ctx.runId}`;
+    const unknown = `user.restoreunknownmaker${ctx.runId}`;
+    trackType(ctx, recorded);
+    trackType(ctx, unknown);
+    const creator = { kind: "key", id: "retired-key", name: "Original maker" };
+    const archive = withEntry(
+      itemsArchive([]),
+      "types.ndjson",
+      [
+        {
+          type: { id: recorded, label: "Recorded", version: 1, fields: {} },
+          provenance: { origin: "user", created_by: creator },
+        },
+        { type: { id: unknown, label: "Unknown", version: 1, fields: {} } },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    const result = await owner.restoreArchive(archive);
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    expect(
+      (await client.getType(recorded)).data.provenance?.created_by,
+    ).toEqual(creator);
+    expect(
+      (await client.getType(unknown)).data.provenance?.created_by,
+    ).toBeNull();
+  });
+});

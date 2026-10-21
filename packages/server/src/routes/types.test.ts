@@ -1278,7 +1278,10 @@ describe("POST /types/normalize", () => {
     expect(repeat.status).toBe(200);
     const result = (await repeat.json()) as typeof normalized;
     expect(result.type).toEqual(result.registered_type);
-    expect(result.resolved_type).toEqual(
+    expect({
+      ...(result.resolved_type as TypeSchema),
+      provenance: expect.any(Object),
+    }).toEqual(
       canonicalTypeDefinition(
         (await (
           await request(ctx.app, "GET", "/types/demo.normalize_candidate", {
@@ -1382,7 +1385,10 @@ it("keeps child-owned refinements declared while resolving the registered parent
     maxLength: 100,
     searchable: false,
   });
-  expect(result.resolved_type).toEqual(
+  expect({
+    ...result.resolved_type,
+    provenance: expect.any(Object),
+  }).toEqual(
     canonicalTypeDefinition(
       (await (
         await request(ctx.app, "GET", `/types/${candidate.id}`, {

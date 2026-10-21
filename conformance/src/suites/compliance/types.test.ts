@@ -34,6 +34,34 @@ describe("type registration and listing", () => {
     expect(r.data.type.id).toBe(customType.id);
   });
 
+  it("reports the creator after replacement and distinguishes built-in types", async () => {
+    const id = `user.creator-${ctx.runId}`;
+    const created = await client.registerType({ id, fields: {} });
+    expect(created.ok).toBe(true);
+    const provenance = created.data.type.provenance;
+    expect(provenance?.origin).toBe("user");
+    expect(provenance?.created_by?.kind).toBe("key");
+    const replaced = await client.replaceType(id, {
+      ...(await client.getType(id)).data,
+      fields: {},
+      label: "Changed",
+      provenance: {
+        origin: "platform",
+        created_by: { kind: "key", id: "forged", name: "Forged" },
+      },
+    });
+    expect(replaced.ok).toBe(true);
+    expect((await client.getType(id)).data.provenance).toEqual(provenance);
+    expect(
+      (await client.listTypes()).data.data.find((type) => type.id === id)
+        ?.provenance,
+    ).toEqual(provenance);
+    expect((await client.getType("core.note")).data.provenance).toEqual({
+      origin: "platform",
+      created_by: null,
+    });
+  });
+
   it("lists registered types", async () => {
     const r = await client.listTypes();
     expect(r.ok).toBe(true);

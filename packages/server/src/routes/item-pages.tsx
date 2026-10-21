@@ -1,7 +1,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
 import type { TypeSchema } from "@withmarfa/shared";
-import type { ItemSummary } from "../storage/interface.js";
+import type { ItemSummary, TypeProvenance } from "../storage/interface.js";
 import {
   PAGE_SIZE,
   type PageSize,
@@ -307,6 +307,7 @@ export function renderItemsPage(props: ItemsPageParams) {
 export function renderTypePage(
   props: PageBase & {
     schema?: TypeSchema;
+    provenance?: TypeProvenance;
     count: number;
     trashed: number;
     removalReason?: string;
@@ -337,7 +338,7 @@ export function renderTypePage(
             id="details"
             title="Details"
             description={
-              type.id.startsWith("core.")
+              props.provenance?.origin === "platform"
                 ? "Every Marfa has this type. It can't be changed or removed."
                 : "Added to this Marfa. Its fields are set by what added it."
             }
@@ -346,7 +347,11 @@ export function renderTypePage(
               <Row title="Type name" value={type.id} valueAuto />
               <Row
                 title="Added by"
-                value={type.id.startsWith("core.") ? "Marfa" : "Not recorded"}
+                description={
+                  props.provenance?.origin === "platform"
+                    ? "Built in to Marfa"
+                    : (props.provenance?.created_by?.name ?? "Not recorded")
+                }
               />
               <Row
                 title="Required fields"

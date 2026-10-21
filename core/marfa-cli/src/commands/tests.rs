@@ -941,11 +941,15 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert!(exported.stream);
     assert_eq!(query(&exported, "format").as_deref(), Some("archive"));
     let audited = audit::request(&audit::AuditArgs {
+        kind: Some("data".into()),
+        query: Some("literal %_".into()),
         action: Some("item.create".into()),
         created_after: Some("t".into()),
         ..Default::default()
     });
     assert_eq!(audited.path(), "/audit");
+    assert_eq!(query(&audited, "kind").as_deref(), Some("data"));
+    assert_eq!(query(&audited, "q").as_deref(), Some("literal %_"));
     assert_eq!(query(&audited, "action").as_deref(), Some("item.create"));
     let streamed = events::request(&events::EventsArgs {
         types: vec!["core.note".into(), "core.task".into()],

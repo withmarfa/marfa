@@ -2236,7 +2236,7 @@ export interface components {
             /** @description The sign-in that wrote this version, named as it was then, even after it ends. Whoever can read the snapshot sees it, such as another app's name or a key's label. `null` if no sign-in wrote it, such as when Marfa reads a file's text. */
             writer: {
                 /**
-                 * @description What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
                  * @enum {string}
                  */
                 kind: "browser" | "app" | "key" | "local";
@@ -2246,7 +2246,7 @@ export interface components {
                  */
                 id: string;
                 /**
-                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
                  * @example Safari on macOS
                  */
                 name: string;
@@ -2327,6 +2327,32 @@ export interface components {
             feed_days?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /** @description Whether Marfa ships the type, and the sign-in that first registered it when known. */
+        TypeProvenance: {
+            /**
+             * @description Where the type came from: shipped by Marfa, registered by a caller, or unknown.
+             * @enum {string}
+             */
+            origin: "platform" | "user" | "unknown";
+            /** @description The sign-in that first registered the type, or null when none is recorded. */
+            created_by: {
+                /**
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @enum {string}
+                 */
+                kind: "browser" | "app" | "key" | "local";
+                /**
+                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 */
+                id: string;
+                /**
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @example Safari on macOS
+                 */
+                name: string;
+            } | null;
         };
         /** @description The source's current problems, by opaque key. Each message is at most 500 UTF-16 code units. The map has at most 200 entries and 512 KiB serialized as UTF-8. An empty map means no current problems. */
         ConnectorProblems: {
@@ -2415,7 +2441,7 @@ export interface components {
             /** @description The sign-in that moved the item to the trash, captured at that time, or null if not recorded. */
             trashed_by: {
                 /**
-                 * @description What wrote the version. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
                  * @enum {string}
                  */
                 kind: "browser" | "app" | "key" | "local";
@@ -2425,7 +2451,7 @@ export interface components {
                  */
                 id: string;
                 /**
-                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
                  * @example Safari on macOS
                  */
                 name: string;
@@ -3375,36 +3401,13 @@ export interface components {
         /** @description A page holding every type. */
         TypeDefinitionPage: {
             /** @description Every type. */
-            data: components["schemas"]["TypeDefinition"][];
+            data: components["schemas"]["RegisteredType"][];
             /** @description Always `null`: Marfa returns every type in one page. */
             next_cursor: string | null;
         };
         /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
-        TypeDefinition: {
-            /** @description Unique identifier for the type. */
-            id: string;
-            /** @description The type's name for people to read. */
-            label?: string;
-            /** @description What the type is for. */
-            description?: string;
-            /** @description The identifier of the type this one inherits from. */
-            parent?: string;
-            /** @description The types this one is a structural superset of. */
-            compatible_with?: string[];
-            /** @description The structural roles the type plays, including those it inherits. */
-            roles?: components["schemas"]["TypeRole"][];
-            /** @description The type's own fields, by name. `GET /types/{id}` adds the fields it inherits. */
-            fields: {
-                [key: string]: components["schemas"]["FieldDefinition"];
-            };
-            /** @description The version number the type was last saved with. */
-            version: number;
-            display_hints?: components["schemas"]["DisplayHints"] & unknown;
-            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
-            link_field?: string;
-            version_policy?: components["schemas"]["VersionPolicy"] & unknown;
-            merge_policy?: components["schemas"]["MergePolicy"] & unknown;
-            retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
+        RegisteredType: components["schemas"]["TypeDefinition"] & {
+            provenance: components["schemas"]["TypeProvenance"] & unknown;
         };
         /**
          * @description A structural role a type plays. `container`: the type can be the target of an `in-collection` edge.
@@ -3439,6 +3442,33 @@ export interface components {
             maxItems?: number;
         } & {
             [key: string]: unknown;
+        };
+        /** @description A type says which fields the items of that type hold, and what else Marfa does for them. */
+        TypeDefinition: {
+            /** @description Unique identifier for the type. */
+            id: string;
+            /** @description The type's name for people to read. */
+            label?: string;
+            /** @description What the type is for. */
+            description?: string;
+            /** @description The identifier of the type this one inherits from. */
+            parent?: string;
+            /** @description The types this one is a structural superset of. */
+            compatible_with?: string[];
+            /** @description The structural roles the type plays, including those it inherits. */
+            roles?: components["schemas"]["TypeRole"][];
+            /** @description The type's own fields, by name. `GET /types/{id}` adds the fields it inherits. */
+            fields: {
+                [key: string]: components["schemas"]["FieldDefinition"];
+            };
+            /** @description The version number the type was last saved with. */
+            version: number;
+            display_hints?: components["schemas"]["DisplayHints"] & unknown;
+            /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
+            link_field?: string;
+            version_policy?: components["schemas"]["VersionPolicy"] & unknown;
+            merge_policy?: components["schemas"]["MergePolicy"] & unknown;
+            retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
         };
         /** @description An error response. */
         TypeNotFoundRefusal: {
@@ -3547,7 +3577,7 @@ export interface components {
         };
         /** @description One type. */
         TypeResponse: {
-            type: components["schemas"]["TypeDefinition"] & unknown;
+            type: components["schemas"]["RegisteredType"] & unknown;
         };
         /** @description An error response. */
         LinkTakenOrTypeAlreadyExistsRefusal: {
@@ -3626,6 +3656,7 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"] & unknown;
             merge_policy?: components["schemas"]["MergePolicy"] & unknown;
             retention_policy?: components["schemas"]["RetentionPolicy"] & unknown;
+            provenance?: components["schemas"]["TypeProvenance"] & unknown;
             /** @description The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing. */
             id?: string;
         };
@@ -4406,7 +4437,7 @@ export interface components {
                  */
                 id: string;
                 /**
-                 * @description The sign-in's name when it wrote the version, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
                  * @example Safari on macOS
                  */
                 name: string;
@@ -5146,6 +5177,40 @@ export interface components {
         };
         /** @description An audit log entry records one action and who took it. */
         AuditEntry: {
+            /** @description The sign-in name and kind recorded when the action happened, Marfa for server work, or null when unknown. */
+            actor: {
+                /**
+                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+                 * @enum {string}
+                 */
+                kind: "browser" | "app" | "key" | "local";
+                /**
+                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+                 * @example Q2xYvR8mKp4TnW6aBc0dEf1gHi3jKl5M
+                 */
+                id: string;
+                /**
+                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+                 * @example Safari on macOS
+                 */
+                name: string;
+            } | {
+                /**
+                 * @description Marfa acting without a sign-in.
+                 * @enum {string}
+                 */
+                kind: "server";
+                /**
+                 * @description The server actor identifier.
+                 * @enum {string}
+                 */
+                id: "server";
+                /**
+                 * @description The server actor name.
+                 * @enum {string}
+                 */
+                name: "Marfa";
+            } | null;
             /** @description Unique identifier for the entry. */
             id: string;
             /** @description When Marfa recorded the entry, in UTC. */
@@ -14277,7 +14342,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeDefinition"];
+                    "application/json": components["schemas"]["RegisteredType"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */

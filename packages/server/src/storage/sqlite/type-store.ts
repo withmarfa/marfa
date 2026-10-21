@@ -1,3 +1,4 @@
+import { auditActor } from "../../auth/audit-actor.js";
 import { projectPlatformRows } from "../platform-family.js";
 import {
   markStructuralReadChange,
@@ -10,7 +11,11 @@ import {
   MarfaError,
   ErrorCode,
 } from "@withmarfa/shared";
-import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
+import type {
+  SeededPlatformType,
+  TypeSchema,
+  VersionWriter,
+} from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { databaseFailureCodes } from "../../error-text.js";
@@ -50,6 +55,23 @@ export function stageTypeRegistration(
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
 
+  async provenance(id: string): Promise<
+    TypeProvenance & {
+      created_by: VersionWriter | null;
+    }
+  > {
+    const row = await this.db
+      .select()
+      .from(types)
+      .where(eq(types.id, id))
+      .get();
+    const loaded = row ? toLoadedTypes([row])[0] : undefined;
+    return {
+      origin: loaded?.origin ?? "unknown",
+      created_by: loaded?.created_by ?? null,
+    };
+  }
+
   list(): Promise<TypeSchema[]> {
     return Promise.resolve(listTypes());
   }
@@ -65,10 +87,13 @@ export class SqliteTypeStore implements TypeStore {
     const now = clock.now().toISOString();
     await this.db.transaction(async (tx) => {
       const shapes = indexShapes(schema.id);
+      const actor =
+        provenance === undefined ? await auditActor() : provenance.created_by;
+      const creator = actor?.kind === "server" ? null : (actor ?? null);
       try {
         await tx.run(sql`
-          INSERT INTO types (id, schema, origin, created_at, updated_at)
-          VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${now}, ${now})
+          INSERT INTO types (id, schema, origin, created_by, created_at, updated_at)
+          VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${creator === null ? null : JSON.stringify(creator)}, ${now}, ${now})
         `);
       } catch (err: unknown) {
         if (isDuplicateKey(err)) {

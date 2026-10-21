@@ -1,3 +1,4 @@
+import { VersionWriterSchema } from "./_schemas.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -18,6 +19,19 @@ import { pageOf } from "./_schemas.js";
 
 const AuditEntrySchema = z
   .object({
+    actor: z
+      .union([
+        VersionWriterSchema,
+        z.object({
+          kind: z.literal("server").describe("Marfa acting without a sign-in."),
+          id: z.literal("server").describe("The server actor identifier."),
+          name: z.literal("Marfa").describe("The server actor name."),
+        }),
+      ])
+      .nullable()
+      .describe(
+        "The sign-in name and kind recorded when the action happened, Marfa for server work, or null when unknown.",
+      ),
     id: z.string().describe("Unique identifier for the entry."),
     created_at: z.string().describe("When Marfa recorded the entry, in UTC."),
     key_id: z

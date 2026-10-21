@@ -878,12 +878,34 @@ describe("the instance from the terminal", () => {
     trackItem(c.ctx, created.item.id);
     const audit = await c.cli.json<{
       data: Array<{ resource_id: string; action: string }>;
-    }>(["audit", "--resource-id", created.item.id]);
+    }>([
+      "audit",
+      "--resource-id",
+      created.item.id,
+      "--kind",
+      "data",
+      "--query",
+      created.item.id,
+    ]);
     expect(audit.data.length).toBeGreaterThan(0);
     // The filter reached the wire: every row is the item's, and the create
     // is among them.
     for (const row of audit.data) expect(row.resource_id).toBe(created.item.id);
     expect(audit.data.map((row) => row.action)).toContain("item.create");
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(socket).toBeTruthy();
+    const local = await c.cli
+      .viaSocket(socket!)
+      .json([
+        "audit",
+        "--resource-id",
+        created.item.id,
+        "--kind",
+        "data",
+        "--query",
+        created.item.id,
+      ]);
+    expect(local).toEqual(audit);
   });
 
   it("exports as NDJSON to stdout and as an archive to a file", async () => {
