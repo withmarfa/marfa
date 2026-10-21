@@ -1049,13 +1049,47 @@ describe("the instance from the terminal", () => {
     ).toBeTruthy();
     const viaSocket = c.cli.viaSocket(socket!);
 
-    // Witness: the plain and the streamed command both succeed under the
-    // key, so what follows is the server's 401 and not the command line.
-    expect((await c.cli.run(["--json", "items", "list"])).code).toBe(0);
-    expect((await c.cli.run(["--json", "export"])).code).toBe(0);
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("cli-socket-tag"), body: "b" }),
+    ]);
+    trackItem(c.ctx, created.item.id);
+    const id = created.item.id;
+    const source = created.item.source;
+    const bulk = (action: string, ...rest: string[]) => [
+      "items",
+      "bulk-action",
+      action,
+      "--type",
+      "core.note",
+      "--source",
+      source,
+      ...rest,
+    ];
+    const keyed = [
+      ["items", "list"],
+      ["export"],
+      ["items", "tag", id, "socket-witness"],
+      bulk("tags", "--add", "socket-witness", "--dry-run"),
+      bulk("transition", "--to", "archived", "--dry-run"),
+      bulk("tier", "--to", "feed", "--dry-run"),
+      bulk("properties", "--patch", JSON.stringify({ body: "b" }), "--dry-run"),
+      bulk("occurred-at", "--occurred-at", "2026-01-02T03:04:05Z", "--dry-run"),
+      bulk("purge", "--state", "trashed", "--confirm", "PURGE", "--dry-run"),
+    ];
+    // Witness: each command succeeds under the key, so what follows is the
+    // server's 401 and not the command line.
+    for (const args of keyed) {
+      const witness = await c.cli.run(["--json", ...args]);
+      expect(witness.code, `${args.join(" ")}: ${witness.stderr}`).toBe(0);
+    }
 
     // Direct local authority carries no key, so the server answers 401.
-    for (const args of [["items", "list"], ["export"], ["events"]]) {
+    for (const args of [["events"], ...keyed]) {
       const label = args.join(" ");
       const refused = await viaSocket.refused(args);
       expect(refused.code, label).toBe(5);
@@ -1063,6 +1097,9 @@ describe("the instance from the terminal", () => {
       expect(refused.envelope.error.server?.status, label).toBe(401);
       expect(refused.envelope.error.message, label).toContain(
         "this operation needs a key or a token, which --socket does not carry; run it without --socket",
+      );
+      expect(refused.envelope.error.message, label).toContain(
+        "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one",
       );
     }
   });

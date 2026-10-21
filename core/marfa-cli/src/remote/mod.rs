@@ -599,7 +599,11 @@ impl Remote {
                 ..
             } = &mut error
         {
-            *message = "this operation needs a key or a token, which --socket does not carry; run it without --socket".into();
+            *message = "this operation needs a key or a token, which --socket does not carry; run it without --socket. \
+                        Item properties, edges, tags, search, counts, events and exports need a key. \
+                        `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` \
+                        and `items bulk-action cancel` work through --socket without one"
+                .into();
         }
         error
     }
