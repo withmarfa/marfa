@@ -7,6 +7,7 @@ import {
   seedOauthBearer,
   type TestContext,
 } from "../test-utils.js";
+import { readAttention } from "../attention.js";
 import { readEffectiveConfig } from "../effective-config.js";
 import { Housekeeping } from "./scheduler.js";
 import { registerHousekeepingJobs } from "./registrations.js";
@@ -109,6 +110,16 @@ it("starts initially disabled work, stops future work, restores defaults and rec
     expect(
       (await ctx.storage.items.get(first))?.properties.extracted_text,
     ).toBeUndefined();
+    const heartbeatConcerns = async () =>
+      (
+        await readAttention(ctx!.storage, {
+          read: () => Promise.resolve({ status: "ok", components: {} }),
+          objectStore: () => Promise.resolve(null),
+          jobs: () => scheduler!.list(),
+        })
+      ).filter((item) => item.kind === "job" && item.reference === "heartbeat");
+    expect(scheduler.names()).toContain("heartbeat");
+    expect(await heartbeatConcerns()).toEqual([]);
     expect(pings).toBe(0);
     await update({ enrichment_enabled: true, heartbeat_enabled: true });
     await scheduler.runNow("enrichment-sweep");
@@ -117,14 +128,18 @@ it("starts initially disabled work, stops future work, restores defaults and rec
     ).toBe("First readable file");
     await scheduler.runNow("heartbeat");
     expect(pings).toBe(1);
+    expect(await heartbeatConcerns()).toEqual([]);
     status = 200;
     await scheduler.runNow("heartbeat");
     expect(pings).toBe(2);
+    expect(await heartbeatConcerns()).toEqual([]);
     const second = await seed("Second readable file");
     await update({ enrichment_enabled: false, heartbeat_enabled: false });
     await scheduler.runNow("enrichment-sweep");
     await scheduler.runNow("heartbeat");
     expect(pings).toBe(2);
+    expect(scheduler.names()).toContain("heartbeat");
+    expect(await heartbeatConcerns()).toEqual([]);
     expect(
       (await ctx.storage.items.get(second))?.properties.extracted_text,
     ).toBeUndefined();
@@ -302,6 +317,17 @@ it("refuses a version sweep when changed environment defaults conflict with over
     kind: "ran",
     run: { outcome: "error" },
   });
+  const versionConcerns = async () =>
+    (
+      await readAttention(ctx!.storage, {
+        read: () => Promise.resolve({ status: "ok", components: {} }),
+        objectStore: () => Promise.resolve(null),
+        jobs: () => scheduler!.list(),
+      })
+    ).filter(
+      (item) => item.kind === "job" && item.reference === "version-thinning",
+    );
+  expect(await versionConcerns()).toHaveLength(1);
   const fixed = await request(ctx.app, "PATCH", "/config", {
     key: ctx.workingKey,
     body: { version_daily_snapshot_days: 180 },
@@ -311,6 +337,7 @@ it("refuses a version sweep when changed environment defaults conflict with over
     kind: "ran",
     run: { outcome: "ok" },
   });
+  expect(await versionConcerns()).toEqual([]);
 });
 
 it("uses the live inactivity choice for the app page, owner responses and retirement", async () => {
