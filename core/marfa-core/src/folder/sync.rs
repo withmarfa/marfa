@@ -29,7 +29,9 @@ pub struct SyncReport {
     /// sync goes on to write out the copy it holds.
     pub catch_up: std::result::Result<CaughtUp, CoreError>,
     /// `None` where the catch-up failed after the copy expired, which leaves
-    /// nothing to pull from until a later sync hydrates.
+    /// nothing to pull from until a later sync hydrates. Where the sync
+    /// pulled again after a rebuild, the later pull's, with the files both
+    /// wrote.
     pub pull: Option<PullReport>,
 }
 
@@ -49,7 +51,8 @@ impl Folder {
     /// Everything a folder does, once: resumes an unfinished hydration, sends
     /// an edit of the settings file, scans, drains, catches up, pulls, and
     /// drains again where the pull queued the placement of a file it wrote, or
-    /// the end of one.
+    /// the end of one. Where that drain rebuilt the copy for a changed read
+    /// view, pulls once more, and drains again where that pull placed a file.
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
@@ -156,18 +159,30 @@ impl Folder {
             Err(error) if error.is_environmental() => Err(error),
             Err(error) => return Err(error),
         };
-        let pull = match self.pull() {
+        let mut pull = match self.pull() {
             Ok(pulled) => Some(pulled),
             Err(CoreError::HydrationIncomplete) if catch_up.is_err() => None,
             Err(error) => return Err(error),
         };
-        if sends_again(catch_up.is_ok(), &drain.report)
-            && pull
-                .as_ref()
-                .is_some_and(|pulled| pulled.placed + pulled.ended > 0)
-        {
+        if sends_again(catch_up.is_ok(), &drain.report) && pull.as_ref().is_some_and(places) {
+            let rebuilt_before = rebuilt.is_some();
             let later = self.drain_rebuilding(&mut rebuilt)?;
             self.absorb(&mut drain, later)?;
+            // The rebuild read the copy under the new view after the pull
+            // wrote it out, so the directory is brought to it once more. The
+            // run has rebuilt already, so a change at the drain after this
+            // pull ends it.
+            if !rebuilt_before && rebuilt.is_some() {
+                let mut again = self.pull()?;
+                if let Some(first) = &pull {
+                    again.add_writes(first);
+                }
+                if sends_again(true, &drain.report) && places(&again) {
+                    let last = self.drain_rebuilding(&mut rebuilt)?;
+                    self.absorb(&mut drain, last)?;
+                }
+                pull = Some(again);
+            }
         }
         Ok(SyncReport {
             hydrated,
@@ -353,6 +368,11 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
                 message: "credential refused".into(),
             })
         })
+}
+
+/// Whether a pull queued the placement of a file it wrote, or the end of one.
+fn places(pulled: &PullReport) -> bool {
+    pulled.placed + pulled.ended > 0
 }
 
 /// Not where the first drain or the catch-up shows the server cannot take
