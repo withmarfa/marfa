@@ -25,7 +25,10 @@ import { TEST_OWNER } from "../../utils/target.js";
 /**
  * What a browser session that signed in more than five minutes ago may and
  * may not do to an app: approve it on either consent screen, revoke a key,
- * and revoke an app's grant. A session's age is the server's clock moved
+ * and revoke or narrow an app's grant. It also holds the other changes the
+ * owner makes only with a recent sign-in: minting and changing a key, the
+ * trash and type removal doors, and renaming or removing a passkey. A
+ * session's age is the server's clock moved
  * forward, and the clock only goes forward, so each case signs the stale
  * session in first, lets six minutes pass, and signs the fresh one in after.
  * Each sign-in comes from an address of its own, so the per-address sign-in
@@ -698,5 +701,209 @@ describe("revoking an app", () => {
     expect(revoked.status).toBe(204);
     await revoked.body?.cancel();
     expect(await itemsStatus(server, access)).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The other changes that need a recent sign-in
+// ---------------------------------------------------------------------------
+
+/** A request a browser sends with a JSON body, from an address of its own. */
+function browserJson(
+  method: string,
+  path: string,
+  cookie: string,
+  body?: unknown,
+): Promise<Response> {
+  return fetch(`${server.apiUrl}${path}`, {
+    method,
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/json",
+      [CLIENT_HEADER]: nextAddress(),
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+describe("minting and changing a key", () => {
+  it("refuses a session that signed in more than five minutes ago 403 and mints no key, and a fresh session mints it", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const source = "minted-by-a-browser";
+    const key = { label: "Minted by a browser", source, permissions: [] };
+    await refused(await browserJson("POST", "/keys", stale, key));
+    const none = await browserJson("GET", "/keys", fresh);
+    expect(none.status).toBe(200);
+    expect(
+      ((await none.json()) as { data: { source: string }[] }).data.some(
+        (row) => row.source === source,
+      ),
+    ).toBe(false);
+    const minted = await browserJson("POST", "/keys", fresh, key);
+    expect(minted.status).toBe(201);
+    await minted.body?.cancel();
+  });
+
+  it("refuses a session that signed in more than five minutes ago 403 and changes nothing, and a fresh session changes the key", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const target = await mintKey([]);
+    await refused(
+      await browserJson("PATCH", `/keys/${target.id}`, stale, {
+        label: "Renamed by a stale session",
+      }),
+    );
+    const listed = await browserJson("GET", "/keys", fresh);
+    expect(listed.status).toBe(200);
+    expect(
+      (
+        (await listed.json()) as { data: { id: string; label: string }[] }
+      ).data.find((row) => row.id === target.id)?.label,
+    ).toMatch(/^recent-sign-in key/);
+    const changed = await browserJson("PATCH", `/keys/${target.id}`, fresh, {
+      label: "Renamed by a fresh session",
+    });
+    expect(changed.status).toBe(200);
+    expect(((await changed.json()) as { label: string }).label).toBe(
+      "Renamed by a fresh session",
+    );
+  });
+});
+
+describe("narrowing an app", () => {
+  it("refuses a session that signed in more than five minutes ago 403 and leaves the app as it was, and a fresh session narrows it", async () => {
+    const stale = await signIn();
+    const app = await registerApp(server, "core.note:read");
+    const { code, verifier } = await codeFor(
+      server,
+      origin,
+      stale,
+      app,
+      "core.note:read",
+    );
+    const exchanged = await token(
+      server,
+      {
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: CALLBACK,
+        code_verifier: verifier,
+        client_id: app.clientId,
+      },
+      app,
+    );
+    expect(exchanged.status).toBe(200);
+    const lister = (await mintKey(["grants.manage"])).key;
+    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      headers: bearer(lister),
+    });
+    const grant = (
+      (await listed.json()) as {
+        data: { id: string; client_id: string; scopes: string[] }[];
+      }
+    ).data.find((row) => row.client_id === app.clientId)!;
+    await pass(6 * MINUTE);
+    const fresh = await signIn();
+    const narrow = (cookie: string) =>
+      browserJson("PATCH", `/auth/grants/${grant.id}`, cookie, {
+        expected_scopes: grant.scopes,
+        scopes: [],
+      });
+    await refused(await narrow(stale));
+    expect(await itemsStatus(server, exchanged.body.access_token!)).toBe(200);
+    const narrowed = await narrow(fresh);
+    expect(narrowed.status, await narrowed.text()).toBe(200);
+  });
+});
+
+describe("the owner's trash and type removal", () => {
+  const working = () => ({ authorization: `Bearer ${server.workingKey}` });
+
+  async function note(title: string) {
+    const response = await fetch(`${server.apiUrl}/items`, {
+      method: "POST",
+      headers: { ...working(), "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "core.note",
+        properties: { title, body: "text" },
+      }),
+    });
+    expect(response.status).toBe(201);
+    return ((await response.json()) as { item: { id: string } }).item;
+  }
+
+  /**
+   * Where the item is: its state while a read finds it, `trashed` while the
+   * owner's trash lists it, and `absent` otherwise.
+   */
+  async function stateOf(id: string, cookie: string): Promise<string> {
+    const response = await fetch(`${server.apiUrl}/items/${id}`, {
+      headers: working(),
+    });
+    if (response.status === 200)
+      return ((await response.json()) as { item: { state: string } }).item
+        .state;
+    await response.body?.cancel();
+    const trash = await browserJson("GET", "/trash?limit=100", cookie);
+    expect(trash.status).toBe(200);
+    const listed = (await trash.json()) as { data: { id: string }[] };
+    return listed.data.some((row) => row.id === id) ? "trashed" : "absent";
+  }
+
+  it("refuses a session that signed in more than five minutes ago 403 at each door and changes no item, and a fresh session passes through them", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const kept = await note("Kept by the stale session");
+    const act = (cookie: string, id: string, action: string, version: number) =>
+      browserJson(
+        "POST",
+        `/items/summaries/${id}/${action}?version=${String(version)}`,
+        cookie,
+      );
+    await refused(await act(stale, kept.id, "trash", 1));
+    expect(await stateOf(kept.id, fresh)).toBe("active");
+
+    const trashed = await act(fresh, kept.id, "trash", 1);
+    expect(trashed.status).toBe(200);
+    const version = ((await trashed.json()) as { version: number }).version;
+    await refused(await act(stale, kept.id, "restore", version));
+    await refused(await act(stale, kept.id, "purge", version));
+    await refused(await browserJson("POST", "/trash/empty", stale));
+    expect(await stateOf(kept.id, fresh)).toBe("trashed");
+
+    const restored = await act(fresh, kept.id, "restore", version);
+    expect(restored.status).toBe(200);
+    expect(await stateOf(kept.id, fresh)).toBe("active");
+    const again = ((await restored.json()) as { version: number }).version;
+    expect((await act(fresh, kept.id, "trash", again)).status).toBe(200);
+    expect((await browserJson("POST", "/trash/empty", fresh)).status).toBe(200);
+    expect(await stateOf(kept.id, fresh)).toBe("absent");
+  });
+
+  it("refuses a session that signed in more than five minutes ago 403 and keeps the type, and a fresh session removes it", async () => {
+    const { stale, fresh } = await staleAndFresh();
+    const registered = await fetch(`${server.apiUrl}/types`, {
+      method: "POST",
+      headers: { ...working(), "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "user.recent-sign-in",
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status).toBe(201);
+    await refused(
+      await browserJson("DELETE", "/types/user.recent-sign-in", stale),
+    );
+    const kept = await fetch(`${server.apiUrl}/types/user.recent-sign-in`, {
+      headers: working(),
+    });
+    expect(kept.status).toBe(200);
+    await kept.body?.cancel();
+    const removed = await browserJson(
+      "DELETE",
+      "/types/user.recent-sign-in",
+      fresh,
+    );
+    expect(removed.status).toBe(200);
+    await removed.body?.cancel();
   });
 });
