@@ -446,7 +446,7 @@ If an attached store leaves a deletion of a dropped or struck copy's bytes from 
 
 ### `stores/unreachable-read`
 
-When `GET /blobs/<built-in function hash>` or a link the instance serves reads the bytes of a blob, and no store that holds a recorded copy of it can be reached or begins to answer the read within 15 seconds, the server MUST answer `503 blob_store_unavailable`.
+When `GET /blobs/{hash}` or a link the instance serves reads the bytes of a blob, and no store that holds a recorded copy of it can be reached or begins to answer the read within 15 seconds, the server MUST answer `503 blob_store_unavailable`.
 
 **Reason:** a store that cannot answer says nothing of the bytes, so `404 blob_not_found` would claim they are gone.
 
@@ -454,7 +454,7 @@ When `GET /blobs/<built-in function hash>` or a link the instance serves reads t
 
 ### `stores/read-no-answer`
 
-If a store that holds a recorded copy of a blob does not begin to answer a read of the bytes for `GET /blobs/<built-in function hash>` or a link the instance serves within 15 seconds, then the server MUST read the bytes from another attached store that holds a recorded copy.
+If a store that holds a recorded copy of a blob does not begin to answer a read of the bytes for `GET /blobs/{hash}` or a link the instance serves within 15 seconds, then the server MUST read the bytes from another attached store that holds a recorded copy.
 
 **Reason:** the bound is on the first byte, not the whole body, so a large blob read over a slow link is not cut off.
 
