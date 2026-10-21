@@ -2699,6 +2699,7 @@ fn land(
     let refused = store::land_on_held_row(&tx, row, id)?;
     apply_read_back_unchecked(&tx, &read)?;
     let catalog = Catalog::load(&tx)?;
+    // Again, since the pins and waiting work moved onto the server's id above.
     store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
     store::settle_read_back(&tx, Subject::Item, id)?;
     store::meta_delete(&tx, &receipt_key(&row.id))?;
@@ -3113,8 +3114,7 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
             held: Some(edge),
             ..
         } => {
-            if store::put_server_edge(conn, edge)? {
-                store::lay_waiting_edge_writes_over(conn, id)?;
+            if store::take_server_edge(conn, edge)? {
                 store::let_go_of_untaken_edge(conn, id)?;
             }
         }
@@ -3152,8 +3152,7 @@ fn apply_read_back_unchecked(conn: &rusqlite::Connection, read: &ReadBack) -> Re
                 store::evict_item(conn, &item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
             }
-            store::put_server_item(conn, item, Some(&held.metadata.tags), &catalog)?;
-            store::lay_waiting_writes_over(conn, &item.id, &|laid| catalog.indexing(laid))?;
+            store::take_server_item(conn, item, Some(&held.metadata.tags), &catalog)?;
         }
         ReadBack::Item {
             id,

@@ -153,6 +153,8 @@ fn hydrate_inner(
                         &row.item.id,
                         row.listed.ok_or_else(crate::read_view::invalid)?,
                     )?;
+                    // Put, not taken: the queue is laid over once, after the
+                    // build catches up.
                     store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                     for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                         for edge in &block.data {
@@ -232,6 +234,7 @@ fn hydrate_inner(
                     &row.item.id,
                     row.listed.ok_or_else(crate::read_view::invalid)?,
                 )?;
+                // Put, not taken, as for a page.
                 store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &catalog)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
@@ -659,13 +662,9 @@ pub(crate) fn hold_row(
         &row.item.id,
         row.listed.ok_or_else(crate::read_view::invalid)?,
     )?;
-    if store::put_server_item(conn, &row.item, Some(&row.metadata.tags), catalog)? {
-        store::lay_waiting_writes_over(conn, &row.item.id, &|laid| catalog.indexing(laid))?;
-    }
+    store::take_server_item(conn, &row.item, Some(&row.metadata.tags), catalog)?;
     for edge in edges {
-        if store::put_server_edge(conn, edge)? {
-            store::lay_waiting_edge_writes_over(conn, &edge.id)?;
-        }
+        store::take_server_edge(conn, edge)?;
     }
     Ok(())
 }
