@@ -17,7 +17,13 @@ import {
 } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, standingPermission } from "../middleware/auth.js";
+import {
+  authorityId,
+  isDirectAuthority,
+  requireRecentOwnerAuthentication,
+  requireAuth,
+  standingPermission,
+} from "../middleware/auth.js";
 import type {
   Storage,
   StoredWebhook,
@@ -40,6 +46,13 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import * as clock from "../clock.js";
+import {
+  isWebhookMaker,
+  listReadableWebhooks,
+  readableWebhook,
+  readWebhookDeliveries,
+  webhookMaker,
+} from "../webhooks/read.js";
 
 /** One stream-style item pattern; absence on PATCH preserves configuration. */
 function normalizeTypeFilter(
@@ -145,6 +158,23 @@ const WebhookSchema = z
     description:
       "A webhook sends the events you choose, as you can read them, to a URL.",
   });
+
+const WebhookReadSchema = WebhookSchema.extend({
+  maker: z
+    .object({
+      kind: z
+        .enum(["key", "app"])
+        .describe("Whether a key or an app registered the webhook."),
+      id: z.string().describe("The key ID or OAuth client ID."),
+      name: z
+        .string()
+        .nullable()
+        .describe(
+          "The maker's current name, or null if it is no longer available.",
+        ),
+    })
+    .describe("The credential that registered this webhook."),
+}).openapi("WebhookRead");
 
 const DeliverySchema = z
   .object({
@@ -291,17 +321,21 @@ const listWebhooksRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns every webhook that belongs to you, with each `secret` shortened to its last four characters.",
+    "Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   responses: {
     200: {
       content: {
         "application/json": {
-          schema: wholeListOf(WebhookSchema, "WebhookPage", "webhook you own"),
+          schema: wholeListOf(
+            WebhookReadSchema,
+            "WebhookPage",
+            "webhook you can inspect",
+          ),
         },
       },
-      description: "Returns your webhooks.",
+      description: "Returns the webhooks you can inspect.",
     },
     401: {
       content: {
@@ -329,7 +363,7 @@ const getWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Get a webhook",
   description:
-    "Returns a webhook, with its `secret` shortened to its last four characters.",
+    "Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -339,7 +373,7 @@ const getWebhookRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: WebhookSchema,
+          schema: WebhookReadSchema,
         },
       },
       description: "Returns the webhook.",
@@ -507,7 +541,7 @@ const redeliverRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Redeliver a failed delivery",
   description:
-    "Sends a `dead_letter` delivery again, to the webhook's current `url`, and returns it as `pending`. The delivery keeps its ID, and Marfa makes up to 8 more attempts.",
+    "Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -519,11 +553,13 @@ const redeliverRoute = createRoute({
   responses: {
     202: {
       description:
-        "Returns the delivery as `pending`. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome.",
+        "Returns the delivery as `pending`, keeping its ID. Marfa makes up to 8 more attempts. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome.",
       content: { "application/json": { schema: DeliverySchema } },
     },
     403: {
-      description: MANAGE_REFUSAL,
+      description:
+        MANAGE_REFUSAL +
+        " An owner browser must have signed in within five minutes.",
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
@@ -554,7 +590,7 @@ const listDeliveriesRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhook deliveries",
   description:
-    "Returns a page of a webhook's deliveries, newest first. Marfa deletes a delivery that isn't `pending` once it's older than the instance's audit retention.",
+    "Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.",
   security: [{ bearerAuth: [] }],
   middleware: managesWebhooks,
   request: {
@@ -574,7 +610,8 @@ const listDeliveriesRoute = createRoute({
           }),
         },
       },
-      description: "Returns a page of deliveries.",
+      description:
+        "Returns a page of deliveries. Marfa deletes settled deliveries older than the instance's audit retention.",
     },
     401: {
       content: {
@@ -626,35 +663,14 @@ function callerOwner(c: Context<AppEnv>): WebhookOwner {
   };
 }
 
-function isOwner(c: Context<AppEnv>, owner: WebhookOwner): boolean {
-  const key = requireAuth(c);
-  if (c.get("authType") !== "oauth") {
-    return owner.kind === "key" && owner.keyId === key.id;
-  }
-  const grant = c.get("oauthGrant");
-  return (
-    owner.kind === "grant" &&
-    owner.clientId === grant?.clientId &&
-    owner.authUserId === grant.authUserId
-  );
-}
-
-/**
- * The subscription `id` as this caller may act on it, or `webhook_not_found`.
- *
- * **A subscription belongs to the credential that registered it**, and one
- * registered by another credential answers as an id nobody holds: listing,
- * reading, re-pointing or removing another credential's subscription would
- * let one credential send another's events to an address of its choosing,
- * or silence them.
- */
+/** Subscription changes remain exclusive to the registering credential. */
 async function ownedWebhook(
   storage: Storage,
   c: Context<AppEnv>,
   id: string,
 ): Promise<StoredWebhook> {
   const webhook = await storage.outboundWebhooks.get(id);
-  if (webhook && isOwner(c, webhook.owner)) return webhook;
+  if (webhook && isWebhookMaker(c, webhook.owner)) return webhook;
   throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
 }
 
@@ -728,13 +744,15 @@ export function webhookRoutes(
   });
 
   router.openapi(listWebhooksRoute, async (c) => {
-    requireAuth(c);
-    const webhooks = await storage.outboundWebhooks.list();
+    const webhooks = await listReadableWebhooks(storage, c);
     return c.json(
       {
-        data: webhooks
-          .filter((w) => isOwner(c, w.owner))
-          .map((w) => wireWebhook(w)),
+        data: await Promise.all(
+          webhooks.map(async (w) => ({
+            ...wireWebhook(w),
+            maker: await webhookMaker(storage, w.owner),
+          })),
+        ),
         next_cursor: null,
       },
       200,
@@ -742,10 +760,14 @@ export function webhookRoutes(
   });
 
   router.openapi(getWebhookRoute, async (c) => {
-    requireAuth(c);
-    const { id } = c.req.valid("param");
-    const webhook = await ownedWebhook(storage, c, id);
-    return c.json(wireWebhook(webhook), 200);
+    const webhook = await readableWebhook(storage, c, c.req.valid("param").id);
+    return c.json(
+      {
+        ...wireWebhook(webhook),
+        maker: await webhookMaker(storage, webhook.owner),
+      },
+      200,
+    );
   });
 
   router.openapi(updateWebhookRoute, async (c) => {
@@ -826,25 +848,21 @@ export function webhookRoutes(
   });
 
   router.openapi(listDeliveriesRoute, async (c) => {
-    requireAuth(c);
     const { id } = c.req.valid("param");
-    const { limit, cursor } = c.req.valid("query");
-
-    await ownedWebhook(storage, c, id);
-
     return c.json(
-      await storage.outboundWebhookDeliveries.list(id, { limit, cursor }),
+      await readWebhookDeliveries(storage, c, id, c.req.valid("query")),
       200,
     );
   });
 
   router.openapi(redeliverRoute, async (c) => {
-    requireAuth(c);
+    if (isDirectAuthority(c)) requireRecentOwnerAuthentication(c);
+    else requireAuth(c);
     const { id, delivery_id } = c.req.valid("param");
     const delivery = await runAuditedTransaction(
       storage,
       async () => {
-        const subscription = await ownedWebhook(storage, c, id);
+        const subscription = await readableWebhook(storage, c, id);
         const existing = await storage.outboundWebhookDeliveries.get(
           id,
           delivery_id,
@@ -884,7 +902,7 @@ export function webhookRoutes(
       },
       {
         client_ip: c.get("clientIp") ?? null,
-        key_id: requireAuth(c).id,
+        key_id: authorityId(c),
         action: "webhook.delivery.redeliver",
         resource_type: "webhook_delivery",
         resource_id: delivery_id,

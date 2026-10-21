@@ -1121,7 +1121,7 @@ describe("outbound webhook delivery", () => {
     }
   });
 
-  it("shows a subscription as its id, url, events, type_filter, secret, active flag and two timestamps, and no more", async () => {
+  it("shows subscription configuration with maker identity on reads", async () => {
     const keys = [
       "active",
       "created_at",
@@ -1142,7 +1142,7 @@ describe("outbound webhook delivery", () => {
     expect(Object.keys(created.data).sort()).toEqual(keys);
 
     const fetched = await client.getWebhook(created.data.id);
-    expect(Object.keys(fetched.data).sort()).toEqual(keys);
+    expect(Object.keys(fetched.data).sort()).toEqual([...keys, "maker"].sort());
     const updated = await client.updateWebhook(created.data.id, {
       active: false,
     });
@@ -1150,7 +1150,7 @@ describe("outbound webhook delivery", () => {
     expect(updated.data.secret).toMatch(/^\*+[0-9a-f]{4}$/);
     const listed = await client.listWebhooks();
     const mine = listed.data.data.find((w) => w.id === created.data.id);
-    expect(Object.keys(mine ?? {}).sort()).toEqual(keys);
+    expect(Object.keys(mine ?? {}).sort()).toEqual([...keys, "maker"].sort());
     expect(listed.data.next_cursor).toBeNull();
   });
 

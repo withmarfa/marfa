@@ -1403,6 +1403,36 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
+  it("sends webhook reads and retries through the private socket", async () => {
+    const socket = await PrivateSocket.start();
+    const cases = [
+      { args: ["list"], path: "GET /webhooks" },
+      { args: ["get", ID], path: `GET /webhooks/${ID}` },
+      { args: ["deliveries", ID], path: `GET /webhooks/${ID}/deliveries` },
+      {
+        args: ["redeliver", ID, ID],
+        path: `POST /webhooks/${ID}/deliveries/${ID}/redeliver`,
+      },
+    ];
+    try {
+      for (const row of cases) {
+        socket.asked = [];
+        socket.answer = { data: [], next_cursor: null };
+        const outcome = await marfa([
+          "--json",
+          "--socket",
+          socket.path,
+          "webhooks",
+          ...row.args,
+        ]);
+        expect(outcome.code, outcome.stderr).toBe(0);
+        expect(socket.asked).toEqual([row.path]);
+      }
+    } finally {
+      await socket.stop();
+    }
+  });
+
   it("holds folder inventory to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
     const body = { data: [], next_cursor: null };

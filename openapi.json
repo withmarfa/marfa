@@ -8023,23 +8023,69 @@
           "data": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Webhook"
+              "$ref": "#/components/schemas/WebhookRead"
             },
-            "description": "Every webhook you own."
+            "description": "Every webhook you can inspect."
           },
           "next_cursor": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Always `null`: Marfa returns every webhook you own in one page."
+            "description": "Always `null`: Marfa returns every webhook you can inspect in one page."
           }
         },
         "required": [
           "data",
           "next_cursor"
         ],
-        "description": "A page holding every webhook you own."
+        "description": "A page holding every webhook you can inspect."
+      },
+      "WebhookRead": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Webhook"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "maker": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "key",
+                      "app"
+                    ],
+                    "description": "Whether a key or an app registered the webhook."
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "The key ID or OAuth client ID."
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "The maker's current name, or null if it is no longer available."
+                  }
+                },
+                "required": [
+                  "kind",
+                  "id",
+                  "name"
+                ],
+                "description": "The credential that registered this webhook."
+              }
+            },
+            "required": [
+              "maker"
+            ]
+          }
+        ],
+        "description": "A webhook sends the events you choose, as you can read them, to a URL."
       },
       "WebhookNotFoundRefusal": {
         "type": "object",
@@ -52064,7 +52110,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns every webhook that belongs to you, with each `secret` shortened to its last four characters.",
+        "description": "Returns webhooks and their makers, with secrets redacted. The owner's browser session and local command see every subscription; keys and apps see only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -52072,7 +52118,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns your webhooks.",
+            "description": "Returns the webhooks you can inspect.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52321,7 +52367,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns a webhook, with its `secret` shortened to its last four characters.",
+        "description": "Returns a webhook and its maker, with its secret redacted. The owner's browser session and local command can read any subscription; keys and apps can read only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -52345,7 +52391,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Webhook"
+                  "$ref": "#/components/schemas/WebhookRead"
                 }
               }
             },
@@ -53384,7 +53430,7 @@
           "Webhooks"
         ],
         "summary": "List webhook deliveries",
-        "description": "Returns a page of a webhook's deliveries, newest first. Marfa deletes a delivery that isn't `pending` once it's older than the instance's audit retention.",
+        "description": "Returns delivery metadata without event payloads, newest first. The owner's browser session and local command can inspect any subscription; keys and apps can inspect only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -53427,7 +53473,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Returns a page of deliveries.",
+            "description": "Returns a page of deliveries. Marfa deletes settled deliveries older than the instance's audit retention.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53706,7 +53752,7 @@
           "Webhooks"
         ],
         "summary": "Redeliver a failed delivery",
-        "description": "Sends a `dead_letter` delivery again, to the webhook's current `url`, and returns it as `pending`. The delivery keeps its ID, and Marfa makes up to 8 more attempts.",
+        "description": "Queues a failed delivery again at the current URL. The owner's recently authenticated browser session or local command can retry any subscription; keys and apps can retry only their own.",
         "security": [
           {
             "bearerAuth": []
@@ -53746,7 +53792,7 @@
         ],
         "responses": {
           "202": {
-            "description": "Returns the delivery as `pending`. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome.",
+            "description": "Returns the delivery as `pending`, keeping its ID. Marfa makes up to 8 more attempts. Its `status_code`, `error` and `attempt` keep their values until the next attempt records an outcome.",
             "content": {
               "application/json": {
                 "schema": {
@@ -53833,7 +53879,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `webhooks.manage`.",
+            "description": "- `forbidden`: you don't have `webhooks.manage`. An owner browser must have signed in within five minutes.",
             "content": {
               "application/json": {
                 "schema": {

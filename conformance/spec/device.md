@@ -1604,11 +1604,11 @@ If the server answers `401` to a request that a command sent through `--socket P
 
 ### `device/redeliver-request`
 
-When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` with its credential and no body, each identifier encoded as a path segment of its own.
+When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` using its selected credential or private socket and no body, each identifier encoded as a path segment of its own.
 
 **Reason:** the server decides from its current authority and retained deliveries whether to send again (`events/redeliver-current`).
 
-**Tests:** `device/contract.test.ts › posts redelivery with encoded ids and no body`.
+**Tests:** `device/contract.test.ts › posts redelivery with encoded ids and no body`, `› sends webhook reads and retries through the private socket`.
 
 ### `device/credential-lock-unsafe`
 

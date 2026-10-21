@@ -14,6 +14,8 @@ const REPO = resolve(SRC, "../../..");
  * own, or the fixture such a test starts.
  */
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
+  "pages/browser/webhooks.browser.test.ts":
+    "fails rather than skips when CI says a browser is expected, a test's own switch",
   "control/socket.test.ts":
     "runs cross-user socket access only on the hosted CI runner",
   "pages/browser/setup.browser.test.ts":
