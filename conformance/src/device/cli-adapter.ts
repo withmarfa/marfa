@@ -1125,7 +1125,9 @@ export interface StatusReport {
   }>;
   paused: { disk: number; pull: number };
   /** Present while the first sync waits to be confirmed (`folders/first-sync-status`). */
-  first_sync?: { plan: { write: number; send: number; beside: number; left: number } | null };
+  first_sync?: {
+    plan: { write: number; send: number; beside: number; left: number } | null;
+  };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge

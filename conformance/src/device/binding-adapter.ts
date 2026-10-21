@@ -828,11 +828,16 @@ export interface BindingFolderStatus {
   }>;
   directories: Array<{ path: string; flag: string; reason: string }>;
   paused: { disk: number; pull: number };
-  firstSync?: { plan?: { write: number; send: number; beside: number; left: number } };
+  firstSync?: {
+    plan?: { write: number; send: number; beside: number; left: number };
+  };
 }
 
 export type BindingFolderSync =
-  | { kind: "waiting"; plan: { write: number; send: number; beside: number; left: number } }
+  | {
+      kind: "waiting";
+      plan: { write: number; send: number; beside: number; left: number };
+    }
   | {
       kind: "done";
       sync: {
