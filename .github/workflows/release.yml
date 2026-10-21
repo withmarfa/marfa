@@ -407,6 +407,7 @@ jobs:
       - name: Stamp the version into every manifest
         run: |
           cargo fetch --locked --manifest-path core/Cargo.toml
+          cargo fetch --locked --manifest-path core/bindings/swift/Cargo.toml
           bash scripts/release/stamp-version.sh "$VERSION"
 
       - name: Build the binary
