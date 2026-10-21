@@ -514,7 +514,7 @@ fn backup_from(
         }
         eprintln!();
         eprintln!(
-            "A copy of your data in an S3-compatible bucket (Amazon S3, Cloudflare R2, Backblaze B2, Railway) lets you rebuild the server if this machine is lost. Without one, no copy leaves this machine, and you back up the volume yourself."
+            "A copy of your data in an S3-compatible bucket (Amazon S3, Cloudflare R2, Backblaze B2, Railway) lets you rebuild the instance if this machine is lost. Without one, no copy leaves this machine, and you back up the volume yourself."
         );
         if !prompter.yes_no("Keep a copy in a bucket?", false)? {
             return Ok(None);
@@ -755,6 +755,25 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     // The backup.
     let backup = backup_from(&args, &name, &prompter, existing.is_some())?;
 
+    // Last of the questions, so nothing is changed before they are all asked.
+    let autostart = match (args.autostart, args.no_autostart, &existing) {
+        (true, _, _) if !boot::supported() => {
+            return Err(CliError::Usage(
+                "--autostart is for a Mac, where launchd starts it at login; on Linux, `sudo systemctl enable docker` brings the server back at boot".into(),
+            ));
+        }
+        (true, _, _) => true,
+        (_, true, _) => false,
+        (_, _, Some((state, _))) => state.autostart,
+        (_, _, None) => {
+            boot::supported()
+                && prompter.yes_no(
+                    "Start Marfa when you log in, even if Docker is not running yet?",
+                    true,
+                )?
+        }
+    };
+
     // The network gives the proxy a range that survives a restart.
     let subnet = match docker.network_subnet(&net)? {
         Some(subnet) => subnet,
@@ -838,23 +857,6 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     if external {
         dotenv.set("MARFA_SETTINGS", "external")?;
     }
-    let autostart = match (args.autostart, args.no_autostart, &existing) {
-        (true, _, _) if !boot::supported() => {
-            return Err(CliError::Usage(
-                "--autostart is for a Mac, where launchd starts it at login; on Linux, `sudo systemctl enable docker` brings the server back at boot".into(),
-            ));
-        }
-        (true, _, _) => true,
-        (_, true, _) => false,
-        (_, _, Some((state, _))) => state.autostart,
-        (_, _, None) => {
-            boot::supported()
-                && prompter.yes_no(
-                    "Start Marfa when you log in, even if Docker is not running yet?",
-                    true,
-                )?
-        }
-    };
     dotenv.set("MARFA_AUTOSTART", if autostart { "on" } else { "off" })?;
 
     std::fs::create_dir_all(&folder.dir)?;
