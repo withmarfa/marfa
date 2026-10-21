@@ -25,24 +25,26 @@ import { Cli, requireBinary } from "./harness.js";
  */
 
 const NOTES = 300;
-let server: FreshServer;
+let server: FreshServer | undefined;
 let cli: Cli;
-let dir: string;
+const dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-first-sync-"));
+let apiUrl = "";
+let workingKey = "";
 
 beforeAll(async () => {
   server = await bootFreshServer("cli-first-sync-pages", {
     RATE_LIMIT_ENABLED: "true",
     RATE_LIMIT_REQUESTS: "150",
   });
-  dir = mkdtempSync(join(realpathSync(tmpdir()), "marfa-first-sync-"));
-  cli = new Cli(requireBinary(), server.apiUrl, server.workingKey).withEnv({
+  ({ apiUrl, workingKey } = server);
+  cli = new Cli(requireBinary(), apiUrl, workingKey).withEnv({
     MARFA_FOLDER_REGISTRY: join(dir, "folders.json"),
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server?.stop();
-  if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 it(
@@ -84,8 +86,8 @@ it(
       report.drain.verdicts.filter((entry) => entry.verdict !== "accepted"),
     ).toEqual([]);
     const client = new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: server.workingKey,
+      baseUrl: apiUrl,
+      apiKey: workingKey,
     });
     const titles = new Set<string>();
     let cursor: string | undefined;

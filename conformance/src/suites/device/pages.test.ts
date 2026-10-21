@@ -13,7 +13,18 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
-import { hydratedHarness, type Harness } from "./harness.js";
+import {
+  folderHarness,
+  hydratedHarness,
+  type FolderHarness,
+  type Harness,
+} from "./harness.js";
+import {
+  EdgeDoor,
+  put,
+  scriptFolderWrites,
+  sentTitles,
+} from "./folders.shared.js";
 
 /**
  * "A device sends the creates that wait in pages."
@@ -27,10 +38,13 @@ import { hydratedHarness, type Harness } from "./harness.js";
  */
 
 let harness: Harness | undefined;
+let folder: FolderHarness | undefined;
 
 afterEach(async () => {
   await harness?.stop();
+  await folder?.stop();
   harness = undefined;
+  folder = undefined;
 });
 
 /** A row the server holds before the fixture starts, the target of every
@@ -378,8 +392,7 @@ describe("creates in pages", () => {
     harness = made.harness;
     const { door } = made;
     const { notes } = await queue(harness, 52);
-    const [repeated, refused] = notes;
-    if (repeated === undefined || refused === undefined) throw new Error();
+    const [repeated, refused] = notes as [QueuedWrite, QueuedWrite];
     // An earlier page the device never heard the answer to took this one.
     door.items.set(
       repeated.item_id ?? "",
@@ -479,5 +492,43 @@ describe("creates in pages", () => {
     );
     expect(second.verdicts.every((entry) => entry.replayed)).toBe(true);
     expect(door.items.size).toBe(51);
+  });
+});
+
+describe("a folder's first sync", () => {
+  it("sends its files and their placements in pages, in one push", async () => {
+    folder = await folderHarness("pages-folder");
+    const edges = new EdgeDoor();
+    const rows = scriptFolderWrites(folder, { edges });
+    const titles = Array.from({ length: 60 }, (_, at) => `Note ${String(at)}`);
+    for (const title of titles)
+      put(folder, `${title}.md`, `---\ntitle: ${title}\n---\ntext\n`);
+
+    const pushed = await folder.folder.push();
+
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.drain.undelivered).toBe(0);
+    expect(
+      pushed.value.drain.verdicts.filter(
+        (entry) => entry.verdict !== "accepted",
+      ),
+    ).toEqual([]);
+    const sent = (pathname: string) =>
+      folder?.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === pathname,
+      ) ?? [];
+    expect(sent("/items/bulk")).toHaveLength(1);
+    expect(sent("/items")).toHaveLength(0);
+    expect(sentTitles(folder).sort()).toEqual([...titles].sort());
+    expect(sent("/edges/bulk")).toHaveLength(1);
+    expect(rows.size).toBe(60);
+    expect(
+      [...edges.edges.values()].filter(
+        (edge) =>
+          edge.edge_type === "in-folder" &&
+          edge.target_id === folder?.settings.id,
+      ),
+    ).toHaveLength(60);
   });
 });
