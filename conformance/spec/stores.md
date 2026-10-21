@@ -252,9 +252,9 @@ When a copy has been dropped through `DELETE /blobs/{hash}/locations/{store}`, t
 
 ### `stores/replicate-no-answer`
 
-If an attached store leaves a question from a run of `blob-replicate` unanswered for 15 seconds, then the server MUST answer the run with the copy it was making counted in `remaining`.
+If an attached store leaves unanswered for 15 seconds a question from a run of `blob-replicate` whether it holds a blob, or a read of a blob's bytes, then the server MUST answer the run with the copy it was making counted in `remaining`.
 
-**Reason:** a store that hangs would otherwise hold the run, and every run after it, without end. A later run makes the copy once the store answers.
+**Reason:** a store that hangs would otherwise hold the run, and every run after it, without end. A later run makes the copy once the store answers. A store's write or delete is not limited here: giving up on one while it can still land would let it undo a later copy.
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`.
 
@@ -400,7 +400,7 @@ When a run of `blob-integrity` cannot reach one store, the server MUST still che
 
 ### `stores/integrity-no-answer`
 
-If an attached store leaves a question from a run of `blob-integrity` unanswered for 15 seconds, then the server MUST count the store in the run's `unreachable`.
+If an attached store leaves unanswered for 15 seconds a question from a run of `blob-integrity` whether it holds a blob, or a read of a blob's bytes, then the server MUST count the store in the run's `unreachable`.
 
 **Reason:** a store that hangs is one the run cannot reach, so its copies are left as they were (`stores/integrity-unreachable-keeps`) and the run ends rather than waiting on it.
 
