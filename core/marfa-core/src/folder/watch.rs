@@ -572,8 +572,9 @@ const SEND_AGAIN_AT: &str = "folder_send_again_at";
 
 impl Folder {
     /// Keeps the wait a drain of this folder was told, whoever drained: a
-    /// later answer replaces an earlier one, and writes the server took with
-    /// no wait end it.
+    /// later answer replaces an earlier one, and a later drain with no wait
+    /// ends it where the server took writes or writes were left undelivered
+    /// (`folders/watch-rate-limit-handover`).
     pub(super) fn keep_wait(&self, drain: &crate::DrainReport) -> Result<(), CoreError> {
         let conn = self.core.conn()?;
         if let Some(wait) = rate_limit_wait(drain) {
@@ -582,7 +583,9 @@ impl Folder {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |since| since.as_millis());
             crate::store::meta_set(&conn, SEND_AGAIN_AT, &millis.to_string())
-        } else if drain.answered > 0 && drain.retry_after_seconds.is_none() {
+        } else if drain.retry_after_seconds.is_none()
+            && (drain.answered > 0 || drain.undelivered > 0)
+        {
             crate::store::meta_delete(&conn, SEND_AGAIN_AT)
         } else {
             Ok(())
@@ -1027,6 +1030,53 @@ mod tests {
         assert!(full_due(None, now));
         assert!(!full_due(Some(now), now + 59 * SECOND));
         assert!(full_due(Some(now), now + FULL_PASS));
+    }
+
+    #[test]
+    fn a_later_drain_that_leaves_writes_undelivered_with_no_wait_ends_the_kept_wait() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let db = dir.path().join(super::super::STATE_DIR).join("core.sqlite");
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        let core = super::super::working(crate::Core::open(&db, None).unwrap()).unwrap();
+        super::super::settings_file::bind(&core, "folder").unwrap();
+        drop(core);
+        let folder = Folder::open(
+            dir.path(),
+            Some(crate::Server {
+                url: "http://127.0.0.1:9".into(),
+                key: "fixture".into(),
+            }),
+        )
+        .unwrap();
+        let limited = || {
+            let mut report = drained().report;
+            report.undelivered = 2;
+            report.retry_after_seconds = Some(30);
+            report
+        };
+        folder.keep_wait(&limited()).unwrap();
+        assert!(
+            folder.kept_wait().is_some(),
+            "a rate limit's wait was not kept"
+        );
+        // A drain that sent nothing says nothing of the wait.
+        folder.keep_wait(&drained().report).unwrap();
+        assert!(folder.kept_wait().is_some());
+
+        let mut unavailable = drained().report;
+        unavailable.undelivered = 1;
+        unavailable.unavailable = Some("the server could not be reached".into());
+        folder.keep_wait(&unavailable).unwrap();
+        assert!(
+            folder.kept_wait().is_none(),
+            "a later drain left writes undelivered with no wait, and the older wait was kept"
+        );
+
+        folder.keep_wait(&limited()).unwrap();
+        let mut answered = drained().report;
+        answered.answered = 1;
+        folder.keep_wait(&answered).unwrap();
+        assert!(folder.kept_wait().is_none());
     }
 
     fn drained() -> Drained {
