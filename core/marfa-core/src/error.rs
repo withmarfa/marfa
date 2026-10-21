@@ -386,7 +386,10 @@ mod tests {
         let other = said("instance_changed");
         assert!(other.contains("another Marfa now answers"), "{other}");
         let invalid = said("read_view_invalid");
-        assert!(invalid.contains("holds no proof it can accept"), "{invalid}");
+        assert!(
+            invalid.contains("holds no proof it can accept"),
+            "{invalid}"
+        );
         // A reason that is a sentence is shown as it is.
         let sentence = said("the server's event log ends at 5");
         assert!(
