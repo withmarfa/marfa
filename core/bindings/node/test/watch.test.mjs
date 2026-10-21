@@ -183,7 +183,10 @@ test(
     await sleep(300);
     const unreachable = told.filter((change) => change.kind === "serverUnreachable");
     assert.equal(unreachable.length, 1, "the loss was told more than once");
-    assert.match(unreachable[0]?.kind === "serverUnreachable" ? unreachable[0].reason : "", /network/);
+    assert.match(
+      unreachable[0]?.kind === "serverUnreachable" ? unreachable[0].reason : "",
+      new RegExp(`^request to ${server.url.replace(/\/$/, "").replace(/[.]/g, "\\.")} failed: `),
+    );
   },
 );
 

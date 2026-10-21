@@ -694,57 +694,67 @@ describe("the contract the binary was built for", () => {
     }
   });
 
-  it("reports a keychain that cannot be read as itself, not as no server named", async () => {
-    const unreadable = await marfa(["--json", "whoami"], undefined, {
-      MARFA_KEYCHAIN: "/marfa-test-no-keychain",
-    });
-    expect(unreadable.code, unreadable.stderr).toBe(4);
-    const error = refusal(unreadable.stderr).error;
-    expect(error.code).toBe("no_keychain");
-    expect(error.message).toMatch(/keychain/);
-    // The witness: with the keychain off nothing is kept, and a server is
-    // what the command asks for.
-    const off = await marfa(["--json", "whoami"], undefined, {
-      MARFA_NO_KEYCHAIN: "1",
-    });
-    expect(off.code, off.stderr).toBe(2);
-    expect(refusal(off.stderr).error.code).toBe("no_server");
-  });
+  // Only macOS has a keychain file that can fail to open; elsewhere one
+  // named reads as holding nothing.
+  it.runIf(process.platform === "darwin")(
+    "reports a keychain that cannot be read as itself, not as no server named",
+    async () => {
+      const unreadable = await marfa(["--json", "whoami"], undefined, {
+        MARFA_KEYCHAIN: "/marfa-test-no-keychain",
+      });
+      expect(unreadable.code, unreadable.stderr).toBe(4);
+      const error = refusal(unreadable.stderr).error;
+      expect(error.code).toBe("no_keychain");
+      expect(error.message).toMatch(/keychain/);
+      // The witness: with the keychain off nothing is kept, and a server is
+      // what the command asks for.
+      const off = await marfa(["--json", "whoami"], undefined, {
+        MARFA_NO_KEYCHAIN: "1",
+      });
+      expect(off.code, off.stderr).toBe(2);
+      expect(refusal(off.stderr).error.code).toBe("no_server");
+    },
+  );
 
-  it("runs a command on held bytes alone when the keychain cannot be read", async () => {
-    boundFolder = await folderHarness("contract-unreadable-keychain");
-    // As over SSH on a Mac: no server is named and the keychain cannot be
-    // read. `whoami` needs the server, so it is the witness that the same
-    // environment is refused.
-    const unreadable = {
-      MARFA_KEYCHAIN: join(dirname(boundFolder.dir), "no-keychain-here"),
-      MARFA_FOLDER_REGISTRY: boundFolder.registry,
-    };
-    const whoami = await marfa(["--json", "whoami"], undefined, unreadable);
-    expect(whoami.code, whoami.stderr).toBe(4);
-    expect(refusal(whoami.stderr).error.code).toBe("no_keychain");
-    const pull = await marfa(
-      ["--json", "folders", "pull", boundFolder.dir],
-      undefined,
-      unreadable,
-    );
-    expect(pull.code, pull.stderr).toBe(0);
-    // A server named outright is not told it may go without a credential.
-    const named = await marfa(
-      [
-        "--json",
-        "folders",
-        "pull",
-        boundFolder.dir,
-        "--url",
-        boundFolder.server.url,
-      ],
-      undefined,
-      unreadable,
-    );
-    expect(named.code, named.stderr).toBe(5);
-    expect(refusal(named.stderr).error.code).toBe("no_credential");
-  });
+  // Only macOS has a keychain file that can fail to open; elsewhere one
+  // named reads as holding nothing.
+  it.runIf(process.platform === "darwin")(
+    "runs a command on held bytes alone when the keychain cannot be read",
+    async () => {
+      boundFolder = await folderHarness("contract-unreadable-keychain");
+      // As over SSH on a Mac: no server is named and the keychain cannot be
+      // read. `whoami` needs the server, so it is the witness that the same
+      // environment is refused.
+      const unreadable = {
+        MARFA_KEYCHAIN: join(dirname(boundFolder.dir), "no-keychain-here"),
+        MARFA_FOLDER_REGISTRY: boundFolder.registry,
+      };
+      const whoami = await marfa(["--json", "whoami"], undefined, unreadable);
+      expect(whoami.code, whoami.stderr).toBe(4);
+      expect(refusal(whoami.stderr).error.code).toBe("no_keychain");
+      const pull = await marfa(
+        ["--json", "folders", "pull", boundFolder.dir],
+        undefined,
+        unreadable,
+      );
+      expect(pull.code, pull.stderr).toBe(0);
+      // A server named outright is not told it may go without a credential.
+      const named = await marfa(
+        [
+          "--json",
+          "folders",
+          "pull",
+          boundFolder.dir,
+          "--url",
+          boundFolder.server.url,
+        ],
+        undefined,
+        unreadable,
+      );
+      expect(named.code, named.stderr).toBe(5);
+      expect(refusal(named.stderr).error.code).toBe("no_credential");
+    },
+  );
 
   it("exits 1, not 5, when the server refuses the setup code", async () => {
     const started = await ScriptedServer.start();
