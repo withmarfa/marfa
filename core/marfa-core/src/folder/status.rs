@@ -15,6 +15,10 @@ pub struct FileStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item_id: Option<String>,
     /// `in_step`, `waiting`, `held`, `unmatched`, `unreached` or `outside`.
+    /// `outside` is a file that is not bound and that the folder does not
+    /// take: an empty file item, or a file the search holds no type for. It is
+    /// not the pull report's `outside` count, which is an item whose path the
+    /// folder will not write to.
     pub status: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub waits: Vec<&'static str>,
@@ -324,22 +328,14 @@ impl Folder {
     ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
         if !is_document(path) && bytes.is_some_and(<[u8]>::is_empty) {
-            return entry.because("empty", "is empty, and a file item holds bytes");
+            return entry.because("empty", "it is empty, and a file item holds bytes");
         }
         // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
-            && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
-                Err(reason) => Some(reason.to_string()),
-                Ok(_) if !super::carries_frontmatter(path) => None,
-                Ok(text) => {
-                    let read = super::document::read(text);
-                    read.unreadable
-                        .or_else(|| super::fields::read(&read.front, edge_types).err())
-                }
-            })
+            && let Some(held) =
+                self.held_document(key, path, bytes, (settings, catalog, edge_types))
         {
-            let flagged = Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
-            return FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason);
+            return FileStatus::new(key, None, "held").because(held.flag, held.reason);
         }
         if self.pushes(path, settings, catalog) {
             return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);
@@ -348,6 +344,40 @@ impl Folder {
             "search",
             "the search holds no type this file would be, so it is left alone",
         )
+    }
+
+    /// Why the scan holds a document it has not bound, where it does: its
+    /// text cannot be read, or the copy would refuse it as a new item.
+    fn held_document(
+        &self,
+        key: &str,
+        path: &Path,
+        bytes: Option<&[u8]>,
+        (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
+    ) -> Option<Flagged> {
+        let unreadable =
+            |reason: String| Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
+        let text = match super::text_of(bytes?) {
+            Ok(text) => text,
+            Err(reason) => return Some(unreadable(reason.to_string())),
+        };
+        let document = super::document_of(path, text);
+        if super::carries_frontmatter(path)
+            && let Some(reason) = document
+                .unreadable
+                .clone()
+                .or_else(|| super::fields::read(&document.front, edge_types).err())
+        {
+            return Some(unreadable(reason));
+        }
+        // A document of a file type is sent as its bytes, never as a draft.
+        if self.file_type_of(path, settings, catalog).is_some() {
+            return None;
+        }
+        match super::push::new_document(key, &document, (settings, catalog, edge_types)) {
+            Err(held) => Some(held),
+            Ok(made) => super::push::admission_hold(&self.core, key, &made.draft),
+        }
     }
 
     fn wait_of(&self, row: &QueuedWrite) -> &'static str {

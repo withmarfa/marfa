@@ -221,6 +221,67 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
         .then(|| format!("{type} is a file type, whose items are bytes rather than documents"))
 }
 
+/// What a document the folder has not bound would be created as.
+pub(super) struct NewDocument {
+    pub(super) draft: Draft,
+    pub(super) read: fields::Read,
+}
+
+/// The draft a new document makes, or the hold the scan puts on it instead:
+/// the type it names is one no document can be. The scan and the status make
+/// it the same way, so the status says a file is held when the scan holds it.
+pub(super) fn new_document(
+    key: &str,
+    document: &document::Document,
+    (settings, catalog, edge_types): (&Settings, &Catalog, &EdgeTypes),
+) -> std::result::Result<NewDocument, Flagged> {
+    let mut read = fields::read(&document.front, edge_types).unwrap_or_default();
+    let r#type = read
+        .lines
+        .r#type
+        .clone()
+        .unwrap_or_else(|| settings.new_type(catalog));
+    if let Some(reason) = unsuited_type(&r#type, catalog) {
+        return Err(Flagged::of(key, &format!("{}{reason}", state::REFUSED)));
+    }
+    let mut properties = std::mem::take(&mut read.properties);
+    properties.insert(
+        fields::body_field(catalog, &r#type).into(),
+        Value::String(document.body.clone()),
+    );
+    for (field, value) in &settings.defaults.properties {
+        properties.entry(field.clone()).or_insert(value.clone());
+    }
+    properties
+        .entry(fields::title_field(catalog, &r#type))
+        .or_insert(Value::String(title_of(key)));
+    let draft = Draft {
+        r#type,
+        properties,
+        tags: read
+            .lines
+            .tags
+            .clone()
+            .unwrap_or_else(|| settings.defaults.tags.clone()),
+        tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
+        occurred_at: read.lines.occurred_at.clone(),
+        ..Default::default()
+    };
+    Ok(NewDocument { draft, read })
+}
+
+/// What the copy says of a draft before queueing it: the hold the scan puts
+/// on a document the copy would refuse.
+pub(super) fn admission_hold(core: &crate::Core, key: &str, draft: &Draft) -> Option<Flagged> {
+    match core.check_create(draft) {
+        Err(error) if local_admission_refusal(&error) => Some(Flagged::of(
+            key,
+            &format!("{LOCAL_ADMISSION_REFUSAL}{error}"),
+        )),
+        _ => None,
+    }
+}
+
 impl Folder {
     /// A file naming a type no document can be is flagged instead.
     pub(super) fn queue_create(
@@ -241,40 +302,11 @@ impl Folder {
             return Ok(None);
         }
         let document = file.document();
-        let read = fields::read(&document.front, edge_types).unwrap_or_default();
-        let r#type = read
-            .lines
-            .r#type
-            .clone()
-            .unwrap_or_else(|| settings.new_type(catalog));
-        if let Some(reason) = unsuited_type(&r#type, catalog) {
-            return Ok(Some(Flagged::of(
-                &file.key,
-                &format!("{}{reason}", state::REFUSED),
-            )));
-        }
-        let mut properties = read.properties;
-        properties.insert(
-            fields::body_field(catalog, &r#type).into(),
-            Value::String(document.body.clone()),
-        );
-        for (field, value) in &settings.defaults.properties {
-            properties.entry(field.clone()).or_insert(value.clone());
-        }
-        properties
-            .entry(fields::title_field(catalog, &r#type))
-            .or_insert(Value::String(title_of(&file.key)));
-        let draft = Draft {
-            r#type,
-            properties,
-            tags: read
-                .lines
-                .tags
-                .unwrap_or_else(|| settings.defaults.tags.clone()),
-            tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
-            occurred_at: read.lines.occurred_at,
-            ..Default::default()
-        };
+        let NewDocument { draft, read } =
+            match new_document(&file.key, &document, (settings, catalog, edge_types)) {
+                Ok(made) => made,
+                Err(held) => return Ok(Some(held)),
+            };
         let created = match self.core.write_create(&draft, crate::Body::Folder) {
             Err(error) if local_admission_refusal(&error) => {
                 return Ok(Some(Flagged::of(

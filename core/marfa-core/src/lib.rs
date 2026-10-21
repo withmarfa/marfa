@@ -1379,6 +1379,19 @@ impl Core {
         self.write_update(id, edit, Based::AsRead, Body::Read)
     }
 
+    /// Whether the copy would take a new item made from `draft`, answered as
+    /// `write_create` would refuse it, with nothing queued or saved. A draft
+    /// naming a natural key is judged by the server, so it is not judged here.
+    pub(crate) fn check_create(&self, draft: &Draft) -> Result<()> {
+        let conn = self.conn()?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        refuse_unmakeable_create(&catalog, draft)?;
+        if draft.source_id.is_none() {
+            catalog.validate_properties(&draft.r#type, &draft.properties, true)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn write_create(&self, draft: &Draft, body: Body) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -2530,15 +2543,9 @@ fn refuse_system_type(r#type: &str) -> Result<()> {
     })
 }
 
-/// An id is minted here, where the draft names none, so a queued row is
-/// readable locally before the server answers.
-fn queue_create(
-    tx: &Connection,
-    catalog: &catalog::Catalog,
-    draft: &Draft,
-    after: &[String],
-    credential: Option<&str>,
-) -> Result<QueuedWrite> {
+/// What no copy could make an item of, whatever it holds: a name the server
+/// would refuse, an id that is no id, a system type, or a type it does not hold.
+fn refuse_unmakeable_create(catalog: &catalog::Catalog, draft: &Draft) -> Result<()> {
     refuse_invalid_names(&draft.tags, &draft.properties)?;
     if let Some(id) = &draft.id {
         validation::id("id", id)?;
@@ -2549,6 +2556,19 @@ fn queue_create(
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
+    Ok(())
+}
+
+/// An id is minted here, where the draft names none, so a queued row is
+/// readable locally before the server answers.
+fn queue_create(
+    tx: &Connection,
+    catalog: &catalog::Catalog,
+    draft: &Draft,
+    after: &[String],
+    credential: Option<&str>,
+) -> Result<QueuedWrite> {
+    refuse_unmakeable_create(catalog, draft)?;
     // A key naming no source is under the credential's own
     // (`items/source-own`), as learned for the credential in use; where it
     // is not known, the tier is chosen here and the drain asks.

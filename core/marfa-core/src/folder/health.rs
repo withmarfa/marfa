@@ -715,6 +715,31 @@ mod tests {
     }
 
     #[test]
+    fn a_document_the_scan_holds_for_its_type_is_a_refusal_not_an_upload_waiting() {
+        let held = FileStatus {
+            path: "unknown.md".into(),
+            item_id: None,
+            status: "held",
+            waits: Vec::new(),
+            flag: Some("refused"),
+            reason: Some("example.unknown is not a type this copy holds".into()),
+            warning: None,
+        };
+        let snapshot = local_snapshot(&StatusReport {
+            files: vec![held],
+            ..StatusReport::default()
+        });
+        assert_eq!(snapshot.pending_uploads, 0);
+        assert_eq!(
+            snapshot.problems,
+            vec![Problem {
+                code: Code::Refused,
+                count: 1
+            }]
+        );
+    }
+
+    #[test]
     fn safe_integer_exhaustion_and_invalid_receipts_preserve_pending() {
         let mut state = State {
             sequence: MAX_SAFE,
