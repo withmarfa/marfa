@@ -17,3 +17,4 @@ export * from "./string-length.js";
 export * from "./profile-permissions.js";
 export * from "./well-formed.js";
 export * from "./exact-integers.js";
+export { itemName } from "./item-name.js";

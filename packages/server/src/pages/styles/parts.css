@@ -1440,3 +1440,56 @@ body:has(.savebar:not([hidden])) .col {
 .strong {
   font-weight: var(--weight-medium);
 }
+
+.item-breakdown {
+  padding: var(--space-5);
+  display: grid;
+  gap: var(--space-4);
+}
+.item-total {
+  font-size: 28px;
+  font-weight: var(--weight-medium);
+}
+.item-share {
+  display: block;
+  width: 100%;
+  height: 12px;
+  border-radius: var(--radius-small);
+  overflow: hidden;
+}
+.item-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-5);
+  font-size: var(--small-size);
+}
+.item-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.item-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.item-share-0 {
+  fill: var(--fg);
+  background: var(--fg);
+}
+.item-share-1 {
+  fill: var(--fg2);
+  background: var(--fg2);
+}
+.item-share-2 {
+  fill: var(--icon);
+  background: var(--icon);
+}
+.item-share-3 {
+  fill: var(--switch-off);
+  background: var(--switch-off);
+}
+.item-share-4 {
+  fill: var(--line);
+  background: var(--line);
+}

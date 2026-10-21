@@ -138,6 +138,8 @@ const OPEN_DOORS: Record<string, string> = {
     "the owner's setup steps, authenticated by the owner session cookie, which send a browser without one to sign in",
   "POST /setup/name":
     "saves the instance name, authenticated by the owner session cookie and origin",
+  "GET /auth/owner/items": "the owner console gate",
+  "GET /auth/owner/types/:id": "the owner console gate",
   "GET /auth/owner/export":
     "Export and restore page authenticated by direct owner session",
   "GET /auth/owner/connectors":
@@ -369,18 +371,20 @@ describe("the credential gate", () => {
   });
 });
 
-it("declares owner browser authority only on the two item summary and export reads", async () => {
+it("declares owner browser authority on counts, export and item summaries", async () => {
   const doc = ctx.app.getOpenAPI31Document({
     openapi: "3.1.0",
     info: { title: "owner read census", version: "0" },
   });
   for (const [path, operations] of Object.entries(doc.paths ?? {})) {
-    if (!["/items/stats", "/export"].includes(path)) continue;
+    if (!["/items/stats", "/export", "/items/summaries"].includes(path))
+      continue;
     const operation = (operations as { get?: { security?: unknown[] } }).get;
-    expect(operation?.security).toEqual([
-      { bearerAuth: [] },
-      { ownerSession: [] },
-    ]);
+    expect(operation?.security).toEqual(
+      path === "/items/summaries"
+        ? [{ ownerSession: [] }]
+        : [{ bearerAuth: [] }, { ownerSession: [] }],
+    );
     const owner = await ctx.ownerRequest(path);
     expect(owner.status).toBe(200);
     await owner.body?.cancel();

@@ -742,6 +742,24 @@ export interface CascadeRoot {
   type: string;
 }
 
+/** An owner-visible name, origin and creation time, with no content fields. */
+export interface ItemSummary {
+  id: string;
+  name: string;
+  source: string;
+  created_at: string;
+}
+
+export interface ItemSummaryFilters {
+  type?: string;
+  q?: string;
+  limit?: number;
+  cursor?: string;
+  /** Matching rows to skip for numbered console pages; not an API filter. */
+  offset?: number;
+  source_filter?: SourceFilterSettings;
+}
+
 export interface ItemStore {
   /** Archive finalization after metadata writes; never changes the version. */
   restoreDates(id: string, dates: ArchivedItemDates): Promise<void>;
@@ -789,6 +807,9 @@ export interface ItemStore {
    */
   getIncludingTrashed(id: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
+  listSummaries(
+    filters: ItemSummaryFilters,
+  ): Promise<PaginatedResult<ItemSummary>>;
   /**
    * The item holding `(source, source_id)` in any state, or null. A trashed
    * row holds its natural key, as the unique index counts it, so a caller

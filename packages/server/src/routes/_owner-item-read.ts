@@ -13,7 +13,7 @@ import { readableMetadata } from "./_extension-reach.js";
 import { mayReadBlob } from "./_blob-reach.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 
-/** Only these two browser reads admit owner authority, never private transport. */
+/** Counts and export admit owner browser authority, never private transport. */
 function isOwnerItemRead(c: Context<AppEnv>): boolean {
   return (
     c.req.method === "GET" &&

@@ -104,6 +104,30 @@ async function edgesFrom(
 
 /** Seeds exactly `LIMIT` rows behind a door and returns how to read them. */
 const seeds: Record<string, () => Promise<Read>> = {
+  "GET /items/summaries": async () => {
+    const name = `fullsummary${ctx.runId.replace(/[^a-z0-9]/gi, "")}`;
+    const ids = await notes(LIMIT, name);
+    const owner = process.env.MARFA_OWNER_COOKIE;
+    expect(owner, "MARFA_OWNER_COOKIE is required").toBeTruthy();
+    return async (page) => {
+      const query = new URLSearchParams({
+        type: "core.note",
+        q: name,
+        limit: String(page.limit),
+        ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+      });
+      const response = await fetch(`${apiUrl}/items/summaries?${query}`, {
+        headers: {
+          cookie: owner!,
+          origin: new URL(apiUrl).origin,
+        },
+      });
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Page;
+      expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
+      return body;
+    };
+  },
   "GET /items": async () => {
     const own = await createTestContext("compliance", "full-last-page-items");
     extra.push(own.ctx);
@@ -294,7 +318,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(11);
+    expect(cursorDoors).toHaveLength(12);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

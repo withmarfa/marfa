@@ -30,6 +30,8 @@
   "POST /setup/exchange": "single-use browser handoff exchange",
   "GET /setup/{step}": "the owner's setup steps after claiming",
   "POST /setup/name": "same-origin owner form submission that names the instance",
+  "GET /auth/owner/items": "owner item summaries page",
+  "GET /auth/owner/types/{id}": "owner page describing one item type",
   "GET /auth/owner/export": "owner page for export and restore",
   "GET /auth/owner/connectors": "owner connectors list",
   "GET /auth/owner/connectors/{id}": "owner page for one connector",
