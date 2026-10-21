@@ -262,6 +262,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         postLogoutRedirectUris: auth_oauth_client.postLogoutRedirectUris,
         scopes: auth_oauth_client.scopes,
         grantTypes: auth_oauth_client.grantTypes,
+        softwareId: auth_oauth_client.softwareId,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -312,6 +313,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       postLogoutRedirectUris,
       scopes,
       grantTypes,
+      softwareId: row.softwareId,
     };
   }
 

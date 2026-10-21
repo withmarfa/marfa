@@ -6,6 +6,7 @@ import {
   pageLinks,
   visibleText,
 } from "../pages/reading.js";
+import { COMMAND_LINE_SOFTWARE_ID } from "../auth/connected-apps.js";
 import { HOSTILE } from "../pages/test-fixture.js";
 import { hashApiKey } from "../middleware/auth.js";
 import {
@@ -74,6 +75,7 @@ async function connectCommandLine(): Promise<string> {
   const registered = await request(ctx.app, "POST", "/auth/oauth2/register", {
     body: {
       client_name: "marfa on a laptop",
+      software_id: COMMAND_LINE_SOFTWARE_ID,
       application_type: "native",
       grant_types: [DEVICE_CODE_GRANT_TYPE, "refresh_token"],
       token_endpoint_auth_method: "none",
