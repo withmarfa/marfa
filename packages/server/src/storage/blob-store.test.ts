@@ -136,6 +136,35 @@ describe("DiskBlobStore", () => {
       expect(await store.has(hashOf(bytes))).not.toBeNull();
     });
 
+    it("refuses a read that closed before the write began, rather than wait on it", async () => {
+      // A copy whose writer was given up on can start long after its source
+      // read closed, and the write holds the blob's lock until it ends.
+      const source = new DiskBlobStore(await freshDir());
+      const store = new DiskBlobStore(await freshDir());
+      await source.attach();
+      await store.attach();
+      const bytes = Buffer.from("a read that closed before its write");
+      await source.put(hashOf(bytes), {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      const read = await source.get(hashOf(bytes));
+      if (!read) throw new Error("the source holds the bytes");
+      // Left unread long enough for the whole file to reach its buffer.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      read.stream.destroy();
+      const outcome = await Promise.race([
+        store.put(hashOf(bytes), read).then(
+          () => "written",
+          () => "refused",
+        ),
+        new Promise((resolve) => setTimeout(resolve, 2_000, "waiting")),
+      ]);
+      expect(outcome).toBe("refused");
+      expect(await store.has(hashOf(bytes))).toBeNull();
+      expect(await readdir(store.spoolDir)).toHaveLength(0);
+    });
+
     it("moves a path source into place, and discards a duplicate", async () => {
       const store = new DiskBlobStore(await freshDir());
       await store.attach();
