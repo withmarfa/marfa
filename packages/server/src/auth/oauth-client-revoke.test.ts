@@ -394,6 +394,14 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     const authUserId = ctx.owner.id;
     const scope = "core.note:read offline_access";
     const tokens = await codeGrant(ctx, clientId, cookie, scope);
+    const issued = (
+      await ctx.storage.audit.list({ action: "auth.token.issued" })
+    ).data[0];
+    expect(issued?.actor).toEqual({
+      kind: "app",
+      id: (await onlyGrant(ctx)).id,
+      name: "Revoking App",
+    });
     const refreshToken = tokens.refresh_token;
     expect(typeof refreshToken).toBe("string");
 
@@ -418,6 +426,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 
     const audits = await revokedAudits(ctx);
     expect(audits.data.length).toBe(1);
+    expect(audits.data[0]?.actor).toEqual(issued?.actor);
     const row = audits.data[0]!;
     expect(row.resource_id).toBe(clientId);
     expect(row.details.source).toBe("client");

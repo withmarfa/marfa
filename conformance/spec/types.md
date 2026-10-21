@@ -981,3 +981,23 @@ When a recent owner session or private local command sends `DELETE /types/{id}`,
 If a direct owner or private local command sends `DELETE /types/{id}?force=true`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
+
+## Type provenance
+
+### `types/creator-snapshot`
+
+When a caller registers a type, the server MUST retain its canonical sign-in ID, kind and readable name in `provenance.created_by`, independently of the submitted definition and later replacements.
+
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`.
+
+### `types/provenance-read`
+
+When a caller reads or lists types, the server MUST return `provenance.origin` as `platform` for built-in types, `user` for registered types, or `unknown` for an unrecorded origin, with `created_by` set to `null` where no creator is recorded.
+
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`.
+
+### `types/creator-archive`
+
+When the server restores an accepted archive, the server MUST preserve a valid recorded type creator and leave an absent creator unknown, rather than attribute the type to the restoring sign-in.
+
+**Tests:** `compliance/restore-archive.test.ts › preserves a recorded creator and leaves an absent creator unknown`.

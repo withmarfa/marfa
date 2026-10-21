@@ -173,6 +173,11 @@ describe("a security observation", () => {
     });
     expect(failed.status).toBe(401);
     expect(await logged("auth.sign_in.failed")).toBe(before + 1);
+    const rows = await new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    }).listAudit({ action: "auth.sign_in.failed", limit: 1 });
+    expect(rows.data.data[0]?.actor).toBeNull();
   });
 
   it("is in the audit log when the refusal of a replayed refresh token answers", async () => {

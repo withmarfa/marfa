@@ -1,3 +1,4 @@
+import { auditActor, withAuditActor } from "../auth/audit-actor.js";
 import { generateId } from "@withmarfa/shared";
 import type { AuditLogEntry, Storage } from "./interface.js";
 import {
@@ -28,8 +29,16 @@ export async function runAuditedTransaction<T>(
   try {
     return await storage.runInTransaction(
       async () => {
-        result = await work();
-        const record = typeof entry === "function" ? entry(result) : entry;
+        const actor = await auditActor();
+        result = await withAuditActor(() => Promise.resolve(actor), work);
+        const supplied = typeof entry === "function" ? entry(result) : entry;
+        const record =
+          supplied === null
+            ? null
+            : {
+                ...supplied,
+                actor: supplied.actor === undefined ? actor : supplied.actor,
+              };
         if (record !== null) {
           if (!nested && faultsArmed())
             await auditUnderFaults(

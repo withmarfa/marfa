@@ -1,3 +1,5 @@
+import { resolveWriter } from "../auth/version-writer.js";
+import type { VersionWriter } from "@withmarfa/shared";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import {
   ErrorCode,
@@ -297,6 +299,7 @@ export class BulkActionWorker {
       let permitted = slice;
       let refused: BulkActionErrorEntry[] = [];
       let committed: BulkActionJobRow | null;
+      let actor: VersionWriter | null = null;
       try {
         committed = await runAuditedTransaction(
           this.storage,
@@ -333,6 +336,10 @@ export class BulkActionWorker {
               });
               return null;
             }
+            actor = await resolveWriter(this.storage, {
+              kind: "credential",
+              key: credential.key,
+            });
             ({ permitted, refused } = await this.splitByWriteAccess(
               credential.key,
               slice,
@@ -366,6 +373,7 @@ export class BulkActionWorker {
             checkpoint === null
               ? null
               : {
+                  actor,
                   key_id: job.api_key_id ?? undefined,
                   action: "items.bulk_action.chunk",
                   resource_type: "items.bulk_action",

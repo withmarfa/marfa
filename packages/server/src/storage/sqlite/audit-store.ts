@@ -1,3 +1,5 @@
+import { auditActor } from "../../auth/audit-actor.js";
+import { archivedWriter } from "../../auth/version-writer.js";
 import {
   eq,
   and,
@@ -37,7 +39,28 @@ import type { DrizzleDb } from "./connection.js";
 import * as clock from "../../clock.js";
 
 function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
+  const details = safeJsonParse<Record<string, unknown>>(
+    row.details,
+    {},
+    "audit_log.details",
+  );
+  const { _actor, ...visibleDetails } = details;
+  const recorded = archivedWriter(_actor, "actor");
+  const server =
+    typeof _actor === "object" &&
+    _actor !== null &&
+    "kind" in _actor &&
+    _actor.kind === "server" &&
+    "id" in _actor &&
+    _actor.id === "server" &&
+    "name" in _actor &&
+    _actor.name === "Marfa";
   return {
+    actor: server
+      ? { kind: "server", id: "server", name: "Marfa" }
+      : "writer" in recorded
+        ? recorded.writer
+        : null,
     id: row.id,
     created_at: row.created_at,
     key_id: row.key_id ?? null,
@@ -45,11 +68,7 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     resource_type: row.resource_type,
     resource_id: row.resource_id ?? null,
     client_ip: row.client_ip ?? null,
-    details: safeJsonParse<Record<string, unknown>>(
-      row.details,
-      {},
-      "audit_log.details",
-    ),
+    details: visibleDetails,
   };
 }
 
@@ -113,13 +132,20 @@ export class SqliteAuditStore implements AuditStore {
       resource_type: entry.resource_type,
       resource_id: entry.resource_id ?? null,
       client_ip: entry.client_ip ?? null,
-      details: JSON.stringify(entry.details ?? {}),
+      details: JSON.stringify({
+        ...entry.details,
+        _actor: entry.actor ?? null,
+      }),
     };
   }
 
   /** Awaited strict insertion; serialization and database failures reach the caller. */
   async log(entry: AuditLogEntry, id?: string): Promise<void> {
-    await this.db.insert(auditLog).values(this.buildRow(entry, id)).run();
+    const actor = entry.actor === undefined ? await auditActor() : entry.actor;
+    await this.db
+      .insert(auditLog)
+      .values(this.buildRow({ ...entry, actor }, id))
+      .run();
   }
 
   async has(id: string): Promise<boolean> {

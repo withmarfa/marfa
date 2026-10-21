@@ -611,6 +611,7 @@ export const types = sqliteTable(
     // is the seed's (core or system), the split the lifecycle keys on;
     // absent on a registration, which belongs to no platform family.
     origin: text("origin").notNull().default("user"),
+    created_by: text("created_by"),
     family: text("family"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),

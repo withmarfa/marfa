@@ -1,3 +1,4 @@
+import { archivedWriter } from "../auth/version-writer.js";
 import { assertCompatibleDependents } from "./_type-dependents.js";
 /**
  * Registering the types an archive carries, before the restore writes
@@ -146,7 +147,18 @@ function provenanceFor(
   if (raw === undefined || raw === null || typeof raw !== "object") {
     return { origin: "unknown" };
   }
-  const claimed = raw as { origin?: unknown; family?: unknown };
+  const claimed = raw as {
+    origin?: unknown;
+    family?: unknown;
+    created_by?: unknown;
+  };
+  const creator = archivedWriter(claimed.created_by, "provenance.created_by");
+  if (!("writer" in creator))
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid creator for type "${typeId}"`,
+      creator,
+    );
 
   if (claimed.origin === "platform") {
     throw new MarfaError(
@@ -170,13 +182,13 @@ function provenanceFor(
     // handle, so there is nothing to check a publisher-tier id against, and
     // the only party a refusal could stop is the deployment's own operator,
     // who holds the restore door.
-    return { origin: "user" };
+    return { origin: "user", created_by: creator.writer };
   }
 
   // Recorded as unrecorded, which is the fail-closed answer: an origin a
   // newer build wrote that this one does not know earns the read-only
   // treatment rather than a wildcard nobody claimed.
-  return { origin: "unknown" };
+  return { origin: "unknown", created_by: creator.writer };
 }
 
 function parseTypeEntries(entries: ArchiveTypeEntry[]): {

@@ -1,3 +1,4 @@
+import type { AuditActor } from "../auth/audit-actor.js";
 import type { BulkActionErrorEntry } from "../bulk-actions/types.js";
 import type { ReplayRequirement } from "../middleware/replay-requirements.js";
 import type {
@@ -1172,6 +1173,9 @@ export interface VersionStore {
 }
 
 export interface TypeStore {
+  provenance(
+    id: string,
+  ): Promise<TypeProvenance & { created_by: VersionWriter | null }>;
   /** Lists every type: the shipped core/system set plus the instance's own
    *  registrations. */
   list(): Promise<TypeSchema[]>;
@@ -1245,11 +1249,13 @@ export interface TypeStore {
 
 /** Where a registered type came from, written alongside its schema. */
 export interface TypeProvenance {
+  created_by?: VersionWriter | null;
   origin: TypeOrigin;
 }
 
 /** A type schema as loaded at startup, the shape the warmup registers. */
 export interface LoadedType {
+  created_by?: VersionWriter | null;
   schema: TypeSchema;
   /** Provenance as stored. `NOT NULL DEFAULT 'user'`, so a row carries one
    *  whatever wrote it. */
@@ -2196,6 +2202,7 @@ export interface OauthProviderStore {
 // ---------------------------------------------------------------------------
 
 export interface AuditEntry {
+  actor: AuditActor | null;
   id: string;
   created_at: string;
   key_id: string | null;
@@ -2211,6 +2218,7 @@ export interface AuditEntry {
 
 /** One audit row, in the shape both writers below take. */
 export interface AuditLogEntry {
+  actor?: AuditActor | null;
   key_id?: string;
   action: string;
   resource_type: string;

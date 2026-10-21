@@ -123,7 +123,17 @@ export interface FieldDefinition {
   format?: string;
 }
 
+export interface RecordedActor {
+  kind: "key" | "app" | "browser" | "local" | "server";
+  id: string;
+  name: string;
+}
+
 export interface TypeSchema {
+  provenance?: {
+    origin: "platform" | "user" | "unknown";
+    created_by: RecordedActor | null;
+  };
   id: string; // Type identifier: "core.note", "acme.deal"
   version?: number; // Server defaults to 0 on registration
   label?: string; // Optional human-readable display name (server auto-generates from id if omitted)
@@ -756,6 +766,7 @@ export interface WebhookDelivery {
 }
 
 export interface AuditEntry {
+  actor: RecordedActor | null;
   id: string;
   created_at: string;
   key_id: string;

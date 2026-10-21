@@ -1,15 +1,17 @@
+import type { VersionWriter } from "@withmarfa/shared";
 import { refuseProfileEmailWrite } from "./profile-scope.js";
 import { scopesAreNarrower } from "../storage/consent-scopes.js";
 import { APIError, isAPIError } from "better-auth/api";
 import { withConsentLock } from "./consent-lock.js";
 import { revokeProjectedGrant, auditGrantReused } from "./grant-lifecycle.js";
-import { appWriter } from "./version-writer.js";
+import { browserWriter, appWriter, grantWriter } from "./version-writer.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import { runAuditedTransaction } from "../storage/audited-transaction.js";
 import * as clock from "../clock.js";
 
 interface CredentialRequest {
+  actor?: VersionWriter;
   path: string;
   active: boolean;
   failure?: { error: unknown };
@@ -135,6 +137,9 @@ export class CredentialPersistencePhase {
             action: response.ok
               ? this.acceptedAction
               : "auth.credentials.refused",
+            actor: response.ok
+              ? credentialRequest.getStore()?.actor
+              : undefined,
             resource_type: "auth_credentials",
             client_ip: credentialRequest.getStore()?.clientIp ?? null,
           }),
@@ -380,7 +385,37 @@ export function withCredentialAudit<
                       unknown
                     >[])
                   : [];
+              if (
+                request &&
+                revoke &&
+                matched.some(
+                  (row) =>
+                    row.clientId === revoke.clientId &&
+                    row.userId === revoke.userId,
+                )
+              ) {
+                request.actor = await grantWriter(storage, {
+                  clientId: revoke.clientId,
+                  authUserId: revoke.userId,
+                });
+              }
               const result = await (original as Operation)(args);
+              if (
+                request &&
+                operation === "create" &&
+                args.model === "session" &&
+                result &&
+                typeof result === "object"
+              ) {
+                const session = result as Record<string, unknown>;
+                if (typeof session.id === "string")
+                  request.actor = browserWriter(
+                    session.id,
+                    typeof session.userAgent === "string"
+                      ? session.userAgent
+                      : null,
+                  );
+              }
               if (confirms && result !== null)
                 // The session ends as every other does, with its own audit
                 // row, in this same transaction. The provider's hook on a
@@ -397,6 +432,7 @@ export function withCredentialAudit<
                       ],
                     }),
                   {
+                    actor: request?.actor,
                     action: "auth.session.delete",
                     resource_type: "auth_session",
                     resource_id: confirms.sessionId,
@@ -432,6 +468,7 @@ export function withCredentialAudit<
                   // The app revoking its own refresh token.
                   by: item ? await appWriter(storage, item) : null,
                   audit: {
+                    actor: request.actor,
                     action: "auth.grant.revoked",
                     resource_type: "oauth_grant",
                     resource_id: revoke.clientId,
@@ -474,6 +511,26 @@ export function withCredentialAudit<
                   });
                 }
               }
+              if (
+                request?.path === "/oauth2/token" &&
+                operation === "create" &&
+                ["oauthAccessToken", "oauthRefreshToken"].includes(
+                  args.model,
+                ) &&
+                result &&
+                typeof result === "object"
+              ) {
+                const token = result as Record<string, unknown>;
+                if (
+                  typeof token.clientId === "string" &&
+                  typeof token.userId === "string"
+                ) {
+                  request.actor = await grantWriter(storage, {
+                    clientId: token.clientId,
+                    authUserId: token.userId,
+                  });
+                }
+              }
               return result;
             },
             (result) => {
@@ -493,6 +550,7 @@ export function withCredentialAudit<
                 result && typeof result === "object" ? result : previous
               ) as Record<string, unknown> | undefined;
               const entry: AuditLogEntry = {
+                actor: request?.actor,
                 action: `auth.${args.model}.${operation}`,
                 resource_type: `auth_${args.model}`,
                 // Verification identifiers can contain credential material. Record only the model there.

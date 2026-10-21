@@ -1796,3 +1796,21 @@ If `GET /audit` names a query key the operation does not declare, then the serve
 If `GET /audit` carries no credential, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/audit.test.ts › refuses a request with no credential`.
+
+### `events/audit-actor-snapshot`
+
+When the server records an action by an authenticated sign-in, the server MUST retain the canonical sign-in ID, kind and readable name as the entry's `actor`, independently of later sign-in renaming or removal.
+
+**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`.
+
+### `events/audit-server-actor`
+
+When the server records work performed without a request, the server MUST record the actor as `{ "kind": "server", "id": "server", "name": "Marfa" }`.
+
+**Tests:** `compliance/audit-server-writes.test.ts › records the server's own writes with no key`.
+
+### `events/audit-unknown-actor`
+
+When a request has no authenticated sign-in, the server MUST record its actor as `null` rather than attribute it to a sign-in or to server-initiated work.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.

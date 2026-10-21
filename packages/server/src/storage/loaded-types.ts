@@ -1,3 +1,4 @@
+import { archivedWriter } from "../auth/version-writer.js";
 /**
  * One mapping from a `types` row to a `LoadedType`, shared by every method
  * that reads the table with provenance, so that what an unreadable column
@@ -35,6 +36,7 @@ export interface TypeRow {
   /** `NOT NULL DEFAULT 'user'`, so never absent. */
   origin: string;
   family: string | null;
+  created_by?: string | null;
 }
 
 /**
@@ -69,7 +71,16 @@ export function toLoadedTypes(rows: readonly TypeRow[]): LoadedType[] {
     );
     if (!parsed) continue;
     reportUnknownOrigin(row.origin, row.id);
+    const creator = archivedWriter(
+      safeJsonParse<unknown>(
+        row.created_by ?? "null",
+        null,
+        `types.created_by[${row.id}]`,
+      ),
+      "created_by",
+    );
     results.push({
+      created_by: "writer" in creator ? creator.writer : null,
       schema: parsed,
       origin: row.origin as LoadedType["origin"],
       ...(row.family !== null && {

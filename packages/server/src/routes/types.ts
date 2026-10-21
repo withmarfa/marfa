@@ -1,3 +1,4 @@
+import { VersionWriterSchema } from "./_schemas.js";
 import { assertCompatibleDependents } from "./_type-dependents.js";
 import {
   canonicalTypeDefinition,
@@ -334,6 +335,21 @@ const TypeDefinitionInputSchema = z
   .meta(CLOSED_BY_HANDLER)
   .openapi("TypeDefinitionInput");
 
+const TypeProvenanceSchema = z
+  .object({
+    origin: z
+      .enum(["platform", "user", "unknown"])
+      .describe(
+        "Where the type came from: shipped by Marfa, registered by a caller, or unknown.",
+      ),
+    created_by: VersionWriterSchema.nullable().describe(
+      "The sign-in that first registered the type, or null when none is recorded.",
+    ),
+  })
+  .describe(
+    "Whether Marfa ships the type, and the sign-in that first registered it when known.",
+  );
+
 /**
  * The same body on the replacement door, where the path names the type.
  *
@@ -344,6 +360,9 @@ const TypeDefinitionInputSchema = z
 const TypeDefinitionUpdateSchema = z
   .looseObject({
     ...typeDefinitionBody,
+    provenance: TypeProvenanceSchema.optional().describe(
+      "The recorded origin and creator, accepted when replacing a read response. This field cannot change either value.",
+    ),
     id: z
       .string()
       .optional()
@@ -486,8 +505,12 @@ const TypeSchemaResponse = z
   )
   .openapi("TypeDefinition");
 
+const RegisteredTypeResponse = TypeSchemaResponse.extend({
+  provenance: TypeProvenanceSchema,
+}).openapi("RegisteredType");
+
 const TypeResponseSchema = z
-  .object({ type: TypeSchemaResponse.describe("The type.") })
+  .object({ type: RegisteredTypeResponse.describe("The type.") })
   .describe("One type.")
   .openapi("TypeResponse");
 
@@ -508,7 +531,11 @@ const listTypesRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: wholeListOf(TypeSchemaResponse, "TypeDefinitionPage", "type"),
+          schema: wholeListOf(
+            RegisteredTypeResponse,
+            "TypeDefinitionPage",
+            "type",
+          ),
         },
       },
       description:
@@ -545,7 +572,7 @@ const getTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: TypeSchemaResponse,
+          schema: RegisteredTypeResponse,
         },
       },
       description: "Returns the type.",
@@ -924,37 +951,48 @@ const deleteTypeRoute = createRoute({
 export function typeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  router.openapi(listTypesRoute, (c) => {
+  router.openapi(listTypesRoute, async (c) => {
     requireAuth(c);
-    const resolve: TypeResolver = (id) => getTypeSchema(id);
-    // Schemas come back as declared, not resolved, which is deliberate:
-    // resolving fields and policies for every type in a vocabulary is work a
-    // caller who wants one type should pay per type. `roles` is the exception
-    // and has to be, because a role exists to be enumerated. A client asking
-    // "which of these can hold a collection" reads this list, and answering
-    // with declared roles omits every subtype of a container while the write
-    // path accepts them. Same helper as the single read, so the two cannot
-    // give different answers about the same type.
-    return c.json(
-      {
-        data: listTypes().map((schema) => {
+    const data = await storage.runInReadSnapshot(
+      async () => {
+        const rows = new Map(
+          (await storage.types.loadAll()).map((row) => [row.schema.id, row]),
+        );
+        const resolve: TypeResolver = (id) => getTypeSchema(id);
+        return listTypes().map((schema) => {
           const roles = resolveRoles(schema.id, resolve);
-          return roles ? { ...schema, roles } : schema;
-        }),
-        next_cursor: null,
+          const row = rows.get(schema.id);
+          return {
+            ...schema,
+            ...(roles ? { roles } : {}),
+            provenance: {
+              origin: row?.origin ?? ("unknown" as const),
+              created_by: row?.created_by ?? null,
+            },
+          };
+        });
       },
-      200,
+      { signal: c.req.raw.signal },
     );
+    return c.json({ data, next_cursor: null }, 200);
   });
 
-  router.openapi(getTypeRoute, (c) => {
+  router.openapi(getTypeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const schema = resolveTypeSchema(id, (typeId) => getTypeSchema(typeId));
-    if (!schema) {
-      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
-    }
-    return c.json(schema, 200);
+    const result = await storage.runInReadSnapshot(
+      async () => {
+        const schema = resolveTypeSchema(id, (typeId) => getTypeSchema(typeId));
+        if (!schema)
+          throw new MarfaError(
+            ErrorCode.TYPE_NOT_FOUND,
+            `Type "${id}" not found`,
+          );
+        return { ...schema, provenance: await storage.types.provenance(id) };
+      },
+      { signal: c.req.raw.signal },
+    );
+    return c.json(result, 200);
   });
 
   router.openapi(
@@ -1057,7 +1095,10 @@ export function typeRoutes(storage: Storage) {
           }
           const created = await storage.types.create(schema);
           assertCompatibleDependents([schema.id]);
-          return created;
+          return {
+            ...created,
+            provenance: await storage.types.provenance(created.id),
+          };
         },
         (created) => ({
           client_ip: c.get("clientIp") ?? null,
@@ -1096,7 +1137,9 @@ export function typeRoutes(storage: Storage) {
             );
           }
           requireTypeSchemaWrite(c, "replace", id);
-          const result = validateTypeSchema({ ...body, id });
+          const definition = { ...body };
+          delete definition.provenance;
+          const result = validateTypeSchema({ ...definition, id });
           if (!result.success) {
             throw schemaRefusal(result.errors);
           }
@@ -1117,7 +1160,7 @@ export function typeRoutes(storage: Storage) {
           }
           const updated = await storage.types.update(id, schema);
           assertCompatibleDependents([id]);
-          return updated;
+          return { ...updated, provenance: await storage.types.provenance(id) };
         },
         {
           client_ip: c.get("clientIp") ?? null,

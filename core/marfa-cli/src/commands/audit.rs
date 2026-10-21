@@ -8,6 +8,12 @@ use crate::remote::request::Request;
 
 #[derive(Debug, Default, Args)]
 pub struct AuditArgs {
+    /// Only entries of this kind.
+    #[arg(long, value_parser = ["access", "data", "settings", "housekeeping"])]
+    pub kind: Option<String>,
+    /// Match every word literally in the recorded entry.
+    #[arg(long)]
+    pub query: Option<String>,
     /// Only entries with this action, such as `item.create`.
     #[arg(long)]
     pub action: Option<String>,
@@ -29,6 +35,8 @@ pub struct AuditArgs {
 
 pub fn request(args: &AuditArgs) -> Request {
     Request::get(&["audit"])
+        .query_opt("kind", args.kind.clone())
+        .query_opt("q", args.query.clone())
         .query_opt("action", args.action.clone())
         .query_opt("resource_type", args.resource_type.clone())
         .query_opt("resource_id", args.resource_id.clone())

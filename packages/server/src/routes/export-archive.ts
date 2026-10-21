@@ -846,7 +846,7 @@ async function collectSelection(input: {
   const typeLines: string[] = [];
   for (const row of registrations.values()) {
     typeLines.push(
-      `${JSON.stringify({ type: row.schema, provenance: { origin: row.origin } })}\n`,
+      `${JSON.stringify({ type: row.schema, provenance: { origin: row.origin, created_by: row.created_by ?? null } })}\n`,
     );
     typeCount += 1;
   }

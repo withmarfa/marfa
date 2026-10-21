@@ -1,3 +1,5 @@
+import { withAuditActor } from "../auth/audit-actor.js";
+import { requestWriter, resolveWriter } from "../auth/version-writer.js";
 import { requireSecureOwnerTransport } from "../auth/owner-browser.js";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
@@ -70,46 +72,50 @@ export function directAuthorityMiddleware(
     }
     const bound = c.get("boundCredential");
     const admitted = c.get("authority");
-    await withRequestAuthority(async (permissions, recent) => {
-      if (admitted?.kind === "owner") {
-        const live = await auth?.getSession(c.req.raw.headers, {
-          readOnly: true,
-        });
-        if (
-          live?.session.id !== admitted.sessionId ||
-          live.user.id !== admitted.userId ||
-          (await storage.owner?.find())?.id !== admitted.userId
-        ) {
-          throw new MarfaError(
-            ErrorCode.UNAUTHORIZED,
-            "The owner session has ended",
-          );
-        }
-      } else if (bound) {
-        const live = await resolveBoundCredential(storage, bound);
-        if (!live)
-          throw new MarfaError(
-            ErrorCode.UNAUTHORIZED,
-            "This credential is no longer valid",
-          );
-        c.set("apiKey", live.key);
-        if (bound.kind === "oauth")
-          c.set("oauthGrant", {
-            scopes: live.permissions,
-            clientId: bound.clientId,
-            authUserId: bound.authUserId,
+    await withRequestAuthority(
+      async (permissions, recent) => {
+        if (admitted?.kind === "owner") {
+          const live = await auth?.getSession(c.req.raw.headers, {
+            readOnly: true,
           });
-      }
-      for (const permission of permissions) {
-        if (!holdsPermission(c, permission))
-          throw new MarfaError(
-            ErrorCode.FORBIDDEN,
-            `This credential no longer holds ${permission}`,
-            { required_scope: permission },
-          );
-      }
-      if (recent) refuseUnlessRecentOwnerAuthentication(c, recent.at);
-    }, next);
+          if (
+            live?.session.id !== admitted.sessionId ||
+            live.user.id !== admitted.userId ||
+            (await storage.owner?.find())?.id !== admitted.userId
+          ) {
+            throw new MarfaError(
+              ErrorCode.UNAUTHORIZED,
+              "The owner session has ended",
+            );
+          }
+        } else if (bound) {
+          const live = await resolveBoundCredential(storage, bound);
+          if (!live)
+            throw new MarfaError(
+              ErrorCode.UNAUTHORIZED,
+              "This credential is no longer valid",
+            );
+          c.set("apiKey", live.key);
+          if (bound.kind === "oauth")
+            c.set("oauthGrant", {
+              scopes: live.permissions,
+              clientId: bound.clientId,
+              authUserId: bound.authUserId,
+            });
+        }
+        for (const permission of permissions) {
+          if (!holdsPermission(c, permission))
+            throw new MarfaError(
+              ErrorCode.FORBIDDEN,
+              `This credential no longer holds ${permission}`,
+              { required_scope: permission },
+            );
+        }
+        if (recent) refuseUnlessRecentOwnerAuthentication(c, recent.at);
+      },
+      () =>
+        withAuditActor(() => resolveWriter(storage, requestWriter(c)), next),
+    );
     // Any answer but a `401`, which means the session ended while the request
     // was in flight: a refused or failed request still moved the expiry.
     if (renewal?.cookie && c.res.status !== 401)

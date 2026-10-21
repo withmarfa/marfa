@@ -77,6 +77,7 @@ describe("the audit log's record of the server's own writes", () => {
     expect(purged).toHaveLength(1);
     expect(purged[0]).toMatchObject({
       key_id: null,
+      actor: { kind: "server", id: "server", name: "Marfa" },
       resource_type: "blob",
       resource_id: hash,
     });

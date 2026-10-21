@@ -216,7 +216,7 @@ enum Command {
         #[command(subcommand)]
         command: webhooks::WebhooksCommand,
     },
-    /// The audit log: every write, with the acting key. Needs `audit.read`.
+    /// The audit log: every write, with the acting sign-in. Needs `audit.read`.
     Audit(audit::AuditArgs),
     /// The event stream, one frame per line. It ends with an error and a
     /// non-zero exit when the stream closes on `cursor_ahead`,

@@ -723,6 +723,7 @@ CREATE TABLE IF NOT EXISTS `types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,
 	`origin` text DEFAULT 'user' NOT NULL,
+	`created_by` text,
 	`family` text,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL

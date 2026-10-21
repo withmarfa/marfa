@@ -189,7 +189,7 @@ describe("PUT /types/{id}", () => {
   });
 
   it("takes back the type exactly as GET /types/{id} answers it", async () => {
-    // Every key the answer carries is one the schema defines, so a client
+    // The answer carries the definition and read-only provenance, so a client
     // that reads a type, changes one thing and replaces it is not refused.
     const id = unique("round_trip");
     expect(

@@ -1916,7 +1916,7 @@ marfa webhooks redeliver [OPTIONS] <ID> <DELIVERY_ID>
 
 ## audit
 
-The audit log: every write, with the acting key. Needs `audit.read`.
+The audit log: every write, with the acting sign-in. Needs `audit.read`.
 
 ### marfa audit
 
@@ -1926,6 +1926,8 @@ marfa audit [OPTIONS]
 
 | Option | Description |
 | --- | --- |
+| `--kind <KIND>` | Only entries of this kind. One of `access`, `data`, `settings`, `housekeeping`. |
+| `--query <QUERY>` | Match every word literally in the recorded entry. |
 | `--action <ACTION>` | Only entries with this action, such as `item.create`. |
 | `--resource-type <TYPE>` | Only entries about this kind of resource. |
 | `--resource-id <ID>` | Only entries about this resource. |

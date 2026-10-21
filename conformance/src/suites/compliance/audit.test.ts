@@ -104,6 +104,8 @@ describe("audit log", () => {
     expect(row?.resource_type).toBe("item");
     expect(row?.resource_id).toBe(item.data.item.id);
     expect(row?.key_id).toBe(ctx.trackedKeys[0]);
+    expect(row?.actor).toMatchObject({ kind: "key", id: ctx.trackedKeys[0] });
+    expect(row?.actor?.name.length).toBeGreaterThan(0);
     expect(row?.details.type).toBe("core.note");
   });
 
