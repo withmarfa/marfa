@@ -1634,3 +1634,26 @@ fn connector_state_can_publish_and_clear_current_problems() {
     );
     assert!(connectors::state_put_request("c1", "p1", json!({}), Some(r#"{"feed":3}"#)).is_err());
 }
+
+#[test]
+fn summaries_send_only_name_type_and_page_filters() {
+    let request = items::summaries_request(
+        Some("core.note"),
+        Some("first line"),
+        &PageArgs {
+            limit: Some(2),
+            cursor: Some("next".into()),
+        },
+    );
+    assert_eq!(request.method, Method::Get);
+    assert_eq!(request.path(), "/items/summaries");
+    assert_eq!(
+        request.query,
+        vec![
+            ("type".into(), "core.note".into()),
+            ("q".into(), "first line".into()),
+            ("limit".into(), "2".into()),
+            ("cursor".into(), "next".into())
+        ]
+    );
+}

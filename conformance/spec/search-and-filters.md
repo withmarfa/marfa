@@ -888,7 +888,7 @@ When a request to counts or export carries an Authorization header alongside an 
 
 ### `search-and-filters/owner-read-boundary`
 
-When a request carries only owner browser authority to another item, edge, search, occurrence or tag content route, or only private local authority to counts or export, the server MUST retain that route's existing credential requirement.
+When a request carries only owner browser authority to another item content route (excluding `GET /items/summaries`), edge, search, occurrence or tag content route, or only private local authority to counts or export, the server MUST retain that route's existing credential requirement.
 
 **Reason:** Owner browser counts and exports admit no other content operation or transport.
 
@@ -2185,3 +2185,53 @@ When the server removes the blob bytes of a restore that did not commit, the ser
 **Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
 
 **Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed row names, and removes those no row names`, `› keeps the bytes of an upload requested while the failed restore ran`.
+
+## Owner item summaries
+
+### `search-and-filters/owner-summaries-authority`
+
+When `GET /items/summaries` carries direct owner browser authority or private local authority, the server MUST admit the read without requiring a recent sign-in.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-projection`
+
+When `GET /items/summaries` succeeds, the server MUST return each item as exactly `id`, `name`, `source` and `created_at`, with its name computed as in `types/item-name-fields`, `types/item-name-text` and `types/item-name-empty`.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-selection`
+
+When `GET /items/summaries` lists items, the server MUST exclude trashed and `system.*` items, apply instance source filtering and, when supplied, match `type` as an exact identifier.
+
+**Tests:** `compliance/item-summaries.test.ts › keeps archived items, exact types and source filtering while excluding system items`.
+
+### `search-and-filters/owner-summaries-search`
+
+When `GET /items/summaries` receives `q`, the server MUST match the trimmed query as a case-insensitive substring of the computed name before pagination.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-order`
+
+When `GET /items/summaries` returns a page, the server MUST order matches by `created_at` descending with `id` descending as a tie-break, using `limit` and `cursor` for pagination.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-boundary`
+
+When the owner requests item summaries, the server MUST retain other content routes' existing credential requirements without minting an API key.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-refusal`
+
+When `GET /items/summaries` refuses a request, the server MUST return only its error envelope without item content.
+
+**Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
+
+### `search-and-filters/owner-summaries-cli`
+
+When a caller runs `marfa --socket PATH items summaries`, the CLI MUST send the optional `--type`, `--q`, `--limit` and `--cursor` filters to `GET /items/summaries` through private local authority and return its summary page.
+
+**Tests:** `cli/item-summaries.test.ts › lists and searches names through local authority without item content`.

@@ -17,6 +17,17 @@ use crate::values::{ItemState, SortDirection, SortField, Tier};
 pub enum ItemsCommand {
     /// List items on the server, a page at a time.
     List(ListArgs),
+    /// Item names, sources and creation times, newest first. Use `--socket`.
+    Summaries {
+        /// Only items of this exact type.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: Option<String>,
+        /// Text to find in item names, ignoring case.
+        #[arg(long)]
+        q: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
     /// One item by id.
     Get {
         /// The item id.
@@ -529,6 +540,14 @@ pub enum BulkActionCommand {
     },
 }
 
+pub fn summaries_request(type_: Option<&str>, q: Option<&str>, page: &PageArgs) -> Request {
+    Request::get(&["items", "summaries"])
+        .query_opt("type", type_.map(str::to_string))
+        .query_opt("q", q.map(str::to_string))
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
+}
+
 pub fn list_request(args: &ListArgs) -> Request {
     Request::get(&["items"])
         .query_opt("type", args.type_.clone())
@@ -911,6 +930,9 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     };
     let request = match &command {
         ItemsCommand::List(args) => list_request(args),
+        ItemsCommand::Summaries { type_, q, page } => {
+            summaries_request(type_.as_deref(), q.as_deref(), page)
+        }
         ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
         ItemsCommand::Create(args) => create_request(args)?,
         ItemsCommand::Update(args) => update_request(args)?,

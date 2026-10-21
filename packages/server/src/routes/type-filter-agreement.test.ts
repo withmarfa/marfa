@@ -270,6 +270,8 @@ describe("?type= resolves the same subtree on every read surface", () => {
 /** Reads that take a `type` parameter but deliberately do not resolve the
  *  type subtree the way the read surfaces do, each with the reason. */
 const NOT_A_TYPE_FILTERED_READ: Record<string, string> = {
+  "get /items/summaries":
+    "owner metadata listing groups by exact type; subtype exclusion is held by the item-summaries compliance fixture",
   "get /events":
     "resolves the same subtree, but over a live stream rather than a query — held by pubsub-type-filter.test.ts, which can assert the rule without racing the subscription",
   "get /items/{id}/edges":

@@ -17,6 +17,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getServerMetrics", "metrics"),
     reached("createItem", "items create"),
     reached("listItems", "items list"),
+    reached("listItemSummaries", "items summaries"),
     reached("getItemStats", "items stats"),
     reached("getItem", "items get"),
     reached("updateItem", "items update"),

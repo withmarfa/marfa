@@ -947,3 +947,25 @@ When `POST /types/normalize` succeeds or is refused, the server MUST create no a
 When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
 
 **Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.
+
+## Item names
+
+### `types/item-name-fields`
+
+When computing an item's name, the server MUST use the first nonblank string among its effective `display_hints.title_field`, `title`, `name`, effective `display_hints.body_field`, `body`, `text`, `filename`, `url` and `address`, in that order.
+
+**Reason:** Existing display hints, inherited as in `types/read-display-hints`, let a custom type choose its name without a second naming configuration; a file's existing `title` also holds its filename.
+
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+
+### `types/item-name-text`
+
+When a name field contains text, the server MUST return its first line after trimming surrounding whitespace, replacing control characters with spaces and collapsing whitespace, limited to 120 Unicode code points with the last point replaced by `…` when shortened.
+
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.
+
+### `types/item-name-empty`
+
+When no name candidate produces nonblank text, the server MUST return `Untitled` as the item's name.
+
+**Tests:** `compliance/item-summaries.test.ts › names every built-in and custom type with bounded plain text and fallback fields`.

@@ -23,6 +23,7 @@ import {
 } from "drizzle-orm";
 import { softDeleteClock } from "../soft-delete-clock.js";
 import {
+  itemName,
   markStructuralReadChange,
   generateId,
   isValidId,
@@ -59,6 +60,8 @@ import {
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { Edge } from "@withmarfa/shared";
 import type {
+  ItemSummary,
+  ItemSummaryFilters,
   ItemStatsAxis,
   ArchivedItemDates,
   StoredCreateItemInput,
@@ -1125,6 +1128,88 @@ export class SqliteItemStore implements ItemStore {
       });
     }
     return out;
+  }
+
+  async listSummaries(
+    filters: ItemSummaryFilters,
+  ): Promise<PaginatedResult<ItemSummary>> {
+    const limit = Math.max(
+      MIN_PAGE_LIMIT,
+      Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+    );
+    const query = (filters.q ?? "").trim().toLowerCase();
+    const key = `item-summaries:${JSON.stringify([filters.type ?? null, query])}`;
+    let after = filters.cursor
+      ? decodeKeyedCursorNullable(filters.cursor, key)
+      : undefined;
+    if (after?.v === null)
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid summary cursor",
+      );
+    const conditions = itemFilterConditions({
+      exclude_states: ["trashed"],
+      exclude_system_types: true,
+      source_filter: filters.source_filter,
+    });
+    if (filters.type !== undefined)
+      conditions.push(eq(items.type, filters.type));
+    const data: ItemSummary[] = [];
+    const hints = new Map<string, ReturnType<typeof resolveTypeSchema>>();
+    // Name filtering precedes paging. Batches bound memory even when every
+    // item has a different name; the ordinary full-item projection is unused.
+    for (;;) {
+      const bound = after
+        ? or(
+            lt(items.created_at, String(after.v)),
+            and(eq(items.created_at, String(after.v)), lt(items.id, after.id)),
+          )
+        : undefined;
+      const rows = await this.db
+        .select({
+          id: items.id,
+          type: items.type,
+          source: items.source,
+          created_at: items.created_at,
+          properties: sql<string>`json(${items.properties})`,
+        })
+        .from(items)
+        .where(and(...conditions, bound))
+        .orderBy(desc(items.created_at), desc(items.id))
+        .limit(MAX_PAGE_LIMIT)
+        .all();
+      for (const row of rows) {
+        if (!hints.has(row.type))
+          hints.set(row.type, resolveTypeSchema(row.type, getTypeSchema));
+        const name = itemName(
+          safeJsonParse<Record<string, unknown>>(
+            row.properties,
+            {},
+            "item summary",
+          ),
+          hints.get(row.type)?.display_hints,
+        );
+        if (!name.toLowerCase().includes(query)) continue;
+        if (data.length === limit) {
+          const last = data.at(-1);
+          if (!last) throw new Error("Missing summary page boundary");
+          return {
+            data,
+            next_cursor: encodeKeyedCursor(last.created_at, last.id, key),
+          };
+        }
+        data.push({
+          id: row.id,
+          name,
+          source: row.source ?? MISSING_SOURCE,
+          created_at: row.created_at,
+        });
+      }
+      if (rows.length < MAX_PAGE_LIMIT) return { data, next_cursor: null };
+      const last = rows.at(-1);
+      if (!last) throw new Error("Missing summary scan boundary");
+      after = { v: last.created_at, id: last.id };
+    }
   }
 
   async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {

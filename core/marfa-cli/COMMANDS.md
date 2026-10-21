@@ -384,6 +384,21 @@ marfa items list [OPTIONS]
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 
+### marfa items summaries
+
+Item names, sources and creation times, newest first. Use `--socket`.
+
+```text
+marfa items summaries [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--type <TYPE>` | Only items of this exact type. |
+| `--q <Q>` | Text to find in item names, ignoring case. |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+
 ### marfa items get
 
 One item by id.
