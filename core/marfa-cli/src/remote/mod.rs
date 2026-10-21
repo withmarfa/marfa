@@ -156,12 +156,13 @@ impl Named {
     }
 
     /// The session, or none where no server is named and no key is in hand,
-    /// for a command that can run on held bytes alone. A key in hand with no
-    /// server is refused, so it is never dropped without a word.
+    /// or where a keychain that cannot be read hides the server, for a
+    /// command that can run on held bytes alone. A key in hand with no server
+    /// is refused, so it is never dropped without a word.
     pub fn session_if_named(&self) -> Result<Option<Session>, CliError> {
         match self.session() {
             Ok(session) => Ok(Some(session)),
-            Err(CliError::NoServerNamed) => Ok(None),
+            Err(CliError::NoServerNamed | CliError::NoKeychain(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }

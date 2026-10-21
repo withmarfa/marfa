@@ -1722,11 +1722,11 @@ If the answer to the check of `keys keep` names another contract than the CLI wa
 
 ### `device/command-keychain-unreadable`
 
-If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason.
+If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason, except for a command that runs on held bytes alone.
 
-**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off, or holds no current server, nothing is kept and `no_server` with exit 2 is right.
+**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off, or holds no current server, nothing is kept and `no_server` with exit 2 is right. `folders pull`, `folders restore` and `device blobs get` need no server for the bytes they hold, and over SSH on a Mac, where there is no default keychain, refusing them would stop work that needs no credential, so they run on what the device holds.
 
-**Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`.
+**Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`, `device/contract.test.ts › runs a command on held bytes alone when the keychain cannot be read`.
 
 ### `device/command-events-refuses-cursor`
 
