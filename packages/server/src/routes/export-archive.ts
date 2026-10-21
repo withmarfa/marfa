@@ -23,8 +23,9 @@
  *
  * A blob no store can read whole is named under the manifest's
  * `missing_blobs` and left out, so one lost file costs the backup that file
- * and not the rest. Bytes that do not hash to their name are found only as
- * they are sent, and end the response with an error.
+ * and not the rest. So is a file's blob that the credential may not read,
+ * such as one only an earlier version names. Bytes that do not hash to their
+ * name are found only as they are sent, and end the response with an error.
  */
 
 import { createHash } from "node:crypto";
@@ -119,10 +120,12 @@ export interface ArchiveManifest {
   type_count: number;
   edge_type_count: number;
   blobs: Record<string, { mime_type: string; size_bytes: number }>;
-  /** The blobs the archive should carry that no store could read whole,
-   *  in the shape of `blobs`, and not counted in `blob_count`. A blob the
-   *  instance has no record of, which a file's `blob_ref` names, has a null
-   *  type and size: nothing here knows them. */
+  /** The blobs the archive names and does not carry, in the shape of
+   *  `blobs`, and not counted in `blob_count`: those left out by
+   *  `files=false`, those no store could read whole, and those a file's
+   *  `blob_ref` names that the instance has no record of or the credential
+   *  may not read. The last two have a null type and size: nothing here
+   *  knows them, or the credential may not be told them. */
   missing_blobs: Record<
     string,
     { mime_type: string | null; size_bytes: number | null }
@@ -677,8 +680,13 @@ async function collectSelection(input: {
   ) => {
     const records: BlobRecord[] = [];
     for (const hash of hashes) {
-      if (!(await reader.blob(storage, hash))) continue;
-      const record = await storage.blobs.get(hash);
+      // A blob the credential may not read is named, when a carried file's
+      // `blob_ref` refers to it, like one the instance has no record of: with
+      // no type or size, and whether or not the instance holds it, so the
+      // archive says no more of it than the blob doors do.
+      const record = (await reader.blob(storage, hash))
+        ? await storage.blobs.get(hash)
+        : null;
       if (record)
         records.push({
           hash,

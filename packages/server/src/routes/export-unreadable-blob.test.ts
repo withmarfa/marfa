@@ -1,10 +1,10 @@
 /**
  * An archive names each blob it should carry and cannot: a copy whose file
- * went from the disk, a blob with no copy left, or one whose only bytes
- * linger after a strike. A blob another store holds is still carried, and
- * bytes that do not hash to their name end the response with an error. A
- * restore answers which named blobs neither the archive nor the instance
- * holds.
+ * went from the disk, a blob with no copy left, one whose only bytes linger
+ * after a strike, or a file's blob the exporting credential may not read. A
+ * blob another store holds is still carried, and bytes that do not hash to
+ * their name end the response with an error. A restore answers which named
+ * blobs neither the archive nor the instance holds.
  */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { rm, writeFile } from "node:fs/promises";
@@ -29,6 +29,7 @@ import {
   closeTestContexts,
   createTestContext,
   request,
+  seedOauthBearer,
   withSecondStore,
   type TestContext,
 } from "../test-utils.js";
@@ -102,10 +103,8 @@ function diskPath(ctx: TestContext, hash: string): string {
   return join(ctx.blobs.disk.locator, hex.slice(0, 4), hex);
 }
 
-function exportArchive(ctx: TestContext) {
-  return request(ctx.app, "GET", "/export?format=archive", {
-    key: ctx.workingKey,
-  });
+function exportArchive(ctx: TestContext, key = ctx.workingKey) {
+  return request(ctx.app, "GET", "/export?format=archive", { key });
 }
 
 async function unpack(bytes: Buffer): Promise<Map<string, Buffer>> {
@@ -149,12 +148,12 @@ async function pack(entries: Map<string, Buffer>): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
-async function exported(ctx: TestContext, asOwner = false) {
+async function exported(ctx: TestContext, asOwner = false, key?: string) {
   const res = asOwner
     ? await request(ctx.app, "GET", "/export?format=archive", {
         headers: { cookie: ctx.owner.cookie },
       })
-    : await exportArchive(ctx);
+    : await exportArchive(ctx, key);
   expect(res.status).toBe(200);
   const entries = await unpack(Buffer.from(await res.arrayBuffer()));
   const manifest = JSON.parse(
@@ -945,5 +944,135 @@ describe("a restore of an archive that lacks a blob it names", () => {
       blobs_imported: 1,
       blobs_missing: [],
     });
+  });
+});
+
+describe("an archive export by a credential that may not read a blob", () => {
+  /** A file whose first version names `earlier` and whose current version
+   *  names `now`, so only the snapshot names `earlier`, which no working
+   *  credential then reads (`blobs/lend-earlier-version`). */
+  async function movedFile(ctx: TestContext, earlier?: string) {
+    const first =
+      earlier ?? (await upload(ctx, `the earlier bytes ${randomUUID()}`));
+    const now = await upload(ctx, `the current bytes ${randomUUID()}`);
+    const id = await fileNaming(ctx, first);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: {
+        version: 1,
+        properties: { blob_ref: now, mime_type: "text/plain" },
+      },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    return { id, earlier: first, now };
+  }
+
+  it("names a blob only an earlier version's blob_ref refers to, with no type or size", async () => {
+    const ctx = await context();
+    const { earlier, now } = await movedFile(ctx);
+    const refused = await request(ctx.app, "GET", `/blobs/${earlier}`, {
+      key: ctx.workingKey,
+    });
+    expect(refused.status).toBe(404);
+
+    // The witness: the owner's export, which reads every blob, carries it.
+    const whole = await exported(ctx, true);
+    expect(Object.keys(whole.manifest.blobs).sort()).toEqual(
+      [earlier, now].sort(),
+    );
+    expect(whole.manifest.missing_blobs).toEqual({});
+
+    const { entries, manifest } = await exported(ctx);
+    expect(Object.keys(manifest.blobs)).toEqual([now]);
+    expect(manifest.blob_count).toBe(1);
+    expect(manifest.missing_blobs).toEqual({
+      [earlier]: { mime_type: null, size_bytes: null },
+    });
+    expect(entries.has(`blobs/${earlier}`)).toBe(false);
+    expect(entries.has(`blobs/${now}`)).toBe(true);
+  });
+
+  it("names an unreadable blob the instance holds as it names one it has no record of", async () => {
+    const { ctx, id, hash: unrecorded } = await unrecordedFile();
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: {
+        version: 1,
+        properties: {
+          blob_ref: await upload(ctx, "the bytes the file names now"),
+          mime_type: "text/plain",
+        },
+      },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { earlier: recorded } = await movedFile(ctx);
+
+    const { manifest } = await exported(ctx);
+    expect(manifest.missing_blobs).toEqual({
+      [unrecorded]: { mime_type: null, size_bytes: null },
+      [recorded]: { mime_type: null, size_bytes: null },
+    });
+  });
+
+  it("names no unreadable blob a row names anywhere but a file's blob_ref", async () => {
+    const ctx = await context();
+    const hash = await upload(
+      ctx,
+      `named in a note's earlier text ${randomUUID()}`,
+    );
+    const id = await noteNaming(ctx, hash);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, properties: { body: "names nothing now" } },
+    });
+    expect(res.status, await res.clone().text()).toBe(200);
+    const { earlier } = await movedFile(ctx);
+
+    // The witness: the owner's export carries the note's blob.
+    const whole = await exported(ctx, true);
+    expect(Object.keys(whole.manifest.blobs)).toContain(hash);
+
+    const { entries, manifest } = await exported(ctx);
+    expect(Object.keys(manifest.missing_blobs)).toEqual([earlier]);
+    expect(Object.keys(manifest.blobs)).not.toContain(hash);
+    expect(entries.has(`blobs/${hash}`)).toBe(false);
+  });
+
+  it("names the blob to an app's access token as it does to a key", async () => {
+    const ctx = await context();
+    const { earlier, now } = await movedFile(ctx);
+    const { token } = await seedOauthBearer(ctx, ["core.file:read"]);
+
+    const { manifest } = await exported(ctx, false, token);
+    expect(Object.keys(manifest.blobs)).toEqual([now]);
+    expect(manifest.missing_blobs).toEqual({
+      [earlier]: { mime_type: null, size_bytes: null },
+    });
+  });
+
+  it("restores the file's history from such an archive and answers the blob missing", async () => {
+    const source = await context();
+    const { id, earlier, now } = await movedFile(source);
+    const res = await exportArchive(source);
+    expect(res.status).toBe(200);
+
+    const target = await context();
+    const restored = await restore(
+      target,
+      Buffer.from(await res.arrayBuffer()),
+    );
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    expect(await restored.json()).toMatchObject({
+      imported: 1,
+      blobs_imported: 1,
+      blobs_missing: [earlier],
+    });
+    expect(await target.storage.blobs.get(now)).not.toBeNull();
+    expect(await target.storage.blobs.get(earlier)).toBeNull();
+    const versions = await target.storage.versions.list(id, {
+      reads: () => true,
+      limit: 10,
+    });
+    expect(versions.data.map((v) => v.properties.blob_ref)).toContain(earlier);
   });
 });

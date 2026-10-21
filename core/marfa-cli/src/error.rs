@@ -76,15 +76,16 @@ pub enum CliError {
     CredentialEnded,
     #[error("{0}")]
     Invalid(String),
-    /// An export written whole but for blobs no store could read.
+    /// An export written whole but for the blobs its manifest names as
+    /// missing.
     #[error(
-        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names",
+        "the archive lacks {} blob(s), which its manifest lists under missing_blobs: {}; it holds everything else it names",
         .0.len(),
         hash_list(.0)
     )]
     ArchiveLacksBlobs(Vec<String>),
-    /// An export to a file, written whole but for blobs no store could read,
-    /// and kept beside the path it was meant for instead of at it.
+    /// An export to a file, written whole but for the blobs its manifest names
+    /// as missing, and kept beside the path it was meant for instead of at it.
     #[error("{}", archive_kept_apart(.missing, .target, .incomplete, .kept, *.target_held, .refused.as_deref()))]
     ArchiveKeptApart {
         missing: Vec<String>,
@@ -531,7 +532,7 @@ fn archive_kept_apart(
         )
     };
     format!(
-        "the archive lacks {} blob(s) no store could read whole, which its manifest lists under missing_blobs: {}; it holds everything else it names, so {place}, and {path}",
+        "the archive lacks {} blob(s), which its manifest lists under missing_blobs: {}; it holds everything else it names, so {place}, and {path}",
         missing.len(),
         hash_list(missing)
     )
