@@ -23,7 +23,7 @@ const route = createRoute({
   summary: "List folders",
   description:
     "Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
-  security: [{ bearerAuth: [] }],
+  security: [{ ownerSession: [] }],
   middleware: standingRule("owner or local command", requireDirectAuthority),
   request: {
     query: z.object({

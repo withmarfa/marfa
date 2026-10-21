@@ -39900,7 +39900,7 @@
         "description": "Returns active folder summaries, newest first, for the owner or a private local command. Revoked folders are excluded. Read reported copies with `GET /folders/{id}/status`.",
         "security": [
           {
-            "bearerAuth": []
+            "ownerSession": []
           }
         ],
         "parameters": [
