@@ -85,13 +85,15 @@ pub fn served(status: &str, https_port: u16) -> Option<String> {
         })
 }
 
-/// Refuses when the port already serves something other than `target`.
-/// Whether it does is read before anything is changed, so a refusal leaves
-/// nothing behind.
-pub fn check_free(https_port: u16, target: &str) -> Result<bool, CliError> {
-    let status = run(&["serve", "status", "--json"]).unwrap_or_default();
+/// Refuses when the port already serves something other than `target`, or
+/// than `previous`, which this install served before and may replace. Whether
+/// it does is read before anything is changed, so a refusal leaves nothing
+/// behind. `true` means `target` is served already.
+pub fn check_free(https_port: u16, target: &str, previous: Option<&str>) -> Result<bool, CliError> {
+    let status = run(&["serve", "status", "--json"])?;
     match served(&status, https_port) {
         Some(existing) if existing == target => Ok(true),
+        Some(existing) if Some(existing.as_str()) == previous => Ok(false),
         Some(existing) => Err(CliError::Usage(format!(
             "Tailscale already serves {existing} on port {https_port}. Choose another with --https-port, or turn that one off first"
         ))),
@@ -101,8 +103,13 @@ pub fn check_free(https_port: u16, target: &str) -> Result<bool, CliError> {
 
 /// Serves `target` on the tailnet only, unless the port already serves
 /// something else, which is never replaced.
-pub fn serve(https_port: u16, target: &str, trace: bool) -> Result<(), CliError> {
-    if check_free(https_port, target)? {
+pub fn serve(
+    https_port: u16,
+    target: &str,
+    previous: Option<&str>,
+    trace: bool,
+) -> Result<(), CliError> {
+    if check_free(https_port, target, previous)? {
         return Ok(());
     }
     let https = format!("--https={https_port}");
@@ -114,7 +121,7 @@ pub fn serve(https_port: u16, target: &str, trace: bool) -> Result<(), CliError>
 
 /// Stops serving `target` on `https_port`, and only that.
 pub fn unserve(https_port: u16, target: &str, trace: bool) -> Result<bool, CliError> {
-    let status = run(&["serve", "status", "--json"]).unwrap_or_default();
+    let status = run(&["serve", "status", "--json"])?;
     if served(&status, https_port).as_deref() != Some(target) {
         return Ok(false);
     }

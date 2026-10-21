@@ -3736,7 +3736,7 @@ marfa server install [OPTIONS]
 
 Move the server to a release, after printing what to read first.
 
-Stops at the release you name or at this binary's own. It refuses an older release than the one installed, because a newer release may have changed the database's shape.
+Moves to the release you name, or to this binary's own. It refuses an older release than the one installed, because a newer release may have changed the database's shape.
 
 ```text
 marfa server upgrade [OPTIONS]

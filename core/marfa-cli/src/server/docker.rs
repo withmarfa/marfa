@@ -125,6 +125,30 @@ impl Docker {
         })
     }
 
+    /// Whether the registry has this release's image. A registry that cannot
+    /// be reached says nothing, and the pull will say what is wrong.
+    pub fn release_exists(&self, image: &str, release: &str) -> Result<(), CliError> {
+        let reference = format!("{image}:{release}");
+        let output = self.output(&["manifest", "inspect", &reference])?;
+        let said = text(&output.stderr).to_lowercase();
+        if !output.status.success()
+            && (said.contains("no such manifest") || said.contains("not found"))
+        {
+            return Err(CliError::Usage(format!(
+                "there is no release {release}: {reference} is not in the registry. Releases are listed at https://github.com/withmarfa/marfa/releases"
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn remove_container(&self, name: &str) -> Result<(), CliError> {
+        if self.container(name)?.is_some() {
+            self.show(&format!("docker rm -f {name}"));
+            self.succeed(&["rm", "-f", name])?;
+        }
+        Ok(())
+    }
+
     pub fn volume_exists(&self, name: &str) -> Result<bool, CliError> {
         self.exists(&["volume", "ls"], name)
     }

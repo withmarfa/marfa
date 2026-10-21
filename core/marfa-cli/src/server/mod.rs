@@ -46,7 +46,7 @@ pub enum ServerCommand {
     Install(InstallArgs),
     /// Move the server to a release, after printing what to read first.
     ///
-    /// Stops at the release you name or at this binary's own. It refuses an
+    /// Moves to the release you name, or to this binary's own. It refuses an
     /// older release than the one installed, because a newer release may have
     /// changed the database's shape.
     Upgrade(UpgradeArgs),
@@ -79,20 +79,14 @@ pub enum Access {
 }
 
 impl Access {
-    fn name(self) -> &'static str {
-        match self {
-            Access::Local => "local",
-            Access::Tailscale => "tailscale",
-            Access::Cloudflare => "cloudflare",
-            Access::Proxy => "proxy",
-        }
+    fn name(self) -> String {
+        self.to_possible_value()
+            .map(|value| value.get_name().to_string())
+            .unwrap_or_default()
     }
 
     fn parse(name: &str) -> Option<Access> {
-        Access::value_variants()
-            .iter()
-            .copied()
-            .find(|access| access.name() == name)
+        Access::from_str(name, false).ok()
     }
 }
 
@@ -238,7 +232,11 @@ impl Folder {
                 .map(|home| PathBuf::from(home).join("marfa-server"))
                 .ok_or_else(|| CliError::Usage("HOME is not set: pass --dir".into()))?,
         };
-        Ok(Self { dir })
+        // Compose reads the project directory from inside it, so a relative
+        // path would mean another folder there.
+        Ok(Self {
+            dir: std::path::absolute(dir)?,
+        })
     }
 
     fn path(&self, name: &str) -> PathBuf {
@@ -336,6 +334,17 @@ fn parse_release(release: &str) -> Option<(u64, u64, u64)> {
     };
     let version = (next()?, next()?, next()?);
     parts.next().is_none().then_some(version)
+}
+
+/// A newer release may have changed the database's shape, so the server never
+/// goes back to an older one.
+fn refuse_older(installed: &str, target: &str) -> Result<(), CliError> {
+    if parse_release(target) < parse_release(installed) {
+        return Err(CliError::Usage(format!(
+            "{installed} is installed and {target} is older. A newer release may have changed the database's shape, so the server will not go back: restore a backup into a fresh install of the older release instead"
+        )));
+    }
+    Ok(())
 }
 
 fn own_release() -> Option<String> {
@@ -467,9 +476,17 @@ fn external_problems(settings: &EnvFile, access: Access, subnet: &str, net: &str
     problems
 }
 
+/// Whether nothing listens on `port` on any address: macOS lets a bind to
+/// the loopback address succeed beside a listener on every address, and the
+/// container's port would then fail to publish.
+fn port_is_free(port: u16) -> std::io::Result<()> {
+    std::net::TcpListener::bind(("127.0.0.1", port))?;
+    std::net::TcpListener::bind(("0.0.0.0", port))?;
+    Ok(())
+}
+
 fn free_port(from: u16) -> Option<u16> {
-    (from..from.saturating_add(100))
-        .find(|port| std::net::TcpListener::bind(("127.0.0.1", *port)).is_ok())
+    (from..from.saturating_add(100)).find(|port| port_is_free(*port).is_ok())
 }
 
 // ---- progress -----------------------------------------------------------
@@ -594,7 +611,12 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         )));
     }
     let release = match (&args.release, &existing) {
-        (Some(release), _) => checked_release(release)?,
+        (Some(release), Some((state, _))) => {
+            let release = checked_release(release)?;
+            refuse_older(&state.release, &release)?;
+            release
+        }
+        (Some(release), None) => checked_release(release)?,
         (None, Some((state, _))) => state.release.clone(),
         (None, None) => own_release().ok_or_else(|| {
             CliError::Usage("this build is not a release, so it names no image: pass --release, such as --release 0.0.22".into())
@@ -635,12 +657,27 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         )));
     }
 
+    // A settings file that lacks a secret is never completed over data that
+    // exists, because a new secret would make every key stop working.
+    if !external && let Some(file) = &have_secrets {
+        for secret in ["API_KEY_SALT", "MARFA_AUTH_SECRET"] {
+            if file.get(secret).is_none_or(str::is_empty)
+                && (existing.is_some() || docker.volume_exists(&volume)?)
+            {
+                return Err(CliError::Usage(format!(
+                    "{secret} is missing or empty in {}, and this install has data: restore the setting from your copy. A new one would make every key stop working",
+                    settings_path.display()
+                )));
+            }
+        }
+    }
+
     // The port.
     let port = match (&existing, args.port) {
         (Some((state, _)), None) => state.port,
         (Some((state, _)), Some(port)) if port == state.port => port,
         (_, Some(port)) => {
-            if let Err(error) = std::net::TcpListener::bind(("127.0.0.1", port)) {
+            if let Err(error) = port_is_free(port) {
                 return Err(CliError::Usage(format!(
                     "port {port} on this machine cannot be used ({error}): choose another with --port"
                 )));
@@ -752,12 +789,34 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
     };
 
+    // What this install served on the tailnet before, which is its own to
+    // replace or to take away.
+    let served_before = existing.as_ref().and_then(|(state, _)| {
+        (state.access == Access::Tailscale).then(|| {
+            (
+                state.https_port.unwrap_or(443),
+                format!("http://127.0.0.1:{}", state.port),
+            )
+        })
+    });
     if access == Access::Tailscale {
         // Before anything is changed: the port may serve something else.
         tailscale::check_free(
             https_port.unwrap_or(443),
             &format!("http://127.0.0.1:{port}"),
+            served_before.as_ref().map(|(_, target)| target.as_str()),
         )?;
+    }
+
+    if external && args.s3_bucket.is_some() {
+        return Err(CliError::Usage(
+            "--s3 options change the settings file, and this install takes it as it is: put the S3_ settings in it".into(),
+        ));
+    }
+
+    // A release that does not exist is found before it is written down.
+    if !docker.image_present(&format!("{IMAGE}:{release}"))? {
+        docker.release_exists(IMAGE, &release)?;
     }
 
     // The backup.
@@ -810,7 +869,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
         if backup.is_some() {
             return Err(CliError::Usage(
-                "--s3 options change the settings file, and this install takes it as it is: put the S3_ settings in it".into(),
+                "the S3_ settings change the settings file, and this install takes it as it is: put them in it".into(),
             ));
         }
     }
@@ -857,7 +916,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     dotenv.set("MARFA_NAME", &name)?;
     dotenv.set("MARFA_RELEASE", &release)?;
     dotenv.set("MARFA_PORT", &port.to_string())?;
-    dotenv.set("MARFA_ACCESS", access.name())?;
+    dotenv.set("MARFA_ACCESS", &access.name())?;
     match https_port {
         Some(port) => dotenv.set("MARFA_HTTPS_PORT", &port.to_string())?,
         None => dotenv.remove("MARFA_HTTPS_PORT"),
@@ -877,8 +936,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     };
     let wrote_dotenv =
         files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
-    let wrote_compose =
-        files::write_if_changed(&folder.path(files::COMPOSE), files::COMPOSE_FILE, false)?;
+    let wrote_compose = write_compose(&folder, &steps)?;
     let changed = wrote_settings || wrote_dotenv || wrote_compose;
 
     if access == Access::Tailscale {
@@ -886,6 +944,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         tailscale::serve(
             https_port.unwrap_or(443),
             &format!("http://127.0.0.1:{port}"),
+            served_before.as_ref().map(|(_, target)| target.as_str()),
             !out.json,
         )?;
     }
@@ -894,14 +953,29 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     wait_until_healthy(&docker, &name, port, args.wait)?;
 
     // The login agent comes after the server is up, because loading it runs it.
+    let mut autostart = autostart;
+    let mut autostart_failed = None;
     if autostart {
         steps.say("Setting the server to start when you log in...");
-        boot::on(
-            &boot::Agent::for_this_binary(&name, &folder.dir)?,
-            !out.json,
-        )?;
+        let loaded = boot::Agent::for_this_binary(&name, &folder.dir)
+            .and_then(|agent| boot::on(&agent, !out.json));
+        if let Err(error) = loaded {
+            // The server is up, so the link below still matters most. The
+            // choice is recorded as off, so a run again tries again only when
+            // asked.
+            autostart = false;
+            autostart_failed = Some(error.to_string());
+            dotenv.set("MARFA_AUTOSTART", "off")?;
+            files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
+        }
     } else if boot::installed(&name) {
         boot::off(&name, !out.json)?;
+    }
+    if let Some((https, target)) = &served_before
+        && (access != Access::Tailscale || *https != https_port.unwrap_or(443))
+    {
+        steps.say("Taking the old address off your tailnet...");
+        tailscale::unserve(*https, target, !out.json)?;
     }
 
     // Claim.
@@ -921,6 +995,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "secrets_made": made_secrets,
         "settings": if external { "external" } else { "managed" },
         "autostart": autostart,
+        "autostart_error": autostart_failed,
         "claimed": claim.claimed,
         "setup_url": claim.url,
         "setup_expires_at": claim.expires_at,
@@ -960,11 +1035,39 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 "\nThis instance has an owner already. Sign in at {address}.\n"
             )),
         }
+        if let Some(why) = &autostart_failed {
+            text.push_str(&format!(
+                "\nThe instance is running, but it was not set to start at login: {why}\nRun this command again with --autostart to try again, or with --no-autostart to leave it.\n"
+            ));
+        }
         for note in &notes {
             text.push_str(&format!("\n{note}\n"));
         }
         text
     })
+}
+
+/// Writes the Compose file, after keeping a copy of one that differs, because
+/// a person may have added a service to it.
+fn write_compose(folder: &Folder, steps: &Steps) -> Result<bool, CliError> {
+    let path = folder.path(files::COMPOSE);
+    if let Ok(existing) = std::fs::read_to_string(&path)
+        && existing != files::COMPOSE_FILE
+    {
+        let backup = (0..)
+            .map(|n| match n {
+                0 => folder.path("compose.yaml.bak"),
+                n => folder.path(&format!("compose.yaml.bak.{n}")),
+            })
+            .find(|candidate| !candidate.exists())
+            .expect("a free name");
+        std::fs::copy(&path, &backup)?;
+        steps.say(&format!(
+            "compose.yaml differed from the one this command writes; the old one is kept as {}.",
+            backup.display()
+        ));
+    }
+    files::write_if_changed(&path, files::COMPOSE_FILE, false)
 }
 
 fn start(
@@ -979,7 +1082,15 @@ fn start(
         docker.compose(dir, &["pull", "--quiet"], !steps.quiet)?;
     }
     steps.say(&format!("Starting {name}..."));
-    docker.compose(dir, &["up", "-d", "--remove-orphans"], false)
+    docker.compose(dir, &["up", "-d"], false)
+}
+
+fn http_agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(3)))
+        .http_status_as_error(false)
+        .build()
+        .into()
 }
 
 fn wait_until_healthy(
@@ -988,11 +1099,7 @@ fn wait_until_healthy(
     port: u16,
     seconds: u64,
 ) -> Result<(), CliError> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(3)))
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let agent = http_agent();
     let url = format!("http://127.0.0.1:{port}/health");
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let mut last = String::from("no answer yet");
@@ -1084,13 +1191,7 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
             )
         })?,
     };
-    let (current, wanted) = (parse_release(&state.release), parse_release(&target));
-    if wanted < current {
-        return Err(CliError::Usage(format!(
-            "{} is installed and {target} is older. A newer release may have changed the database's shape, so the server will not go back: restore a backup into a fresh install of the older release instead",
-            state.release
-        )));
-    }
+    refuse_older(&state.release, &target)?;
     let docker = Docker::new(!out.json);
     docker.check()?;
     let unchanged = target == state.release;
@@ -1101,7 +1202,7 @@ fn upgrade(args: UpgradeArgs, out: &Printer) -> Result<(), CliError> {
         dotenv.set("MARFA_RELEASE", &target)?;
         files::write_if_changed(&folder.path(files::DOTENV), &dotenv.render(), false)?;
     }
-    files::write_if_changed(&folder.path(files::COMPOSE), files::COMPOSE_FILE, false)?;
+    write_compose(&folder, &steps)?;
     start(&docker, &folder.dir, &state.name, &target, &steps)?;
     wait_until_healthy(&docker, &state.name, state.port, args.wait)?;
     let report = json!({
@@ -1157,12 +1258,7 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let container = docker.container(&state.name)?;
     let running = container.as_ref().is_some_and(|c| c.status == "running");
     let healthy = running && {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(3)))
-            .http_status_as_error(false)
-            .build()
-            .into();
-        agent
+        http_agent()
             .get(&format!("http://127.0.0.1:{}/health", state.port))
             .call()
             .is_ok_and(|response| response.status().as_u16() == 200)
@@ -1239,19 +1335,29 @@ fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                 "--delete-data needs --yes when nothing can ask you".into(),
             ));
         }
-        eprintln!(
-            "This deletes every item and file in {volume}, and the secrets in {}.",
-            folder.path(files::SETTINGS).display()
-        );
+        if state.external {
+            eprintln!(
+                "This deletes every item and file in {volume}. {} is managed elsewhere and stays.",
+                folder.path(files::SETTINGS).display()
+            );
+        } else {
+            eprintln!(
+                "This deletes every item and file in {volume}, and the secrets in {}.",
+                folder.path(files::SETTINGS).display()
+            );
+        }
         let typed = prompter.text(&format!("Type {} to confirm", state.name), None, "--yes")?;
         if typed != state.name {
             return Err(CliError::Usage("not confirmed; nothing was deleted".into()));
         }
     }
     steps.say(&format!("Stopping {}...", state.name));
-    if folder.path(files::COMPOSE).exists() {
-        docker.compose(&folder.dir, &["down"], false)?;
-    }
+    // The Compose file is written first if it is gone, so that `down` has a
+    // project to take down; a container that is still there after it is
+    // removed by name, and one that cannot be removed fails the command.
+    write_compose(&folder, &steps)?;
+    docker.compose(&folder.dir, &["down"], false)?;
+    docker.remove_container(&state.name)?;
     if boot::installed(&state.name) {
         boot::off(&state.name, !out.json)?;
     }
@@ -1266,8 +1372,16 @@ fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     }
     if args.delete_data {
         docker.remove_volume(&volume)?;
-        docker.remove_network(&net)?;
+        // A proxy of the person's may have joined the network. The data is
+        // gone either way, so that is said and not made a failure.
+        if let Err(error) = docker.remove_network(&net) {
+            eprintln!("The Docker network {net} stays: {error}");
+        }
+        let kept_settings = state.external;
         for name in [files::SETTINGS, files::DOTENV, files::COMPOSE] {
+            if kept_settings && name == files::SETTINGS {
+                continue;
+            }
             match std::fs::remove_file(folder.path(name)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1285,7 +1399,15 @@ fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
     });
     out.report(&report, || {
         if args.delete_data {
-            format!("Stopped {} and deleted its data and settings.", state.name)
+            if state.external {
+                format!(
+                    "Stopped {} and deleted its data. {} is managed elsewhere and stays.",
+                    state.name,
+                    folder.path(files::SETTINGS).display()
+                )
+            } else {
+                format!("Stopped {} and deleted its data and settings.", state.name)
+            }
         } else {
             format!(
                 "Stopped {}. Its data stays in the Docker volume {volume}, and its settings in {}; `marfa server install` starts it again.",

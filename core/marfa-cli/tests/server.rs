@@ -25,8 +25,10 @@ case "$1" in
     name=$(sed -n 's/^MARFA_NAME=//p' "$dir/.env")
     case "$action" in
       pull) touch "$S/image" ;;
-      up) touch "$S/c-$name" "$S/vol-$name-data" ;;
-      down) rm -f "$S/c-$name" ;;
+      up)
+        port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
+        touch "$S/c-$name" "$S/vol-$name-data" "$S/go-$port" ;;
+      down) if [ -e "$S/down-needs-compose" ] && [ ! -e "$dir/compose.yaml" ]; then echo "no configuration file provided" >&2; exit 1; fi; rm -f "$S/c-$name" ;;
     esac
     exit 0 ;;
   info) echo 27.0.0 ;;
@@ -35,7 +37,7 @@ case "$1" in
       ls) n=$(named "$@"); [ -e "$S/net-$n" ] && echo "$n"; exit 0 ;;
       create) touch "$S/net-$3"; echo id ;;
       inspect) echo '[{"Subnet":"172.30.0.0/24","Gateway":"172.30.0.1"}]' ;;
-      rm) rm -f "$S/net-$3" ;;
+      rm) if [ -e "$S/netbusy-$3" ]; then echo "network $3 has active endpoints" >&2; exit 1; fi; rm -f "$S/net-$3" ;;
     esac ;;
   volume)
     case "$2" in
@@ -44,6 +46,8 @@ case "$1" in
     esac ;;
   container) n=$(named "$@"); [ -e "$S/c-$n" ] && echo "$n"; exit 0 ;;
   image) [ -e "$S/image" ] ;;
+  manifest) case "$3" in *:9.9.9) echo "no such manifest: $3" >&2; exit 1 ;; esac ;;
+  rm) rm -f "$S/c-$3" ;;
   inspect) echo '{"Status":"running"}' ;;
   exec)
     case "$*" in
@@ -87,6 +91,28 @@ fn free_port() -> u16 {
     }
 }
 
+const FAKE_TAILSCALE: &str = r#"#!/bin/sh
+# A Tailscale whose Serve configuration is a file of "port target" lines.
+S="$FAKE_DOCKER_STATE"
+MAP="$S/serve.map"
+touch "$MAP"
+echo "$*" >> "$S/tailscale.log"
+without() { grep -v "^$1 " "$MAP" > "$MAP.new"; mv "$MAP.new" "$MAP"; }
+case "$1 $2" in
+  "status --json") echo '{"Self":{"DNSName":"host.example.ts.net."}}' ;;
+  "serve status")
+    printf '{"Web":{'; first=1
+    while read -r port target; do
+      [ -z "$port" ] && continue
+      [ $first = 1 ] || printf ','; first=0
+      printf '"host.example.ts.net:%s":{"Handlers":{"/":{"Proxy":"%s"}}}' "$port" "$target"
+    done < "$MAP"
+    printf '}}\n' ;;
+  "serve --bg") port=${3#--https=}; without "$port"; echo "$port $4" >> "$MAP" ;;
+  serve\ --https=*) port=${2#--https=}; without "$port" ;;
+esac
+"#;
+
 const FAKE_LAUNCHCTL: &str = r#"#!/bin/sh
 # A launchd that remembers what was loaded.
 H="$MARFA_AUTOSTART_ROOT"
@@ -105,7 +131,7 @@ struct Rig {
     state: PathBuf,
     port: u16,
     stop: Arc<AtomicBool>,
-    health: Option<JoinHandle<()>>,
+    health: Vec<JoinHandle<()>>,
 }
 
 impl Rig {
@@ -117,6 +143,9 @@ impl Rig {
         let script = root.join("docker");
         fs::write(&script, FAKE_DOCKER).unwrap();
         fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        let tailscale = root.join("tailscale");
+        fs::write(&tailscale, FAKE_TAILSCALE).unwrap();
+        fs::set_permissions(&tailscale, fs::Permissions::from_mode(0o755)).unwrap();
         let home = root.join("home");
         fs::create_dir_all(home.join("bin")).unwrap();
         let launchctl = home.join("bin/launchctl");
@@ -134,23 +163,30 @@ impl Rig {
             state,
             port,
             stop,
-            health: Some(health),
+            health: vec![health],
         }
     }
 
     fn marfa(&self, args: &[&str]) -> (i32, String, String) {
-        let output = output_of(
-            Command::new(env!("CARGO_BIN_EXE_marfa"))
-                .arg("server")
-                .args(args)
-                .arg("--dir")
-                .arg(&self.dir)
-                .env("MARFA_DOCKER", self.root.join("docker"))
-                .env("FAKE_DOCKER_STATE", &self.state)
-                .env("MARFA_TAILSCALE", self.root.join("no-tailscale"))
-                .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
-                .env_remove("S3_SECRET_ACCESS_KEY"),
-        );
+        self.marfa_with(args, &[])
+    }
+
+    fn marfa_with(&self, args: &[&str], env: &[(&str, &Path)]) -> (i32, String, String) {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
+        command
+            .arg("server")
+            .args(args)
+            .arg("--dir")
+            .arg(&self.dir)
+            .env("MARFA_DOCKER", self.root.join("docker"))
+            .env("FAKE_DOCKER_STATE", &self.state)
+            .env("MARFA_TAILSCALE", self.root.join("tailscale"))
+            .env("MARFA_AUTOSTART_ROOT", self.root.join("home"))
+            .env_remove("S3_SECRET_ACCESS_KEY");
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let output = output_of(&mut command);
         (
             output.status.code().unwrap(),
             String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -174,6 +210,13 @@ impl Rig {
         self.marfa(&args)
     }
 
+    /// An install with exactly the options given, apart from not asking.
+    fn install_as(&self, extra: &[&str]) -> (i32, String, String) {
+        let mut args = vec!["install", "--yes", "--wait", "5"];
+        args.extend(extra);
+        self.marfa(&args)
+    }
+
     /// An install that must work, whose refusal is said in full.
     fn installed(&self, extra: &[&str]) {
         let (code, stdout, stderr) = self.install(extra);
@@ -188,6 +231,14 @@ impl Rig {
         self.file("marfa.env")
             .lines()
             .find_map(|line| line.strip_prefix(&format!("{name}=")).map(str::to_string))
+    }
+
+    /// Answers the health check on one more port, once a start names it.
+    fn also_listen(&mut self, port: u16) {
+        let (stop, state) = (self.stop.clone(), self.state.clone());
+        self.health.push(std::thread::spawn(move || {
+            serve_health(port, &state, &stop)
+        }));
     }
 
     fn home(&self) -> PathBuf {
@@ -207,7 +258,7 @@ impl Rig {
 impl Drop for Rig {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(health) = self.health.take() {
+        for health in self.health.drain(..) {
             let _ = health.join();
         }
         let _ = fs::remove_dir_all(&self.root);
@@ -220,15 +271,11 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
         if stop.load(Ordering::Relaxed) {
             return;
         }
-        let started = fs::read_dir(state)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .any(|e| e.file_name().to_string_lossy().starts_with("c-"))
-            })
-            .unwrap_or(false);
-        if started && let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
-            break listener;
+        if state.join(format!("go-{port}")).exists() {
+            let _held = SOCKETS.lock().unwrap();
+            if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+                break listener;
+            }
         }
         std::thread::sleep(Duration::from_millis(20));
     };
@@ -432,7 +479,21 @@ fn an_address_the_server_would_refuse_is_refused_first() {
 #[test]
 fn tailscale_without_tailscale_says_what_to_install() {
     let rig = Rig::new("tailscale");
-    let (code, _, stderr) = rig.install(&["--access", "tailscale"]);
+    let missing = rig.root.join("no-tailscale");
+    let port = rig.port.to_string();
+    let (code, _, stderr) = rig.marfa_with(
+        &[
+            "install",
+            "--release",
+            "0.0.22",
+            "--port",
+            &port,
+            "--yes",
+            "--access",
+            "tailscale",
+        ],
+        &[("MARFA_TAILSCALE", &missing)],
+    );
     assert_eq!(code, 3, "{stderr}");
     assert!(stderr.contains("Tailscale"), "{stderr}");
     assert!(!rig.dir.join("marfa.env").exists());
@@ -845,4 +906,261 @@ fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
     );
     let (code, _, stderr) = rig.install(&["--access", "proxy", "--external-settings"]);
     assert_eq!(code, 0, "{stderr}");
+}
+
+#[test]
+fn install_never_moves_to_an_older_release() {
+    let rig = Rig::new("older");
+    rig.installed(&["--access", "local"]);
+    let (code, _, stderr) = rig.install_as(&["--release", "0.0.21"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("older"), "{stderr}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.22"));
+}
+
+#[test]
+fn a_release_that_does_not_exist_is_found_before_anything_is_written() {
+    let rig = Rig::new("norelease");
+    let port = rig.port.to_string();
+    let (code, _, stderr) =
+        rig.install_as(&["--access", "local", "--release", "9.9.9", "--port", &port]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("no release 9.9.9"), "{stderr}");
+    assert!(!rig.dir.exists() && !rig.log().contains("network create"));
+}
+
+#[test]
+fn a_settings_file_missing_a_secret_is_not_completed_over_data() {
+    let rig = Rig::new("partial");
+    rig.installed(&["--access", "local"]);
+    let whole = rig.file("marfa.env");
+    for broken in [
+        whole
+            .lines()
+            .filter(|line| !line.starts_with("MARFA_AUTH_SECRET="))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+        whole
+            .lines()
+            .map(|line| {
+                if line.starts_with("API_KEY_SALT=") {
+                    "API_KEY_SALT="
+                } else {
+                    line
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    ] {
+        fs::write(rig.dir.join("marfa.env"), &broken).unwrap();
+        let (code, _, stderr) = rig.install(&[]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("missing or empty"), "{stderr}");
+        assert_eq!(rig.file("marfa.env"), broken, "the file was completed");
+    }
+}
+
+#[test]
+fn a_relative_folder_works_because_compose_reads_it_from_inside() {
+    let rig = Rig::new("relative");
+    let port = rig.port.to_string();
+    let output = output_of(
+        Command::new(env!("CARGO_BIN_EXE_marfa"))
+            .current_dir(&rig.root)
+            .args([
+                "server",
+                "install",
+                "--dir",
+                "install",
+                "--release",
+                "0.0.22",
+                "--access",
+                "local",
+                "--yes",
+                "--wait",
+                "5",
+                "--port",
+                &port,
+            ])
+            .env("MARFA_DOCKER", rig.root.join("docker"))
+            .env("FAKE_DOCKER_STATE", &rig.state)
+            .env("MARFA_AUTOSTART_ROOT", rig.home()),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let log = rig.log();
+    let project = log
+        .lines()
+        .find(|line| line.contains("--project-directory"))
+        .unwrap();
+    assert!(project.contains(rig.dir.to_str().unwrap()), "{project}");
+}
+
+#[test]
+fn an_edited_compose_file_is_kept_beside_the_new_one() {
+    let rig = Rig::new("compose-edit");
+    rig.installed(&["--access", "local"]);
+    let edited = format!(
+        "{}\n# mine: a sidecar goes here\n",
+        rig.file("compose.yaml")
+    );
+    fs::write(rig.dir.join("compose.yaml"), &edited).unwrap();
+    let (code, _, stderr) = rig.install(&[]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.contains("compose.yaml.bak"), "{stderr}");
+    assert_eq!(
+        fs::read_to_string(rig.dir.join("compose.yaml.bak")).unwrap(),
+        edited
+    );
+    assert!(!rig.file("compose.yaml").contains("a sidecar goes here"));
+    assert!(
+        !rig.log().contains("--remove-orphans"),
+        "a sidecar would be removed"
+    );
+    // A second edit does not replace the first copy.
+    fs::write(rig.dir.join("compose.yaml"), format!("{edited}# again\n")).unwrap();
+    rig.installed(&[]);
+    assert!(rig.dir.join("compose.yaml.bak.1").exists());
+    assert_eq!(
+        fs::read_to_string(rig.dir.join("compose.yaml.bak")).unwrap(),
+        edited
+    );
+}
+
+#[test]
+fn a_login_agent_that_fails_does_not_cost_the_setup_link() {
+    let rig = Rig::new("agent-fails");
+    fs::write(
+        rig.home().join("bin/launchctl"),
+        "#!/bin/sh\ncase \"$1\" in print) exit 1;; bootstrap) echo 'Domain does not support specified action' >&2; exit 5;; esac\n",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = rig.install(&["--access", "local", "--autostart"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("TICKET123"), "{stdout}");
+    assert!(
+        stdout.contains("not set to start at login") && stdout.contains("--no-autostart"),
+        "{stdout}"
+    );
+    assert!(rig.file(".env").contains("MARFA_AUTOSTART=off"));
+    // The next run does not fail the same way, and does not try again unasked.
+    let (code, _, stderr) = rig.install(&[]);
+    assert_eq!(code, 0, "{stderr}");
+}
+
+#[test]
+fn deleting_the_data_leaves_a_settings_file_that_is_managed_elsewhere() {
+    let rig = Rig::new("external-delete");
+    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    rig.installed(&["--access", "cloudflare", "--external-settings"]);
+    let (code, stdout, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("managed elsewhere"), "{stdout}");
+    assert_eq!(rig.file("marfa.env"), CLOUDFLARE_FILE);
+    assert!(!rig.dir.join(".env").exists() && !rig.dir.join("compose.yaml").exists());
+}
+
+#[test]
+fn uninstall_stops_the_container_even_when_the_compose_file_is_gone() {
+    let rig = Rig::new("no-compose");
+    rig.installed(&["--access", "local"]);
+    fs::remove_file(rig.dir.join("compose.yaml")).unwrap();
+    // Without a Compose file, `down` has nothing to take down.
+    fs::write(rig.state.join("down-needs-compose"), "").unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["uninstall"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Stopped"), "{stdout}");
+    assert!(
+        !rig.state.join("c-marfa").exists(),
+        "the container is still there"
+    );
+}
+
+#[test]
+fn a_network_that_cannot_be_removed_does_not_fail_a_deletion_that_has_happened() {
+    let rig = Rig::new("net-busy");
+    rig.installed(&["--access", "local"]);
+    fs::write(rig.state.join("netbusy-marfa-net"), "").unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["uninstall", "--delete-data", "--yes"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.contains("network marfa-net stays"), "{stderr}");
+    assert!(stdout.contains("deleted"), "{stdout}");
+    assert!(!rig.state.join("vol-marfa-data").exists());
+}
+
+#[test]
+fn a_busy_port_on_every_address_is_found_before_anything_is_written() {
+    let rig = Rig::new("wildcard");
+    let held = TcpListener::bind("0.0.0.0:0").unwrap();
+    let port = held.local_addr().unwrap().port().to_string();
+    let (code, _, stderr) = rig.marfa(&[
+        "install",
+        "--release",
+        "0.0.22",
+        "--access",
+        "local",
+        "--yes",
+        "--port",
+        &port,
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("cannot be used"), "{stderr}");
+    assert!(!rig.dir.exists());
+}
+
+#[test]
+fn the_tailnet_address_follows_the_install() {
+    let mut rig = Rig::new("tailnet");
+    let map_file = rig.state.join("serve.map");
+    let map = || fs::read_to_string(&map_file).unwrap_or_default();
+    rig.installed(&["--access", "tailscale"]);
+    assert_eq!(map(), format!("443 http://127.0.0.1:{}\n", rig.port));
+    assert_eq!(
+        rig.setting("MARFA_AUTH_BASE_URL").as_deref(),
+        Some("https://host.example.ts.net")
+    );
+    assert_eq!(
+        rig.setting("TRUSTED_PROXY_CIDRS").as_deref(),
+        Some("172.30.0.0/24")
+    );
+
+    // Its own mapping is replaced, not mistaken for a stranger's, when the port changes.
+    let moved_port = free_port();
+    rig.also_listen(moved_port);
+    let moved = moved_port.to_string();
+    let (code, _, stderr) = rig.install_as(&["--port", &moved]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(map(), format!("443 http://127.0.0.1:{moved}\n"));
+
+    // A new Tailscale port takes the old one off the tailnet.
+    let (code, _, stderr) = rig.install_as(&["--https-port", "8445"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(map(), format!("8445 http://127.0.0.1:{moved}\n"));
+
+    // Moving away from Tailscale takes the address off the tailnet.
+    let (code, _, stderr) = rig.install_as(&["--access", "local"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(map(), "");
+}
+
+#[test]
+fn a_port_that_tailscale_serves_to_something_else_is_never_replaced() {
+    let rig = Rig::new("tailnet-foreign");
+    fs::write(rig.state.join("serve.map"), "443 http://127.0.0.1:8210\n").unwrap();
+    let (code, _, stderr) = rig.install(&["--access", "tailscale"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("already serves http://127.0.0.1:8210"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(rig.state.join("serve.map")).unwrap(),
+        "443 http://127.0.0.1:8210\n"
+    );
+    assert!(!rig.dir.exists() && !rig.log().contains("network create"));
 }
