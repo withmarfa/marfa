@@ -1258,7 +1258,7 @@ When a device writes a document whose item carries a `type` property that is not
 
 When a device writes a document whose `type` line is empty and whose item carries no `type` property, a device MUST keep the line empty.
 
-**Reason:** the server keeps no empty property, so the empty line has nothing on the item to be written back from, and filling it in would change a file the person did not edit.
+**Reason:** a save that replaces every property drops a null one (`items/update-null-replace`), so the empty line can have nothing on the item to be written back from, and filling it in would change a file the person did not edit.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads every value the grammar refuses as a property, and still refuses a type the copy does not hold`.
 
