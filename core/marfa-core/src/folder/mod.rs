@@ -2125,8 +2125,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_large_walk_keeps_descriptors_available() {
+        // Names the file the child writes once it has run to its end, so a
+        // filter that matches no test cannot pass as a clean exit.
         const CHILD: &str = "MARFA_TEST_LARGE_WALK_CHILD";
-        if std::env::var_os(CHILD).is_none() {
+        let Some(marker) = std::env::var_os(CHILD) else {
+            let scratch = tempfile::tempdir().unwrap();
+            let marker = scratch.path().join("ran");
             let output = std::process::Command::new("sh")
                 .args(["-c", "ulimit -n 128; exec \"$@\"", "large-walk"])
                 .arg(std::env::current_exe().unwrap())
@@ -2135,7 +2139,7 @@ mod tests {
                     "folder::tests::a_large_walk_keeps_descriptors_available",
                     "--nocapture",
                 ])
-                .env(CHILD, "1")
+                .env(CHILD, &marker)
                 .output()
                 .unwrap();
             assert!(
@@ -2144,8 +2148,14 @@ mod tests {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+            assert!(
+                marker.exists(),
+                "the child exited cleanly without running the walk, so its test \
+                 filter matches no test\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
             return;
-        }
+        };
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         for at in 0..256 {
@@ -2197,6 +2207,7 @@ mod tests {
             route.open().unwrap().unlink(name).unwrap();
         }
         assert!(Directory::open(&root).is_ok());
+        std::fs::write(marker, "ran").unwrap();
     }
 
     #[test]
