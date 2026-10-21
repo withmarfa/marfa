@@ -1701,6 +1701,26 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 **Tests:** `compliance/audit.test.ts › filters by action and resource type with an excluded control`, `› records a write with the acting key, the resource and the action`.
 
+### `events/audit-kind`
+
+The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, so that each entry is of exactly one kind.
+
+**Reason:** `kind` is the console's Activity filter. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+
+**Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
+
+### `events/audit-kind-invalid`
+
+If `kind` is not one of `access`, `data`, `settings` or `housekeeping`, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/audit.test.ts › refuses a kind it does not sort by`.
+
+### `events/audit-search`
+
+The server MUST filter `GET /audit` by `q` to the entries that hold every word of `q`, in any order and ignoring ASCII case, in their action, resource type, resource ID, key ID, client address or details.
+
+**Tests:** `compliance/audit.test.ts › searches by every word, ignoring case and order`.
+
 ### `events/audit-bounds`
 
 The server MUST bound `GET /audit` by `created_after` and `created_before`, both exclusive of a row's own instant.

@@ -3,11 +3,14 @@
  * and setting, opened from anywhere with Command-K, or Control-K where the
  * platform is not Apple's.
  *
- * The server writes every result into the dialog; this module only filters
+ * The server writes the pages into the dialog and this module only filters
  * them as the person types, so no search runs on the server and a page that
- * has no script still carries the links.
+ * has no script still carries the links. The settings are too many to send
+ * with every page: the first time the dialog opens, this module reads them
+ * from the owner-only answer named in `data-settings-source`.
  */
 import { rankMatches, stepIndex } from "../navigation.js";
+import { firstSentence, groupSlug } from "../settings-links.js";
 import { openDialog } from "./dialog.js";
 
 const PER_GROUP = 5;
@@ -25,10 +28,12 @@ export function initCommandSearch(): void {
   );
   const input = dialog?.querySelector<HTMLInputElement>("[data-search-input]");
   const none = dialog?.querySelector<HTMLElement>("[data-search-none]");
-  if (!dialog || !input || !none) return;
+  const status = dialog?.querySelector<HTMLElement>("[data-search-status]");
+  if (!dialog || !input || !none || !status) return;
   const searchDialog = dialog;
   const searchInput = input;
   const noMatch = none;
+  const settingsStatus = status;
   const apple = isApplePlatform();
 
   for (const hint of document.querySelectorAll<HTMLElement>(
@@ -50,6 +55,7 @@ export function initCommandSearch(): void {
   ];
   let visible: HTMLAnchorElement[] = [];
   let selected = 0;
+  let settingsState: "waiting" | "loading" | "loaded" | "failed" = "waiting";
 
   function select(index: number): void {
     selected = index;
@@ -121,8 +127,75 @@ export function initCommandSearch(): void {
       group.hidden = shown.length === 0;
       visible.push(...shown);
     }
-    noMatch.hidden = visible.length > 0;
+    const pending = settingsState === "loading" || settingsState === "failed";
+    settingsStatus.hidden = !pending;
+    settingsStatus.textContent =
+      settingsState === "loading"
+        ? "Loading settings…"
+        : "Settings could not be loaded.";
+    noMatch.hidden = visible.length > 0 || pending;
     select(0);
+  }
+
+  /** The settings group's options, made from the settings answer with text set as text. */
+  function addSettings(source: string, entries: unknown): void {
+    if (!Array.isArray(entries)) throw new Error("not a list");
+    const group = searchDialog.querySelector<HTMLElement>(
+      "[data-search-group=settings]",
+    );
+    if (!group) return;
+    const base = source.replace(/\.json$/, "");
+    const options: HTMLAnchorElement[] = [];
+    for (const entry of entries as Record<string, unknown>[]) {
+      const { name, label, group: kind, description } = entry;
+      if (
+        typeof name !== "string" ||
+        typeof label !== "string" ||
+        typeof kind !== "string" ||
+        typeof description !== "string"
+      )
+        throw new Error("not a setting");
+      const option = document.createElement("a");
+      option.className = "pal-row";
+      option.setAttribute("role", "option");
+      option.id = `cs-setting-${name}`;
+      option.href = `${base}/${groupSlug(kind)}#${name}`;
+      option.tabIndex = -1;
+      option.setAttribute("aria-selected", "false");
+      option.dataset.title = label;
+      option.dataset.haystack = `${label} ${firstSentence(description)} ${name} ${kind}`;
+      option.hidden = true;
+      const title = document.createElement("span");
+      title.className = "grow";
+      title.dataset.titleText = "";
+      title.textContent = label;
+      const meta = document.createElement("span");
+      meta.className = "meta";
+      meta.textContent = kind;
+      option.append(title, meta);
+      options.push(option);
+    }
+    group.append(...options);
+  }
+
+  async function loadSettings(): Promise<void> {
+    const source = searchDialog.dataset.settingsSource;
+    if (source === undefined) return;
+    if (settingsState === "loaded" || settingsState === "loading") return;
+    settingsState = "loading";
+    filter();
+    try {
+      const response = await fetch(source, {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      const body = (await response.json()) as { data?: unknown };
+      addSettings(source, body.data);
+      settingsState = "loaded";
+    } catch {
+      settingsState = "failed";
+    }
+    filter();
   }
 
   function show(): void {
@@ -130,6 +203,7 @@ export function initCommandSearch(): void {
     filter();
     openDialog(searchDialog);
     searchInput.focus();
+    void loadSettings();
   }
 
   document.addEventListener("keydown", (event) => {

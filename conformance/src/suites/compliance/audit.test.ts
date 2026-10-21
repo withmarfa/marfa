@@ -7,7 +7,9 @@ import {
   trackKey,
   trackWebhook,
   cleanup,
+  getManagementClient,
 } from "../../utils/setup.js";
+import { waitFor } from "../../utils/wait.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -71,6 +73,11 @@ async function seedHolding(
   trackItem(ctx, created.data.item.id);
   const row = await createdRow(created.data.item.id);
   return { id: created.data.item.id, since: row.created_at };
+}
+
+/** A bound that is exclusive, moved back so the entry it came from is inside. */
+function justBefore(instant: string): string {
+  return new Date(Date.parse(instant) - 1).toISOString();
 }
 
 async function createdRow(itemId: string) {
@@ -167,6 +174,113 @@ describe("audit log", () => {
     });
     expect(edges.ok).toBe(true);
     expect(edges.data.data).toEqual([]);
+  });
+
+  it("sorts entries by kind, each into exactly one", async () => {
+    const { id, since: seeded } = await seedHolding(`audit-kind-${ctx.runId}`);
+    const since = justBefore(seeded);
+    const minted = await client.createKey({
+      label: "audit-kind",
+      source: `${ctx.source}-kind`,
+      type_permissions: { "core.note": "read" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const receiver = await startReceiver();
+    try {
+      const hook = await client.createWebhook({
+        url: receiver.hookUrl("audit-kind"),
+        events: ["item.created"],
+      });
+      expect(hook.status).toBe(201);
+      trackWebhook(ctx, hook.data.id, client);
+
+      const idsOf = async (
+        kind: string,
+        by: string | null = ctx.trackedKeys[0]!,
+      ): Promise<string[]> => {
+        const page = await client.listAudit({
+          kind: kind as "data",
+          created_after: since,
+          limit: 200,
+        });
+        expect(page.ok, JSON.stringify(page.error)).toBe(true);
+        return page.data.data
+          .filter((entry) => entry.key_id === by)
+          .map((entry) => `${entry.action}:${entry.resource_id}`);
+      };
+      const own = {
+        data: `item.create:${id}`,
+        access: `key.create:${minted.data.id}`,
+        settings: `webhook.create:${hook.data.id}`,
+      };
+      // Each entry is in its own kind and in no other, so the kinds
+      // partition the log and a filter that answered everything fails.
+      for (const [kind, entry] of Object.entries(own)) {
+        const found = await idsOf(kind);
+        expect(found, kind).toContain(entry);
+        for (const [other, foreign] of Object.entries(own))
+          if (other !== kind)
+            expect(found, `${kind} holds ${other}`).not.toContain(foreign);
+      }
+      // Housekeeping writes with no key: an orphaned upload, reported on one
+      // run of the sweep and purged on the next, leaves a `blob.purge`.
+      const upload = await client.uploadBlob(
+        new TextEncoder().encode(`audit-kind orphan ${ctx.runId}`),
+        "text/plain",
+      );
+      expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
+      const purge = `blob.purge:${upload.data.hash}`;
+      const operator = getManagementClient();
+      await waitFor(
+        "the sweep to purge the orphaned upload",
+        async () => {
+          await operator.runHousekeeping("blob-orphans");
+          return (await idsOf("housekeeping", null)).includes(purge)
+            ? true
+            : undefined;
+        },
+        30_000,
+      );
+      const housekeeping = await idsOf("housekeeping");
+      for (const entry of Object.values(own))
+        expect(housekeeping).not.toContain(entry);
+      for (const kind of ["access", "data", "settings"])
+        expect(await idsOf(kind, null), kind).not.toContain(purge);
+    } finally {
+      await receiver.close();
+    }
+  });
+
+  it("refuses a kind it does not sort by", async () => {
+    const refused = await client.rawRequest("/audit?kind=everything");
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    const sorted = await client.rawRequest("/audit?kind=data&limit=1");
+    expect(sorted.status).toBe(200);
+  });
+
+  it("searches by every word, ignoring case and order", async () => {
+    const { id, since: seeded } = await seedHolding(
+      `audit-search-${ctx.runId}`,
+    );
+    const since = justBefore(seeded);
+    const search = async (q: string): Promise<string[]> => {
+      const page = await client.listAudit({
+        q,
+        created_after: since,
+        limit: 200,
+      });
+      expect(page.ok, JSON.stringify(page.error)).toBe(true);
+      return page.data.data.map((entry) => entry.resource_id ?? "");
+    };
+    // The item's own ID is in its entry, so a search for it finds the
+    // entry, in any case and with the action's word in either order.
+    expect(await search(`${id.toUpperCase()} ITEM.CREATE`)).toContain(id);
+    expect(await search(`item.create ${id}`)).toContain(id);
+    // One word that is nowhere in the entry removes it.
+    expect(await search(`${id} no-such-word-${ctx.runId}`)).not.toContain(id);
+    expect(await search(`   `)).toContain(id);
   });
 
   it("bounds by created_after and created_before, both exclusive", async () => {

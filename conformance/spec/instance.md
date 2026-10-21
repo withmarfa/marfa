@@ -724,6 +724,14 @@ The server MUST send `Cache-Control: no-store` on the page it answers to the own
 
 **Tests:** `compliance/console-pages.test.ts › is not cached`.
 
+### `instance/settings-owner-read`
+
+When the owner's browser session sends `GET /auth/owner/settings.json`, the server MUST answer `200` with a `data` list that holds, for each setting in the table at the end of this chapter, an entry with its `name`, `label`, `group`, `description`, `secret`, `live` and `set`, and its `value` in words unless it holds a secret.
+
+**Reason:** the console's All settings pages and its search read the settings from this one answer. `secret` is true for every setting that holds a credential, `live` is true for a setting the owner can also change while the server runs, and `set` says whether the environment states the setting. Nothing returns a secret's value (`authentication/console-settings-no-secret`).
+
+**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.
+
 ### `instance/root-search-key`
 
 When the owner's browser session requests `GET /` for a page with the query key `q`, the server MUST NOT refuse `q` as undeclared.
@@ -1224,9 +1232,9 @@ If a setting that does not hold a secret is outside its rule, then the server MU
 
 If a setting that holds a secret is outside its rule, then the server MUST NOT print its value anywhere in its refusal.
 
-**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `S3_SECRET_ACCESS_KEY`.
+**Reason:** the log is read by more people than the secret is meant for. The settings that hold a secret include `API_KEY_SALT`, `MARFA_AUTH_SECRET`, `S3_ENDPOINT` and `S3_SECRET_ACCESS_KEY`, since an address can carry a credential.
 
-**Tests:** `compliance/instance-lifecycle.test.ts › refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
+**Tests:** `compliance/instance-lifecycle.test.ts › refuses to start with status 1, naming %s and no other setting, when it is %s`, `› refuses a secret with whitespace around it without printing it, where it prints the value of a setting that is not one`, `› refuses a MARFA_AUTH_SECRET of 31 characters, without printing it`.
 
 ### `instance/settings-secret-padded`
 
@@ -1311,7 +1319,7 @@ The server reads each of these environment variables once, when it starts, and a
 | `TRUSTED_PROXY_HEADER`                      | None                          | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.                                                                                                                                 |
 | `API_KEY_SALT`                              | None. Required in production. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.                                                                                               |
 | `MARFA_AUTH_SECRET`                         | None. Required in production. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.                                    |
-| `MARFA_AUTH_BASE_URL`                       | None. Required in production. | Absolute `http` or `https` URL                                     | The public URL for OAuth, cookies, and links. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.                                                              |
+| `MARFA_AUTH_BASE_URL`                       | None. Required in production. | Absolute `http` or `https` URL                                     | The public URL for OAuth, cookies, and links. It has no user name, password or query string. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.               |
 | `CORS_ORIGINS`                              | None                          | Comma-separated origins, each `scheme://host[:port]` with no path  | The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.                                                                   |
 | `MARFA_PERMISSION_BUNDLES`                  | None                          | JSON array of permission bundles                                   | The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.                                                                                                     |
 | `ENABLE_HSTS`                               | `false`                       | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the server sends the `Strict-Transport-Security` header.                                                                                                                                                                                                  |

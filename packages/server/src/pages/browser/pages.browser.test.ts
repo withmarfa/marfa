@@ -14,7 +14,10 @@ import {
   reserveOrigin,
 } from "../../test-browser.js";
 import { authStaticRoutes } from "../../routes/auth-static.js";
-import { pageSecurityPolicy } from "../../routes/content-security-policy.js";
+import {
+  consoleContentSecurityPolicy,
+  pageSecurityPolicy,
+} from "../../routes/content-security-policy.js";
 import { renderHttpErrorPage } from "../../routes/http-error-page.js";
 import { renderSignedOutPage } from "../../routes/signed-out-page.js";
 import { createTestContext } from "../../test-utils.js";
@@ -43,15 +46,19 @@ beforeAll(async () => {
   const app = new Hono<AppEnv>();
   app.use("*", pageSecurityPolicy);
   app.route("/auth/static", authStaticRoutes());
-  app.get("/fixture", (c) =>
-    c.html(
+  app.get("/fixture", (c) => {
+    c.header(
+      "Content-Security-Policy",
+      consoleContentSecurityPolicy(c.var.cspNonce),
+    );
+    return c.html(
       renderFixturePage({
         nonce: c.var.cspNonce,
         page: Number(c.req.query("page") ?? "1"),
         size: parsePageSize(c.req.query("size")),
       }),
-    ),
-  );
+    );
+  });
   // What an injection into a page would look like: an inline script and an
   // inline style attribute, neither carrying the nonce.
   app.get("/injected", (c) =>
@@ -74,6 +81,18 @@ beforeAll(async () => {
     ),
   );
   app.post("/fixture/form", (c) => c.html("<p>posted</p>"));
+  app.get("/fixture/settings.json", (c) =>
+    c.json({
+      data: [
+        {
+          name: "TRASH_DAYS",
+          label: "Keep items in the trash",
+          group: "Keeping things",
+          description: "After this, they are deleted for good. More words.",
+        },
+      ],
+    }),
+  );
   // A page with no stylesheet: the witness that the overflow check can fail.
   app.get("/unstyled", (c) =>
     c.html(
@@ -618,6 +637,7 @@ describe("keyboard", () => {
             .allTextContents(),
         ).toContain("API keys");
 
+        await page.locator("[data-search-status]").waitFor({ state: "hidden" });
         await page.keyboard.type("trash");
         const options = page.locator("#command-search [role=option]:visible");
         expect(await options.count()).toBe(2);
@@ -657,6 +677,38 @@ describe("keyboard", () => {
         await page.keyboard.press("Enter");
         await page.waitForURL(/\/fixture\/settings/);
         expect(await page.locator("dialog#command-search").count()).toBe(0);
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
+  inBrowser(
+    "finds a setting through the command search, loaded when it opens",
+    async () => {
+      const { page, context } = await open();
+      try {
+        await page.goto(`${origin}/fixture`);
+        const mod = await modifier(page);
+        const settings = page.locator(
+          "#command-search [data-search-group=settings] [role=option]",
+        );
+        // Nothing is in the page before the dialog opens.
+        expect(await settings.count()).toBe(0);
+        await page.keyboard.press(`${mod}+k`);
+        await page.locator("#command-search[open]").waitFor();
+        await page.locator("[data-search-status]").waitFor({ state: "hidden" });
+        // Only the setting's description holds these words.
+        await page.keyboard.type("deleted good");
+        const found = page.locator(
+          "#command-search [data-search-group=settings] [role=option]:visible",
+        );
+        expect(await found.allTextContents()).toEqual([
+          "Keep items in the trashKeeping things",
+        ]);
+        expect(await found.getAttribute("href")).toBe(
+          "/fixture/settings/keeping-things#TRASH_DAYS",
+        );
       } finally {
         await context.close();
       }

@@ -6,7 +6,7 @@ import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { DEFAULT_DEPLOYMENT_ENVIRONMENT } from "./deployment-environment.js";
 import { DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS } from "./storage/blob-read.js";
 import { DEFAULT_UPLOAD_IDLE_TIMEOUT_MS } from "./upload-body.js";
-import type { PermissionBundle } from "@withmarfa/shared";
+import type { InstanceConfig, PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
 import {
   parseTrustedProxyCidrs,
@@ -14,6 +14,7 @@ import {
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 import { MAX_CLOCK_OFFSET_MS } from "./clock.js";
+import { readSettings, type SettingReading } from "./settings-reading.js";
 
 /** The largest `MARFA_TEST_CONTRACT_VERSION`. */
 const MAX_CONTRACT_VERSION = 2_147_483_647;
@@ -436,6 +437,9 @@ export interface AppConfig {
   /** Names in the environment that look like a misspelled setting; boot
    *  logs each one. */
   settingWarnings?: string[];
+  /** Every setting as the console shows it. A secret has no value in it.
+   *  Optional on the type for the same reason as `s3ForcePathStyle`. */
+  settingReadings?: SettingReading[];
 }
 
 /** Where the deployment says it runs: free text, set per environment. */
@@ -545,6 +549,33 @@ export type SettingRule =
 /** What a number counts, when it counts something named. */
 export type SettingUnit = "ms" | "days" | "hours" | "bytes";
 
+/** The groups the console lists settings under, in the order it lists them. */
+export const SETTING_GROUPS = [
+  "Address and network",
+  "Where data is kept",
+  "File storage",
+  "Sign-in and access",
+  "Keeping things",
+  "Text from files",
+  "Alerts and monitoring",
+  "Connectors and webhooks",
+  "Limits",
+  "Fine tuning",
+  "Development and testing",
+] as const;
+
+export type SettingGroup = (typeof SETTING_GROUPS)[number];
+
+/** The retention settings the owner can also change while the server runs, by their name in `PUT /config`. */
+export type LiveSetting = keyof Pick<
+  InstanceConfig,
+  | "audit_retention_days"
+  | "event_log_retention_hours"
+  | "trash_retention_days"
+  | "inbound_handled_retention_days"
+  | "inbound_pending_retention_days"
+>;
+
 /** How a stated value is read: it throws to refuse, and the message completes "NAME ...". */
 interface Parser<T> {
   rule: SettingRule;
@@ -563,9 +594,19 @@ export interface SettingDescription {
   secret: boolean;
   /** One plain statement of what the setting controls. */
   description: string;
+  /** The one group the console lists it under. */
+  group: SettingGroup;
+  /** What the console calls it. */
+  label: string;
+  /** Its name in `PUT /config`, when the owner can also change it while the server runs. */
+  live?: LiveSetting;
 }
 
-type SettingMeta = Omit<SettingDescription, "name">;
+type SettingMeta = Omit<
+  SettingDescription,
+  "name" | "group" | "label" | "live"
+> &
+  Partial<Pick<SettingDescription, "group" | "label" | "live">>;
 
 const SETTING_META = new WeakMap<object, SettingMeta>();
 
@@ -573,6 +614,21 @@ interface SettingOptions {
   /** Never echoed into a refusal, and no default is stated. */
   secret?: boolean;
   defaultNote?: string;
+}
+
+/**
+ * Puts a setting in its group and names it for the console. Every setting
+ * in the schema passes through here, and `describeSettings` refuses one that
+ * did not.
+ */
+function grouped<S extends z.ZodType>(
+  placing: { group: SettingGroup; label: string; live?: LiveSetting },
+  schema: S,
+): S {
+  const meta = SETTING_META.get(schema);
+  if (meta === undefined) throw new Error(`${placing.label} is not a setting`);
+  SETTING_META.set(schema, { ...meta, ...placing });
+  return schema;
 }
 
 /** An empty default is no default: the setting then resolves to nothing. */
@@ -756,6 +812,19 @@ const httpUrl: Parser<string> = {
     }
     if (url.protocol !== "http:" && url.protocol !== "https:") {
       throw new Error("must be an absolute http or https URL");
+    }
+    return value;
+  },
+};
+
+/** The instance's public address, which anyone may read: no user info and no query string. */
+const publicUrl: Parser<string> = {
+  rule: { kind: "url" },
+  parse: (value) => {
+    httpUrl.parse(value);
+    const url = new URL(value);
+    if (url.username !== "" || url.password !== "" || url.search !== "") {
+      throw new Error("must have no user name, password or query string");
     }
     return value;
   },
@@ -949,16 +1018,12 @@ const optionalText = (description: string, defaultNote?: string) =>
     description,
     defaultNote === undefined ? {} : { defaultNote },
   );
-const optionalUrl = (description: string, defaultNote?: string) =>
-  setting<string | undefined>(
-    httpUrl,
-    () => undefined,
-    description,
-    defaultNote === undefined ? {} : { defaultNote },
-  );
-const blankText = (description: string) => setting(text, () => "", description);
-const blankUrl = (description: string) =>
-  setting(httpUrl, () => "", description);
+const optionalUrl = (description: string, options?: SettingOptions) =>
+  setting<string | undefined>(httpUrl, () => undefined, description, options);
+const blankText = (description: string, options?: SettingOptions) =>
+  setting(text, () => "", description, options);
+const blankUrl = (description: string, options?: SettingOptions) =>
+  setting(httpUrl, () => "", description, options);
 const count = (
   fallback: number,
   description: string,
@@ -979,521 +1044,859 @@ const on = (fallback: boolean, description: string) =>
  * settings table in `conformance/spec/instance.md` is written from it.
  */
 const settingsShape = {
-  NODE_ENV: setting(
-    choice("production", "development", "test"),
-    () => "development" as const,
-    "The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.",
+  NODE_ENV: grouped(
+    { group: "Development and testing", label: "Server mode" },
+    setting(
+      choice("production", "development", "test"),
+      () => "development" as const,
+      "The environment the server runs in. Production makes `API_KEY_SALT`, `MARFA_AUTH_SECRET` and `MARFA_AUTH_BASE_URL` mandatory, and the two secrets strong.",
+    ),
   ),
-  PORT: count(
-    8600,
-    "The port the server listens on. Zero lets the operating system assign a port.",
-    { min: 0, max: 65_535 },
+  PORT: grouped(
+    { group: "Address and network", label: "Port" },
+    count(
+      8600,
+      "The port the server listens on. Zero lets the operating system assign a port.",
+      { min: 0, max: 65_535 },
+    ),
   ),
-  MARFA_LISTEN_HOST: optionalText(
-    "The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.",
+  MARFA_LISTEN_HOST: grouped(
+    { group: "Address and network", label: "Listen address" },
+    optionalText(
+      "The IP address or hostname the public HTTP listener binds to. Unset uses the runtime's unspecified address: IPv6 when available, otherwise IPv4.",
+    ),
   ),
-  SQLITE_PATH: setting(
-    text,
-    () => "./data/marfa.db",
-    "The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.",
+  SQLITE_PATH: grouped(
+    { group: "Where data is kept", label: "Database file" },
+    setting(
+      text,
+      () => "./data/marfa.db",
+      "The path of the database file. A value starting with `file:` is passed to the database as written, and `:memory:` opens a database held in memory.",
+    ),
   ),
-  MARFA_CONTROL_SOCKET: setting(
-    text,
-    () => "",
-    "Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700. Linux requires getfacl.",
+  MARFA_CONTROL_SOCKET: grouped(
+    { group: "Address and network", label: "Private control socket" },
+    setting(
+      text,
+      () => "",
+      "Absolute private Unix socket path. Defaults to control/marfa.sock beside the database. Its directory must belong to the server account with mode 0700. Linux requires getfacl.",
+    ),
   ),
-  MARFA_CONTROL_ONLY: setting(
-    flag,
-    () => false,
-    "Start only the private control listener, without public HTTP or background jobs, for local recovery.",
+  MARFA_CONTROL_ONLY: grouped(
+    { group: "Development and testing", label: "Recovery mode" },
+    setting(
+      flag,
+      () => false,
+      "Start only the private control listener, without public HTTP or background jobs, for local recovery.",
+    ),
   ),
-  MARFA_TEST_HOOKS: on(
-    false,
-    "Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener, and refused when `NODE_ENV` is production. Leave off on every instance that holds real data.",
+  MARFA_TEST_HOOKS: grouped(
+    { group: "Development and testing", label: "Test hooks" },
+    on(
+      false,
+      "Serve the clock and fault routes a conformance harness drives on the private control socket. Never on the public listener, and refused when `NODE_ENV` is production. Leave off on every instance that holds real data.",
+    ),
   ),
-  MARFA_TEST_CLOCK_OFFSET_MS: count(
-    0,
-    "How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.",
-    { min: 0, max: MAX_CLOCK_OFFSET_MS, unit: "ms" },
+  MARFA_TEST_CLOCK_OFFSET_MS: grouped(
+    { group: "Development and testing", label: "Test clock offset" },
+    count(
+      0,
+      "How far ahead of the system clock the server's clock starts. Needs `MARFA_TEST_HOOKS`, so a harness that moved the clock can restart the server without the time going back.",
+      { min: 0, max: MAX_CLOCK_OFFSET_MS, unit: "ms" },
+    ),
   ),
-  MARFA_TEST_CONTRACT_VERSION: setting<number | undefined>(
-    wholeNumber(0, MAX_CONTRACT_VERSION),
-    () => undefined,
-    "The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.",
-    { defaultNote: "The build's contract version" },
+  MARFA_TEST_CONTRACT_VERSION: grouped(
+    { group: "Development and testing", label: "Test contract version" },
+    setting<number | undefined>(
+      wholeNumber(0, MAX_CONTRACT_VERSION),
+      () => undefined,
+      "The contract version the server speaks instead of the build's, in the root's `contract`, the `X-Marfa-Contract` header and the document's `info.version`. Needs `MARFA_TEST_HOOKS`, so a harness can show what a change of contract does to what the server kept.",
+      { defaultNote: "The build's contract version" },
+    ),
   ),
-  SQLITE_BUSY_BUDGET_MS: count(
-    5_000,
-    "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
-    { min: 0, max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  SQLITE_BUSY_BUDGET_MS: grouped(
+    { group: "Fine tuning", label: "Database busy wait" },
+    count(
+      5_000,
+      "How long a write that meets a locked database is retried before the server answers `503 write_contention`. At 0 the first refusal is answered.",
+      { min: 0, max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
   ),
-  BLOB_PATH: setting(
-    text,
-    () => "./data/blobs",
-    "The folder of the disk store, where every upload lands.",
+  BLOB_PATH: grouped(
+    { group: "Where data is kept", label: "File folder" },
+    setting(
+      text,
+      () => "./data/blobs",
+      "The folder of the disk store, where every upload lands.",
+    ),
   ),
-  MARFA_DISK_RESERVE_BYTES: count(
-    128 * 1024 * 1024,
-    "The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
-    { min: 0, unit: "bytes" },
+  MARFA_DISK_RESERVE_BYTES: grouped(
+    { group: "File storage", label: "Free disk space to keep" },
+    count(
+      128 * 1024 * 1024,
+      "The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.",
+      { min: 0, unit: "bytes" },
+    ),
   ),
-  MARFA_UPLOAD_IDLE_TIMEOUT_MS: count(
-    DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
-    "How long a restore or a blob upload may receive no bytes before the server ends it `408 request_timeout`. An upload has no other time limit while bytes keep arriving.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  MARFA_UPLOAD_IDLE_TIMEOUT_MS: grouped(
+    { group: "Fine tuning", label: "Upload idle timeout" },
+    count(
+      DEFAULT_UPLOAD_IDLE_TIMEOUT_MS,
+      "How long a restore or a blob upload may receive no bytes before the server ends it `408 request_timeout`. An upload has no other time limit while bytes keep arriving.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
   ),
-  MARFA_MAX_REQUEST_BYTES: count(
-    1_048_576,
-    "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits.",
-    { unit: "bytes" },
+  MARFA_MAX_REQUEST_BYTES: grouped(
+    { group: "Limits", label: "Largest request" },
+    count(
+      1_048_576,
+      "The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_MAX_BULK_REQUEST_BYTES: count(
-    16 * 1024 * 1024,
-    "The largest body the bulk operations accept.",
-    { unit: "bytes" },
-  ),
-
-  S3_BUCKET: blankText(
-    "The bucket of an S3-compatible object store. The store is attached when this is set.",
-  ),
-  S3_REGION: setting(
-    text,
-    () => "us-east-1",
-    "The region of the object store.",
-  ),
-  S3_ENDPOINT: blankUrl(
-    "The endpoint of the object store. When blank, the store's provider chooses it.",
-  ),
-  S3_ACCESS_KEY_ID: blankText("The access key ID for the object store."),
-  S3_SECRET_ACCESS_KEY: secretSetting(
-    "The secret access key for the object store.",
-  ),
-  S3_FORCE_PATH_STYLE: on(
-    true,
-    "Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.",
-  ),
-  S3_PREFIX: setting(
-    keyPrefix,
-    () => "blobs",
-    "The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.",
-  ),
-  MARFA_BLOB_MIN_COPIES: count(
-    1,
-    "The fewest live copies a blob keeps. A drop that would leave fewer is refused.",
-  ),
-  MARFA_BLOB_READ_IDLE_TIMEOUT_MS: count(
-    DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
-    "How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
-  ),
-  MARFA_BLOB_REPLICATE_INTERVAL_MS: count(
-    60_000,
-    "How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BLOB_REPLICATE_BATCH: count(
-    100,
-    "The most blobs one replication run copies.",
-  ),
-  MARFA_BLOB_REPLICATE_BATCH_BYTES: count(
-    1024 * 1024 * 1024,
-    "The most bytes one replication run copies.",
-    { unit: "bytes" },
-  ),
-  MARFA_BLOB_INTEGRITY_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `blob-integrity` job checks the copies it holds. The job has no off switch.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BLOB_INTEGRITY_BATCH: count(
-    500,
-    "The most copies one integrity run checks.",
-  ),
-  MARFA_BLOB_INTEGRITY_BATCH_BYTES: count(
-    1024 * 1024 * 1024,
-    "The most bytes one integrity run checks.",
-    { unit: "bytes" },
-  ),
-  MARFA_BLOB_CLEANUP_INTERVAL_MS: count(
-    86_400_000,
-    "How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.",
-    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BLOB_CLEANUP_GRACE_MS: count(
-    86_400_000,
-    "How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.",
-    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+  MARFA_MAX_BULK_REQUEST_BYTES: grouped(
+    { group: "Limits", label: "Largest bulk request" },
+    count(16 * 1024 * 1024, "The largest body the bulk operations accept.", {
+      unit: "bytes",
+    }),
   ),
 
-  MARFA_ENRICHMENT_ENABLED: on(
-    true,
-    "Whether the server extracts text from uploaded files.",
+  S3_BUCKET: grouped(
+    { group: "File storage", label: "Object store bucket" },
+    blankText(
+      "The bucket of an S3-compatible object store. The store is attached when this is set.",
+    ),
   ),
-  MARFA_ENRICHMENT_OCR_ENABLED: on(
-    true,
-    "Whether the server reads text from images with OCR. When off, images are recorded as unsupported.",
+  S3_REGION: grouped(
+    { group: "File storage", label: "Object store region" },
+    setting(text, () => "us-east-1", "The region of the object store."),
   ),
-  MARFA_ENRICHMENT_TESSDATA_DIR: optionalText(
-    "The folder where the OCR language model is cached. When unset, it is a `tessdata` folder beside the database file.",
+  S3_ENDPOINT: grouped(
+    { group: "File storage", label: "Object store address" },
+    blankUrl(
+      "The endpoint of the object store. When blank, the store's provider chooses it.",
+      { secret: true },
+    ),
   ),
-  MARFA_ENRICHMENT_INTERVAL_MS: count(
-    30_000,
-    "How often the enrichment sweep runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
+  S3_ACCESS_KEY_ID: grouped(
+    { group: "File storage", label: "Object store access key ID" },
+    blankText("The access key ID for the object store.", { secret: true }),
   ),
-  MARFA_ENRICHMENT_BATCH_SIZE: count(
-    8,
-    "The most items one enrichment sweep extracts.",
+  S3_SECRET_ACCESS_KEY: grouped(
+    { group: "File storage", label: "Object store secret key" },
+    secretSetting("The secret access key for the object store."),
   ),
-  MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(
-    60_000,
-    "How long the extraction of one item may take.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  S3_FORCE_PATH_STYLE: grouped(
+    { group: "File storage", label: "Use path-style addressing" },
+    on(
+      true,
+      "Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.",
+    ),
   ),
-  MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(
-    20 * 1024 * 1024,
-    "The largest blob the server extracts text from. A larger blob is skipped unread.",
-    { unit: "bytes" },
+  S3_PREFIX: grouped(
+    { group: "File storage", label: "Object store prefix" },
+    setting(
+      keyPrefix,
+      () => "blobs",
+      "The key prefix the instance keeps everything in the bucket under: its blobs and, in the image, its database replica under `db/`. Each instance on a bucket needs its own. A `/` at either end is dropped; a `.` or `..` segment is refused.",
+    ),
+  ),
+  MARFA_BLOB_MIN_COPIES: grouped(
+    { group: "File storage", label: "Minimum file copies" },
+    count(
+      1,
+      "The fewest live copies a blob keeps. A drop that would leave fewer is refused.",
+    ),
+  ),
+  MARFA_BLOB_READ_IDLE_TIMEOUT_MS: grouped(
+    { group: "Fine tuning", label: "File read idle timeout" },
+    count(
+      DEFAULT_BLOB_READ_IDLE_TIMEOUT_MS,
+      "How long a blob read may make no progress before its stream and file or socket are closed. Slow consumers must read within this interval.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BLOB_REPLICATE_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Copy files every" },
+    count(
+      60_000,
+      "How often the `blob-replicate` job gives every attached store its copies. The job has no off switch.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BLOB_REPLICATE_BATCH: grouped(
+    { group: "Fine tuning", label: "Files per copy run" },
+    count(100, "The most blobs one replication run copies."),
+  ),
+  MARFA_BLOB_REPLICATE_BATCH_BYTES: grouped(
+    { group: "Fine tuning", label: "Bytes per copy run" },
+    count(1024 * 1024 * 1024, "The most bytes one replication run copies.", {
+      unit: "bytes",
+    }),
+  ),
+  MARFA_BLOB_INTEGRITY_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Check file copies every" },
+    count(
+      3_600_000,
+      "How often the `blob-integrity` job checks the copies it holds. The job has no off switch.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BLOB_INTEGRITY_BATCH: grouped(
+    { group: "Fine tuning", label: "Copies per check run" },
+    count(500, "The most copies one integrity run checks."),
+  ),
+  MARFA_BLOB_INTEGRITY_BATCH_BYTES: grouped(
+    { group: "Fine tuning", label: "Bytes per check run" },
+    count(1024 * 1024 * 1024, "The most bytes one integrity run checks.", {
+      unit: "bytes",
+    }),
+  ),
+  MARFA_BLOB_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Look for orphan files every" },
+    count(
+      86_400_000,
+      "How often the `blob-orphans` job sweeps for unreferenced blobs. At 0 the sweep is off.",
+      { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BLOB_CLEANUP_GRACE_MS: grouped(
+    { group: "Keeping things", label: "Keep orphan files for" },
+    count(
+      86_400_000,
+      "How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.",
+      { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+
+  MARFA_ENRICHMENT_ENABLED: grouped(
+    { group: "Text from files", label: "Read text in documents" },
+    on(true, "Whether the server extracts text from uploaded files."),
+  ),
+  MARFA_ENRICHMENT_OCR_ENABLED: grouped(
+    { group: "Text from files", label: "Read text in images" },
+    on(
+      true,
+      "Whether the server reads text from images with OCR. When off, images are recorded as unsupported.",
+    ),
+  ),
+  MARFA_ENRICHMENT_TESSDATA_DIR: grouped(
+    { group: "Text from files", label: "Image reader data folder" },
+    optionalText(
+      "The folder where the OCR language model is cached. When unset, it is a `tessdata` folder beside the database file.",
+    ),
+  ),
+  MARFA_ENRICHMENT_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Read text every" },
+    count(30_000, "How often the enrichment sweep runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
+  ),
+  MARFA_ENRICHMENT_BATCH_SIZE: grouped(
+    { group: "Fine tuning", label: "Files per text run" },
+    count(8, "The most items one enrichment sweep extracts."),
+  ),
+  MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: grouped(
+    { group: "Fine tuning", label: "Time allowed per file" },
+    count(60_000, "How long the extraction of one item may take.", {
+      max: MAX_TIMER_DELAY_MS,
+      unit: "ms",
+    }),
+  ),
+  MARFA_ENRICHMENT_MAX_BLOB_BYTES: grouped(
+    { group: "Text from files", label: "Largest file to read" },
+    count(
+      20 * 1024 * 1024,
+      "The largest blob the server extracts text from. A larger blob is skipped unread.",
+      { unit: "bytes" },
+    ),
   ),
   // The validator's cap, not restated: above it, the sweeper's validation
   // parks an over-long extraction rather than storing it.
-  MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(
-    DEFAULT_MAX_STRING_LENGTH,
-    "The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.",
+  MARFA_ENRICHMENT_MAX_TEXT_CHARS: grouped(
+    { group: "Text from files", label: "Most text to keep" },
+    count(
+      DEFAULT_MAX_STRING_LENGTH,
+      "The most UTF-16 code units of extracted text the server keeps. Longer text is cut short, never through a character.",
+    ),
   ),
-  MARFA_ENRICHMENT_MAX_INFLATED_BYTES: count(
-    64 * 1024 * 1024,
-    "The most a document may inflate to when the server extracts its text, all of its parts together. A document that inflates past it is skipped.",
-    { unit: "bytes" },
+  MARFA_ENRICHMENT_MAX_INFLATED_BYTES: grouped(
+    { group: "Text from files", label: "Largest unpacked document" },
+    count(
+      64 * 1024 * 1024,
+      "The most a document may inflate to when the server extracts its text, all of its parts together. A document that inflates past it is skipped.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_ENRICHMENT_MAX_MEMORY_BYTES: count(
-    256 * 1024 * 1024,
-    "The most the JavaScript heap of the process that reads one document's text may take. That process also holds the document and what it inflates to, outside the heap, so allow this and the two limits above together. A document that needs more is skipped.",
-    { unit: "bytes" },
+  MARFA_ENRICHMENT_MAX_MEMORY_BYTES: grouped(
+    { group: "Text from files", label: "Memory for reading a document" },
+    count(
+      256 * 1024 * 1024,
+      "The most the JavaScript heap of the process that reads one document's text may take. That process also holds the document and what it inflates to, outside the heap, so allow this and the two limits above together. A document that needs more is skipped.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_ENRICHMENT_MAX_ATTEMPTS: count(
-    3,
-    "How many times the server tries to extract text from a failing item before it stops.",
-  ),
-
-  TRUSTED_PROXY_CIDRS: setting<CidrRange[]>(
-    fromThrowingParser({ kind: "cidrs" }, parseTrustedProxyCidrs),
-    () => [],
-    "The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.",
-  ),
-  TRUSTED_PROXY_HEADER: setting<string | null>(
-    fromThrowingParser({ kind: "header-name" }, parseTrustedProxyHeader),
-    () => null,
-    "The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.",
-  ),
-
-  API_KEY_SALT: secretSetting(
-    "The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.",
-    "None. Required in production.",
-  ),
-  MARFA_AUTH_SECRET: secretSetting(
-    "The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
-    "None. Required in production.",
-    SECRET_MIN_LENGTH,
-  ),
-  MARFA_AUTH_BASE_URL: optionalUrl(
-    "The public URL for OAuth, cookies, and links. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.",
-    "None. Required in production.",
-  ),
-  CORS_ORIGINS: setting(
-    origins,
-    () => [],
-    "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.",
-  ),
-  MARFA_PERMISSION_BUNDLES: setting<PermissionBundle[] | undefined>(
-    permissionBundles,
-    () => undefined,
-    "The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.",
-    { secret: true },
-  ),
-  ENABLE_HSTS: on(
-    false,
-    "Whether the server sends the `Strict-Transport-Security` header.",
+  MARFA_ENRICHMENT_MAX_ATTEMPTS: grouped(
+    { group: "Text from files", label: "Attempts per file" },
+    count(
+      3,
+      "How many times the server tries to extract text from a failing item before it stops.",
+    ),
   ),
 
-  RATE_LIMIT_ENABLED: on(true, "Whether the rate limiter is on."),
-  RATE_LIMIT_REQUESTS: count(
-    1000,
-    "The requests one credential may make to one group of operations in each window. A `GET` may make twice as many, except in a group that another setting caps.",
+  TRUSTED_PROXY_CIDRS: grouped(
+    { group: "Address and network", label: "Trusted proxy ranges" },
+    setting<CidrRange[]>(
+      fromThrowingParser({ kind: "cidrs" }, parseTrustedProxyCidrs),
+      () => [],
+      "The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.",
+    ),
   ),
-  RATE_LIMIT_WINDOW_MS: count(60_000, "The length of a rate-limit window.", {
-    max: MAX_RETENTION_MS,
-    unit: "ms",
-  }),
-  RATE_LIMIT_KEYS_REQUESTS: count(
-    DEFAULT_KEYS_RATE_LIMIT,
-    "The requests one credential may make in each window to the operations under `/keys`.",
-  ),
-  RATE_LIMIT_AGGREGATE_MULTIPLIER: count(
-    4,
-    "The multiplier of `RATE_LIMIT_REQUESTS` that caps a credential across every operation in a window. At 0 there is no such cap.",
-    { min: 0 },
-  ),
-  MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `rate-limit-cleanup` job drops expired rate-limit windows.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
+  TRUSTED_PROXY_HEADER: grouped(
+    { group: "Address and network", label: "Trusted client address header" },
+    setting<string | null>(
+      fromThrowingParser({ kind: "header-name" }, parseTrustedProxyHeader),
+      () => null,
+      "The name of a header that the platform's edge overwrites with the client address. It takes precedence over `TRUSTED_PROXY_CIDRS`.",
+    ),
   ),
 
-  MARFA_CONNECTOR_HOLD_MS: count(
-    DEFAULT_CONNECTOR_HOLD_MS,
-    "How long a connector's hold on its registration lasts after its last take or renewal.",
-    { min: 1_000, max: 3_600_000, unit: "ms" },
+  API_KEY_SALT: grouped(
+    { group: "Sign-in and access", label: "API key salt" },
+    secretSetting(
+      "The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Outside production, an unset salt falls back to a built-in one.",
+      "None. Required in production.",
+    ),
   ),
-  MARFA_INBOUND_MAX_BYTES: count(
-    DEFAULT_INBOUND_LIMITS.maxBytes,
-    "The largest inbound webhook delivery the server stores.",
-    { unit: "bytes" },
+  MARFA_AUTH_SECRET: grouped(
+    { group: "Sign-in and access", label: "Sign-in secret" },
+    secretSetting(
+      "The secret that signs sign-in cookies, authorize queries, read-view tokens and credential-free blob links. It must be at least 32 characters. Outside production, an unset secret falls back to a random one for each process.",
+      "None. Required in production.",
+      SECRET_MIN_LENGTH,
+    ),
   ),
-  RATE_LIMIT_INBOUND_REQUESTS: count(
-    DEFAULT_INBOUND_LIMITS.requestsPerWindow,
-    "The deliveries one inbound endpoint accepts in each rate-limit window.",
+  MARFA_AUTH_BASE_URL: grouped(
+    { group: "Address and network", label: "Public address" },
+    setting<string | undefined>(
+      publicUrl,
+      () => undefined,
+      "The public URL for OAuth, cookies, and links. It has no user name, password or query string. Outside production, an unset URL uses the assigned port with `http://127.0.0.1` when `MARFA_LISTEN_HOST` is `127.0.0.1`, otherwise `http://localhost`.",
+      { defaultNote: "None. Required in production." },
+    ),
   ),
-  MARFA_INBOUND_BACKLOG_DELIVERIES: count(
-    DEFAULT_INBOUND_LIMITS.backlogDeliveries,
-    "The unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
+  CORS_ORIGINS: grouped(
+    { group: "Address and network", label: "Allowed websites" },
+    setting(
+      origins,
+      () => [],
+      "The browser origins allowed to call the API across origins, beside the web pages the owner approves, and trusted by the sign-in forms. Each is an exact scheme and host with no trailing slash.",
+    ),
   ),
-  MARFA_INBOUND_BACKLOG_BYTES: count(
-    DEFAULT_INBOUND_LIMITS.backlogBytes,
-    "The bytes of unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
-    { unit: "bytes" },
+  MARFA_PERMISSION_BUNDLES: grouped(
+    { group: "Sign-in and access", label: "Approve access groups" },
+    setting<PermissionBundle[] | undefined>(
+      permissionBundles,
+      () => undefined,
+      "The permission bundles the consent screen offers, replacing the built-in ones. Each entry has a string `id`, an array of `scopes` and a boolean `default_on`.",
+      { secret: true },
+    ),
   ),
-  MARFA_INBOUND_RETAINED_DELIVERIES: count(
-    DEFAULT_INBOUND_LIMITS.retainedDeliveries,
-    "The most deliveries the server retains across live and retired endpoints.",
-  ),
-  MARFA_INBOUND_RETAINED_BYTES: count(
-    DEFAULT_INBOUND_LIMITS.retainedBytes,
-    "The most bytes of deliveries the server retains across live and retired endpoints.",
-    { unit: "bytes" },
-  ),
-  MARFA_INBOUND_CLEANUP_INTERVAL_MS: count(
-    DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
-    "How often the `inbound-delivery-cleanup` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_INBOUND_IN_FLIGHT_BYTES: count(
-    DEFAULT_INBOUND_LIMITS.inFlightBytes,
-    "The most bytes of inbound webhook deliveries the server holds in memory at once.",
-    { unit: "bytes" },
-  ),
-  MARFA_INBOUND_READ_TIMEOUT_MS: count(
-    DEFAULT_INBOUND_LIMITS.readTimeoutMs,
-    "How long a delivery's body has to arrive whole.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
-  ),
-  MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
-    DEFAULT_INBOUND_LIMITS.handledRetentionDays,
-    "How long the server keeps a handled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  MARFA_INBOUND_PENDING_RETENTION_DAYS: count(
-    DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
-    "How long the server keeps an unhandled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  ENABLE_HSTS: grouped(
+    { group: "Address and network", label: "Require secure connections" },
+    on(
+      false,
+      "Whether the server sends the `Strict-Transport-Security` header.",
+    ),
   ),
 
-  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(
-    1_000,
-    "How often the housekeeping scheduler asks its table which jobs are due.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  RATE_LIMIT_ENABLED: grouped(
+    { group: "Limits", label: "Rate limiting" },
+    on(true, "Whether the rate limiter is on."),
   ),
-  AUDIT_RETENTION_DAYS: count(
-    90,
-    "How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age. `PUT /config` overrides it.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  RATE_LIMIT_REQUESTS: grouped(
+    { group: "Limits", label: "Requests per window" },
+    count(
+      1000,
+      "The requests one credential may make to one group of operations in each window. A `GET` may make twice as many, except in a group that another setting caps.",
+    ),
   ),
-  AUDIT_CLEANUP_INTERVAL_MS: count(
-    86_400_000,
-    "How often the `audit-cleanup` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
+  RATE_LIMIT_WINDOW_MS: grouped(
+    { group: "Limits", label: "Rate limit window" },
+    count(60_000, "The length of a rate-limit window.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
   ),
-  MARFA_REVOKED_GRANT_RETENTION_DAYS: count(
-    90,
-    "How long a revoked application grant is kept. At 0 the job that purges them is off. `PUT /config` does not override it.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  RATE_LIMIT_KEYS_REQUESTS: grouped(
+    { group: "Limits", label: "Key requests per window" },
+    count(
+      DEFAULT_KEYS_RATE_LIMIT,
+      "The requests one credential may make in each window to the operations under `/keys`.",
+    ),
   ),
-  MARFA_GRANT_INACTIVITY_DAYS: count(
-    365,
-    "How long an application grant may go unused before the server retires it. At 0 grants are never retired. `PUT /config` does not override it.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+  RATE_LIMIT_AGGREGATE_MULTIPLIER: grouped(
+    { group: "Limits", label: "Overall request multiplier" },
+    count(
+      4,
+      "The multiplier of `RATE_LIMIT_REQUESTS` that caps a credential across every operation in a window. At 0 there is no such cap.",
+      { min: 0 },
+    ),
   ),
-  MARFA_EVENT_LOG_RETENTION_HOURS: count(
-    168,
-    "The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age. `PUT /config` overrides it.",
-    { min: 0, max: MAX_RETENTION_HOURS, unit: "hours" },
-  ),
-  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `event-log-cleanup` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  VERSION_THINNING_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `version-thinning` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  FEED_EXPIRY_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `feed-expiry` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  VERSION_RECENT_DAYS: count(
-    30,
-    "The window in which the version policy keeps every version of an item.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  VERSION_DAILY_SNAPSHOT_DAYS: count(
-    90,
-    "The window in which the version policy keeps one version a day. It must be at least `VERSION_RECENT_DAYS`.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  VERSION_WEEKLY_SNAPSHOT_DAYS: count(
-    365,
-    "The window in which the version policy keeps one version a week. It must be at least `VERSION_DAILY_SNAPSHOT_DAYS`.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  VERSION_MAX_VERSIONS: count(
-    500,
-    "The most versions the version policy keeps for one item.",
-  ),
-  TRASH_RETENTION_DAYS: count(
-    60,
-    "How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age. `PUT /config` overrides it.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  TRASH_PURGE_INTERVAL_MS: count(
-    86_400_000,
-    "How often the `trash-purge` job runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  AUTH_SESSION_CLEANUP_INTERVAL_MS: count(
-    3_600_000,
-    "How often the `auth-session-cleanup` job drops expired sign-in sessions.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_DCR_CLIENT_RETENTION_DAYS: count(
-    1,
-    "How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 the job that removes them is off.",
-    { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
-  ),
-  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(
-    3_600_000,
-    "How often the job that removes dynamically registered clients with no grants runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BULK_ACTION_JOB_RETENTION_MS: count(
-    7 * 24 * 3_600_000,
-    "How long a finished bulk-action job is kept. At 0 the sweep that removes them is off.",
-    { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: count(
-    3_600_000,
-    "How often the sweep that removes finished bulk-action jobs runs.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
-  ),
-  MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(
-    500,
-    "The base interval at which the bulk-action worker looks for work.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
-  ),
-  MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: count(
-    60_000,
-    "The longest the bulk-action worker waits between looks for work when it is idle. It must be at least `MARFA_BULK_ACTION_POLL_INTERVAL_MS`.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
-  ),
-  MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: setting(
-    decimal(1, 100),
-    () => 2,
-    "The factor by which the bulk-action worker's wait grows after each look that finds no work.",
-  ),
-  MARFA_SSE_MAX_VIEWERS: count(
-    0,
-    "The most event-stream viewers one server instance serves at once. At 0 there is no limit.",
-    { min: 0 },
+  MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clear rate limit records every" },
+    count(
+      3_600_000,
+      "How often the `rate-limit-cleanup` job drops expired rate-limit windows.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
   ),
 
-  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: on(
-    false,
-    "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
+  MARFA_CONNECTOR_HOLD_MS: grouped(
+    { group: "Connectors and webhooks", label: "Connector hold time" },
+    count(
+      DEFAULT_CONNECTOR_HOLD_MS,
+      "How long a connector's hold on its registration lasts after its last take or renewal.",
+      { min: 1_000, max: 3_600_000, unit: "ms" },
+    ),
   ),
-  ERROR_WEBHOOK_URL: blankUrl(
-    "The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.",
+  MARFA_INBOUND_MAX_BYTES: grouped(
+    { group: "Connectors and webhooks", label: "Largest incoming webhook" },
+    count(
+      DEFAULT_INBOUND_LIMITS.maxBytes,
+      "The largest inbound webhook delivery the server stores.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_ERROR_WEBHOOK_TIMEOUT_MS: count(
-    5_000,
-    "How long one post to `ERROR_WEBHOOK_URL` may take.",
-    { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+  RATE_LIMIT_INBOUND_REQUESTS: grouped(
+    { group: "Limits", label: "Incoming webhooks per window" },
+    count(
+      DEFAULT_INBOUND_LIMITS.requestsPerWindow,
+      "The deliveries one inbound endpoint accepts in each rate-limit window.",
+    ),
   ),
-  MARFA_HEARTBEAT_URL: blankUrl(
-    "The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.",
+  MARFA_INBOUND_BACKLOG_DELIVERIES: grouped(
+    {
+      group: "Connectors and webhooks",
+      label: "Waiting webhooks per connector",
+    },
+    count(
+      DEFAULT_INBOUND_LIMITS.backlogDeliveries,
+      "The unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
+    ),
   ),
-  MARFA_HEARTBEAT_INTERVAL_MS: count(
-    60_000,
-    "How often the server requests `MARFA_HEARTBEAT_URL`.",
-    { max: MAX_RETENTION_MS, unit: "ms" },
+  MARFA_INBOUND_BACKLOG_BYTES: grouped(
+    {
+      group: "Connectors and webhooks",
+      label: "Waiting webhook size per connector",
+    },
+    count(
+      DEFAULT_INBOUND_LIMITS.backlogBytes,
+      "The bytes of unhandled deliveries one registration may hold before the server refuses more deliveries for it.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_PLACEMENT_REGION: optionalText(
-    "Free text naming the region the server runs in, reported at `/health` as `placement.region`.",
+  MARFA_INBOUND_RETAINED_DELIVERIES: grouped(
+    { group: "Connectors and webhooks", label: "Webhooks kept in total" },
+    count(
+      DEFAULT_INBOUND_LIMITS.retainedDeliveries,
+      "The most deliveries the server retains across live and retired endpoints.",
+    ),
   ),
-  MARFA_PLACEMENT_LOCATION: optionalText(
-    "Free text naming the location the server runs in, reported at `/health` as `placement.location`.",
+  MARFA_INBOUND_RETAINED_BYTES: grouped(
+    { group: "Connectors and webhooks", label: "Webhook storage in total" },
+    count(
+      DEFAULT_INBOUND_LIMITS.retainedBytes,
+      "The most bytes of deliveries the server retains across live and retired endpoints.",
+      { unit: "bytes" },
+    ),
   ),
-  MARFA_PLACEMENT_COUNTRY: optionalText(
-    "Free text naming the country the server runs in, reported at `/health` as `placement.country`.",
+  MARFA_INBOUND_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clean up webhooks every" },
+    count(
+      DEFAULT_INBOUND_LIMITS.cleanupIntervalMs,
+      "How often the `inbound-delivery-cleanup` job runs.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_INBOUND_IN_FLIGHT_BYTES: grouped(
+    { group: "Connectors and webhooks", label: "Webhook memory limit" },
+    count(
+      DEFAULT_INBOUND_LIMITS.inFlightBytes,
+      "The most bytes of inbound webhook deliveries the server holds in memory at once.",
+      { unit: "bytes" },
+    ),
+  ),
+  MARFA_INBOUND_READ_TIMEOUT_MS: grouped(
+    { group: "Fine tuning", label: "Webhook body timeout" },
+    count(
+      DEFAULT_INBOUND_LIMITS.readTimeoutMs,
+      "How long a delivery's body has to arrive whole.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_INBOUND_HANDLED_RETENTION_DAYS: grouped(
+    {
+      group: "Keeping things",
+      label: "Keep handled webhooks",
+      live: "inbound_handled_retention_days",
+    },
+    count(
+      DEFAULT_INBOUND_LIMITS.handledRetentionDays,
+      "How long the server keeps a handled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
+  ),
+  MARFA_INBOUND_PENDING_RETENTION_DAYS: grouped(
+    {
+      group: "Keeping things",
+      label: "Keep waiting webhooks",
+      live: "inbound_pending_retention_days",
+    },
+    count(
+      DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
+      "How long the server keeps an unhandled delivery. `PUT /config` overrides it. At 0 age does not expire a delivery.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
   ),
 
-  MARFA_OTEL_SAMPLE_RATIO: setting(
-    decimal(0, 1),
-    () => 0.05,
-    "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Check for due jobs every" },
+    count(
+      1_000,
+      "How often the housekeeping scheduler asks its table which jobs are due.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
   ),
-  OTEL_SERVICE_NAME: optionalText(
-    "The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.",
-    "`marfa-server`",
+  AUDIT_RETENTION_DAYS: grouped(
+    {
+      group: "Keeping things",
+      label: "Keep activity",
+      live: "audit_retention_days",
+    },
+    count(
+      90,
+      "How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age. `PUT /config` overrides it.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
   ),
-  OTEL_RESOURCE_ATTRIBUTES: setting<Record<string, string>>(
-    resourceAttributes,
-    () => ({}),
-    "Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.",
+  AUDIT_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clean up the audit log every" },
+    count(86_400_000, "How often the `audit-cleanup` job runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
   ),
-  OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl(
-    "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
+  MARFA_REVOKED_GRANT_RETENTION_DAYS: grouped(
+    { group: "Keeping things", label: "Keep records of disconnected apps" },
+    count(
+      90,
+      "How long a revoked application grant is kept. At 0 the job that purges them is off. `PUT /config` does not override it.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
   ),
-  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl(
-    "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+  MARFA_GRANT_INACTIVITY_DAYS: grouped(
+    { group: "Sign-in and access", label: "Disconnect apps left unused" },
+    count(
+      365,
+      "How long an application grant may go unused before the server retires it. At 0 grants are never retired. `PUT /config` does not override it.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
   ),
-  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalUrl(
-    "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+  MARFA_EVENT_LOG_RETENTION_HOURS: grouped(
+    {
+      group: "Keeping things",
+      label: "Let apps catch up on changes",
+      live: "event_log_retention_hours",
+    },
+    count(
+      168,
+      "The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age. `PUT /config` overrides it.",
+      { min: 0, max: MAX_RETENTION_HOURS, unit: "hours" },
+    ),
   ),
-  OTEL_EXPORTER_OTLP_HEADERS: setting(
-    otlpHeaders,
-    () => ({}),
-    "The headers sent with every OTLP export, as `key=value` pairs.",
-    { secret: true },
+  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clean up the event log every" },
+    count(3_600_000, "How often the `event-log-cleanup` job runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
   ),
-  OTEL_EXPORTER_OTLP_TRACES_HEADERS: setting(
-    otlpHeaders,
-    () => ({}),
-    "The headers sent with trace exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
-    { secret: true },
+  VERSION_THINNING_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Thin old versions every" },
+    count(3_600_000, "How often the `version-thinning` job runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
   ),
-  OTEL_EXPORTER_OTLP_LOGS_HEADERS: setting(
-    otlpHeaders,
-    () => ({}),
-    "The headers sent with log exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
-    { secret: true },
+  FEED_EXPIRY_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Expire feed items every" },
+    count(3_600_000, "How often the `feed-expiry` job runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
   ),
-  MARFA_POSTHOG_HOST: optionalUrl(
-    "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_PROJECT_TOKEN` set too.",
+  VERSION_RECENT_DAYS: grouped(
+    { group: "Keeping things", label: "Keep every version of an item" },
+    count(
+      30,
+      "The window in which the version policy keeps every version of an item.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
   ),
-  MARFA_POSTHOG_PROJECT_TOKEN: secretSetting(
-    "The PostHog project token for exception reports. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_HOST` set too.",
+  VERSION_DAILY_SNAPSHOT_DAYS: grouped(
+    { group: "Keeping things", label: "Keep daily versions for" },
+    count(
+      90,
+      "The window in which the version policy keeps one version a day. It must be at least `VERSION_RECENT_DAYS`.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
+  ),
+  VERSION_WEEKLY_SNAPSHOT_DAYS: grouped(
+    { group: "Keeping things", label: "Keep weekly versions for" },
+    count(
+      365,
+      "The window in which the version policy keeps one version a week. It must be at least `VERSION_DAILY_SNAPSHOT_DAYS`.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
+  ),
+  VERSION_MAX_VERSIONS: grouped(
+    { group: "Keeping things", label: "Most versions per item" },
+    count(500, "The most versions the version policy keeps for one item."),
+  ),
+  TRASH_RETENTION_DAYS: grouped(
+    {
+      group: "Keeping things",
+      label: "Keep items in the trash",
+      live: "trash_retention_days",
+    },
+    count(
+      60,
+      "How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age. `PUT /config` overrides it.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
+  ),
+  TRASH_PURGE_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Empty the trash every" },
+    count(86_400_000, "How often the `trash-purge` job runs.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
+  ),
+  AUTH_SESSION_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clear old sign-ins every" },
+    count(
+      3_600_000,
+      "How often the `auth-session-cleanup` job drops expired sign-in sessions.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_DCR_CLIENT_RETENTION_DAYS: grouped(
+    { group: "Keeping things", label: "Keep unused app registrations" },
+    count(
+      1,
+      "How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 the job that removes them is off.",
+      { min: 0, max: MAX_RETENTION_DAYS, unit: "days" },
+    ),
+  ),
+  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clear app registrations every" },
+    count(
+      3_600_000,
+      "How often the job that removes dynamically registered clients with no grants runs.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BULK_ACTION_JOB_RETENTION_MS: grouped(
+    { group: "Keeping things", label: "Keep finished bulk jobs" },
+    count(
+      7 * 24 * 3_600_000,
+      "How long a finished bulk-action job is kept. At 0 the sweep that removes them is off.",
+      { min: 0, max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Clear finished bulk jobs every" },
+    count(
+      3_600_000,
+      "How often the sweep that removes finished bulk-action jobs runs.",
+      { max: MAX_RETENTION_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BULK_ACTION_POLL_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Bulk job check interval" },
+    count(
+      500,
+      "The base interval at which the bulk-action worker looks for work.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Longest bulk job wait" },
+    count(
+      60_000,
+      "The longest the bulk-action worker waits between looks for work when it is idle. It must be at least `MARFA_BULK_ACTION_POLL_INTERVAL_MS`.",
+      { max: MAX_TIMER_DELAY_MS, unit: "ms" },
+    ),
+  ),
+  MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: grouped(
+    { group: "Fine tuning", label: "Bulk job wait growth" },
+    setting(
+      decimal(1, 100),
+      () => 2,
+      "The factor by which the bulk-action worker's wait grows after each look that finds no work.",
+    ),
+  ),
+  MARFA_SSE_MAX_VIEWERS: grouped(
+    { group: "Limits", label: "Most live viewers" },
+    count(
+      0,
+      "The most event-stream viewers one server instance serves at once. At 0 there is no limit.",
+      { min: 0 },
+    ),
+  ),
+
+  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: grouped(
+    {
+      group: "Connectors and webhooks",
+      label: "Allow private webhook targets",
+    },
+    on(
+      false,
+      "Whether outbound webhooks may reach loopback, private and other non-public addresses.",
+    ),
+  ),
+  ERROR_WEBHOOK_URL: grouped(
+    { group: "Alerts and monitoring", label: "Error alert address" },
+    blankUrl(
+      "The URL the server posts a notice to when a request fails with a 500 error. When blank, no notice is sent.",
+      { secret: true },
+    ),
+  ),
+  MARFA_ERROR_WEBHOOK_TIMEOUT_MS: grouped(
+    { group: "Fine tuning", label: "Error alert timeout" },
+    count(5_000, "How long one post to `ERROR_WEBHOOK_URL` may take.", {
+      max: MAX_TIMER_DELAY_MS,
+      unit: "ms",
+    }),
+  ),
+  MARFA_HEARTBEAT_URL: grouped(
+    { group: "Alerts and monitoring", label: "Heartbeat address" },
+    blankUrl(
+      "The URL the server requests on a schedule, so that something else can notice when the requests stop. When blank, there is no heartbeat.",
+      { secret: true },
+    ),
+  ),
+  MARFA_HEARTBEAT_INTERVAL_MS: grouped(
+    { group: "Fine tuning", label: "Heartbeat interval" },
+    count(60_000, "How often the server requests `MARFA_HEARTBEAT_URL`.", {
+      max: MAX_RETENTION_MS,
+      unit: "ms",
+    }),
+  ),
+  MARFA_PLACEMENT_REGION: grouped(
+    { group: "Alerts and monitoring", label: "Server region" },
+    optionalText(
+      "Free text naming the region the server runs in, reported at `/health` as `placement.region`.",
+    ),
+  ),
+  MARFA_PLACEMENT_LOCATION: grouped(
+    { group: "Alerts and monitoring", label: "Server location" },
+    optionalText(
+      "Free text naming the location the server runs in, reported at `/health` as `placement.location`.",
+    ),
+  ),
+  MARFA_PLACEMENT_COUNTRY: grouped(
+    { group: "Alerts and monitoring", label: "Server country" },
+    optionalText(
+      "Free text naming the country the server runs in, reported at `/health` as `placement.country`.",
+    ),
+  ),
+
+  MARFA_OTEL_SAMPLE_RATIO: grouped(
+    { group: "Alerts and monitoring", label: "Share of traces sent" },
+    setting(
+      decimal(0, 1),
+      () => 0.05,
+      "The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.",
+    ),
+  ),
+  OTEL_SERVICE_NAME: grouped(
+    { group: "Alerts and monitoring", label: "Telemetry service name" },
+    optionalText(
+      "The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.",
+      "`marfa-server`",
+    ),
+  ),
+  OTEL_RESOURCE_ATTRIBUTES: grouped(
+    { group: "Alerts and monitoring", label: "Telemetry resource attributes" },
+    setting<Record<string, string>>(
+      resourceAttributes,
+      () => ({}),
+      "Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `deployment.environment`, which an error notification names too.",
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_ENDPOINT: grouped(
+    { group: "Alerts and monitoring", label: "Telemetry address" },
+    optionalUrl(
+      "The base URL of the OTLP receiver. Setting it turns telemetry on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, nothing is exported and the telemetry SDK is not loaded.",
+      { secret: true },
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: grouped(
+    { group: "Alerts and monitoring", label: "Trace address" },
+    optionalUrl(
+      "The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+      { secret: true },
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: grouped(
+    { group: "Alerts and monitoring", label: "Log address" },
+    optionalUrl(
+      "The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.",
+      { secret: true },
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_HEADERS: grouped(
+    { group: "Alerts and monitoring", label: "Telemetry headers" },
+    setting(
+      otlpHeaders,
+      () => ({}),
+      "The headers sent with every OTLP export, as `key=value` pairs.",
+      { secret: true },
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: grouped(
+    { group: "Alerts and monitoring", label: "Trace headers" },
+    setting(
+      otlpHeaders,
+      () => ({}),
+      "The headers sent with trace exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
+      { secret: true },
+    ),
+  ),
+  OTEL_EXPORTER_OTLP_LOGS_HEADERS: grouped(
+    { group: "Alerts and monitoring", label: "Log headers" },
+    setting(
+      otlpHeaders,
+      () => ({}),
+      "The headers sent with log exports, as `key=value` pairs. They override `OTEL_EXPORTER_OTLP_HEADERS`.",
+      { secret: true },
+    ),
+  ),
+  MARFA_POSTHOG_HOST: grouped(
+    { group: "Alerts and monitoring", label: "PostHog address" },
+    optionalUrl(
+      "The PostHog host that receives exception reports, which OTLP cannot carry into error tracking. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_PROJECT_TOKEN` set too.",
+      { secret: true },
+    ),
+  ),
+  MARFA_POSTHOG_PROJECT_TOKEN: grouped(
+    { group: "Alerts and monitoring", label: "PostHog project token" },
+    secretSetting(
+      "The PostHog project token for exception reports. It needs `OTEL_EXPORTER_OTLP_ENDPOINT` and `MARFA_POSTHOG_HOST` set too.",
+    ),
   ),
 };
 
@@ -1510,7 +1913,11 @@ export function describeSettings(): SettingDescription[] {
     if (meta === undefined) {
       throw new Error(`${name} has no rule or description`);
     }
-    return { name, ...meta };
+    const { group, label, ...rest } = meta;
+    if (group === undefined || label === undefined) {
+      throw new Error(`${name} has no group or label`);
+    }
+    return { name, ...rest, group, label };
   });
 }
 
@@ -1963,6 +2370,7 @@ export function loadConfig(
     housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
     sseMaxViewers: s.MARFA_SSE_MAX_VIEWERS,
     ...(warnings.length > 0 && { settingWarnings: warnings }),
+    settingReadings: readSettings(describeSettings(), s, env),
   };
 }
 

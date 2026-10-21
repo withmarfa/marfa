@@ -46,6 +46,11 @@ export interface PagerProps {
    * another size sends back. Page and size are never carried.
    */
   carry?: Readonly<Record<string, string>>;
+  /**
+   * The list cannot say how long it is, only whether a page follows: the
+   * range then names no total, and `pagination.total` is a floor.
+   */
+  open?: boolean;
 }
 
 /**
@@ -58,7 +63,8 @@ export interface PagerProps {
 export function Pager(props: PagerProps) {
   const { pagination: p } = props;
   if (p.total <= PAGE_SIZE) return null;
-  const range = `${String(p.from + 1)}–${String(p.to)} of ${String(p.total)}`;
+  const span = `${String(p.from + 1)}–${String(p.to)}`;
+  const range = props.open ? span : `${span} of ${String(p.total)}`;
   return (
     <nav class="pager" aria-label={`${props.noun}, pages`}>
       <form class="line" method="get" data-script-only hidden>

@@ -1122,12 +1122,27 @@ describe("CommandSearch", () => {
     ]);
   });
 
-  it("holds each setting, naming the page it is on, with its text escaped", () => {
-    const out = render();
-    expect(out).toContain('id="cs-setting-settings-trash_days"');
-    expect(out).toContain('data-title="Keep items in the trash"');
-    expect(out).toContain(">All settings</span></a>");
-    expect(out).not.toContain("<script>window");
+  it("holds the settings other pages register, with their text escaped, and none of the settings page's own", () => {
+    const registry = fixtureRegistry();
+    registry.register("general", {
+      href: "/fixture/general",
+      settings: [
+        {
+          id: "name",
+          title: "Name <b>",
+          group: "General",
+          href: "/fixture/general#name",
+        },
+      ],
+    });
+    const out = html(
+      <CommandSearch registry={registry} home={{ href: "/" }} />,
+    );
+    expect(out).toContain('id="cs-setting-general-name"');
+    expect(out).toContain('data-title="Name &lt;b&gt;"');
+    expect(out).not.toContain("cs-setting-settings-");
+    expect(out).not.toContain("Keep items in the trash");
+    expect(out).toContain('data-settings-source="/fixture/settings.json"');
   });
 
   it("starts with the suggested pages and every other result hidden", () => {

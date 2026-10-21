@@ -212,7 +212,7 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 ## Console pages
 
-The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/restore`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
+The owner's console pages are the pages under `/auth/owner/`: `/auth/owner/manage`, `/auth/owner/activity`, `/auth/owner/settings` and the pages under it (`/auth/owner/settings/{group}` and `/auth/owner/settings.json`), `/auth/owner/keys` and the pages under it (`/auth/owner/keys/new`, `/auth/owner/keys/{id}` and `/auth/owner/keys/{id}/copy`), `/auth/owner/apps` and `/auth/owner/apps/{id}`, which are the Connected apps pages, `/auth/owner/browsers`, `/auth/owner/restore`, `/auth/owner/general`, `/auth/owner/health`, `/auth/owner/profile` and `/auth/owner/passkeys`, which is the Password and passkeys page. A browser asks for HTML when its `Accept` names `text/html` before any `application/json`.
 
 ### `authentication/console-sign-in`
 
@@ -253,3 +253,11 @@ The server MUST NOT include a key's plaintext in any page under `/auth/owner/key
 **Reason:** the plaintext is shown once, from the answer to the mint (`keys-and-oauth/plaintext-once`), so a page the server draws, which a cache, a log or a later visit can read again, must never hold it.
 
 **Tests:** `compliance/console-pages.test.ts › never carry a key's plaintext, even for the key just made`.
+
+### `authentication/console-settings-no-secret`
+
+Where a setting holds a secret, the server MUST NOT include its value in any page under `/auth/owner/settings`, in the answer to `GET /auth/owner/settings.json`, or in Home; those say only whether it is set.
+
+**Reason:** the settings are read once, from the environment, and are not written anywhere the owner can read them again, so a page the server draws, which a cache, a log or a later visit can read, must never hold a secret that was never meant to be shown (`instance/settings-refused-secret-hidden` holds the same line for the log).
+
+**Tests:** `compliance/console-pages.test.ts › show the owner the log and every setting, and carry no secret's value`.

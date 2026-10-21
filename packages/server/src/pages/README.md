@@ -63,6 +63,9 @@ There is no client framework and no client-side rendering.
 - **Navigation:** `Breadcrumb` (with the page picker) and `CommandSearch`.
   `SearchField` with `shortcutHint` also shows a button that opens the search,
   hidden until the script knows the shortcut for the platform.
+  `CommandSearch` writes the pages and the settings other pages register, and
+  loads the settings page's own, which are many, from its `.json` answer when
+  it first opens.
 - **Console page:** `ConsolePage` is the layout every console page uses: the
   document, `Breadcrumb`, `CommandSearch`, `ConsoleColumn` and `ConfirmDialog`.
 
@@ -90,7 +93,8 @@ Keep these in every page you build.
   line per row cut short with an ellipsis, and pages of 10 rows by default.
   Past 10 rows the `Pager` also offers "Rows per page" (10, 25 or 50, read with
   `parsePageSize` from the `size` query key beside `page`). Never offer "Show
-  all".
+  all". A list that can only say whether a page follows, such as the audit log
+  read by cursor, passes `open` to the `Pager`, which then names no total.
 - Red is for what cannot be undone, and for something that has stopped. Amber
   is for something that needs a look. Both appear only as a dot or a value,
   never as a filled box, and only where the page is reporting a state.
