@@ -303,9 +303,13 @@ fn copy_expired(reason: &str) -> String {
             "another Marfa now answers at this address; rebuild the copy from it".to_string()
         }
         "read_view_invalid" => "this copy holds no proof it can accept of what the credential may read; rebuild the copy from the server".to_string(),
-        sentence => format!("{sentence}; rebuild the copy from the server"),
+        sentence => {
+            return format!(
+                "this working copy can no longer be kept current: {sentence}; rebuild the copy from the server"
+            );
+        }
     };
-    format!("this working copy can no longer be kept current: {cause_and_advice}")
+    format!("this working copy can no longer be kept current ({reason}): {cause_and_advice}")
 }
 
 impl From<rusqlite::Error> for CoreError {
@@ -390,6 +394,15 @@ mod tests {
             invalid.contains("holds no proof it can accept"),
             "{invalid}"
         );
+        // The reason is named, so a caller can tell why the copy expired.
+        for reason in [
+            "credential_ended",
+            "read_view_changed",
+            "instance_changed",
+            "read_view_invalid",
+        ] {
+            assert!(said(reason).contains(&format!("({reason})")), "{reason}");
+        }
         // A reason that is a sentence is shown as it is.
         let sentence = said("the server's event log ends at 5");
         assert!(
