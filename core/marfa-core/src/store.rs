@@ -3696,8 +3696,9 @@ fn forget_row(conn: &Connection, id: &str) -> Result<(), CoreError> {
 /// Takes the server's row into the copy and, only where that wrote, lays the
 /// writes still waiting over it, so the copy keeps showing them. A row refused
 /// for a later one held leaves the writes laid over that one. Answers whether
-/// the row went in. The contract is `queue-and-verdicts/waiting-over-answer`
-/// and `queue-and-verdicts/waiting-over-event`.
+/// the row went in. The contract is `queue-and-verdicts/waiting-over-answer`,
+/// `queue-and-verdicts/waiting-over-event`, `device/pin-waiting-write` and
+/// `device/catch-up-edge-own-write`.
 pub fn take_server_item(
     conn: &Connection,
     item: &WireItem,

@@ -2699,7 +2699,8 @@ fn land(
     let refused = store::land_on_held_row(&tx, row, id)?;
     apply_read_back_unchecked(&tx, &read)?;
     let catalog = Catalog::load(&tx)?;
-    // Again, since the pins and waiting work moved onto the server's id above.
+    // The read-back lays nothing over a later row the copy already holds, so
+    // the work moved onto the server's id above is laid over it here.
     store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
     store::settle_read_back(&tx, Subject::Item, id)?;
     store::meta_delete(&tx, &receipt_key(&row.id))?;
