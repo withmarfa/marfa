@@ -222,6 +222,7 @@ export function appRoutes(storage: Storage) {
           ),
           bundles: getPermissionBundles(),
           start: "held",
+          narrowing: app.scopes,
         }),
         keys: await keyListRows(storage, made, now, { maker: false }),
         siblings,

@@ -76,7 +76,8 @@ export function literalsOf(form: HTMLFormElement): string[] {
   for (const select of form.querySelectorAll<HTMLSelectElement>(
     "select[name=scopes], select[name=types]",
   )) {
-    if (select.value === "" || select.value === CHOOSE_TYPES) continue;
+    if (select.disabled || select.value === "" || select.value === CHOOSE_TYPES)
+      continue;
     if (select.name === "types" && !choosing) continue;
     literals.add(select.value);
   }

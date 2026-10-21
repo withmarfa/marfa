@@ -38,32 +38,41 @@ function LevelControl(props: {
   const descriptionId =
     row.description === undefined ? undefined : `${row.id}-description`;
   return (
-    <Row
-      title={row.title}
-      description={row.description}
-      descriptionId={descriptionId}
-      data={
-        props.search === undefined
-          ? undefined
-          : { "type-row": "", search: props.search }
-      }
-      control={
-        <Select
-          id={row.id}
-          name={row.name ?? "scopes"}
-          label={row.title}
-          describedBy={descriptionId}
-          value={row.selected}
-          options={row.options}
-          data={{
-            noun: row.noun,
-            ...(row.type === undefined ? {} : { alias: row.type }),
-            held: row.held,
-            ...(props.all ? { all: "" } : {}),
-          }}
-        />
-      }
-    />
+    <>
+      {row.inherited?.scopes.map((literal) => (
+        <input type="hidden" name="scopes" value={literal} />
+      ))}
+      <Row
+        title={row.title}
+        description={row.description}
+        descriptionId={descriptionId}
+        data={
+          props.search === undefined
+            ? undefined
+            : { "type-row": "", search: props.search }
+        }
+        control={
+          <Select
+            id={row.id}
+            name={row.name ?? "scopes"}
+            label={row.title}
+            describedBy={descriptionId}
+            value={row.selected}
+            options={row.options}
+            disabled={row.inherited !== undefined}
+            data={{
+              noun: row.noun,
+              ...(row.type === undefined ? {} : { alias: row.type }),
+              held: row.held,
+              ...(row.inherited
+                ? { "inherited-level": row.inherited.level }
+                : {}),
+              ...(props.all ? { all: "" } : {}),
+            }}
+          />
+        }
+      />
+    </>
   );
 }
 

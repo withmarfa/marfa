@@ -126,6 +126,138 @@ async function openDisconnect(page: Page, name: string) {
 }
 
 describe("Connected apps", () => {
+  for (const [broad, narrow, effective] of [
+    ["*:read", "core.note:read", "Read only"],
+    ["*:write", "core.note:read", "Read only"],
+    ["core.*:read", "core.media.article:read", "Read only"],
+    ["content:write", "core.note:read", "Read only"],
+    ["edge.*:write", "edge.parent-of:read", "Read only"],
+    ["metadata:write", "metadata.types:read", "Read and edit"],
+    ["profile:write", "profile.name:read", "Read and edit"],
+  ] as const) {
+    inBrowser(`keeps ${narrow} truthful while ${broad} covers it`, async () => {
+      const { page, context, errors, violations } = await open();
+      try {
+        const app = await seedOauthBearer(ctx, [broad, narrow]);
+        await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+        const group = broad.startsWith("profile")
+          ? "Your profile"
+          : "Your data";
+        await page.locator("#access").getByText(group, { exact: true }).click();
+        const dependent = page.locator("select[name=scopes]").filter({
+          has: page.locator(`option[value="${narrow}"]`),
+        });
+        const wider = page.locator("select[name=scopes]").filter({
+          has: page.locator(`option[value="${broad}"]`),
+        });
+        expect(await dependent.isDisabled()).toBe(true);
+        expect(await dependent.locator("option:checked").innerText()).toBe(
+          effective,
+        );
+        expect(await dependent.locator('option[value=""]').count()).toBe(0);
+        expect(await wider.isEnabled()).toBe(true);
+        await wider.selectOption("");
+        expect(await dependent.isDisabled()).toBe(true);
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await page.getByText("Saved", { exact: true }).waitFor();
+        const response = await page.request.get(`${origin}/auth/grants`);
+        const grants = (await response.json()) as {
+          data: { id: string; scopes: string[] }[];
+        };
+        expect(
+          grants.data.find((grant) => grant.id === app.grantId)?.scopes,
+        ).toEqual([narrow]);
+        await page.locator("#access").getByText(group, { exact: true }).click();
+        expect(await dependent.isEnabled()).toBe(true);
+        expect(await dependent.locator('option[value=""]').innerText()).toBe(
+          "No access",
+        );
+        await dependent.selectOption("");
+        await page.getByRole("button", { name: "Save", exact: true }).click();
+        await page.getByText("Saved", { exact: true }).waitFor();
+        const cleared = await page.request.get(`${origin}/auth/grants`);
+        const remaining = (await cleared.json()) as {
+          data: { id: string; scopes: string[] }[];
+        };
+        expect(
+          remaining.data.find((grant) => grant.id === app.grantId)?.scopes,
+        ).toEqual([]);
+        expect(await violations()).toEqual([]);
+        expect(errors).toEqual([]);
+      } finally {
+        await context.close();
+      }
+    });
+  }
+
+  inBrowser(
+    "keeps changes retryable after cancellation, refusal and network failure",
+    async () => {
+      const { page, context } = await open();
+      try {
+        const app = await seedOauthBearer(ctx, ["core.note:read"]);
+        await page.goto(`${origin}/auth/owner/apps/${app.grantId}`);
+        await page
+          .locator("#access")
+          .getByText("Your data", { exact: true })
+          .click();
+        const note = page.locator("select[name=scopes]").first();
+        await note.selectOption("");
+        const save = page.getByRole("button", { name: "Save", exact: true });
+        const target = `**/auth/grants/${app.grantId}`;
+        for (const failure of ["cancel", "refuse", "network"]) {
+          await page.route(target, async (route) => {
+            if (failure === "network") return route.abort();
+            await route.fulfill({
+              status: 403,
+              contentType: "application/json",
+              body: JSON.stringify({
+                error: {
+                  code: "forbidden",
+                  message:
+                    failure === "cancel"
+                      ? "Sign in again to perform this operation"
+                      : "Access changed. Reload before saving.",
+                },
+              }),
+            });
+          });
+          await save.click();
+          if (failure === "cancel") {
+            const confirm = page.locator("dialog[data-confirm-dialog]");
+            await confirm.waitFor();
+            await confirm
+              .getByRole("button", { name: "Cancel", exact: true })
+              .click();
+            await confirm.waitFor({ state: "hidden" });
+          } else {
+            await page
+              .locator('[data-notice="problem"]')
+              .waitFor({ state: "visible" });
+          }
+          await page.waitForFunction(
+            () =>
+              !document
+                .querySelector("form[data-app-access]")
+                ?.getAttribute("data-sending"),
+          );
+          expect(await note.inputValue()).toBe("");
+          expect(await save.isEnabled()).toBe(true);
+          await page.unroute(target);
+        }
+        await page
+          .getByRole("button", { name: "Discard", exact: true })
+          .click();
+        expect(await note.inputValue()).toBe("core.note:read");
+        await note.selectOption("");
+        await save.click();
+        await page.getByText("Saved", { exact: true }).waitFor();
+      } finally {
+        await context.close();
+      }
+    },
+  );
+
   inBrowser(
     "disconnects an app and the keys it made, by default, with the keyboard alone",
     async () => {
