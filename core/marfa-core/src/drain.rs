@@ -2056,12 +2056,17 @@ fn unavailable_by(error: &CoreError) -> Option<String> {
 struct AnsweredAt<'a> {
     version: i64,
     item: Option<&'a WireItem>,
+    /// The version the create made, where the answer is a later read of the
+    /// row rather than the create's own answer.
+    made: Option<i64>,
 }
 
 /// Behind a create, only edits based on 0 move: the placeholder an
 /// unanswered create holds, which the server never mints. A create
 /// acknowledged as a repeat answers the row as it stands now, so the edits
-/// behind it go on 1, the version that create made.
+/// behind it go on 1, the version that create made. So does a create a page
+/// made, which a later read answers, unless the row as read holds what the
+/// edit read.
 fn move_edits_behind(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
@@ -2080,6 +2085,18 @@ fn move_edits_behind(
                 }
                 match row.base_version {
                     _ if acknowledged => 1,
+                    // Another device can have changed the row since the
+                    // create, and an edit that read none of it must not
+                    // overwrite it.
+                    _ if let Some(made) = at.made
+                        && version > made =>
+                    {
+                        if holds(conn, &id, at)? {
+                            version
+                        } else {
+                            made
+                        }
+                    }
                     Some(created_on) if created_on > 0 && version > created_on + 1 => {
                         if holds(conn, &id, at)? {
                             version
@@ -2384,8 +2401,8 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     Ok(())
 }
 
-/// `read` is the read the answer owes, where it was made before the answer
-/// was settled.
+/// `read` is a page's read of the row its create made, at version 1, made
+/// before the answer was settled.
 fn settle_success(
     core: &Core,
     row: &QueuedWrite,
@@ -2493,6 +2510,7 @@ fn settle_success(
     let Some(owed) = owed else {
         return Ok(settled);
     };
+    let made = read.is_some().then_some(1);
     let read = match read.map(Ok).unwrap_or_else(|| {
         read_owed(
             core,
@@ -2532,6 +2550,7 @@ fn settle_success(
             &AnsweredAt {
                 version: parsed.item.version,
                 item: Some(&parsed.item),
+                made,
             },
         )?;
         if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
@@ -2554,6 +2573,7 @@ fn settle_success(
             &AnsweredAt {
                 version: parsed.edge.version,
                 item: None,
+                made,
             },
         )?;
     }
@@ -3386,6 +3406,7 @@ mod tests {
         AnsweredAt {
             version,
             item: None,
+            made: None,
         }
     }
 
@@ -3410,6 +3431,7 @@ mod tests {
         let answer = AnsweredAt {
             version: 5,
             item: Some(&answered),
+            made: None,
         };
         move_edits_behind(&conn, &first, Verdict::Accepted, false, "mine", &answer).unwrap();
         assert_eq!(based_on(&conn, &read.id), (Some(5), Some(5)));
@@ -3480,6 +3502,7 @@ mod tests {
             let at = AnsweredAt {
                 version: 5,
                 item: Some(&item),
+                made: None,
             };
             assert_eq!(
                 holds(&conn, &edit.id, &at).unwrap(),

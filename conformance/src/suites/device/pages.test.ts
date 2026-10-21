@@ -705,6 +705,195 @@ describe("creates in pages", () => {
     expect(second.answered).toBe(51);
     expect(door.items.size).toBe(52);
   });
+
+  it("keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue", async () => {
+    const made = await start("pages-owed-refused");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 50);
+    const paged = new Set(notes.map((note) => note.item_id));
+    let reads = 0;
+    door.reading = (id) => {
+      if (!paged.has(id)) return undefined;
+      reads += 1;
+      return reads === 1
+        ? answers.rateLimited()
+        : answers.validation("validation_error", "The read was refused");
+    };
+    const first = await drain(harness);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    const late = value(
+      await harness.device.create({
+        type: "core.note",
+        properties: { title: "Late", body: "text" },
+      }),
+    );
+
+    const second = await drain(harness);
+
+    // The witness: the owed read was made, and refused.
+    expect(reads).toBeGreaterThan(50);
+    expect(bulkReads(door)).toHaveLength(2);
+    expect(second.unavailable, JSON.stringify(second)).toBeNull();
+    expect(second.stopped).toBeNull();
+    expect(
+      door
+        .requests("POST", "/items")
+        .map((request) => (JSON.parse(request.body) as ItemEntry).id),
+    ).toEqual([late.item_id]);
+
+    door.reading = undefined;
+    const third = await drain(harness);
+
+    expect(third.unavailable, JSON.stringify(third)).toBeNull();
+    // Still owed after the refusal, so this drain made it.
+    expect(bulkReads(door).at(2)).toEqual(notes.map((note) => note.item_id));
+    expect(door.requests("POST", "/items/bulk")).toHaveLength(1);
+    const queued = value(await harness.device.queue());
+    expect(queued.map((row) => row.verdict)).toEqual([
+      ...notes.map(() => "accepted"),
+      "accepted",
+    ]);
+  });
+
+  it("settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more", async () => {
+    const made = await start("pages-owed-edge");
+    harness = made.harness;
+    const { door } = made;
+    const { edges } = await queue(harness, 50, { edges: true });
+    const [unread] = edges as [QueuedWrite];
+    const edgeId = unread.edge_id ?? "";
+    const edited = value(
+      await harness.device.updateEdge(edgeId, {
+        properties: { note: "edited" },
+        version: 0,
+      }),
+    );
+    let paged = false;
+    let limited = false;
+    door.page = (request) => {
+      if (request.pathname === "/edges/bulk") paged = true;
+      return undefined;
+    };
+    door.reading = () => {
+      if (!paged || limited) return undefined;
+      limited = true;
+      return answers.rateLimited();
+    };
+    const patches: number[] = [];
+    const readsBefore: number[] = [];
+    harness.server.answer("PATCH", `/edges/${edgeId}`, (request) => {
+      const sent = JSON.parse(request.body) as {
+        version: number;
+        properties: Record<string, unknown>;
+      };
+      patches.push(sent.version);
+      readsBefore.push(door.requests("GET", `/edges/${edgeId}`).length);
+      const held = door.edges.get(edgeId);
+      if (held === undefined) return refusal(404, "edge_not_found", "No edge");
+      const now = {
+        ...held,
+        properties: sent.properties,
+        version: (held.version ?? 1) + 1,
+      };
+      door.edges.set(edgeId, now);
+      return writeAnswers.edge(now, 200);
+    });
+
+    const first = await drain(harness);
+
+    expect(limited).toBe(true);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(door.requests("POST", "/edges/bulk")).toHaveLength(1);
+    expect(patches).toEqual([]);
+    door.unlisted.add(edgeId);
+
+    const second = await drain(harness);
+
+    expect(second.unavailable, JSON.stringify(second)).toBeNull();
+    // The witness: the source was read, and the edge was not in it.
+    expect(bulkReads(door).at(-1)).toContain(unread.item_id ?? "");
+    expect(readsBefore).toEqual([1]);
+    expect(door.requests("POST", "/edges")).toHaveLength(0);
+    // Settled on the version the page made, so the edit behind it is sent
+    // on that version.
+    expect(patches).toEqual([1]);
+    const queued = value(await harness.device.queue());
+    expect(queued.find((row) => row.id === unread.id)?.verdict).toBe(
+      "accepted",
+    );
+    expect(queued.find((row) => row.id === edited?.id)?.verdict).toBe(
+      "accepted",
+    );
+  });
+
+  it("sends an edit queued behind a page's create on the version the page made, so another device's edit since meets a conflict", async () => {
+    const made = await start("pages-owed-edit");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 50);
+    const [mine] = notes as [QueuedWrite];
+    const id = mine.item_id ?? "";
+    const edit = value(
+      await harness.device.update(id, {
+        properties: { title: "Mine" },
+        version: 0,
+      }),
+    );
+    let limited = false;
+    door.reading = () => {
+      if (limited) return undefined;
+      limited = true;
+      return answers.rateLimited();
+    };
+    const patches: number[] = [];
+    harness.server.answer("PATCH", `/items/${id}`, (request) => {
+      const sent = JSON.parse(request.body) as { version: number };
+      patches.push(sent.version);
+      const held = door.items.get(id) ?? {};
+      const current = {
+        id,
+        version: held.version as number,
+        properties: held.properties as Record<string, unknown>,
+        tier: "library" as const,
+        occurred_at: held.occurred_at as string,
+        source_id: null,
+        type: "core.note",
+      };
+      if (sent.version !== current.version) {
+        return answers.versionConflict(
+          current,
+          { ...current, version: sent.version },
+          ["title"],
+          { fields: {}, default: "last_writer_wins" },
+        );
+      }
+      return answers.updated(held);
+    });
+
+    const first = await drain(harness);
+
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(patches).toEqual([]);
+    // Another device edits the row between the page and its owed read.
+    const created = door.items.get(id) ?? {};
+    door.items.set(id, {
+      ...created,
+      version: 2,
+      properties: { title: "Theirs", body: "text" },
+    });
+
+    const second = await drain(harness);
+
+    expect(patches, JSON.stringify(second)).toEqual([1]);
+    const verdict = value(await harness.device.queue()).find(
+      (row) => row.id === edit.id,
+    );
+    expect(verdict?.verdict).not.toBe("accepted");
+    expect(
+      (door.items.get(id)?.properties as Record<string, unknown>).title,
+    ).toBe("Theirs");
+  });
 });
 
 describe("a folder's first sync", () => {

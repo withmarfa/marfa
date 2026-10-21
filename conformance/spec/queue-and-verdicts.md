@@ -222,7 +222,15 @@ If the read back of writes a page created meets an environmental failure, then a
 
 **Reason:** the server took the page, so each write landed; sent again it would be a second attempt that only its own door may make (`queue-and-verdicts/page-never-sent`), so the device keeps the page's answer as the verdict and reads the rows back before the next drain sends anything (`queue-and-verdicts/owed-read-first`).
 
-**Tests:** `device/pages.test.ts › keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again`.
+**Tests:** `device/pages.test.ts › keeps the verdicts of a page whose read-back the server limits, and sends none of its writes again`, `› settles an edge the owed read of its source leaves out by a read of the edge, and sends it no more`.
+
+### `queue-and-verdicts/page-owed-read-refused`
+
+If the server refuses the read that writes a page created owe, other than by an environmental failure or a refusal that ends the drain, then a device MUST keep each write's verdict and its read owed, and go on with the drain.
+
+**Reason:** a read owed by a write on its own door is kept the same way: the refusal is of the read, not of the writes the server took, and a write sent again would be a second attempt (`queue-and-verdicts/page-never-sent`).
+
+**Tests:** `device/pages.test.ts › keeps the read of a page's writes owed where the server refuses it, and sends the rest of the queue`.
 
 ## The version a write carries
 
@@ -1696,7 +1704,7 @@ An edit is queued against the version the copy holds, and an edit waiting in the
 
 ### `queue-and-verdicts/own-create-edit-on-answer`
 
-When this device's create of a row or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over` or `queue-and-verdicts/create-repeat-edit-on-one` says otherwise.
+When this device's create of a row or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-on-one` or `queue-and-verdicts/page-create-edit-on-one` says otherwise.
 
 **Reason:** a row or edge of this device's own unanswered create is at version 0, which the server never mints (`versions/create-claim-none`), so sent as it stands the edit names a snapshot no server holds and is blocked `ancestor_unavailable`.
 
@@ -1725,6 +1733,14 @@ When the server answers this device's create of a row or an edge as a repeat it 
 **Reason:** a repeat is answered with the row or edge as it stands, whoever has written it since (`items/create-repeat` and `edges/id-repeat`); version 1 is the one that create made, and the server merges an item's edit against it, or refuses an edge's edit as stale wherever the edge has moved on.
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the version that create made where the server answers a repeat of it`.
+
+### `queue-and-verdicts/page-create-edit-on-one`
+
+When a create a page made is settled on a read that finds the row or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
+
+**Reason:** a page create makes version 1, and the read that settles it can come a drain later (`queue-and-verdicts/page-read-back-failed`), after another device has written the row or edge; on version 1 the server merges or conflicts on the edit as the type's policy says, rather than taking it over a write it never read.
+
+**Tests:** `device/pages.test.ts › sends an edit queued behind a page's create on the version the page made, so another device's edit since meets a conflict`.
 
 ### `queue-and-verdicts/edit-on-answer`
 

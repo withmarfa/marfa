@@ -678,7 +678,9 @@ pub(super) fn owed_by_a_page(receipt: &str) -> bool {
 /// Makes the reads `owe` left, a hundred rows to a request, and settles each
 /// write on what they find, as a page's read settles it. An edge the read of
 /// its source does not hold is read by its id. Any other write the reads do
-/// not find keeps its verdict, and its read stays owed as any other.
+/// not find keeps its verdict, and its read stays owed as any other. A read
+/// the server refuses stays owed, as one on its own door does, and the pass
+/// goes on.
 pub(super) fn settle_owed(
     core: &Core,
     stop: &AtomicBool,
@@ -702,7 +704,10 @@ pub(super) fn settle_owed(
                         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                     }));
                 }
-                Err(error) => return Err(context.failed(core, error)?),
+                Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
+                    return Err(context.failed(core, error)?);
+                }
+                Err(_) => break,
             };
             let mut again = Vec::new();
             for row in &left {
@@ -724,7 +729,10 @@ pub(super) fn settle_owed(
                                 retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                             }));
                         }
-                        Err(error) => return Err(error),
+                        Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
+                            return Err(error);
+                        }
+                        Err(_) => continue,
                     },
                 };
                 let Some((body, read)) = read else {
