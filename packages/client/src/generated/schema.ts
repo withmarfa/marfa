@@ -1599,7 +1599,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner
-         * @description Updates the owner's email, name, or picture URL and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Set `avatar` to `null` to clear the picture URL.
+         * @description Updates the owner's email, name, or picture URL and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity. Set `avatar` to `null` to clear the picture URL.
          */
         patch: operations["updateOwner"];
         trace?: never;
