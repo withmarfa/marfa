@@ -361,6 +361,11 @@ request that makes other writes first does not shift the count: a
 and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
 without an action counts every write.
 
+`fail:lock` counts only writes made for a caller. The target's own writes, such
+as a bulk-action job's chunks and the housekeeping jobs', are not counted, so a
+job that commits between setting the fault and the caller's request cannot take
+it.
+
 | Name                            | Reached                                                                                                                     | What it does                                                                                                                                                                                                                                                    |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `fail:lock[=<n>]`               | At the start of each write, before it does any work.                                                                        | The write meets the write lock held by something else for longer than the target waits for it, and is refused as `write_contention`. Nothing of the write is done.                                                                                              |

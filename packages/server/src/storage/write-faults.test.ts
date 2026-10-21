@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MarfaError } from "@withmarfa/shared";
 import { clearFaults, activeFaults, setFault } from "../control/faults.js";
+import { withRequestAuthority } from "../auth/request-authority.js";
+import { runInBackground } from "../background-context.js";
 import { reportableError } from "../error-text.js";
 import { diskFull } from "./disk-space.js";
 import { createTestContext, type TestContext } from "../test-utils.js";
@@ -50,17 +52,23 @@ async function failureOf(operation: Promise<unknown>): Promise<unknown> {
 }
 
 describe("fail:lock", () => {
-  it("refuses the nth write as write contention before it does any work, and the writes around it land", async () => {
+  /** A write as a request starts it. */
+  const asRequest = <T>(work: () => Promise<T>) =>
+    withRequestAuthority(() => Promise.resolve(), work);
+
+  it("refuses the nth write a request starts as write contention before it does any work, and the writes around it land", async () => {
     setFault("fail:lock", "2");
     let work = 0;
     const counted = (key: string) =>
-      runAuditedTransaction(
-        ctx.storage,
-        async () => {
-          work++;
-          await ctx.storage.settings.set(key, "v");
-        },
-        { action: "test.write", resource_type: "settings" },
+      asRequest(() =>
+        runAuditedTransaction(
+          ctx.storage,
+          async () => {
+            work++;
+            await ctx.storage.settings.set(key, "v");
+          },
+          { action: "test.write", resource_type: "settings" },
+        ),
       );
     await counted("a");
     const refused = await failureOf(counted("b"));
@@ -70,6 +78,17 @@ describe("fail:lock", () => {
     expect(work).toBe(2);
     expect(await ctx.storage.settings.get("b")).toBeNull();
     expect(await audited("test.write")).toBe(2);
+    expect(activeFaults()[0]).toMatchObject({ name: "fail:lock", fired: 1 });
+  });
+
+  it("does not count a write the server starts for itself, so the next request's write takes the fault", async () => {
+    setFault("fail:lock", "1");
+    await runInBackground(() => write("background"));
+    expect(activeFaults()[0]).toMatchObject({ name: "fail:lock", fired: 0 });
+    expect(await audited("test.write")).toBe(1);
+    const refused = await failureOf(asRequest(() => write("request")));
+    expect((refused as MarfaError).code).toBe("write_contention");
+    expect(await ctx.storage.settings.get("request")).toBeNull();
     expect(activeFaults()[0]).toMatchObject({ name: "fail:lock", fired: 1 });
   });
 });

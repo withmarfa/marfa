@@ -17,7 +17,9 @@
  *   `fired` count, so a fixture can tell that it acted, and is cleared like
  *   any other. A write point may name the audit action of the write it
  *   counts, as `items.bulk@2`, so a request that makes other writes first
- *   does not shift the count.
+ *   does not shift the count. `fail:lock` counts only the writes a request
+ *   starts, never the server's own, so a background job cannot take the fault
+ *   from the request it is set for.
  * - `deadline:<job>=<ms>` shortens the run deadline of that job.
  * - `free:<volume>=<bytes>` makes the server read that many bytes of free
  *   space on the volume (`database` or `blobs`) from now until the fault is
