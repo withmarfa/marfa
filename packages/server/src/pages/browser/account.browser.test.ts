@@ -169,7 +169,11 @@ async function theOwner() {
  * Changes the owner through the server's own door with a sign-in made now, so
  * a case that aged the sessions can still put things back.
  */
-async function setOwner(fields: { name?: string; email?: string }) {
+async function setOwner(fields: {
+  name?: string;
+  email?: string;
+  avatar?: string | null;
+}) {
   const signIn = await fetch(`${origin}/auth/sign-in/email`, {
     method: "POST",
     headers: {
@@ -203,10 +207,50 @@ const dialogOf = (page: Page, name: string) =>
 const done = (page: Page) => page.locator('[data-notice="done"]');
 
 const restore = async () => {
-  await setOwner({ name: ownerName, email: owner.email });
+  await setOwner({ name: ownerName, email: owner.email, avatar: null });
 };
 
 describe("Profile", () => {
+  inBrowser(
+    "sets and clears a picture address from the Profile page",
+    async () => {
+      const { page, context, requests, errors } = await open();
+      try {
+        await page.goto(origin + PROFILE);
+        await page.locator('[data-hook="change-avatar"]').click();
+        const dialog = dialogOf(page, "Change picture");
+        const field = dialog.getByLabel("Picture address");
+        await field.fill("file:///private/picture.png");
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await dialog
+          .getByText("Enter an http:// or https:// address.")
+          .waitFor();
+        expect(
+          requests.filter((request) => request.method === "PATCH"),
+        ).toEqual([]);
+
+        const url = "https://example.test/picture.png";
+        await field.fill(url);
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await done(page).getByText("Picture changed").waitFor();
+        expect((await theOwner()).avatar).toBe(url);
+        await page.getByText(url, { exact: true }).waitFor();
+        await page.locator('[data-hook="change-avatar"]').click();
+        expect(await dialog.getByLabel("Picture address").inputValue()).toBe(
+          url,
+        );
+        await dialog.getByLabel("Picture address").fill("");
+        await dialog.getByRole("button", { name: "Save" }).click();
+        await done(page).getByText("Picture changed").waitFor();
+        expect((await theOwner()).avatar).toBeNull();
+        expect(errors).toEqual([]);
+      } finally {
+        await context.close();
+        await restore();
+      }
+    },
+  );
+
   inBrowser(
     "shows the name and email and changes the name from the keyboard alone, under the real policy",
     async () => {
@@ -219,9 +263,10 @@ describe("Profile", () => {
         const before = await theOwner();
         await page.getByText(before.name, { exact: true }).waitFor();
         await page.getByText(`${before.email}. You sign in with it.`).waitFor();
-        expect(await page.getByText("Picture", { exact: true }).count()).toBe(
-          0,
-        );
+        await page
+          .locator("#profile-avatar")
+          .getByText("Picture", { exact: true })
+          .waitFor();
 
         await page.locator('[data-hook="change-name"]').focus();
         await page.keyboard.press("Enter");

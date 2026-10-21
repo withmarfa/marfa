@@ -47,6 +47,7 @@ export class SqliteOwnerStore implements OwnerStore {
         id: auth_user.id,
         email: auth_user.email,
         name: auth_user.name,
+        avatar: auth_user.image,
         createdAt: auth_user.createdAt,
       })
       .from(auth_user)

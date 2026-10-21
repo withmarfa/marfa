@@ -16,7 +16,7 @@ pub enum OwnerCommand {
     },
     /// Recover the owner's password using private machine authority; revoke browser sessions.
     Recover(SecretInput),
-    /// Change the owner's email or display name (private socket required).
+    /// Change the owner's email, display name, or avatar (private socket required).
     Update(OwnerUpdateArgs),
 }
 
@@ -29,6 +29,12 @@ pub struct OwnerUpdateArgs {
     /// The owner's display name.
     #[arg(long)]
     name: Option<String>,
+    /// An HTTP or HTTPS avatar URL. Marfa does not fetch it.
+    #[arg(long, conflicts_with = "clear_avatar")]
+    avatar: Option<String>,
+    /// Clear the avatar URL.
+    #[arg(long)]
+    clear_avatar: bool,
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +113,12 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             }
             if let Some(name) = args.name {
                 body.insert("name".into(), json!(name));
+            }
+            if let Some(avatar) = args.avatar {
+                body.insert("avatar".into(), json!(avatar));
+            }
+            if args.clear_avatar {
+                body.insert("avatar".into(), Value::Null);
             }
             out.value(&remote.json(&Request::patch(&["owner"]).json(Value::Object(body)))?)
         }

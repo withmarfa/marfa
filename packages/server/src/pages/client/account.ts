@@ -92,11 +92,11 @@ async function refusal(
 }
 
 function ownerChange(
-  field: "name" | "email",
+  field: "name" | "email" | "avatar",
   done: string,
   invalid: string,
 ): FormKind["send"] {
-  const why = `To change your ${field}, confirm it's you.`;
+  const why = `To change your ${field === "avatar" ? "picture" : field}, confirm it's you.`;
   return async (form, opener) => {
     const input = control(form, field);
     const value = input.value.trim();
@@ -106,7 +106,9 @@ function ownerChange(
           method: "PATCH",
           credentials: "same-origin",
           headers: JSON_HEADERS,
-          body: JSON.stringify({ [field]: value }),
+          body: JSON.stringify({
+            [field]: field === "avatar" && value === "" ? null : value,
+          }),
         }),
       why,
       opener,
@@ -246,6 +248,27 @@ const FORMS: Readonly<Record<string, FormKind>> = {
       return text === undefined ? undefined : { control: input, text };
     },
     send: ownerChange("email", "Email changed", ACCOUNT_WORDS.emailShape),
+  },
+  avatar: {
+    check: (form) => {
+      const input = control(form, "avatar");
+      const value = input.value.trim();
+      if (value === "") return undefined;
+      if (value.length > 2048)
+        return { control: input, text: "Use 2048 characters or fewer." };
+      try {
+        if (["http:", "https:"].includes(new URL(value).protocol))
+          return undefined;
+      } catch {
+        // The server remains the authority for URL validation.
+      }
+      return { control: input, text: "Enter an http:// or https:// address." };
+    },
+    send: ownerChange(
+      "avatar",
+      "Picture changed",
+      "Enter a valid picture address.",
+    ),
   },
   password: {
     check: (form) => {

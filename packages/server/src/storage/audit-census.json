@@ -491,7 +491,7 @@
     }
   },
   "routes/owner.ts": {
-    "boundary": "Owner email and name changes and their audit share the same transaction after recent direct authority is checked.",
+    "boundary": "Owner email, name, and avatar changes and their audit share the same transaction after recent direct authority is checked.",
     "calls": {
       "OwnerStore.update": 1,
       "runAuditedTransaction": 1

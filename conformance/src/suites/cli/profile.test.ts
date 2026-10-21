@@ -37,6 +37,22 @@ it("changes owner through the private socket and profile through its credential"
     email: "updated@example.test",
     name: "CLI owner",
   });
+  const pictured = await local.json<{ avatar: string | null }>([
+    "owner",
+    "update",
+    "--avatar",
+    "https://example.test/owner.png",
+  ]);
+  expect(pictured.avatar).toBe("https://example.test/owner.png");
+  expect(
+    (await local.json<{ avatar: string | null }>(["owner", "show"])).avatar,
+  ).toBe("https://example.test/owner.png");
+  const cleared = await local.json<{ avatar: string | null }>([
+    "owner",
+    "update",
+    "--clear-avatar",
+  ]);
+  expect(cleared.avatar).toBeNull();
   const refused = await delegated
     .as(undefined)
     .refused(["owner", "update", "--name", "No"]);

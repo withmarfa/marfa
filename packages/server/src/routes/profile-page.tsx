@@ -1,10 +1,5 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource hono/jsx */
-/**
- * Profile: the owner's name and email, each changed in a dialog. The change
- * itself is made by the browser module `client/account.ts` through
- * `PATCH /owner`, which checks the values and asks for a recent sign-in.
- */
 import { renderDocument } from "../pages/render.js";
 import {
   Button,
@@ -22,11 +17,11 @@ export const PROFILE_HREF = "/auth/owner/profile";
 export interface ProfilePageParams {
   nonce: string;
   instanceName: string;
-  owner: { name: string; email: string };
+  owner: { name: string; email: string; avatar: string | null };
 }
 
 function ChangeDialog(props: {
-  kind: "name" | "email";
+  kind: "name" | "email" | "avatar";
   title: string;
   description: string;
   label: string;
@@ -66,9 +61,15 @@ function ChangeDialog(props: {
           id={`profile-${props.kind}-input`}
           name={props.kind}
           label={props.label}
-          type={props.kind === "email" ? "email" : "text"}
+          type={
+            props.kind === "email"
+              ? "email"
+              : props.kind === "avatar"
+                ? "url"
+                : "text"
+          }
           value={props.value}
-          autocomplete={props.kind}
+          autocomplete={props.kind === "avatar" ? "off" : props.kind}
           full
         />
       </form>
@@ -88,7 +89,7 @@ export function ProfilePage(props: ProfilePageParams) {
       <div class="stack-24">
         <PageHeader
           title="Profile"
-          lede="Your name and email. Apps see them only if you let them."
+          lede="Your name, email and picture. Apps see them only if you let them."
         />
         <div data-notice="done" hidden>
           <Notice>
@@ -126,6 +127,27 @@ export function ProfilePage(props: ProfilePageParams) {
               </Button>
             }
           />
+          <Row
+            id="profile-avatar"
+            title="Picture"
+            description={props.owner.avatar ?? "No picture address set"}
+            buttons={
+              <>
+                <span class="tile" aria-hidden="true">
+                  {Array.from(
+                    props.owner.name || props.owner.email,
+                  )[0]?.toUpperCase() ?? "?"}
+                </span>
+                <Button
+                  kind="quiet"
+                  opens="profile-avatar-dialog"
+                  hook="change-avatar"
+                >
+                  Change
+                </Button>
+              </>
+            }
+          />
         </RowGroup>
         <ChangeDialog
           kind="name"
@@ -140,6 +162,13 @@ export function ProfilePage(props: ProfilePageParams) {
           description="You sign in with this email. Marfa sends no email, so there's nothing to confirm."
           label="Email"
           value={props.owner.email}
+        />
+        <ChangeDialog
+          kind="avatar"
+          title="Change picture"
+          description="The address of an image on the web. Leave it empty to clear the picture address."
+          label="Picture address"
+          value={props.owner.avatar ?? ""}
         />
       </div>
     </ConsolePage>
