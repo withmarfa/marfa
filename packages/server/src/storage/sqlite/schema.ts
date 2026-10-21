@@ -484,11 +484,7 @@ export const blobStores = sqliteTable("blob_stores", {
 });
 
 // ---------------------------------------------------------------------------
-// blob_locations: the copy record, which stores hold which blob.
-//
-// The table keeps its SQL name: the server refuses a database whose schema
-// differs from this build's, so renaming it would refuse every existing
-// database.
+// blob_copies: the copy record, which stores hold which blob.
 //
 // A row is written only once the store has the bytes and they hashed to
 // their name; `verified_at` is the last time a check found the copy present
@@ -496,7 +492,7 @@ export const blobStores = sqliteTable("blob_stores", {
 // still attached.
 // ---------------------------------------------------------------------------
 export const blobCopies = sqliteTable(
-  "blob_locations",
+  "blob_copies",
   {
     hash: text("hash")
       .notNull()
@@ -510,7 +506,7 @@ export const blobCopies = sqliteTable(
   (table) => [
     primaryKey({ columns: [table.hash, table.store_id] }),
     // The integrity check takes a store's least recently checked copies.
-    index("idx_blob_locations_store_verified").on(
+    index("idx_blob_copies_store_verified").on(
       table.store_id,
       table.verified_at,
     ),
