@@ -126,9 +126,9 @@ Within a group, operations come in the order a developer meets them:
 6. Delete.
 7. The group's other actions, in the order a developer meets them. For example, restore comes before purge.
 
-A group starts with the first of these it has. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, or for a request Marfa sends, the name the document's `webhooks` gives it. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
+A group starts with the first of these it has, with two exceptions: Connector state starts with the hold, which a process takes before it writes, and Metadata puts Replace before Update. Give the order as the group's `operations` in `PUBLIC_TAGS`, each an `operationId`, or for a request Marfa sends, the name the document's `webhooks` gives it. The document publishes the list as `x-operation-order` on the tag and orders `paths` by the first appearance of their operations in the lists, so a reader of `openapi.json` follows the same order. A path whose methods fall in two groups stands where its earliest operation does.
 
-**(checked)** Every published operation and webhook is listed once, under its own tag, and every name in a list is published. A new operation fails `openapi-operation-order.test.ts`, naming it, until it has an entry.
+`openapi-operation-order.test.ts` checks that every published operation and webhook is listed once, under its own tag, and that every name in a list is published. A new operation fails it, naming the operation, until it has an entry.
 
 Leave the route mounts in `app.ts` alone: Hono matches in registration order, and a static route such as `/items/stats` shares a prefix with a parameter route.
 

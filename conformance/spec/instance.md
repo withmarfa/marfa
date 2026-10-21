@@ -276,9 +276,15 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 
 ### `instance/document-groups`
 
-When `GET /openapi.json` is answered, the server MUST give each operation in `paths` exactly one tag, and declare in `tags` only tags that an operation carries.
+When `GET /openapi.json` is answered, the server MUST give each operation in `paths` exactly one tag.
 
 **Tests:** `compliance/instance.test.ts › declares no tag that no operation carries, and no operation without one`, `› lists every operation once, under its own tag, in each tag's x-operation-order`.
+
+### `instance/document-tags`
+
+When `GET /openapi.json` is answered, the server MUST declare in `tags` exactly the tags that its operations carry.
+
+**Tests:** `compliance/instance.test.ts › declares no tag that no operation carries, and no operation without one`.
 
 ### `instance/document-operation-order`
 

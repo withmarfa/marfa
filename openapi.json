@@ -55719,7 +55719,7 @@
     },
     {
       "name": "API keys",
-      "description": "The keys that sign requests to this instance, and the permissions each holds.",
+      "description": "The keys that authenticate requests to this instance, and the permissions each holds.",
       "x-operation-order": [
         "createKey",
         "getCurrentKey",
@@ -55730,7 +55730,7 @@
     },
     {
       "name": "Apps",
-      "description": "Apps that register as OAuth clients, and the access you grant them.",
+      "description": "Apps that register as OAuth clients, and the access the owner grants them.",
       "x-operation-order": [
         "registerOAuthClient",
         "listAppGrants",

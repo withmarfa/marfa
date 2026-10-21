@@ -85,7 +85,6 @@ export const SERVERS = [
 ];
 
 export interface PublicTag {
-  /** The group's heading in the reference. */
   readonly name: string;
   readonly description: string;
   /**
@@ -299,7 +298,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "API keys",
     description:
-      "The keys that sign requests to this instance, and the permissions each holds.",
+      "The keys that authenticate requests to this instance, and the permissions each holds.",
     operations: [
       "createKey",
       "getCurrentKey",
@@ -311,7 +310,7 @@ export const PUBLIC_TAGS: readonly PublicTag[] = [
   {
     name: "Apps",
     description:
-      "Apps that register as OAuth clients, and the access you grant them.",
+      "Apps that register as OAuth clients, and the access the owner grants them.",
     operations: [
       "registerOAuthClient",
       "listAppGrants",
