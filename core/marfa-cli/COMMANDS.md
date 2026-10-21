@@ -45,7 +45,7 @@ With --json a refusal is one JSON object on stderr:
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `no_store`, `no_credential`, `blobs_missing`, `docs_page_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `contract_mismatch`, `canceled`, `first_sync_waiting`, `invalid`, `not_held`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `blobs_missing`, `docs_page_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -3689,3 +3689,102 @@ Every docs page: its title, address and description.
 ```text
 marfa docs topics [OPTIONS]
 ```
+
+## server
+
+A server on this machine, in Docker: install it, upgrade it, see how it is and take it down.
+
+### marfa server
+
+```text
+marfa server [OPTIONS] <COMMAND>
+```
+
+### marfa server install
+
+Set up a server on this machine and print the link that claims it.
+
+Needs Docker with Compose. It writes a Compose file and two settings files into `--dir`, makes the server's two secrets once and keeps them in `marfa.env`, which only you can read, starts the pinned release with a restart policy, and prints the one-time setup link. It never prints a secret. Running it again changes only what is not already as asked, and never a secret.
+
+It asks how the server is reached, because that decides which caller address the server believes. Every question has a flag, and `--yes` or a non-terminal answers none: the flag or the default is used.
+
+```text
+marfa server install [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--name <NAME>` | What this install is called: the container, the data volume and the Compose project are named from it. The default is `marfa`. |
+| `--release <VERSION>` | The release to run, such as `0.0.22`. The default is this binary's own version, and for a server already installed, the release it runs. |
+| `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
+| `--address <URL>` | The address devices use, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. |
+| `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
+| `--https-port <PORT>` | The port Tailscale serves on, for `--access tailscale`. The default is 443. |
+| `--s3-bucket <BUCKET>` | Keep a copy of the data in an S3-compatible bucket: its name. Setting any `--s3-` option turns the copy on. The secret key is read from `S3_SECRET_ACCESS_KEY` or asked for, never taken as an option. |
+| `--s3-region <REGION>` | The bucket's region. |
+| `--s3-endpoint <URL>` | The bucket's address, for a store other than Amazon S3. |
+| `--s3-access-key-id <ID>` | The bucket's access key ID. |
+| `--s3-prefix <PREFIX>` | Where in the bucket this install keeps its copy. It must be this install's own. The default is the install's name. |
+| `--external-settings` | The server's settings file, `marfa.env` in `--dir`, is written by something else, such as a secrets manager. This command then never makes or changes it: it checks that it holds the secrets, the address and the proxy setting this install needs, and says what is missing. |
+| `--autostart` | Start the server when you log in, even if Docker is not running yet: a launchd agent that runs `server start`. The default on a Mac. |
+| `--no-autostart` | Do not start the server at login. |
+| `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
+| `-y, --yes` | Ask nothing: use the flags and the defaults. |
+
+### marfa server upgrade
+
+Move the server to a release, after printing what to read first.
+
+Stops at the release you name or at this binary's own. It refuses an older release than the one installed, because a newer release may have changed the database's shape.
+
+```text
+marfa server upgrade [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--release <VERSION>` | The release to move to. The default is this binary's own version. |
+| `--wait <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
+
+### marfa server status
+
+Whether the server runs, its release and address, and whether it is claimed.
+
+```text
+marfa server status [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+
+### marfa server start
+
+Bring the server up: start Docker's engine if it is down (on a Mac), then the container. What the login agent runs.
+
+```text
+marfa server start [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--wait <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
+
+### marfa server uninstall
+
+Stop the server and remove its container, keeping its data.
+
+The data volume, the settings and the secrets stay, so `install` brings the same server back. `--delete-data` removes the volume too.
+
+```text
+marfa server uninstall [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory. |
+| `--delete-data` | Also delete the data volume and the settings. This cannot be undone. |
+| `-y, --yes` | Do not ask before `--delete-data`. |

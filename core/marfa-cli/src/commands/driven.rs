@@ -180,6 +180,9 @@ fn skipped(words: &[String]) -> bool {
         || first == Some("operations")
         // Reads the docs site, never a server.
         || first == Some("docs")
+        // Runs Docker on this machine, never a request to a server; the
+        // fixtures in `tests/server.rs` hold it.
+        || first == Some("server")
         // Prints a definition from its arguments and sends nothing.
         || words == ["types", "scaffold"]
         // Remote settings and health commands need no local folder. Other

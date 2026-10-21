@@ -24,6 +24,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::ClosedOutput => "the output was closed",
         CliError::Refused { status, .. } => refused(refused_code(*status)),
         CliError::Usage(_) => "the command line was wrong",
+        CliError::Install(_) => "Docker or Tailscale did not do what the server install needs",
         CliError::NoStoreNamed | CliError::NoStoreAt(_) => {
             "no working copy was named, or none exists where it was named"
         }

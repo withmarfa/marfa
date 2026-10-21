@@ -270,7 +270,7 @@ WantedBy=default.target
 /// The path the binary was run by, where it leads to the binary running:
 /// Linux gives `current_exe` with links resolved, and a link such as a
 /// package manager's survives an upgrade that replaces what it leads to.
-fn invoked(
+pub(crate) fn invoked(
     argv0: Option<&std::ffi::OsStr>,
     path: Option<&std::ffi::OsStr>,
     cwd: &Path,
@@ -295,7 +295,7 @@ fn invoked(
 
 /// A path the agent's file can carry: text with no control character, which
 /// neither a property list nor a unit file can hold.
-fn text(path: &Path) -> Result<&str, CliError> {
+pub(crate) fn text(path: &Path) -> Result<&str, CliError> {
     path.to_str()
         .filter(|text| !text.chars().any(char::is_control))
         .ok_or_else(|| {
@@ -306,7 +306,7 @@ fn text(path: &Path) -> Result<&str, CliError> {
         })
 }
 
-fn xml(text: &str) -> String {
+pub(crate) fn xml(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

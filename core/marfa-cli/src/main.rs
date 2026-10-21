@@ -17,6 +17,7 @@ mod output;
 #[cfg(test)]
 mod reference;
 mod remote;
+mod server;
 mod storage;
 mod telemetry;
 mod values;
@@ -252,6 +253,12 @@ enum Command {
         command: FoldersCommand,
     },
     Docs(docs::DocsArgs),
+    /// A server on this machine, in Docker: install it, upgrade it, see how
+    /// it is and take it down.
+    Server {
+        #[command(subcommand)]
+        command: server::ServerCommand,
+    },
 }
 
 fn main() -> ExitCode {
@@ -388,6 +395,7 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
             | Command::Device(_)
             | Command::Folders { .. }
             | Command::Docs(_)
+            | Command::Server { .. }
             | Command::Types {
                 command: types::TypesCommand::Scaffold(_)
             }
@@ -455,6 +463,11 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "types scaffold contacts no server and takes neither --url nor --key".into(),
         ));
     }
+    if matches!(cli.command, Command::Server { .. }) && (cli.url.is_some() || cli.key.is_some()) {
+        return Err(CliError::Usage(
+            "server commands run Docker on this machine and take neither --url nor --key".into(),
+        ));
+    }
     let named = Named {
         url: cli.url,
         key: cli.key,
@@ -483,6 +496,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
     match cli.command {
         Command::Operations => operations::run(&out),
         Command::Docs(args) => docs::run(args, &named, &out),
+        Command::Server { command } => server::run(command, &out),
         Command::Login(args) => login::run(args, &named, &out),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
