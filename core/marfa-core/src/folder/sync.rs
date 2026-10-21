@@ -21,6 +21,9 @@ pub struct SyncReport {
     /// Every write the sync sent, those the pull queued after the first
     /// drain included.
     pub drain: Drained,
+    /// The hydration the drain took where the server said the copy's read
+    /// view had changed, before it sent the writes still waiting.
+    pub rebuilt: Option<HydrateReport>,
     /// Why the catch-up could not reach the server, where it could not; the
     /// sync goes on to write out the copy it holds.
     pub catch_up: std::result::Result<CaughtUp, CoreError>,
@@ -37,6 +40,8 @@ pub struct SendReport {
     pub settings: SettingsFileReport,
     pub scan: ScanReport,
     pub drain: Drained,
+    /// As for `SyncReport`.
+    pub rebuilt: Option<HydrateReport>,
 }
 
 impl Folder {
@@ -117,12 +122,13 @@ impl Folder {
         let hydrated = self.resume()?;
         let settings = self.send_settings_edit()?;
         let scan = self.scan_keeping_files()?;
-        let drain = self.drain()?;
+        let (drain, rebuilt) = self.drain_rebuilding()?;
         Ok(SendReport {
             hydrated,
             settings,
             scan,
             drain,
+            rebuilt,
         })
     }
 
@@ -141,7 +147,7 @@ impl Folder {
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
         let scan = self.scan()?;
-        let mut drain = self.drain()?;
+        let (mut drain, rebuilt) = self.drain_rebuilding()?;
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
@@ -164,9 +170,25 @@ impl Folder {
             settings,
             scan,
             drain,
+            rebuilt,
             catch_up,
             pull,
         })
+    }
+
+    /// A drain that the server ends by saying the copy's read view changed,
+    /// as it does once the folder's key is replaced or narrowed, builds the
+    /// copy again and drains once more, so the writes still waiting go out in
+    /// this run rather than the next. Once only: a second change ends the run.
+    /// A rebuild that fails ends it with its own error, the queue kept.
+    fn drain_rebuilding(&self) -> Result<(Drained, Option<HydrateReport>)> {
+        match self.drain() {
+            Err(CoreError::CopyExpired { reason }) if reason == "read_view_changed" => {
+                let rebuilt = self.hydrate()?;
+                Ok((self.drain()?, Some(rebuilt)))
+            }
+            drained => drained.map(|drained| (drained, None)),
+        }
     }
 
     /// Takes the folder at `dir` off this machine: its own state under

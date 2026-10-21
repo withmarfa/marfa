@@ -2588,6 +2588,200 @@ describe("files and items", () => {
     }
   });
 
+  describe("a copy whose read view changes under a push", () => {
+    /**
+     * A folder of notes whose server, at the read after the first write it
+     * answers, says the copy's read view has changed, as it does once the
+     * folder's key is replaced. A hydration lists every note created since,
+     * as the server would, and reads the catalog through `catalog` once the
+     * view has changed.
+     */
+    async function rekeyed(
+      label: string,
+      catalog: () => Answer = () => typeCatalog(),
+      again = false,
+    ): Promise<{ harness: FolderHarness; changed: () => boolean }> {
+      const notes: Array<{ item: WireItemOptions }> = [];
+      const made = await folderHarness(label, { rows: { "core.note": notes } });
+      let changed = false;
+      scriptFolderWrites(made, {
+        creating: (answer) => {
+          if (answer.kind === "json" && answer.status === 201) {
+            const { item } = answer.body as { item: WireItemOptions };
+            notes.push({ item });
+          }
+          return answer;
+        },
+        reading: (answer, request) => {
+          if (changed && !again) return answer;
+          // A bulk read resolves each id through this door too, and a
+          // hydration's reads are answered: only a read by id is refused.
+          if (!made.server.requests.includes(request)) return answer;
+          changed = true;
+          return refusal(409, "read_view_changed", "The read view has changed");
+        },
+      });
+      made.server.copyAnswer("GET", "/types", () =>
+        changed ? catalog() : typeCatalog(),
+      );
+      return { harness: made, changed: () => changed };
+    }
+
+    /** The copy-stream bootstraps a hydration starts with. */
+    function hydrations(made: FolderHarness): number {
+      return made.server.requests.filter(
+        (request) =>
+          request.method === "GET" &&
+          request.pathname === "/events" &&
+          request.headers["last-event-id"] === undefined &&
+          request.headers["x-marfa-read-view"] === undefined,
+      ).length;
+    }
+
+    it.each([
+      { run: "push", sendOnly: false },
+      { run: "send-only push", sendOnly: true },
+    ])(
+      "builds the copy again and delivers every waiting write in the same $run",
+      async ({ sendOnly }) => {
+        const made = await rekeyed(
+          `folder-push-view-changed${sendOnly ? "-send-only" : ""}`,
+        );
+        harness = made.harness;
+        for (const title of ["One", "Two"]) {
+          put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+        }
+        const before = hydrations(harness);
+        const pushed = sendOnly
+          ? await harness.folder.pushSendOnly()
+          : await harness.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        if (!pushed.ok) return;
+        // The witness: the server did say the view changed, under this push.
+        expect(made.changed()).toBe(true);
+        expect(
+          hydrations(harness) - before,
+          "the push did not build the copy again",
+        ).toBe(1);
+        expect(pushed.value.exit, JSON.stringify(pushed.value)).toBe(0);
+        expect(pushed.value.drain.undelivered).toBe(0);
+        expect(pushed.value.rebuilt?.items).toBeGreaterThan(0);
+        expect(
+          sentTitles(harness).sort(),
+          "a write was lost, or sent twice, across the rebuild",
+        ).toEqual(["One", "Two"]);
+
+        const again = await harness.folder.push();
+        expect(again.ok, JSON.stringify(again)).toBe(true);
+        if (!again.ok) return;
+        expect(again.value.exit).toBe(0);
+        expect(again.value.rebuilt).toBeNull();
+        expect(sentTitles(harness).sort()).toEqual(["One", "Two"]);
+      },
+    );
+
+    it("builds the copy again while watching and delivers every waiting write, still watching", async () => {
+      const made = await rekeyed("folder-watch-view-changed");
+      harness = made.harness;
+      for (const title of ["One", "Two"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(sentTitles(harness!).sort(), watching.stderr).toEqual([
+              "One",
+              "Two",
+            ]),
+          { timeout: 30_000, interval: 100 },
+        );
+        expect(made.changed()).toBe(true);
+        expect(hydrations(harness) - before).toBeGreaterThanOrEqual(1);
+        expect(watching.running(), watching.stderr).toBe(true);
+      } finally {
+        await watching.stop();
+      }
+      expect(sentTitles(harness).sort()).toEqual(["One", "Two"]);
+    });
+
+    it("builds the copy again only once in a push, and ends it copy_expired where the view changes again", async () => {
+      const made = await rekeyed(
+        "folder-push-view-changes-twice",
+        () => typeCatalog(),
+        true,
+      );
+      harness = made.harness;
+      for (const title of ["One", "Two", "Three"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const before = hydrations(harness);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+      if (pushed.ok) return;
+      expect(pushed.refusal.code).toBe("copy_expired");
+      expect(pushed.refusal.raw).toContain("read_view_changed");
+      expect(hydrations(harness) - before).toBe(1);
+      // The witness: the drain after the rebuild went, and read the answered
+      // write back under the new view, which was refused again.
+      const settingsId = harness.settings.id;
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "GET" &&
+            /^\/items\/[^/]+$/.test(request.pathname) &&
+            request.pathname !== `/items/${settingsId}` &&
+            request.headers["x-marfa-read-view"] !== undefined,
+        ),
+      ).toHaveLength(2);
+      expect(sentTitles(harness)).toEqual(["One"]);
+    });
+
+    it("ends the push with the rebuild's own failure, keeping the writes for the next push", async () => {
+      let failing = true;
+      const made = await rekeyed(
+        "folder-push-view-changed-rebuild-fails",
+        () => (failing ? answers.serverFault() : typeCatalog()),
+      );
+      harness = made.harness;
+      for (const title of ["One", "Two"]) {
+        put(harness, `${title}.md`, `---\ntitle: ${title}\n---\n${title}\n`);
+      }
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+      if (pushed.ok) return;
+      expect(made.changed()).toBe(true);
+      // The witness for the code: the drain alone ends `copy_expired`.
+      expect(
+        pushed.refusal.code,
+        "the push said the copy expired rather than why the rebuild failed",
+      ).toBe("server");
+      expect(pushed.refusal.raw).toContain('"exit":3');
+      // The first create was taken before the view changed; the second waits.
+      expect(sentTitles(harness)).toHaveLength(1);
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      if (!queued.ok) return;
+      expect(
+        queued.value.filter(
+          (write) => write.kind === "create_item" && write.verdict === null,
+        ),
+        "the write waiting behind the change was not kept",
+      ).toHaveLength(1);
+
+      failing = false;
+      const next = await harness.folder.push();
+      expect(next.ok, JSON.stringify(next)).toBe(true);
+      if (!next.ok) return;
+      expect(next.value.exit).toBe(0);
+      expect(
+        sentTitles(harness).sort(),
+        "a write was lost, or sent twice, after the rebuild failed",
+      ).toEqual(["One", "Two"]);
+    });
+  });
+
   describe("a copy that falls behind the log", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {

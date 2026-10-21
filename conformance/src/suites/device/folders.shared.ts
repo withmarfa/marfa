@@ -155,6 +155,9 @@ export function scriptFolderWrites(
     /** The answer a create is given in place of the door's own, which it is
      *  handed: a gated one, say. */
     creating?: (answer: Answer, request: RecordedRequest) => Answer;
+    /** The answer the read of a row is given in place of the door's own,
+     *  which it is handed: a refusal under a read view that changed, say. */
+    reading?: (answer: Answer, request: RecordedRequest) => Answer;
   } = {},
 ): Map<string, DoorRow> {
   // What the hydration served, so a write to one of those rows is answered
@@ -203,7 +206,12 @@ export function scriptFolderWrites(
       },
     ],
     // Reconciliation reads the current server row after each settled write.
-    read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
+    read: [
+      (request) => {
+        const answer = door.read(request.pathname.split("/").at(-1) ?? "");
+        return options.reading?.(answer, request) ?? answer;
+      },
+    ],
     // The tags a row holds move as the tag doors are told.
     tags: [
       (request) => {

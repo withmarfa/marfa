@@ -3690,6 +3690,36 @@ When a folder’s cursor has aged out of the server log, a device MUST hydrate a
 
 **Tests:** `device/folders.test.ts › hydrates again at a push whose cursor the log has aged past`, `device/folders.test.ts › hydrates again while watching when the log ages past its cursor`.
 
+### `folders/view-changed-push-rebuilds`
+
+When a folder push's drain or a send-only run's drain ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and drain once more in the same run, sending each write still waiting once.
+
+**Reason:** A key that is replaced or narrowed changes the read view the copy was built under (`device/view-changed`), and a run that stopped there would leave every write behind it waiting for no cause the person can act on. The rebuild reads under the new view, so nothing the new key cannot read stays in the copy.
+
+**Tests:** `device/folders.test.ts › builds the copy again and delivers every waiting write in the same $run`.
+
+### `folders/view-changed-push-once`
+
+If the drain after a folder push's rebuild for a changed read view also ends `copy_expired` with the reason `read_view_changed`, then a device MUST end the run `copy_expired` without hydrating again, keeping the writes still waiting.
+
+**Reason:** A view that changes again at once is changing under the run, and rebuilding without end would spend the key's rate limit and never finish.
+
+**Tests:** `device/folders.test.ts › builds the copy again only once in a push, and ends it copy_expired where the view changes again`.
+
+### `folders/view-changed-rebuild-fails`
+
+If the hydration a folder push takes for a changed read view fails, then the CLI MUST end the push with that hydration's own error and exit code, keeping the writes still waiting for the next push.
+
+**Reason:** The person acts on why the rebuild failed, such as a server that cannot be reached, not on the changed view the rebuild was answering.
+
+**Tests:** `device/folders.test.ts › ends the push with the rebuild's own failure, keeping the writes for the next push`.
+
+### `folders/view-changed-watch-rebuilds`
+
+When a folder watch's drain ends `copy_expired` with the reason `read_view_changed`, a device MUST hydrate the copy again and send the writes still waiting without ending the watch.
+
+**Tests:** `device/folders.test.ts › builds the copy again while watching and delivers every waiting write, still watching`.
+
 ### `folders/failed-hydration-retried`
 
 When a folder push previously failed to hydrate a usable copy, a device MUST retry hydration at the next push.
