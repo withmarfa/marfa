@@ -174,10 +174,11 @@ impl Folder {
             // pull ends it.
             if !rebuilt_before && rebuilt.is_some() {
                 let mut again = self.pull()?;
+                let places_again = places(&again);
                 if let Some(first) = &pull {
                     again.add_writes(first);
                 }
-                if sends_again(true, &drain.report) && places(&again) {
+                if sends_again(true, &drain.report) && places_again {
                     let last = self.drain_rebuilding(&mut rebuilt)?;
                     self.absorb(&mut drain, last)?;
                 }
