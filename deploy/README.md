@@ -61,6 +61,8 @@ A build without `VERSION_RELEASE` names no release: `GET /` answers `version` an
 
 Without `S3_BUCKET` the container runs the server alone and says so in its log: nothing is streamed and no object store is attached. That is a local trial, not a deployment.
 
+In that case a start over a blob folder that is missing, or that has lost its `.marfa-store` file, is refused when the database records saved files in the store kept there, because the drive may not have mounted. The server names the folder and stops with status `1`, so a restart policy tries again once the drive is back. Mount or restore the folder with its `.marfa-store` file. To start with an empty folder on purpose, point `BLOB_PATH` at another folder: the store kept at the old one is then detached. With a bucket attached the server starts on an empty folder instead, and `blob-replicate` fills it, which is how [Restoring by hand](#restoring-by-hand) rebuilds an instance. `stores/missing-folder-refused` in `conformance/spec/stores.md` states the rule.
+
 ## Claiming the instance
 
 Open `/setup` at the instance's public URL and enter the setup code printed in its log. Choose the owner's email and password. The claim signs you in and goes on to add a passkey, name the instance and connect something. Setup closes when the claim commits; deleting or revoking ordinary keys never reopens it.

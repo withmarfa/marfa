@@ -316,6 +316,28 @@ export type BlobLayerConfig = Pick<
   | "testHooks"
 >;
 
+/**
+ * Refuses a new disk store at a folder where the location log still records
+ * copies in the store that was there: a drive that did not mount leaves the
+ * folder or its marker missing, and a new store over it would hide every
+ * saved file and take every new one where the drive, once back, hides it.
+ * Only where the disk is the one store: with an object store attached, the
+ * bucket serves the copies and replication refills the new folder, which is
+ * how an instance is rebuilt from the bucket onto an empty volume.
+ */
+async function refuseNewStoreOverCopies(
+  storage: Storage,
+  disk: DiskBlobStore,
+): Promise<void> {
+  const claimed = await storage.blobs.copiesClaimedAt("disk", disk.locator);
+  if (claimed.length === 0) return;
+  const copies = claimed.reduce((sum, store) => sum + store.copies, 0);
+  const ids = claimed.map((store) => store.store_id).join(", ");
+  throw new Error(
+    `The file folder ${disk.locator} is missing its store marker, but the database records ${String(copies)} saved file${copies === 1 ? "" : "s"} in the store kept there (${ids}). Mount or restore it, with its .marfa-store file, and start the server again.`,
+  );
+}
+
 export async function createBlobLayer(
   storage: Storage,
   config: BlobLayerConfig,
@@ -337,7 +359,10 @@ export async function createBlobLayer(
   if (config.testHooks) for (const store of stores) withBlobFaults(store);
   // Marker creation and remote store discovery cannot be rolled back by SQL.
   // Finish both before claiming any registry change.
-  for (const store of stores) await store.attach();
+  await disk.attach(
+    s3 ? undefined : () => refuseNewStoreOverCopies(storage, disk),
+  );
+  if (s3) await s3.attach();
   await runAuditedTransaction(
     storage,
     async () => {

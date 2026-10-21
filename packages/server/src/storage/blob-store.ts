@@ -259,24 +259,34 @@ export class DiskBlobStore implements BlobStore {
     return join(this.locator, SPOOL_DIR);
   }
 
-  async attach(): Promise<void> {
-    await mkdir(this.spoolDir, { recursive: true });
+  /**
+   * `beforeNewStore` runs when the folder, or its marker, is missing, before
+   * anything is created there; it refuses the new store by throwing.
+   */
+  async attach(beforeNewStore?: () => Promise<void>): Promise<void> {
     const markerPath = join(this.locator, MARKER);
+    let raw: string | null = null;
     try {
-      const raw = await readFile(markerPath, "utf8");
-      const parsed = JSON.parse(raw) as { id?: unknown };
-      if (typeof parsed.id !== "string" || parsed.id.length === 0) {
-        throw new Error(`the store marker at ${markerPath} names no id`);
-      }
-      this.storeId = parsed.id;
+      raw = await readFile(markerPath, "utf8");
     } catch (err) {
       if (!isEnoent(err)) throw err;
+    }
+    if (raw === null) {
+      await beforeNewStore?.();
+      await mkdir(this.locator, { recursive: true });
       const id = generateId();
       await writeFile(markerPath, JSON.stringify({ id }) + "\n", {
         flag: "wx",
       });
       this.storeId = id;
+    } else {
+      const parsed = JSON.parse(raw) as { id?: unknown };
+      if (typeof parsed.id !== "string" || parsed.id.length === 0) {
+        throw new Error(`the store marker at ${markerPath} names no id`);
+      }
+      this.storeId = parsed.id;
     }
+    await mkdir(this.spoolDir, { recursive: true });
     // A spool left by a process that died mid-upload is bytes nothing will
     // ever name. Each boot starts with an empty spool.
     for (const entry of await readdir(this.spoolDir)) {

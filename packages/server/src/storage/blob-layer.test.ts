@@ -1,4 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import {
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -162,6 +171,122 @@ describe("createBlobLayer", () => {
     expect(after.map((row) => [row.store_id, row.detached])).toEqual([
       [ctx.blobs.disk.id, true],
     ]);
+  });
+
+  describe("a disk folder found without its marker at start", () => {
+    async function uploadOne(context: TestContext): Promise<string> {
+      const res = await context.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${context.workingKey}`,
+          "Content-Type": "text/plain",
+        },
+        body: new TextEncoder().encode(`a saved file ${randomUUID()}`),
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { hash: string }).hash;
+    }
+
+    /** The configuration the context booted with, disk only. */
+    async function sameFolder(context: TestContext): Promise<BlobLayerConfig> {
+      return { ...(await diskAt()), blobPath: context.blobs.disk.locator };
+    }
+
+    it("refuses to start over a missing folder whose store holds copies, and creates nothing there", async () => {
+      ctx = await createTestContext();
+      const folder = ctx.blobs.disk.locator;
+      await uploadOne(ctx);
+      const before = await ctx.storage.blobs.listStores();
+      const away = `${folder}.away`;
+      await rename(folder, away);
+
+      await expect(
+        createBlobLayer(ctx.storage, await sameFolder(ctx)),
+      ).rejects.toThrow(
+        `The file folder ${folder} is missing its store marker`,
+      );
+      expect(existsSync(folder)).toBe(false);
+      expect(await ctx.storage.blobs.listStores()).toEqual(before);
+
+      // The witness: the folder back in place is the same store again.
+      await rename(away, folder);
+      const back = await createBlobLayer(ctx.storage, await sameFolder(ctx));
+      expect(back.disk.id).toBe(ctx.blobs.disk.id);
+    });
+
+    it("refuses to start over a folder that lost only its marker while its store holds copies", async () => {
+      ctx = await createTestContext();
+      const folder = ctx.blobs.disk.locator;
+      const hash = await uploadOne(ctx);
+      const marker = join(folder, ".marfa-store");
+      const kept = await readFile(marker, "utf8");
+      await unlink(marker);
+      const before = await ctx.storage.blobs.listStores();
+
+      await expect(
+        createBlobLayer(ctx.storage, await sameFolder(ctx)),
+      ).rejects.toThrow(/Mount or restore it/);
+      expect(existsSync(marker)).toBe(false);
+      expect(await ctx.storage.blobs.listStores()).toEqual(before);
+      expect(
+        (await ctx.storage.blobs.listLocations(hash)).map((row) => [
+          row.store_id,
+          row.detached,
+        ]),
+      ).toEqual([[ctx.blobs.disk.id, false]]);
+
+      await writeFile(marker, kept);
+      const back = await createBlobLayer(ctx.storage, await sameFolder(ctx));
+      expect(back.disk.id).toBe(ctx.blobs.disk.id);
+    });
+
+    it("starts a new store over the folder when its store holds no copies", async () => {
+      ctx = await createTestContext();
+      const folder = ctx.blobs.disk.locator;
+      await rm(folder, { recursive: true });
+
+      const fresh = await createBlobLayer(ctx.storage, await sameFolder(ctx));
+      expect(fresh.disk.id).not.toBe(ctx.blobs.disk.id);
+      expect(existsSync(join(folder, ".marfa-store"))).toBe(true);
+    });
+
+    it("creates the folder and a new store at a path where no store was recorded", async () => {
+      ctx = await createTestContext();
+      const folder = join(
+        await mkdtemp(join(tmpdir(), "blob-layer-new-")),
+        "a",
+        "b",
+      );
+      dirs.push(join(folder, "..", ".."));
+      await uploadOne(ctx);
+
+      const fresh = await createBlobLayer(ctx.storage, {
+        ...(await diskAt()),
+        blobPath: folder,
+      });
+      expect(fresh.disk.id).not.toBe(ctx.blobs.disk.id);
+      expect(existsSync(join(folder, ".marfa-store"))).toBe(true);
+    });
+
+    it("starts a new disk store over the missing folder when an object store is configured", async () => {
+      ctx = await createTestContext();
+      const folder = ctx.blobs.disk.locator;
+      await uploadOne(ctx);
+      await rm(folder, { recursive: true });
+      vi.spyOn(S3BlobStore.prototype, "attach").mockImplementation(function (
+        this: S3BlobStore,
+      ) {
+        (this as unknown as { storeId: string }).storeId = "fixture-bucket";
+        return Promise.resolve();
+      });
+
+      const layer = await createBlobLayer(ctx.storage, {
+        ...(await sameFolder(ctx)),
+        s3Bucket: "fixture-bucket",
+      });
+      expect(layer.disk.id).not.toBe(ctx.blobs.disk.id);
+      expect(existsSync(join(folder, ".marfa-store"))).toBe(true);
+    });
   });
 
   it("finds a store by id and answers undefined for one it has not attached", async () => {

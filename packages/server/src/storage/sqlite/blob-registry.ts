@@ -291,6 +291,29 @@ export class SqliteBlobRegistry implements BlobRegistry {
     }));
   }
 
+  async copiesClaimedAt(
+    kind: BlobStoreKind,
+    locator: string,
+  ): Promise<{ store_id: string; copies: number }[]> {
+    return this.db
+      .select({
+        store_id: blobStores.id,
+        copies: sql<number>`count(*)`,
+      })
+      .from(blobStores)
+      .innerJoin(blobLocations, eq(blobLocations.store_id, blobStores.id))
+      .where(
+        and(
+          eq(blobStores.kind, kind),
+          eq(blobStores.locator, locator),
+          isNull(blobStores.detached_at),
+        ),
+      )
+      .groupBy(blobStores.id)
+      .orderBy(asc(blobStores.id))
+      .all();
+  }
+
   async recordLocation(hash: string, storeId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx
