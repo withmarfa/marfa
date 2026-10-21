@@ -578,6 +578,19 @@ fn refused_credential(server: &str, said: &CoreError) -> CliError {
     })
 }
 
+/// What the pass's drain came to, in the words `counts` uses for the same
+/// numbers, with the writes it left undelivered for the next pass.
+fn drain_clause(report: &marfa_core::DrainReport) -> String {
+    let mut clause = crate::output::answered_and_held(report);
+    if report.undelivered > 0 {
+        clause.push_str(&format!(
+            ", {} not delivered, waiting for the next pass",
+            report.undelivered
+        ));
+    }
+    clause
+}
+
 fn passed(
     say: Say<'_>,
     folder: &Folder,
@@ -663,17 +676,12 @@ fn passed(
             .map(|line| format!("{line}\n"))
             .collect();
             format!(
-                "{settings}{} created, {} updated, {} renamed, {} deleted; answered {}{}; {} file(s) written{}{}{}{}",
+                "{settings}{} created, {} updated, {} renamed, {} deleted; {}; {} file(s) written{}{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
                 scanned.deleted,
-                drained.report.answered,
-                if drained.report.undelivered > 0 {
-                    format!(", {} waiting", drained.report.undelivered)
-                } else {
-                    String::new()
-                },
+                drain_clause(&drained.report),
                 pulled.written + pulled.rewritten,
                 if held > 0 {
                     format!(", {held} not written")
@@ -735,6 +743,33 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     use super::*;
+    use crate::output::tests::{pass, verdict};
+    use marfa_core::{Verdict, WriteKind};
+
+    #[test]
+    fn a_watch_line_says_the_drain_in_the_words_a_push_does() {
+        let mut report = pass(
+            3,
+            12,
+            vec![
+                verdict(WriteKind::CreateItem, Some(Verdict::Accepted)),
+                verdict(WriteKind::CreateItem, Some(Verdict::Accepted)),
+            ],
+        );
+        report.undelivered = 2;
+        assert_eq!(
+            drain_clause(&report),
+            "the server answered 3 write(s), creating 2 item(s); 12 more held back until the write each follows is answered, 2 not delivered, waiting for the next pass"
+        );
+        assert!(
+            drain_clause(&report).starts_with(&crate::output::counts(&report)),
+            "the watch and the push say the same drain differently"
+        );
+        assert_eq!(
+            drain_clause(&pass(0, 0, Vec::new())),
+            "the server answered 0 write(s)"
+        );
+    }
 
     #[test]
     fn a_refused_credential_is_not_sent_again_and_one_kept_since_is_tried_once() {

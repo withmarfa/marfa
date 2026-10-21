@@ -1125,7 +1125,9 @@ export interface StatusReport {
   }>;
   paused: { disk: number; pull: number };
   /** Present while the first sync waits to be confirmed (`folders/first-sync-status`). */
-  first_sync?: { plan: { write: number; send: number; beside: number } | null };
+  first_sync?: {
+    plan: { write: number; send: number; beside: number; left: number } | null;
+  };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
@@ -1550,6 +1552,9 @@ export interface FirstSyncJson {
   write: number | null;
   send: number | null;
   beside: number | null;
+  /** Items whose file is not written, because a file that is not sent is at
+   *  the path (`folders/first-sync-plan-left`). */
+  left: number | null;
   /** Why the folder could not be read for a plan now, where it could not. */
   unread: string | null;
 }

@@ -99,6 +99,7 @@ struct Placing<'a> {
 pub(super) struct PullPlan {
     pub(super) write: usize,
     pub(super) beside: usize,
+    pub(super) left: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -111,6 +112,10 @@ pub struct PullReport {
     pub absent: usize,
     pub unwritten: usize,
     pub revived: usize,
+    /// Items whose path the folder does not write to: left out by its lists,
+    /// inside a package or another folder, or not a path inside the folder.
+    /// Not a status of a file, which `outside` also names for a file the
+    /// folder does not take.
     pub outside: usize,
     pub beside: usize,
     pub unsuited: usize,
@@ -505,13 +510,28 @@ impl Folder {
             taken.insert(crate::names::folded(&entry.want));
         }
         if let Some(plan) = planning {
-            // Every entry still unbound is a file the pull will write: where
-            // the person's file holds its path, one of the two takes a number,
-            // as the scan's creates, sent by then, rank among the others.
+            // Every entry still unbound is a file the pull will write, but
+            // where a file is at its path. A file the scan bound is sent
+            // before the pull, so the two are both kept and one takes a
+            // number. A file the scan did not bind is the person's to mend,
+            // and the pull writes nothing over it. Paths are compared as the
+            // pull compares them, so a name in another case or Unicode form
+            // is the same file.
+            let bound: Vec<String> = state::bound_paths(&*self.core.conn()?)?
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect();
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
-                plan.write += 1;
-                if self.exists(self.root.join(&entry.want)) {
+                if bound
+                    .iter()
+                    .any(|path| crate::names::same(path, &entry.want))
+                {
+                    plan.write += 1;
                     plan.beside += 1;
+                } else if !self.exists(self.root.join(&entry.want)) {
+                    plan.write += 1;
+                } else {
+                    plan.left += 1;
                 }
             }
             return Ok(());

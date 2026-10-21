@@ -3555,7 +3555,9 @@ describe("files and items", () => {
     if (!said.ok) return;
     expect(said.value.exit).toBe(3);
     expect(said.value.text).toContain("0 unchanged");
-    expect(said.value.text).toContain("2 queued earlier and not delivered yet");
+    expect(said.value.text).toContain(
+      "2 already queued by an earlier scan, so not counted as created or updated here",
+    );
     expect(said.value.text).toContain("2 write(s) not delivered");
     expect(said.value.text).toContain("the server asked for 2s");
   });
@@ -5485,7 +5487,16 @@ describe("large removals, status and size", () => {
     put(harness, "queued.md", "---\ntitle: Queued\n---\nbody\n");
     put(harness, "broken.md", "---\ntitle: [unclosed\n---\nbody\n");
     put(harness, "bogus.md", "---\ntitle: Bogus\ntier: bogus\n---\nbody\n");
-    expect((await harness.folder.scan()).ok).toBe(true);
+    // Readable, but no document can be one of these, so the scan holds them.
+    put(
+      harness,
+      "unknown.md",
+      "---\ntitle: U\ntype: example.unknown\n---\nx\n",
+    );
+    put(harness, "system.md", "---\ntitle: S\ntype: system.folder\n---\nx\n");
+    put(harness, "filetype.md", "---\ntitle: F\ntype: core.file\n---\nx\n");
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
     const status = await harness.folder.status();
     expect(status.ok, JSON.stringify(status)).toBe(true);
     if (!status.ok) return;
@@ -5503,6 +5514,33 @@ describe("large removals, status and size", () => {
       "held",
       "unreadable",
     ]);
+    // The scan holds each of these and sends nothing for it, so the status
+    // says held and why, never that the file waits to be sent.
+    for (const path of ["unknown.md", "system.md", "filetype.md"]) {
+      expect(
+        [of(path)?.status, of(path)?.flag],
+        `${path} was not said to be held`,
+      ).toEqual(["held", "refused"]);
+      expect(of(path)?.waits ?? []).toEqual([]);
+    }
+    expect(of("unknown.md")?.reason).toContain(
+      "example.unknown is not a type this copy holds",
+    );
+    expect(of("system.md")?.reason).toContain("never as a document");
+    expect(of("filetype.md")?.reason).toContain("is a file type");
+    // What the status holds, the scan held: the same files and reasons.
+    expect(
+      scanned.ok &&
+        scanned.value.flagged
+          .filter((file) => file.flag === "refused")
+          .map((file) => [file.path, file.reason])
+          .sort(),
+    ).toEqual(
+      ["filetype.md", "system.md", "unknown.md"].map((path) => [
+        path,
+        of(path)?.reason,
+      ]),
+    );
     expect(status.value.paused).toEqual({ disk: 0, pull: 0 });
   });
 });
@@ -5797,7 +5835,7 @@ describe("a folder that cannot reach the server", () => {
     ).toBe(1);
     const offlineLines = watching.stdout
       .split("\n")
-      .filter((line) => line.includes("; answered 0"));
+      .filter((line) => line.includes("; the server answered 0 write(s)"));
     expect(
       offlineLines.length,
       `a watch printed its line at every pass while nothing went: ${watching.stdout}`,
@@ -5944,6 +5982,7 @@ describe("a folder's first sync", () => {
       write: 2,
       send: 3,
       beside: 0,
+      left: 0,
       unread: null,
     });
     expect(
@@ -5958,7 +5997,7 @@ describe("a folder's first sync", () => {
     expect(writesSent(harness)).toEqual([]);
     const status = await harness.folder.status();
     expect(status.ok && status.value.first_sync).toEqual({
-      plan: { write: 2, send: 3, beside: 0 },
+      plan: { write: 2, send: 3, beside: 0, left: 0 },
     });
   });
 
@@ -6028,6 +6067,7 @@ describe("a folder's first sync", () => {
       write: 2,
       send: 1,
       beside: 1,
+      left: 0,
       unread: null,
     });
     expect((await harness.folder.confirm()).ok).toBe(true);
@@ -6045,6 +6085,81 @@ describe("a folder's first sync", () => {
     ).toHaveLength(1);
     expect(texts.filter((text) => /^a$/m.test(text))).toHaveLength(1);
     expect(sentTitles(harness)).toEqual(["Remote A"]);
+    expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
+  });
+
+  it("counts a file whose name differs from an item's only in case as a file written beside, not one left", async () => {
+    harness = await waiting("first-sync-beside-case", {
+      "remote a.md": typed("Remote A"),
+    });
+    // The file is sent, so it is bound at its path; the item's file is
+    // written beside it, whatever case either name is in.
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 2,
+      send: 1,
+      beside: 1,
+      left: 0,
+      unread: null,
+    });
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const names = readdirSync(harness.dir).filter((name) =>
+      name.toLowerCase().startsWith("remote a"),
+    );
+    expect(
+      names,
+      "the plan said beside, but the pull wrote otherwise",
+    ).toHaveLength(2);
+    expect(
+      names
+        .map((name) => read(harness!, name))
+        .filter((text) => text.includes("written by hand")),
+      "the person's file was written over or lost",
+    ).toHaveLength(1);
+  });
+
+  it("counts a file whose name differs from an item's only in Unicode form as a file written beside, not one left", async () => {
+    const cafe = "01a00000-0000-7000-8000-0000000005a3";
+    harness = await waiting(
+      "first-sync-beside-unicode",
+      // The same name as the item's title, but decomposed.
+      { "Cafe\u0301.md": typed("Cafe\u0301") },
+      {
+        "core.note": [
+          {
+            item: { id: cafe, properties: { title: "Caf\u00e9", body: "c\n" } },
+          },
+        ],
+      },
+    );
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 1,
+      send: 1,
+      beside: 1,
+      left: 0,
+      unread: null,
+    });
+  });
+
+  it("says it leaves a file it cannot send where an item's file would go, and writes no file there", async () => {
+    const broken = "---\ntitle: [unclosed\n---\nthe person's words\n";
+    harness = await waiting("first-sync-left", { "Remote A.md": broken });
+    // Remote B is written; Remote A is not, because a file the folder holds
+    // back is at its path. No number is added, as there is none to add.
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 1,
+      send: 0,
+      beside: 0,
+      left: 1,
+      unread: null,
+    });
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(read(harness, "Remote A.md")).toBe(broken);
+    expect(existsSync(join(harness.dir, "Remote A (2).md"))).toBe(false);
     expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
   });
 
@@ -6066,6 +6181,7 @@ describe("a folder's first sync", () => {
       write: null,
       send: null,
       beside: null,
+      left: null,
       unread: null,
     });
     const status = await harness.folder.status();
@@ -6104,6 +6220,7 @@ describe("a folder's first sync", () => {
       write: 2,
       send: 1,
       beside: 0,
+      left: 0,
       unread: null,
     });
     expect(existsSync(join(harness.dir, "Remote A.md"))).toBe(false);
@@ -6122,7 +6239,7 @@ describe("a folder's first sync", () => {
     expect(
       status.ok && status.value.first_sync,
       "one machine's confirmation let another machine's folder go",
-    ).toEqual({ plan: { write: 2, send: 0, beside: 0 } });
+    ).toEqual({ plan: { write: 2, send: 0, beside: 0, left: 0 } });
     const first = await harness.folder.status();
     expect(first.ok && first.value.first_sync).toBeUndefined();
   });

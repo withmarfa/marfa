@@ -1587,10 +1587,13 @@ fn change_line(change: &marfa_core::Change) -> String {
             marfa_core::ChangeEvent::QueueNotDrained(error)
             | marfa_core::ChangeEvent::WatchFailed(error) => format!(": {error}"),
             marfa_core::ChangeEvent::QueueDrained(report) => format!(
-                ": answered {}, held {}, undelivered {}{}",
-                report.answered,
-                report.held,
-                report.undelivered,
+                ": {}{}{}",
+                crate::output::answered_and_held(report),
+                if report.undelivered > 0 {
+                    format!("; {} not delivered", report.undelivered)
+                } else {
+                    String::new()
+                },
                 report
                     .stopped
                     .as_deref()

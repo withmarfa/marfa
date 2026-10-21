@@ -1379,15 +1379,22 @@ impl Scanned {
     fn document(&self) -> document::Document {
         #[cfg(test)]
         tests::DOCUMENTS_READ.with(|read| read.set(read.get() + 1));
-        if carries_frontmatter(&self.path) {
-            document::read(&self.text)
-        } else if is_document(&self.path) {
-            document::read_body(&self.text)
+        if is_document(&self.path) {
+            document_of(&self.path, &self.text)
         } else {
             document::read_body(&String::from_utf8_lossy(
                 self.source.as_deref().unwrap_or_default(),
             ))
         }
+    }
+}
+
+/// A document's front matter and body, read as the scan reads them.
+fn document_of(path: &Path, text: &str) -> document::Document {
+    if carries_frontmatter(path) {
+        document::read(text)
+    } else {
+        document::read_body(text)
     }
 }
 

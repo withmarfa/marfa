@@ -244,9 +244,19 @@ While a folder’s first sync waits for confirmation, a device MUST NOT send que
 
 ### `folders/first-sync-plan`
 
-When a waiting folder’s first-sync plan is read, a device MUST report the counts `write`, `send` and `beside` from the current copy and directory.
+When a waiting folder’s first-sync plan is read, a device MUST report the counts `write`, `send`, `beside` and `left` from the current copy and directory.
 
-**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`.
+**Reason:** `beside` counts a file written where a file the folder sends already is, and one of the two takes a number in its name; two names are the same path when they differ only in case or Unicode form, as the folder compares them. `left` counts an item whose file is not written because a file the folder does not send is at the path, which `folders/first-sync-plan-left` says. `write` counts neither of the files `left` counts.
+
+**Tests:** `device/folders.test.ts › says what it will do when the folder is added, and sends and writes nothing`, `device/folders.test.ts › writes beside a file already where an item's file would go, and says so`, `device/folders.test.ts › counts a file whose name differs from an item's only in case as a file written beside, not one left`, `device/folders.test.ts › counts a file whose name differs from an item's only in Unicode form as a file written beside, not one left`.
+
+### `folders/first-sync-plan-left`
+
+When a waiting folder’s first-sync plan finds a file the folder does not send at the path an item's file would take, a device MUST count the item in `left` and in neither `write` nor `beside`.
+
+**Reason:** a file the folder holds back is the person's to mend, so the first sync neither sends it nor writes over it, and adds no number to the item's name. Counting the item as written beside would promise a file that never appears.
+
+**Tests:** `device/folders.test.ts › says it leaves a file it cannot send where an item's file would go, and writes no file there`.
 
 ### `folders/first-sync-plan-writes-unsent`
 
@@ -5626,6 +5636,14 @@ When a new folder document’s frontmatter cannot be parsed or names a refused o
 
 **Tests:** `device/folders.test.ts › reports each file's status`.
 
+### `folders/status-refused-document`
+
+When the folder's scan holds a new document because the type it names is no type a document can be, or because the copy would refuse it as a new item, a device MUST report the document's status as `held` with flag `refused` and the reason, before binding it.
+
+**Reason:** a status of `waiting` says the file will be sent, and a document the scan holds is not sent until the person changes it.
+
+**Tests:** `device/folders.test.ts › reports each file's status`.
+
 ### `folders/status-encoding`
 
 When a new folder document is not UTF-8, a device MUST report its status as `held` with flag `encoding`.
@@ -5635,6 +5653,8 @@ When a new folder document is not UTF-8, a device MUST report its status as `hel
 ### `folders/status-outside`
 
 When a non-document file has no type held by the folder search, a device MUST report its status as `outside`.
+
+**Reason:** this `outside` names a file the folder does not take. It is not the pull report's `outside` count, which `folders/pull-outside-lists` and `folders/placement-outside` say is an item whose path the folder does not write to.
 
 **Tests:** `device/folders-contract-b.test.ts › reads status from disk and the held copy without contacting the server`.
 

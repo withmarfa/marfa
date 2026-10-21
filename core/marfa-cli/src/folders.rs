@@ -944,7 +944,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.unwritten,
             "the folder did not write and would not write over",
         ),
-        (report.outside, "wanting a path outside the folder"),
+        (
+            report.outside,
+            "whose path the folder does not write to (left out by its lists, inside a package or another folder, or not a path inside the folder)",
+        ),
         (
             report.unsuited,
             "whose placement would make them another kind of file",
@@ -1030,6 +1033,16 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     line
 }
 
+/// A status as a person reads it. `outside` is the name in the JSON for a file
+/// the folder does not take; a pull's `outside` count is another thing, a
+/// path the folder will not write to.
+fn status_words(status: &str) -> String {
+    match status {
+        "outside" => "not taken".to_string(),
+        other => other.replace('_', " "),
+    }
+}
+
 fn describe_status(report: &marfa_core::StatusReport) -> String {
     let in_step = report
         .files
@@ -1038,7 +1051,7 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         .count();
     let mut lines = vec![format!("{in_step} file(s) in step")];
     for file in report.files.iter().filter(|file| file.status != "in_step") {
-        let mut line = format!("{}: {}", file.path, file.status.replace('_', " "));
+        let mut line = format!("{}: {}", file.path, status_words(file.status));
         if !file.waits.is_empty() {
             line.push_str(&format!(" ({})", file.waits.join(", ")));
         }
@@ -1082,8 +1095,14 @@ fn plan_line(plan: &FirstSync) -> String {
     );
     if plan.beside > 0 {
         line.push_str(&format!(
-            "; {} of those write where a file is already, so one of the two gets a number added to its name and none is written over",
+            "; {} of those would be written at the path of a file that is being sent, so one of the two gets a number added to its name and no file is written over",
             plan.beside
+        ));
+    }
+    if plan.left > 0 {
+        line.push_str(&format!(
+            "; for {} more, no file is written, because a file that is not sent is already at the item's path; that file stays as it is",
+            plan.left
         ));
     }
     line
@@ -1120,6 +1139,7 @@ fn first_sync_json(
         "write": plan.map(|plan| plan.write),
         "send": plan.map(|plan| plan.send),
         "beside": plan.map(|plan| plan.beside),
+        "left": plan.map(|plan| plan.left),
         "unread": unread,
     })
 }
@@ -1190,7 +1210,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             ),
             (
                 report.waiting,
-                "queued earlier and not delivered yet",
+                "already queued by an earlier scan, so not counted as created or updated here",
             ),
             (
                 report.unreached,
@@ -1366,6 +1386,87 @@ mod tests {
             replayed: false,
             merged_fields: Vec::new(),
         }
+    }
+
+    fn file(
+        path: &str,
+        status: &'static str,
+        flag: &'static str,
+        reason: &str,
+    ) -> marfa_core::FileStatus {
+        marfa_core::FileStatus {
+            path: path.into(),
+            item_id: None,
+            status,
+            waits: Vec::new(),
+            flag: Some(flag),
+            reason: Some(reason.into()),
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn the_first_sync_plan_says_what_happens_where_a_file_is_at_a_path() {
+        let plan = |beside, left| FirstSync {
+            write: 3,
+            send: 2,
+            beside,
+            left,
+        };
+        let plain = plan_line(&plan(0, 0));
+        assert_eq!(
+            plain,
+            "3 file(s) to write into the directory, 2 to send to the server"
+        );
+        let beside = plan_line(&plan(2, 0));
+        assert!(
+            beside.contains(
+                "2 of those would be written at the path of a file that is being sent, so one of the two gets a number added to its name and no file is written over"
+            ),
+            "{beside}"
+        );
+        let left = plan_line(&plan(0, 1));
+        assert!(
+            left.contains(
+                "for 1 more, no file is written, because a file that is not sent is already at the item's path; that file stays as it is"
+            ),
+            "{left}"
+        );
+        assert!(!left.contains("gets a number"), "{left}");
+    }
+
+    #[test]
+    fn a_file_the_folder_does_not_take_is_not_said_to_be_outside() {
+        let said = describe_status(&marfa_core::StatusReport {
+            files: vec![file(
+                "blank.bin",
+                "outside",
+                "empty",
+                "it is empty, and a file item holds bytes",
+            )],
+            ..Default::default()
+        });
+        assert!(said.contains("blank.bin: not taken, it is empty"), "{said}");
+        assert!(!said.contains("outside"), "{said}");
+    }
+
+    #[test]
+    fn a_pull_says_why_a_path_is_one_the_folder_does_not_write() {
+        let said = describe_pull(&marfa_core::PullReport {
+            outside: 2,
+            ..Default::default()
+        });
+        assert!(
+            said.contains("2 whose path the folder does not write to"),
+            "{said}"
+        );
+        assert!(
+            said.contains("left out by its lists")
+                && said.contains("inside a package or another folder")
+                && said.contains("not a path inside the folder"),
+            "{said}"
+        );
+        assert!(!said.contains("wanting a path outside"), "{said}");
     }
 
     #[test]

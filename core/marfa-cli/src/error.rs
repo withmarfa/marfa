@@ -71,7 +71,7 @@ pub enum CliError {
     /// A stream's closing frame says so on a `200`, so the envelope names no
     /// server status.
     #[error(
-        "the credential that holds this stream has ended: sign in again with `marfa login` or use a new key"
+        "the credential that holds this stream has ended: sign in again with `marfa login`, or use a new key"
     )]
     CredentialEnded,
     #[error("{0}")]
@@ -666,6 +666,14 @@ mod tests {
         });
         assert_eq!(ended.code(), "unauthorized");
         assert_eq!(ended.exit(), Exit::Credential);
+        // The advice is the same for a key and a sign-in as the core gives for
+        // a copy whose credential ended, with the command that signs in.
+        assert!(
+            ended
+                .to_string()
+                .ends_with("sign in again with `marfa login`, or use a new key"),
+            "{ended}"
+        );
         // The server sent a `200` stream, so the envelope names no status.
         assert!(ended.envelope()["error"]["server"].is_null());
         // The witness: any other reason is the environment's.

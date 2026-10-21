@@ -15,6 +15,10 @@ pub struct FileStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub item_id: Option<String>,
     /// `in_step`, `waiting`, `held`, `unmatched`, `unreached` or `outside`.
+    /// `outside` is a file that is not bound and that the folder does not
+    /// take: an empty file item, or a file the search holds no type for. It is
+    /// not the pull report's `outside` count, which is an item whose path the
+    /// folder will not write to.
     pub status: &'static str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub waits: Vec<&'static str>,
@@ -324,22 +328,14 @@ impl Folder {
     ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
         if !is_document(path) && bytes.is_some_and(<[u8]>::is_empty) {
-            return entry.because("empty", "is empty, and a file item holds bytes");
+            return entry.because("empty", "it is empty, and a file item holds bytes");
         }
         // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
-            && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
-                Err(reason) => Some(reason.to_string()),
-                Ok(_) if !super::carries_frontmatter(path) => None,
-                Ok(text) => {
-                    let read = super::document::read(text);
-                    read.unreadable
-                        .or_else(|| super::fields::read(&read.front, edge_types).err())
-                }
-            })
+            && let Some(held) =
+                self.held_document(key, path, bytes, (settings, catalog, edge_types))
         {
-            let flagged = Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
-            return FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason);
+            return FileStatus::new(key, None, "held").because(held.flag, held.reason);
         }
         if self.pushes(path, settings, catalog) {
             return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);
@@ -348,6 +344,40 @@ impl Folder {
             "search",
             "the search holds no type this file would be, so it is left alone",
         )
+    }
+
+    /// Why the scan holds a document it has not bound, where it does: its
+    /// text cannot be read, or the copy would refuse it as a new item.
+    fn held_document(
+        &self,
+        key: &str,
+        path: &Path,
+        bytes: Option<&[u8]>,
+        (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
+    ) -> Option<Flagged> {
+        let unreadable =
+            |reason: String| Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
+        let text = match super::text_of(bytes?) {
+            Ok(text) => text,
+            Err(reason) => return Some(unreadable(reason.to_string())),
+        };
+        let document = super::document_of(path, text);
+        if super::carries_frontmatter(path)
+            && let Some(reason) = document
+                .unreadable
+                .clone()
+                .or_else(|| super::fields::read(&document.front, edge_types).err())
+        {
+            return Some(unreadable(reason));
+        }
+        // A document of a file type is sent as its bytes, never as a draft.
+        if self.file_type_of(path, settings, catalog).is_some() {
+            return None;
+        }
+        match super::push::new_document(key, &document, (settings, catalog, edge_types)) {
+            Err(held) => Some(held),
+            Ok(made) => super::push::admission_hold(catalog, key, &made.draft),
+        }
     }
 
     fn wait_of(&self, row: &QueuedWrite) -> &'static str {
@@ -412,21 +442,25 @@ mod tests {
         atomic::{AtomicBool, Ordering},
     };
 
-    #[test]
-    fn status_keeps_the_edge_catalog_from_its_item_catalog_snapshot() {
-        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
-        let state_dir = dir.path().join(super::super::STATE_DIR);
-        std::fs::create_dir(&state_dir).unwrap();
-        let path = state_dir.join("core.sqlite");
-        let writing = store::open(&path).unwrap();
-        let catalog = |written_at: &str| WireCatalog {
+    fn wire_catalog(written_at: &str) -> WireCatalog {
+        WireCatalog {
             types: serde_json::from_value(serde_json::json!([{ "id": "core.note", "fields": {} }]))
                 .unwrap(),
             edge_types: vec![
                 serde_json::json!({ "id": "references", "cardinality": "many-to-many", "source_type_constraints": ["*"], "target_type_constraints": ["*"], "cascade_on_delete": "orphan", "property_schema": {}, "shipped": true, "written_at": written_at }),
             ],
-        };
-        store::replace_catalog(&writing, &catalog("source")).unwrap();
+        }
+    }
+
+    /// A folder holding one new `core.note` file per name in `notes`, read
+    /// through a reader copy, and the connection that writes the copy.
+    fn folder_of_new_notes(notes: &[&str]) -> (tempfile::TempDir, rusqlite::Connection, Folder) {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state_dir = dir.path().join(super::super::STATE_DIR);
+        std::fs::create_dir(&state_dir).unwrap();
+        let path = state_dir.join("core.sqlite");
+        let writing = store::open(&path).unwrap();
+        store::replace_catalog(&writing, &wire_catalog("source")).unwrap();
         for (key, value) in [
             (store::META_SLICE_TYPES, "[\"core.note\"]"),
             (store::META_SLICE_TIER, "library"),
@@ -449,12 +483,39 @@ mod tests {
             &Indexing::default(),
         )
         .unwrap();
-        std::fs::write(dir.path().join("Note.md"), "new note\n").unwrap();
+        for note in notes {
+            std::fs::write(dir.path().join(note), "new note\n").unwrap();
+        }
         let core = Core::open_reader(&path).unwrap();
+        let folder = Folder {
+            root: dir.path().to_path_buf(),
+            folder: "folder".into(),
+            core,
+            key: std::sync::Mutex::new(None),
+            unread_give_ways: std::sync::Mutex::new(Default::default()),
+            permissions: std::sync::OnceLock::new(),
+            refused_renames: std::sync::Mutex::new(Default::default()),
+            root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
+                .unwrap(),
+            store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
+                .unwrap()
+                .entry_identity(std::path::Path::new("core.sqlite"))
+                .unwrap(),
+            state_dir: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
+                .unwrap(),
+        };
+        (dir, writing, folder)
+    }
+
+    #[test]
+    fn status_keeps_the_edge_catalog_from_its_item_catalog_snapshot() {
+        let (_dir, writing, folder) = folder_of_new_notes(&["Note.md"]);
         let changed = Arc::new(AtomicBool::new(false));
         let witnessed = changed.clone();
         let mut type_reads = 0;
-        core.conn()
+        folder
+            .core
+            .conn()
             .unwrap()
             .authorizer(Some(move |ctx: AuthContext<'_>| {
                 if matches!(
@@ -478,28 +539,11 @@ mod tests {
                 {
                     // The next catalog is unreadable. This status began with the
                     // previous one and must not combine the two revisions.
-                    store::replace_catalog(&writing, &catalog("unreadable")).unwrap();
+                    store::replace_catalog(&writing, &wire_catalog("unreadable")).unwrap();
                 }
                 Authorization::Allow
             }))
             .unwrap();
-        let folder = Folder {
-            root: dir.path().to_path_buf(),
-            folder: "folder".into(),
-            core,
-            key: std::sync::Mutex::new(None),
-            unread_give_ways: std::sync::Mutex::new(Default::default()),
-            permissions: std::sync::OnceLock::new(),
-            refused_renames: std::sync::Mutex::new(Default::default()),
-            root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
-                .unwrap(),
-            store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
-                .unwrap()
-                .entry_identity(std::path::Path::new("core.sqlite"))
-                .unwrap(),
-            state_dir: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
-                .unwrap(),
-        };
         let status = folder.status().unwrap();
         assert!(
             changed.load(Ordering::SeqCst),
@@ -513,6 +557,44 @@ mod tests {
         assert!(
             folder.status().is_err(),
             "a later status did not see the unreadable replacement"
+        );
+    }
+
+    /// How many times a status read the item catalog's types.
+    fn catalog_reads_of_a_status(notes: &[&str]) -> usize {
+        let (_dir, _writing, folder) = folder_of_new_notes(notes);
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = reads.clone();
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .authorizer(Some(move |ctx: AuthContext<'_>| {
+                if matches!(
+                    ctx.action,
+                    AuthAction::Read {
+                        table_name: "types",
+                        column_name: "parent"
+                    }
+                ) {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                }
+                Authorization::Allow
+            }))
+            .unwrap();
+        let status = folder.status().unwrap();
+        assert_eq!(status.files.len(), notes.len());
+        reads.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn status_judges_every_new_document_against_the_one_catalog_it_loaded() {
+        let one = catalog_reads_of_a_status(&["One.md"]);
+        assert!(one > 0, "the witness read no catalog");
+        assert_eq!(
+            catalog_reads_of_a_status(&["One.md", "Two.md", "Three.md"]),
+            one,
+            "a document loaded the catalog again, so a refresh between two could split the status across revisions"
         );
     }
 }

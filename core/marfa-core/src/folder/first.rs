@@ -11,15 +11,19 @@ const META_FIRST_SYNC: &str = "folder_first_sync";
 /// What a folder's first sync will do, read from the folder as it stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirstSync {
-    /// Files it will write into the directory.
+    /// Files it will write into the directory. Not those `left` counts.
     pub write: usize,
     /// Files in the directory it will send, as new items or as the edits of
     /// the items they name.
     pub send: usize,
-    /// Of the files it will write, those whose path a file already in the
-    /// directory has. Both end up in the folder, and one of the two takes a
-    /// number in its name; none is written over.
+    /// Of the files it will write, those whose path a file it sends already
+    /// has. Both end up in the folder, and one of the two takes a number in
+    /// its name; none is written over.
     pub beside: usize,
+    /// Items whose file it will not write, because a file it does not send
+    /// is at the path: one it holds back, or one it takes no part in. That
+    /// file stays as it is and no number is added.
+    pub left: usize,
 }
 
 impl FirstSync {
@@ -108,6 +112,7 @@ impl Folder {
             write: pulled.write,
             send,
             beside: pulled.beside,
+            left: pulled.left,
         };
         if plan.nothing() {
             self.confirm_first_sync()?;
@@ -125,4 +130,25 @@ impl Folder {
 /// Whether the store of a folder whose first sync waits is this one.
 pub(crate) fn waiting(conn: &rusqlite::Connection) -> Result<bool> {
     Ok(store::meta_get(conn, META_FIRST_SYNC)?.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_plan_without_a_count_of_files_left_reads_as_no_plan() {
+        let stored = r#"{"write":2,"send":1,"beside":0}"#;
+        assert!(serde_json::from_str::<FirstSync>(stored).is_err());
+        let whole = r#"{"write":2,"send":1,"beside":0,"left":1}"#;
+        assert_eq!(
+            serde_json::from_str::<FirstSync>(whole).unwrap(),
+            FirstSync {
+                write: 2,
+                send: 1,
+                beside: 0,
+                left: 1
+            }
+        );
+    }
 }
