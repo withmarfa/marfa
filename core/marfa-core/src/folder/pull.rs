@@ -514,14 +514,22 @@ impl Folder {
             // where a file is at its path. A file the scan bound is sent
             // before the pull, so the two are both kept and one takes a
             // number. A file the scan did not bind is the person's to mend,
-            // and the pull writes nothing over it.
-            let conn = self.core.conn()?;
+            // and the pull writes nothing over it. Paths are compared as the
+            // pull compares them, so a name in another case or Unicode form
+            // is the same file.
+            let bound: Vec<String> = state::bound_paths(&*self.core.conn()?)?
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect();
             for entry in placing.iter().filter(|entry| entry.bound.is_none()) {
-                if !self.exists(self.root.join(&entry.want)) {
-                    plan.write += 1;
-                } else if state::bound_at(&conn, &entry.want)?.is_some() {
+                if bound
+                    .iter()
+                    .any(|path| crate::names::same(path, &entry.want))
+                {
                     plan.write += 1;
                     plan.beside += 1;
+                } else if !self.exists(self.root.join(&entry.want)) {
+                    plan.write += 1;
                 } else {
                     plan.left += 1;
                 }

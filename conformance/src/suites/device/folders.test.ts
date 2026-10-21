@@ -5474,7 +5474,11 @@ describe("large removals, status and size", () => {
     put(harness, "broken.md", "---\ntitle: [unclosed\n---\nbody\n");
     put(harness, "bogus.md", "---\ntitle: Bogus\ntier: bogus\n---\nbody\n");
     // Readable, but no document can be one of these, so the scan holds them.
-    put(harness, "unknown.md", "---\ntitle: U\ntype: example.unknown\n---\nx\n");
+    put(
+      harness,
+      "unknown.md",
+      "---\ntitle: U\ntype: example.unknown\n---\nx\n",
+    );
     put(harness, "system.md", "---\ntitle: S\ntype: system.folder\n---\nx\n");
     put(harness, "filetype.md", "---\ntitle: F\ntype: core.file\n---\nx\n");
     const scanned = await harness.folder.scan();
@@ -6068,6 +6072,61 @@ describe("a folder's first sync", () => {
     expect(texts.filter((text) => /^a$/m.test(text))).toHaveLength(1);
     expect(sentTitles(harness)).toEqual(["Remote A"]);
     expect(existsSync(join(harness.dir, "Remote B.md"))).toBe(true);
+  });
+
+  it("counts a file whose name differs from an item's only in case as a file written beside, not one left", async () => {
+    harness = await waiting("first-sync-beside-case", {
+      "remote a.md": typed("Remote A"),
+    });
+    // The file is sent, so it is bound at its path; the item's file is
+    // written beside it, whatever case either name is in.
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 2,
+      send: 1,
+      beside: 1,
+      left: 0,
+      unread: null,
+    });
+    expect((await harness.folder.confirm()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const names = readdirSync(harness.dir).filter((name) =>
+      name.toLowerCase().startsWith("remote a"),
+    );
+    expect(
+      names,
+      "the plan said beside, but the pull wrote otherwise",
+    ).toHaveLength(2);
+    expect(
+      names
+        .map((name) => read(harness!, name))
+        .filter((text) => text.includes("written by hand")),
+      "the person's file was written over or lost",
+    ).toHaveLength(1);
+  });
+
+  it("counts a file whose name differs from an item's only in Unicode form as a file written beside, not one left", async () => {
+    const cafe = "01a00000-0000-7000-8000-0000000005a3";
+    harness = await waiting(
+      "first-sync-beside-unicode",
+      // The same name as the item's title, but decomposed.
+      { "Cafe\u0301.md": typed("Cafe\u0301") },
+      {
+        "core.note": [
+          {
+            item: { id: cafe, properties: { title: "Caf\u00e9", body: "c\n" } },
+          },
+        ],
+      },
+    );
+    expect(harness.added.first_sync).toEqual({
+      waiting: true,
+      write: 1,
+      send: 1,
+      beside: 1,
+      left: 0,
+      unread: null,
+    });
   });
 
   it("says it leaves a file it cannot send where an item's file would go, and writes no file there", async () => {

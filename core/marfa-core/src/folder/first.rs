@@ -23,7 +23,6 @@ pub struct FirstSync {
     /// Items whose file it will not write, because a file it does not send
     /// is at the path: one it holds back, or one it takes no part in. That
     /// file stays as it is and no number is added.
-    #[serde(default)]
     pub left: usize,
 }
 
@@ -131,4 +130,25 @@ impl Folder {
 /// Whether the store of a folder whose first sync waits is this one.
 pub(crate) fn waiting(conn: &rusqlite::Connection) -> Result<bool> {
     Ok(store::meta_get(conn, META_FIRST_SYNC)?.is_some())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_plan_without_a_count_of_files_left_reads_as_no_plan() {
+        let stored = r#"{"write":2,"send":1,"beside":0}"#;
+        assert!(serde_json::from_str::<FirstSync>(stored).is_err());
+        let whole = r#"{"write":2,"send":1,"beside":0,"left":1}"#;
+        assert_eq!(
+            serde_json::from_str::<FirstSync>(whole).unwrap(),
+            FirstSync {
+                write: 2,
+                send: 1,
+                beside: 0,
+                left: 1
+            }
+        );
+    }
 }
