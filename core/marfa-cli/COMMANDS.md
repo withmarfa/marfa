@@ -1822,6 +1822,8 @@ marfa webhooks [OPTIONS] <COMMAND>
 
 Register a subscription. The secret is answered once, in plaintext.
 
+The secret leads the output on a line of its own, as `keys create` leads with a new key, and with `--json` it is the `secret` field. A secret given with `--secret` is not printed back.
+
 ```text
 marfa webhooks create [OPTIONS] --to <URL> --event <EVENT>
 ```

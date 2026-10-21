@@ -2,8 +2,9 @@ use clap::{Args, Subcommand};
 use serde_json::{Map, Value, json};
 
 use super::insert_opt;
+use crate::access;
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
@@ -13,6 +14,10 @@ use crate::remote::request::Request;
 #[derive(Debug, Subcommand)]
 pub enum WebhooksCommand {
     /// Register a subscription. The secret is answered once, in plaintext.
+    ///
+    /// The secret leads the output on a line of its own, as `keys create`
+    /// leads with a new key, and with `--json` it is the `secret` field. A
+    /// secret given with `--secret` is not printed back.
     Create(WebhookCreateArgs),
     /// Every subscription.
     List,
@@ -140,5 +145,77 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
         WebhooksCommand::Deliveries { id, limit } => deliveries_request(id, *limit),
         WebhooksCommand::Redeliver { id, delivery_id } => redeliver_request(id, delivery_id),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        WebhooksCommand::Create(args) => out.report(&answer, || created_text(&answer, args)),
+        _ => out.value(&answer),
+    }
+}
+
+/// A created webhook, with the secret it answered on a line of its own,
+/// above the rest, as `keys create` leads with a new key. The secret is not
+/// in the description of the webhook, and a secret the caller supplied is
+/// not printed back.
+fn created_text(answer: &Value, args: &WebhookCreateArgs) -> String {
+    let field = |name: &str| answer.get(name).and_then(Value::as_str).unwrap_or("");
+    let events: Vec<&str> = answer
+        .get("events")
+        .and_then(Value::as_array)
+        .map(|events| events.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let mut lines = vec![format!("events {}", printable(&events.join(", ")))];
+    if let Some(filter) = answer.get("type_filter").and_then(Value::as_str) {
+        lines.push(format!("type filter {}", printable(filter)));
+    }
+    let named = format!(
+        "webhook {} ({})",
+        printable(field("id")),
+        printable(field("url"))
+    );
+    let first = if args.secret.is_some() {
+        format!("{named}; deliveries are signed with the secret you gave")
+    } else {
+        format!(
+            "{}\n{named}; the signing secret is shown once, keep it now",
+            printable(field("secret"))
+        )
+    };
+    access::indented(&first, &lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn created() -> Value {
+        json!({
+            "id": "wh_1",
+            "url": "https://receiver.example/hook",
+            "events": ["item.created", "item.deleted"],
+            "type_filter": "core.note",
+            "secret": "whsec_PLAINTEXT",
+            "active": true,
+        })
+    }
+
+    #[test]
+    fn a_minted_secret_leads_on_its_own_line_and_is_not_in_the_description() {
+        let text = created_text(&created(), &WebhookCreateArgs::default());
+        assert_eq!(
+            text,
+            "whsec_PLAINTEXT\nwebhook wh_1 (https://receiver.example/hook); the signing secret is shown once, keep it now\n  events item.created, item.deleted\n  type filter core.note"
+        );
+        assert_eq!(text.matches("whsec_PLAINTEXT").count(), 1);
+    }
+
+    #[test]
+    fn a_secret_the_caller_gave_is_not_printed_back() {
+        let args = WebhookCreateArgs {
+            secret: Some("whsec_PLAINTEXT".into()),
+            ..Default::default()
+        };
+        let text = created_text(&created(), &args);
+        assert!(!text.contains("whsec_PLAINTEXT"), "{text}");
+        assert!(text.contains("the secret you gave"), "{text}");
+    }
 }
