@@ -4016,19 +4016,19 @@ When a file is saved back at a path whose binding remains after another folder t
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/moved-file-not-trashed-item-preserved`
 
 When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/moved-file-count`
 
 When a scan identifies a missing folder file as moved to another registered folder, a device MUST count it as `moved_away`.
 
-**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
+**Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/moved-carried-id-utf16`
 
@@ -4054,13 +4054,13 @@ When two folder searches both hold an item and each folder has its own bound fil
 
 When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST queue deletion of its item.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/missing-file-trashed-path-reported`
 
 When a missing folder file’s deletion grace expires and no other folder holds the moved file, a device MUST name the path in the scan report’s `trashed`.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/missing-file-said`
 
@@ -4090,11 +4090,35 @@ When another registered folder holds a file whose bytes can be read but are not 
 
 ### `folders/moved-arrival-bytes`
 
-When a non-document file arrives from another folder whose missing-file binding uniquely identifies it by identity or bytes, a device MUST bind the arriving file to the existing item.
+When a file that carries no ID arrives from another folder whose missing-file binding of a file item uniquely identifies it by identity or bytes, a device MUST bind the arriving file to that file item.
 
-**Reason:** a file at a document name is read as a document, and a document without an id line is a new item, so a `.txt` note moved to another folder as `.md` is a new item there.
+**Reason:** a file item's file carries nothing that names its item, so only the other folder's binding can, whatever the file's name. A pull can place a file item at a document name (`.md`, `.markdown` or `.txt`).
 
-**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`.
+**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
+
+### `folders/moved-arrival-text-note`
+
+When a file at a name other than `.md` or `.markdown` (in any letter case) arrives from another folder whose missing-file binding of a note uniquely identifies it by identity, or by bytes at a name other than `.md` or `.markdown`, a device MUST bind the arriving file to that note.
+
+**Reason:** a note at a `.txt` name carries no ID line, so only its identity or its bytes follow it.
+
+**Tests:** `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`.
+
+### `folders/moved-arrival-markdown-new`
+
+When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder whose missing-file binding of a note identifies it by identity or bytes, a device MUST admit the arriving file as a new item.
+
+**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there.
+
+**Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`.
+
+### `folders/moved-file-item-bytes`
+
+When a file item's missing folder file has unambiguous bytes in a file that carries no ID in another registered folder, a device MUST identify that file as the missing file's move, whatever either file's name.
+
+**Reason:** the folder that file is in takes it as the file item by those bytes (`folders/moved-arrival-bytes`), so a delete would trash the item that folder now holds. A note's missing Markdown file is still found only by its identity or its ID line.
+
+**Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folders/moved-awaiting-peer`
 

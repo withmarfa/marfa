@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use super::lists::Lists;
 use super::registry::{Registered, Registry, gone};
-use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
+use super::{
+    Catalog, Folder, STATE_DIR, bytes_of, carries_frontmatter, identity, plainly_inside, state,
+};
 use crate::directory::Directory;
 use crate::{Core, Result, store};
 
@@ -59,6 +61,7 @@ pub(super) struct Peer {
     walked: OnceCell<Walked>,
     /// Its bindings by path, as item and bytes.
     bound: OnceCell<HashMap<String, (String, String)>>,
+    catalog: OnceCell<Option<Catalog>>,
 }
 
 /// Another folder's directory, walked once a pass.
@@ -135,6 +138,7 @@ impl Peer {
             members: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
+            catalog: OnceCell::new(),
         }
     }
 
@@ -162,6 +166,24 @@ impl Peer {
             (Ok(settings), Ok(Some(item))) => !settings.holds_state(item.state),
             _ => true,
         }
+    }
+
+    /// Whether its copy holds the item as bytes rather than as a document.
+    fn file_item(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return false;
+        };
+        let catalog = self
+            .catalog
+            .get_or_init(|| Catalog::load(&*folder.core.conn().ok()?).ok());
+        catalog.as_ref().is_some_and(|catalog| {
+            folder
+                .core
+                .get(item_id)
+                .ok()
+                .flatten()
+                .is_some_and(|item| bytes_of(&item, catalog).is_some())
+        })
     }
 
     fn bound_to(&self, item_id: &str) -> Option<state::Bound> {
@@ -469,42 +491,63 @@ impl<'a> Peers<'a> {
     }
 
     /// Another folder's binding of an id-less file gone from it, by identity
-    /// or unique bytes, its path given whole.
-    pub(super) fn left_behind(&self, mark: Option<&str>, hash: &str) -> Option<state::Bound> {
+    /// or unique bytes, its path given whole. `markdown` is whether the
+    /// arriving file is at a Markdown name.
+    ///
+    /// A note's Markdown file carries its id line, so an arriving Markdown
+    /// file without one is a file item's or a new item, and a note's missing
+    /// Markdown file is not known by its bytes. A file item's file is its
+    /// bytes whatever its name.
+    pub(super) fn left_behind(
+        &self,
+        mark: Option<&str>,
+        hash: &str,
+        markdown: bool,
+    ) -> Option<state::Bound> {
         let mut same_bytes = Vec::new();
         for peer in self.all() {
             let Some(folder) = &peer.folder else {
                 continue;
             };
-            let Ok(conn) = folder.core.conn() else {
-                continue;
+            // Each read lets go of the connection before `takes`, which asks
+            // for it again.
+            let read = |rows: fn(&rusqlite::Connection, &str) -> Result<Vec<state::Bound>>,
+                        key: &str| {
+                folder
+                    .core
+                    .conn()
+                    .ok()
+                    .map(|conn| rows(&conn, key).unwrap_or_default())
             };
             let whole = |bound: state::Bound| state::Bound {
                 path: peer.root.join(&bound.path).display().to_string(),
                 ..bound
             };
-            if let Some(mark) = mark
-                && let Some(found) = state::bound_with_identity(&conn, mark)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .find(|bound| !peer.present(&bound.path))
+            let takes = |bound: &state::Bound, by_bytes: bool| {
+                peer.file_item(&bound.item_id)
+                    || !(markdown || by_bytes && carries_frontmatter(Path::new(&bound.path)))
+            };
+            if let Some(found) = mark
+                .and_then(|mark| read(state::bound_with_identity, mark))
+                .and_then(|rows| rows.into_iter().find(|bound| !peer.present(&bound.path)))
             {
-                return Some(whole(found));
+                return takes(&found, false).then(|| whole(found));
             }
             same_bytes.extend(
-                state::bound_with_hash(&conn, hash)
+                read(state::bound_with_hash, hash)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|bound| {
-                        !carries_frontmatter(Path::new(&bound.path)) && !peer.present(&bound.path)
-                    })
+                    .filter(|bound| !peer.present(&bound.path) && takes(bound, true))
                     .map(whole),
             );
         }
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
-    pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool) -> Look {
+    /// `file_item` is whether this folder's copy holds the lost file's item
+    /// as bytes: a note's Markdown file is followed by its id line, and a
+    /// file item's file by its bytes whatever its name.
+    pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool, file_item: bool) -> Look {
         if let Some(why) = self.doubt.as_deref().or(self.unreadable()) {
             return Look::Unsure(why.to_string());
         }
@@ -531,7 +574,7 @@ impl<'a> Peers<'a> {
                     .get(&file.key)
                     .is_some_and(|(bound, _)| bound == item)
         };
-        if carries_frontmatter(Path::new(&lost.path)) {
+        if !file_item && carries_frontmatter(Path::new(&lost.path)) {
             let found = peers.iter().any(|peer| {
                 peer.files()
                     .iter()
@@ -550,7 +593,11 @@ impl<'a> Peers<'a> {
                 continue;
             }
             for file in peer.files() {
-                if carries_frontmatter(&file.path) || theirs(peer, file) {
+                // A Markdown file with an id line is that id's note, and the
+                // arriving side takes one without it only for a file item.
+                if carries_frontmatter(&file.path) && (!file_item || file.id.is_some())
+                    || theirs(peer, file)
+                {
                     continue;
                 }
                 let same = match bound.get(&file.key) {
@@ -654,6 +701,7 @@ mod tests {
             members: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
+            catalog: OnceCell::new(),
         };
         let moved = to.join("moved.md");
         std::fs::rename(&note, &moved).unwrap();
@@ -780,6 +828,7 @@ mod tests {
             members: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
+            catalog: OnceCell::new(),
         };
         let walked = peer.walked();
         assert_eq!(walked.files.len(), 6);
@@ -826,6 +875,7 @@ mod tests {
             members: OnceCell::new(),
             walked: OnceCell::new(),
             bound: OnceCell::new(),
+            catalog: OnceCell::new(),
         };
         let partial = peer.walked().partial.clone();
         std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o600)).unwrap();

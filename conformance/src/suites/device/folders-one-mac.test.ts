@@ -371,31 +371,48 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       { "core.note": [] },
     );
     put(a, "Loose.txt", "loose words\n");
+    put(a, "Copied.txt", "copied words\n");
     expect((await a.folder.push()).ok).toBe(true);
-    const loose = String(sentCreates(a)[0]?.id);
+    const notes = sentCreates(a).map((sent) => String(sent.id));
+    expect(notes).toHaveLength(2);
+    // Moved, the file keeps its identity; copied and deleted, its bytes.
     renameSync(join(a.dir, "Loose.txt"), join(b.dir, "Loose.md"));
+    copyFileSync(join(a.dir, "Copied.txt"), join(b.dir, "Copied.md"));
+    rmSync(join(a.dir, "Copied.txt"));
 
     const from = b.server.requests.length;
     const pushed = await b.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    const creates = createsSince(b.server, from);
-    expect(
-      creates.map((sent) => (sent.properties as { title?: string }).title),
-      "a file at a document name was taken for the item of the folder it left",
-    ).toEqual(["Loose"]);
-    expect(creates[0]?.id).not.toBe(loose);
-    expect((creates[0]?.properties as { body?: string }).body).toBe(
-      "loose words\n",
+    const creates = createsSince(b.server, from).sort((x, y) =>
+      String((x.properties as { title?: string }).title).localeCompare(
+        String((y.properties as { title?: string }).title),
+      ),
     );
+    expect(
+      creates.map((sent) => [
+        (sent.properties as { title?: string }).title,
+        (sent.properties as { body?: string }).body,
+      ]),
+      "a file at a document name was taken for the note of the folder it left",
+    ).toEqual([
+      ["Copied", "copied words\n"],
+      ["Loose", "loose words\n"],
+    ]);
+    for (const sent of creates) expect(notes).not.toContain(sent.id);
 
-    // The folder it left sweeps its missing file: the words live on in the
-    // new item, and the new item is never the one trashed.
+    // The folder it left sweeps its missing files: the words live on in the
+    // new items, and a new item is never the one trashed.
     expect((await a.folder.push()).ok).toBe(true);
     await pastTheGrace();
     expect((await a.folder.push()).ok).toBe(true);
-    expect(deletesOf(a.server, String(creates[0]?.id))).toBe(0);
+    for (const sent of creates) {
+      expect(deletesOf(a.server, String(sent.id))).toBe(0);
+    }
     expect(readFileSync(join(b.dir, "Loose.md"), "utf8")).toContain(
       "loose words\n",
+    );
+    expect(readFileSync(join(b.dir, "Copied.md"), "utf8")).toContain(
+      "copied words\n",
     );
   });
 
@@ -2004,6 +2021,79 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(placed.map((edge) => [edge.source_id, edge.properties])).toEqual([
       [early, { path: "Early.txt" }],
     ]);
+  });
+
+  it("takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it", async () => {
+    // Plain text a server holds as files, each at a document name.
+    const files = {
+      moved: ["01a00000-0000-7000-8000-0000000042a1", "notes.md"],
+      copied: ["01a00000-0000-7000-8000-0000000042a2", "copied.markdown"],
+      logged: ["01a00000-0000-7000-8000-0000000042a3", "log.txt"],
+      gone: ["01a00000-0000-7000-8000-0000000042a4", "gone.md"],
+    } as const;
+    const bytesOf = (name: string) => Buffer.from(`the bytes of ${name}\n`);
+    const { a, b, edges } = await onOneMac(
+      "file-item-document-name",
+      { search: { types: ["core.file"] } },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.file": Object.values(files).map(([id, name]) => ({
+          item: {
+            id,
+            type: "core.file",
+            properties: {
+              title: name,
+              blob_ref: hashOf(bytesOf(name)),
+            },
+          },
+        })),
+      },
+    );
+    for (const [, name] of Object.values(files)) {
+      scriptBlob(a.server, bytesOf(name));
+    }
+    expect((await a.folder.pull()).ok).toBe(true);
+    for (const [, name] of Object.values(files)) {
+      expect(readFileSync(join(a.dir, name))).toEqual(bytesOf(name));
+    }
+    renameSync(join(a.dir, files.moved[1]), join(b.dir, files.moved[1]));
+    for (const [, name] of [files.copied, files.logged]) {
+      copyFileSync(join(a.dir, name), join(b.dir, name));
+      rmSync(join(a.dir, name));
+    }
+    rmSync(join(a.dir, files.gone[1]));
+
+    const from = b.server.requests.length;
+    const taken = await b.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect(
+      createsSince(b.server, from).map(
+        (sent) => (sent.properties as { title?: string }).title,
+      ),
+      "a file item's file moved to another folder became a new item there",
+    ).toEqual([]);
+    const placements = edges.placements(b.settings.id);
+    for (const [id, name] of [files.moved, files.copied, files.logged]) {
+      expect(placements.get(id), `${name} is not its item's file`).toBe(name);
+      expect(readFileSync(join(b.dir, name))).toEqual(bytesOf(name));
+    }
+
+    // The folder it left finds each moved, and trashes only the one found
+    // in no folder: the witness that a missing file item is still trashed.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(
+      [files.moved, files.copied, files.logged].map(([id]) =>
+        deletesOf(a.server, id),
+      ),
+      "a file item moved to another folder was read as a delete, and trashed",
+    ).toEqual([0, 0, 0]);
+    expect(swept.value.scan.moved_away).toBe(3);
+    expect(deletesOf(a.server, files.gone[0])).toBe(1);
+    expect(swept.value.scan.trashed).toEqual([files.gone[1]]);
   });
 
   it("gives a fresh id to a moved file whose item the server will not show, and pins one it shows", async () => {
