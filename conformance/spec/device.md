@@ -1486,9 +1486,17 @@ If a refusal names no contract, then the CLI MUST report it `unnamed_answer` wit
 
 ### `device/command-unreachable-origin`
 
-If the CLI cannot reach the server it was sent to, then it MUST report it `network` with exit 3, whose message names the server by scheme, host and port, and by no path, query, key or token, and does not begin with the word `network`.
+If the CLI cannot reach the server it was sent to, then the CLI MUST report it `network` with exit 3, in a message that names the server by its scheme, host and port alone.
 
-**Reason:** a person with several servers needs to know which one did not answer, and a gateway's path or a credential in the address must not reach a terminal or a log. A surface that prints the code beside the message would show `network` twice.
+**Reason:** a person with several servers needs to know which one did not answer, and a gateway's path or a credential in the address must not reach a terminal or a log.
+
+**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
+
+### `device/command-unreachable-code-once`
+
+If the CLI reports `network`, then the CLI MUST NOT begin the message with the word `network`.
+
+**Reason:** a surface that prints the code beside the message would show it twice.
 
 **Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
 
@@ -1714,9 +1722,9 @@ If the answer to the check of `keys keep` names another contract than the CLI wa
 
 ### `device/command-keychain-unreadable`
 
-If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason, and MUST NOT report `no_server`.
+If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason.
 
-**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off (`--no-keychain`, `MARFA_NO_KEYCHAIN`), or holds no current server, nothing is kept and `no_server` with exit 2 is right.
+**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off, or holds no current server, nothing is kept and `no_server` with exit 2 is right.
 
 **Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`.
 
