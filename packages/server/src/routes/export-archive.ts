@@ -680,15 +680,13 @@ async function collectSelection(input: {
   ) => {
     const records: BlobRecord[] = [];
     for (const hash of hashes) {
-      if (!(await reader.blob(storage, hash))) {
-        // Named only as a file's `blob_ref`, and with no type or size, so
-        // the archive says no more of the blob than the blob doors do: not
-        // even whether the instance holds it.
-        if (refs.has(hash))
-          records.push({ hash, mime_type: null, size_bytes: null });
-        continue;
-      }
-      const record = await storage.blobs.get(hash);
+      // A blob the credential may not read is named, when a carried file's
+      // `blob_ref` refers to it, like one the instance has no record of: with
+      // no type or size, and whether or not the instance holds it, so the
+      // archive says no more of it than the blob doors do.
+      const record = (await reader.blob(storage, hash))
+        ? await storage.blobs.get(hash)
+        : null;
       if (record)
         records.push({
           hash,
