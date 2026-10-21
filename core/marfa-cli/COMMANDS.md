@@ -266,16 +266,18 @@ marfa owner recover [OPTIONS]
 
 ### marfa owner update
 
-Change the owner's email or display name (private socket required).
+Change the owner's email, display name, or avatar (private socket required).
 
 ```text
-marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>>
+marfa owner update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <AVATAR>|--clear-avatar>
 ```
 
 | Option | Description |
 | --- | --- |
 | `--email <EMAIL>` | The email address the owner uses to sign in. |
 | `--name <NAME>` | The owner's display name. |
+| `--avatar <AVATAR>` | An HTTP or HTTPS avatar URL. Marfa does not fetch it. |
+| `--clear-avatar` | Clear the avatar URL. |
 
 ## profile
 

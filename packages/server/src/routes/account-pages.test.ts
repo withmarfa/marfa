@@ -10,8 +10,13 @@ import { signInValue, suggestedPasskeyName } from "./account-pages.js";
 import { renderPasswordPage } from "./password-page.js";
 import { renderProfilePage } from "./profile-page.js";
 
-const profile = (owner = { name: "Ada Lovelace", email: "ada@example.net" }) =>
-  renderProfilePage({ nonce: "abc123", instanceName: "Marfa", owner });
+const profile = (
+  owner = {
+    name: "Ada Lovelace",
+    email: "ada@example.net",
+    avatar: null as string | null,
+  },
+) => renderProfilePage({ nonce: "abc123", instanceName: "Marfa", owner });
 
 const password = (
   passkeys: Parameters<typeof renderPasswordPage>[0]["passkeys"] = [],
@@ -35,10 +40,10 @@ const TWO = [
 ];
 
 describe("the Profile page", () => {
-  it("shows the name and the email, each with a way to change it", () => {
+  it("shows the name, email and picture, each with a way to change it", () => {
     const text = visibleText(profile());
     expect(text).toContain(
-      "Your name and email. Apps see them only if you let them.",
+      "Your name, email and picture. Apps see them only if you let them.",
     );
     expect(text).toContain("Ada Lovelace");
     expect(text).toContain("ada@example.net. You sign in with it.");
@@ -48,7 +53,8 @@ describe("the Profile page", () => {
     expect(text).toContain(
       "You sign in with this email. Marfa sends no email, so there's nothing to confirm.",
     );
-    expect(text).not.toContain("Picture");
+    expect(text).toContain("Your initial, until you add one");
+    expect(text).toContain("Picture address");
   });
 
   it("starts each field with the current value and checks nothing in the browser itself", () => {
@@ -56,9 +62,11 @@ describe("the Profile page", () => {
     expect(pageField(out, "name")?.value).toBe("Ada Lovelace");
     expect(pageField(out, "email")?.value).toBe("ada@example.net");
     expect(pageField(out, "email")?.type).toBe("email");
-    // The third form is the dialog that confirms it's you, which every console page carries.
+    expect(pageField(out, "avatar")?.type).toBe("url");
+    // The final form is the dialog that confirms it's you, which every console page carries.
     const forms = pageForms(out);
     expect(forms.map((form) => form.method)).toEqual([
+      "dialog",
       "dialog",
       "dialog",
       "get",
@@ -70,6 +78,7 @@ describe("the Profile page", () => {
     const out = profile({
       name: HOSTILE,
       email: `${LONG_UNBROKEN}@example.net`,
+      avatar: null,
     });
     expect(out).not.toContain("<script>window.__injected");
     expect(out).not.toContain("<b>bold</b>");

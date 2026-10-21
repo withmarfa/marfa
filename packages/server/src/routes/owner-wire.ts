@@ -6,6 +6,10 @@ export const OwnerSchema = z
     id: z.string().describe("Unique identifier for the owner."),
     email: z.string().describe("Email address used to sign in."),
     name: z.string().describe("Display name of the owner."),
+    avatar: z
+      .string()
+      .nullable()
+      .describe("HTTP or HTTPS avatar URL, or null when no picture is set."),
     created_at: z.string().describe("When the owner was created, in UTC."),
   })
   .describe("The single owner of the instance.")
@@ -17,6 +21,7 @@ export function ownerWire(owner: OwnerRecord): z.infer<typeof OwnerSchema> {
     id: owner.id,
     email: owner.email,
     name: owner.name,
+    avatar: owner.avatar,
     created_at: owner.createdAt.toISOString(),
   };
 }

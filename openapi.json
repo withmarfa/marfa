@@ -7386,6 +7386,13 @@
             "type": "string",
             "description": "Display name of the owner."
           },
+          "avatar": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "HTTP or HTTPS avatar URL, or null when no picture is set."
+          },
           "created_at": {
             "type": "string",
             "description": "When the owner was created, in UTC."
@@ -7395,6 +7402,7 @@
           "id",
           "email",
           "name",
+          "avatar",
           "created_at"
         ],
         "description": "The single owner of the instance."
@@ -47298,7 +47306,7 @@
             "ownerSession": []
           }
         ],
-        "description": "Updates the owner's email or name and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.",
+        "description": "Updates the owner's email, name, or avatar URL. Requires a direct owner sign-in within five minutes or private machine authority. Set avatar to null to clear it. Marfa does not fetch the URL. Credentials and grants retain their identity.",
         "requestBody": {
           "required": true,
           "content": {
@@ -47317,6 +47325,15 @@
                     "minLength": 1,
                     "maxLength": 200,
                     "description": "Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed."
+                  },
+                  "avatar": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 2048,
+                    "format": "uri",
+                    "description": "HTTP or HTTPS avatar URL, at most 2048 characters. null clears it. Marfa does not fetch the URL."
                   }
                 },
                 "additionalProperties": false

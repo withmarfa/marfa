@@ -308,6 +308,7 @@ export async function claimOwner(
         id: result.authUserId,
         email: result.email,
         name: result.name,
+        avatar: null,
         createdAt: result.createdAt,
       };
     },

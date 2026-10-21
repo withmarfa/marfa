@@ -1599,7 +1599,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner
-         * @description Updates the owner's email or name and returns the owner. Requires a direct owner sign-in within five minutes or private machine authority. Changing email needs no confirmation; credentials, sessions, and grants keep their identity.
+         * @description Updates the owner's email, name, or avatar URL. Requires a direct owner sign-in within five minutes or private machine authority. Set avatar to null to clear it. Marfa does not fetch the URL. Credentials and grants retain their identity.
          */
         patch: operations["updateOwner"];
         trace?: never;
@@ -4781,6 +4781,8 @@ export interface components {
             email: string;
             /** @description Display name of the owner. */
             name: string;
+            /** @description HTTP or HTTPS avatar URL, or null when no picture is set. */
+            avatar: string | null;
             /** @description When the owner was created, in UTC. */
             created_at: string;
         };
@@ -24205,6 +24207,11 @@ export interface operations {
                     email?: string;
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
+                    /**
+                     * Format: uri
+                     * @description HTTP or HTTPS avatar URL, at most 2048 characters. null clears it. Marfa does not fetch the URL.
+                     */
+                    avatar?: string | null;
                 };
             };
         };

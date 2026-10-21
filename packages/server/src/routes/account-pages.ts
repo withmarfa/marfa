@@ -67,6 +67,13 @@ CONSOLE_PAGES.register("profile", {
       group: "Profile",
       href: `${PROFILE_HREF}#profile-email`,
     },
+    {
+      id: "avatar",
+      title: "Picture",
+      description: "The address of your picture",
+      group: "Profile",
+      href: `${PROFILE_HREF}#profile-avatar`,
+    },
   ],
   value: async ({ storage }) => {
     const owner = await storage.owner?.find();
@@ -113,7 +120,7 @@ export function accountPages(storage: Storage, auth: MarfaAuth) {
     return found;
   };
   router.get("/profile", async (c) => {
-    const { name, email } = await owner(c.req.raw.headers);
+    const { name, email, avatar } = await owner(c.req.raw.headers);
     c.header(
       "Content-Security-Policy",
       consoleContentSecurityPolicy(c.var.cspNonce),
@@ -122,7 +129,7 @@ export function accountPages(storage: Storage, auth: MarfaAuth) {
       renderProfilePage({
         nonce: c.var.cspNonce,
         instanceName: await readInstanceName(storage.settings),
-        owner: { name, email },
+        owner: { name, email, avatar },
       }),
     );
   });

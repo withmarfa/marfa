@@ -298,21 +298,29 @@ If the persisted owner is unavailable, then the server MUST answer `PATCH /owner
 
 ### `instance-claim/owner-update`
 
-When a direct owner authenticated within the last five minutes or the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, or both, the server MUST return the updated owner.
+When a direct owner authenticated within the last five minutes or the private local command submits a valid nonempty `PATCH /owner` with `email`, `name`, `avatar`, or any combination of them, the server MUST return the updated owner.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› requires a recent direct owner and refuses explicit email-write grants`.
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› sets and clears the owner's avatar without changing other fields`, `› requires a recent direct owner and refuses explicit email-write grants`.
+
+### `instance-claim/owner-avatar`
+
+When `PATCH /owner` receives an HTTP(S) `avatar` URL of at most 2048 characters or `null`, the server MUST store that value on the existing owner and answer it at `GET /owner` and `PATCH /owner`.
+
+**Reason:** The owner can manage the same picture that an authorized profile writer can change, without making an upload or another stored value.
+
+**Tests:** `compliance/profile.test.ts › sets and clears the owner's avatar without changing other fields`.
 
 ### `instance-claim/owner-update-authority`
 
 If `PATCH /owner` lacks private local authority or a live direct owner sign-in authenticated at most five minutes ago, then the server MUST refuse the request.
 
-**Reason:** Email determines the owner's password sign-in identity.
+**Reason:** Email determines the owner's password sign-in identity, and the other fields are the owner's visible profile.
 
 **Tests:** `compliance/profile.test.ts › requires a recent direct owner and refuses explicit email-write grants`.
 
 ### `instance-claim/owner-update-identity`
 
-When `PATCH /owner` changes email or name, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
+When `PATCH /owner` changes email, name, or avatar, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
 
 **Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 

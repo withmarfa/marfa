@@ -40,7 +40,8 @@ it("updates the existing owner and keeps password sign-in working at the new ema
 it("refuses empty, unknown and invalid owner fields", async () => {
   for (const body of [
     {},
-    { avatar: null },
+    { avatar: "file:///tmp/picture" },
+    { avatar: "https://example.com/" + "a".repeat(2048) },
     { name: " " },
     { name: "\tName" },
     { name: "\u200fName" },
@@ -51,6 +52,28 @@ it("refuses empty, unknown and invalid owner fields", async () => {
     expect((await owner(body)).status, JSON.stringify(body)).toBe(400);
   }
   expect((await owner({ name: "😀".repeat(200) })).status).toBe(200);
+});
+it("sets and clears the owner's picture without changing their other details", async () => {
+  const before = await ctx.storage.owner!.find();
+  const set = await owner({ avatar: "https://example.test/portrait.png" });
+  expect(set.status).toBe(200);
+  expect(await set.json()).toMatchObject({
+    avatar: "https://example.test/portrait.png",
+  });
+  expect(await ctx.storage.owner!.find()).toMatchObject({
+    id: before!.id,
+    email: before!.email,
+    name: before!.name,
+    avatar: "https://example.test/portrait.png",
+  });
+  const cleared = await owner({ avatar: null });
+  expect(cleared.status).toBe(200);
+  expect(await cleared.json()).toMatchObject({ avatar: null });
+  expect(await ctx.storage.owner!.find()).toMatchObject({
+    email: before!.email,
+    name: before!.name,
+    avatar: null,
+  });
 });
 it("refuses profile fields without credential write authority and never accepts email", async () => {
   expect(
@@ -188,7 +211,7 @@ it("does not let bearer plus owner cookie or a forged local header update owner"
           cookie: ctx.owner.cookie,
           origin: new URL(ctx.config.authBaseUrl).origin,
         },
-        body: { name: "No" },
+        body: { avatar: "https://example.test/no.png" },
       })
     ).status,
   ).toBe(403);
@@ -312,12 +335,19 @@ it("requires owner authentication at most five minutes old, and a live session",
     await raw.__sqliteAll("SELECT created_at FROM auth_session")
   )[0]!;
   vi.spyOn(clock, "nowMs").mockReturnValue(session.created_at * 1000 + 300_000);
-  expect((await owner({ name: "At boundary" })).status).toBe(200);
+  expect(
+    (await owner({ avatar: "https://example.test/boundary.png" })).status,
+  ).toBe(200);
   vi.mocked(clock.nowMs).mockReturnValue(session.created_at * 1000 + 300_001);
-  expect((await owner({ name: "Too late" })).status).toBe(403);
+  expect(
+    (await owner({ avatar: "https://example.test/late.png" })).status,
+  ).toBe(403);
   vi.restoreAllMocks();
   await raw.__sqliteRun("DELETE FROM auth_session", []);
-  expect((await owner({ name: "Ended" })).status).toBe(401);
+  expect((await owner({ avatar: null })).status).toBe(401);
+  expect((await ctx.storage.owner!.find())!.avatar).toBe(
+    "https://example.test/boundary.png",
+  );
 });
 
 it("serves changed profile values through real OAuth userinfo and keeps wildcard reads", async () => {
