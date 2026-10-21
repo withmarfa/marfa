@@ -1169,7 +1169,7 @@ export interface paths {
         };
         /**
          * List connectors
-         * @description Returns your registration, or every registration if you hold connectors.manage, newest first.
+         * @description Returns your registration, or every registration if you hold `connectors.manage`, newest first.
          */
         get: operations["listConnectors"];
         put?: never;
@@ -19539,7 +19539,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19676,7 +19676,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20039,7 +20039,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage. */
+            /** @description - `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21108,7 +21108,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21841,7 +21841,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22002,7 +22002,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22183,7 +22183,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage. */
+            /** @description - `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26858,7 +26858,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller lacks instance.read */
+            /** @description `forbidden`: your credential lacks `instance.read`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

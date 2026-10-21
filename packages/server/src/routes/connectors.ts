@@ -317,7 +317,7 @@ const hiddenConnectorResponse = {
   404: {
     ...notFoundResponse[404],
     description:
-      "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
+      "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`.",
   },
 };
 
@@ -343,7 +343,7 @@ export const ownKeyResponses = {
 export const ownKeyOrManagerResponses = {
   ...anyKeyResponses,
   ...forbiddenResponse(
-    "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+    "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
   ),
   ...notFoundResponse,
 };
@@ -422,7 +422,7 @@ const listConnectorsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List connectors",
   description:
-    "Returns your registration, or every registration if you hold connectors.manage, newest first.",
+    "Returns your registration, or every registration if you hold `connectors.manage`, newest first.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {

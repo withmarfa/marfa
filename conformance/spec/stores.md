@@ -68,7 +68,7 @@ When the server starts over a disk folder that holds no marker, and `stores/miss
 
 Where no object store is configured, if the server starts over a disk folder that is missing or holds no marker while the copy record records a copy in a store recorded at that folder and not detached, then the server MUST refuse to start, naming the folder.
 
-**Reason:** a folder or marker missing where the log records copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
+**Reason:** a folder or marker missing where the copy record names copies is a drive that did not mount or a folder that was not restored. A new store there would answer every saved file as not found, report itself healthy, and take new uploads into a folder the drive hides once it is mounted again. Where an object store is configured, the bucket serves the copies and `blob-replicate` fills the new folder, which is how an instance is rebuilt from the bucket onto an empty volume.
 
 **Tests:** `compliance/blob-store-folders.test.ts › refuses to start while the folder or its marker is missing and the log records copies there, and creates neither`.
 
@@ -124,7 +124,7 @@ The copy record says which stores hold which blob.
 
 ### `stores/locations-listed`
 
-When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the log holds, each naming its `store_id`, `kind` and `policy`, and carrying `detached`, `recorded_at` and `verified_at`.
+When a credential that may read a blob sends `GET /blobs/{hash}/copies`, the server MUST answer `200` with a row for each copy the copy record holds, each naming its `store_id`, `kind` and `policy`, and carrying `detached`, `recorded_at` and `verified_at`.
 
 **Reason:** which credentials may read a blob is `blobs/read-no-type`, `blobs/read-unreadable` and the rules about lending.
 
@@ -164,13 +164,13 @@ When the server records a copy of a blob, the server MUST answer its `recorded_a
 
 ### `stores/reupload-keeps-times`
 
-When a credential that may upload sends `POST /blobs` with bytes whose copy the log already holds, the server MUST keep that copy's `recorded_at` and `verified_at`.
+When a credential that may upload sends `POST /blobs` with bytes of which the copy record already holds a copy, the server MUST keep that copy's `recorded_at` and `verified_at`.
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps a copy's recorded and verified times when the same bytes are uploaded again`.
 
 ### `stores/no-location`
 
-While the log holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/copies` for it with `200` and no rows.
+While the copy record holds no copy of a blob, the server MUST answer `GET /blobs/{hash}/copies` for it with `200` and no rows.
 
 **Tests:** `compliance/blob-store-folders.test.ts › strikes a copy found altered or missing, counts it, and leaves a blob that lost its last copy with none recorded`.
 
@@ -332,7 +332,7 @@ If a caller authorized by `blobs.manage` or direct owner or local authority send
 
 ### `stores/drop-below-minimum-keeps`
 
-When the server refuses a drop with `409 copies_below_minimum`, the server MUST keep the copy's row in the log and its bytes in the store.
+When the server refuses a drop with `409 copies_below_minimum`, the server MUST keep the copy's row in the copy record and its bytes in the store.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-settings.test.ts › reports the minimum beside the stores and refuses a drop that would leave fewer copies`.
 
@@ -346,7 +346,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or direct owner or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the log could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
+**Reason:** the copy record can name a copy its store no longer holds, such as one that a store's late deletion removed after the server stopped waiting for it. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing.
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the log allows when the other copy is gone from its store, and keeps the copy`.
 
@@ -384,7 +384,7 @@ When a caller authorized by `blobs.manage` or direct owner or local authority se
 
 When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a store that has not finished a write or a deletion of the blob's bytes (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
-**Reason:** the copy record is read before any store is asked, so a drop that the log alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the log's answers because it can still change what the log says, so a store that is not attached is also answered `503` while one is out.
+**Reason:** the copy record is read before any store is asked, so a drop that the copy record alone refuses is answered without waiting on a store. A store's unfinished write or deletion comes before the copy record's answers because it can still change what the copy record says, so a store that is not attached is also answered `503` while one is out.
 
 **Tests:** `compliance/blob-rules.test.ts › answers the drop door's refusals in their order`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/declared-refusals.test.ts › is refused 400 on the key and blob-copy doors`, `compliance/blob-store-silent.test.ts › answers 503 blob_store_unavailable at once, keeps the copy, and drops it once the store answers`.
 
@@ -404,7 +404,7 @@ While drops of every copy of one blob are in flight together, the server MUST an
 
 ## Checking the copies
 
-The `blob-integrity` housekeeping job checks the copies the log claims.
+The `blob-integrity` housekeeping job checks the copies the copy record names.
 
 ### `stores/integrity-result`
 

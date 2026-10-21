@@ -801,7 +801,7 @@ export async function stopServer(args: BootOptions): Promise<void> {
  * `garage:up` makes after a `garage:down` carries
  * no marker and the boot against a database that still holds the old
  * store's row mints a second id beside it. The old row is detached rather
- * than removed and its location rows stay, so a deterministic blob
+ * than removed and its copy rows stay, so a deterministic blob
  * re-uploaded into the new bucket reads as three copies where the chapter
  * says two.
  *

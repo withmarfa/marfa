@@ -37525,7 +37525,7 @@
           "Connectors"
         ],
         "summary": "List connectors",
-        "description": "Returns your registration, or every registration if you hold connectors.manage, newest first.",
+        "description": "Returns your registration, or every registration if you hold `connectors.manage`, newest first.",
         "security": [
           {
             "bearerAuth": []
@@ -37859,7 +37859,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
+            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -38136,7 +38136,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -39280,7 +39280,7 @@
             }
           },
           "404": {
-            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks connectors.manage.",
+            "description": "- `connector_not_found`: no connector has this ID, or it is registered under another key and yours lacks `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -41063,7 +41063,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42631,7 +42631,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -42986,7 +42986,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -43305,7 +43305,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of connectors.manage.",
+            "description": "- `forbidden`: your credential is neither the connector's own key nor a holder of `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -52874,7 +52874,7 @@
             }
           },
           "403": {
-            "description": "Caller lacks instance.read",
+            "description": "`forbidden`: your credential lacks `instance.read`.",
             "content": {
               "application/json": {
                 "schema": {

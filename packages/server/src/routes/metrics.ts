@@ -85,7 +85,7 @@ const getMetricsRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller lacks instance.read",
+      description: "`forbidden`: your credential lacks `instance.read`.",
     },
   },
 });
