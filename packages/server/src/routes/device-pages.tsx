@@ -32,14 +32,12 @@ interface DevicePageParams {
   nonce: string;
 }
 
-/** What a code the server did not accept says: it may be wrong or past its end. */
-const NOT_RIGHT =
-  "That code isn't right or has ended. Check your device for a new one.";
-
 const ERROR_MESSAGES: Record<string, string> = {
   missing_code: "Enter the code shown on your device.",
-  invalid_code: NOT_RIGHT,
-  expired_code: NOT_RIGHT,
+  invalid_code:
+    "That code isn't right. Check it against your device and try again.",
+  expired_code:
+    "That code has expired. Start again on your device to get a new one.",
   already_resolved:
     "That code has already been used. Check your device for a new one.",
   another_account:

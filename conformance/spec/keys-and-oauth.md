@@ -2217,17 +2217,23 @@ When `GET /auth/device` carries `error=too_many_attempts` and a `retry_after` of
 
 ### `keys-and-oauth/device-code-not-right`
 
-When `GET /auth/device` carries `error=invalid_code` or `error=expired_code`, the server MUST answer a page saying the code isn't right or has ended.
+When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a page saying the code isn't right and to check it against the device.
 
-**Reason:** A person who meets either needs the same next step, a new code from their device, so the page says one thing for both.
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong in one way and a code that has expired in another`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+### `keys-and-oauth/device-code-expired`
+
+When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start again on the device for a new one.
+
+**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard.
+
+**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong in one way and a code that has expired in another`.
 
 ### `keys-and-oauth/device-code-lifetime`
 
 The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says a code that is wrong or has ended in one way, and how long codes last`.
+**Tests:** `compliance/sign-in-surface.test.ts › says how long codes last`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 

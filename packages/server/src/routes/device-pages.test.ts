@@ -59,17 +59,23 @@ describe("renderDevicePage", () => {
     expect(hostile).not.toContain("<script>x</script>");
   });
 
-  it.each(["invalid_code", "expired_code"])(
-    "says a code that is wrong or has ended in one way, under the field (%s)",
-    (error) => {
-      const html = renderDevicePage({ prefilled: "", error });
-      expect(pageFieldError(html, "user_code")).toBe(
-        "That code isn't right or has ended. Check your device for a new one.",
-      );
-      expect(html).toContain('aria-invalid="true"');
-      expect(visibleText(html)).not.toContain("Codes end after");
-    },
-  );
+  it("says a code that is wrong, and asks to check it", () => {
+    const html = renderDevicePage({ prefilled: "", error: "invalid_code" });
+    expect(pageFieldError(html, "user_code")).toBe(
+      "That code isn't right. Check it against your device and try again.",
+    );
+    expect(html).toContain('aria-invalid="true"');
+    expect(visibleText(html)).not.toContain("Codes end after");
+  });
+
+  it("says a code that has expired, and sends the person to the device for a new one", () => {
+    const html = renderDevicePage({ prefilled: "", error: "expired_code" });
+    expect(pageFieldError(html, "user_code")).toBe(
+      "That code has expired. Start again on your device to get a new one.",
+    );
+    expect(html).toContain('aria-invalid="true"');
+    expect(visibleText(html)).not.toContain("Codes end after");
+  });
 
   it("says a code already used and a missing code in their own words", () => {
     expect(
