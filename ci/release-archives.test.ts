@@ -45,8 +45,7 @@ const jobs = (
   ) as { jobs: Record<string, Job> }
 ).jobs;
 
-const needs = (job: Job | undefined): string[] =>
-  [job?.needs ?? []].flat() as string[];
+const needs = (job: Job | undefined): string[] => [job?.needs ?? []].flat();
 
 /** Runs `script` in a fresh folder holding `files`, and says how it ended. */
 function inFolder(
