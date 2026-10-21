@@ -116,7 +116,9 @@ describe("the Password and passkeys page", () => {
     expect(text).toContain("Added October 3, 2026");
     expect(text).toContain("Added October 9, 2026");
     expect(text).toContain("Remove Safari on macOS?");
-    expect(text).toContain("Remove Passkey?");
+    expect(text).toContain("Unnamed passkey");
+    expect(text).toContain("Remove this passkey?");
+    expect(text).not.toContain("Remove Passkey?");
     expect(text).toContain("You can still sign in with your password.");
     expect(text).not.toContain("No passkeys yet");
     for (const id of ["pk-one", "pk-two"])
