@@ -70,6 +70,7 @@ pub struct FirstSyncPlan {
     pub write: i64,
     pub send: i64,
     pub beside: i64,
+    pub left: i64,
 }
 
 impl From<marfa_core::FirstSync> for FirstSyncPlan {
@@ -78,6 +79,7 @@ impl From<marfa_core::FirstSync> for FirstSyncPlan {
             write: count(plan.write as u64),
             send: count(plan.send as u64),
             beside: count(plan.beside as u64),
+            left: count(plan.left as u64),
         }
     }
 }

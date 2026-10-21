@@ -663,14 +663,20 @@ fn passed(
             .map(|line| format!("{line}\n"))
             .collect();
             format!(
-                "{settings}{} created, {} updated, {} renamed, {} deleted; answered {}{}; {} file(s) written{}{}{}{}",
+                "{settings}{} created, {} updated, {} renamed, {} deleted; the server answered {} write(s){}{}; {} file(s) written{}{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
                 scanned.deleted,
                 drained.report.answered,
+                crate::output::held_words(&drained.report)
+                    .map(|held| format!(", {held}"))
+                    .unwrap_or_default(),
                 if drained.report.undelivered > 0 {
-                    format!(", {} waiting", drained.report.undelivered)
+                    format!(
+                        ", {} not delivered, waiting for the next pass",
+                        drained.report.undelivered
+                    )
                 } else {
                     String::new()
                 },

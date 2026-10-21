@@ -11,15 +11,20 @@ const META_FIRST_SYNC: &str = "folder_first_sync";
 /// What a folder's first sync will do, read from the folder as it stands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FirstSync {
-    /// Files it will write into the directory.
+    /// Files it will write into the directory. Not those `left` counts.
     pub write: usize,
     /// Files in the directory it will send, as new items or as the edits of
     /// the items they name.
     pub send: usize,
-    /// Of the files it will write, those whose path a file already in the
-    /// directory has. Both end up in the folder, and one of the two takes a
-    /// number in its name; none is written over.
+    /// Of the files it will write, those whose path a file it sends already
+    /// has. Both end up in the folder, and the one it writes takes a number
+    /// in its name; none is written over.
     pub beside: usize,
+    /// Items whose file it will not write, because a file it does not send
+    /// is at the path: one it holds back, or one it takes no part in. That
+    /// file stays as it is and no number is added.
+    #[serde(default)]
+    pub left: usize,
 }
 
 impl FirstSync {
@@ -108,6 +113,7 @@ impl Folder {
             write: pulled.write,
             send,
             beside: pulled.beside,
+            left: pulled.left,
         };
         if plan.nothing() {
             self.confirm_first_sync()?;

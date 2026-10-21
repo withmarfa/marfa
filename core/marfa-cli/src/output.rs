@@ -367,12 +367,50 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
     said
 }
 
+/// What the server answered in a pass, in words that say what is counted: a
+/// write it answered, whatever it said, and of those the items it created. A
+/// first sync queues its creates when the folder is added or confirmed, so
+/// the scan that runs with the push counts none of them; this is where they
+/// show.
+pub fn answered_words(drain: &DrainReport) -> String {
+    let created = drain
+        .verdicts
+        .iter()
+        .filter(|write| {
+            write.kind == marfa_core::WriteKind::CreateItem
+                && matches!(
+                    write.verdict,
+                    Some(marfa_core::Verdict::Accepted | marfa_core::Verdict::Merged)
+                )
+        })
+        .count();
+    let mut line = format!("the server answered {} write(s)", drain.answered);
+    if created > 0 {
+        line.push_str(&format!(", creating {created} item(s)"));
+    }
+    line
+}
+
+/// Writes the pass left unsent because each follows a write that has no
+/// answer yet, so a later pass sends them.
+pub fn held_words(drain: &DrainReport) -> Option<String> {
+    (drain.held > 0).then(|| {
+        format!(
+            "{} more held back until the write each follows is answered",
+            drain.held
+        )
+    })
+}
+
 /// Every write the pass came to, but those `stopped` names, which says how
 /// many a refused credential parked.
 pub fn counts(drain: &DrainReport) -> String {
-    let mut line = format!("answered {}, held {}", drain.answered, drain.held);
+    let mut line = answered_words(drain);
+    if let Some(held) = held_words(drain) {
+        line.push_str(&format!("; {held}"));
+    }
     if drain.unsent > 0 {
-        line.push_str(&format!(", {} given a verdict unsent", drain.unsent));
+        line.push_str(&format!(", {} settled without being sent", drain.unsent));
     }
     if drain.unmade > 0 {
         line.push_str(&format!(
@@ -854,8 +892,76 @@ pub fn body_links(links: &marfa_core::BodyLinks) -> String {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{describe, edges_from, snippet_text};
+    use super::{answered_words, counts, describe, edges_from, snippet_text};
+    use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use serde_json::json;
+
+    fn verdict(kind: WriteKind, verdict: Option<Verdict>) -> DrainVerdict {
+        DrainVerdict {
+            id: "write".into(),
+            kind,
+            item_id: Some("item".into()),
+            edge_id: None,
+            verdict,
+            reason: None,
+            refusal: None,
+            conflicted_copy_id: None,
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+        }
+    }
+
+    fn pass(answered: usize, held: usize, verdicts: Vec<DrainVerdict>) -> DrainReport {
+        DrainReport {
+            answered,
+            held,
+            undelivered: 0,
+            unsent: 0,
+            unmade: 0,
+            unavailable: None,
+            verdicts,
+            stopped: None,
+            unclaimed_sources: Vec::new(),
+            retry_after_seconds: None,
+        }
+    }
+
+    #[test]
+    fn a_pass_says_what_the_server_answered_and_how_many_items_that_created() {
+        let report = pass(
+            4,
+            0,
+            vec![
+                verdict(WriteKind::CreateItem, Some(Verdict::Accepted)),
+                verdict(WriteKind::CreateItem, Some(Verdict::Accepted)),
+                verdict(WriteKind::CreateItem, Some(Verdict::Refused)),
+                verdict(WriteKind::UpdateItem, Some(Verdict::Accepted)),
+            ],
+        );
+        assert_eq!(
+            answered_words(&report),
+            "the server answered 4 write(s), creating 2 item(s)"
+        );
+        assert_eq!(
+            counts(&report),
+            "the server answered 4 write(s), creating 2 item(s)"
+        );
+        assert_eq!(
+            counts(&pass(1, 0, vec![verdict(WriteKind::UpdateItem, None)])),
+            "the server answered 1 write(s)"
+        );
+    }
+
+    #[test]
+    fn held_writes_are_said_as_waiting_on_a_write_with_no_answer_yet() {
+        let said = counts(&pass(1101, 12377, Vec::new()));
+        assert_eq!(
+            said,
+            "the server answered 1101 write(s); 12377 more held back until the write each follows is answered"
+        );
+        assert!(!said.contains("held 12377"), "{said}");
+    }
 
     #[test]
     fn summary_lists_show_the_name_and_version_needed_for_an_action() {

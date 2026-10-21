@@ -101,15 +101,19 @@ pub struct PausedRemoval {
 /// What a folder's first sync will do, read from the folder as it stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
 pub struct FirstSyncPlan {
-    /// Files it will write into the directory.
+    /// Files it will write into the directory. Not those `left` counts.
     pub write: u64,
     /// Files in the directory it will send, as new items or as the edits of
     /// the items they name.
     pub send: u64,
-    /// Of the files it will write, those whose path a file already in the
-    /// directory has. Both end up in the folder, and one of the two takes a
-    /// number in its name; none is written over.
+    /// Of the files it will write, those whose path a file it sends already
+    /// has. Both end up in the folder, and the one it writes takes a number
+    /// in its name; none is written over.
     pub beside: u64,
+    /// Items whose file it will not write, because a file it does not send
+    /// is at the path: one it holds back, or one it takes no part in. That
+    /// file stays as it is and no number is added.
+    pub left: u64,
 }
 
 impl From<marfa_core::FirstSync> for FirstSyncPlan {
@@ -118,6 +122,7 @@ impl From<marfa_core::FirstSync> for FirstSyncPlan {
             write: plan.write as u64,
             send: plan.send as u64,
             beside: plan.beside as u64,
+            left: plan.left as u64,
         }
     }
 }

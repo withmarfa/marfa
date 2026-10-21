@@ -1264,7 +1264,7 @@ describe("identity", () => {
     ).toHaveLength(1);
     // Sent 2: the later file's create and its placement.
     expect(later[0]).toMatch(
-      /^1 created, 0 updated, 0 renamed, 0 deleted; answered 2; \d+ file\(s\) written, 1 bound to an item that is gone$/,
+      /^1 created, 0 updated, 0 renamed, 0 deleted; the server answered 2 write\(s\); \d+ file\(s\) written, 1 bound to an item that is gone$/,
     );
   });
 });
