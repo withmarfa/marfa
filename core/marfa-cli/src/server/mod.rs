@@ -946,7 +946,7 @@ fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 "\nOpen this link to choose the owner's email and password. It works once, for five minutes; run this command again for a new one.\n\n  {url}\n"
             )),
             None => text.push_str(&format!(
-                "\nThe server has an owner already. Sign in at {address}.\n"
+                "\nThis instance has an owner already. Sign in at {address}.\n"
             )),
         }
         for note in &notes {
@@ -1128,6 +1128,15 @@ fn start_server(args: StartArgs, out: &Printer) -> Result<(), CliError> {
 
 // ---- status -------------------------------------------------------------
 
+fn autostart_word(state: &State) -> &'static str {
+    match (state.autostart, boot::installed(&state.name)) {
+        (true, true) if boot::loaded(&state.name) => "on",
+        (true, true) => "installed, not loaded",
+        (true, false) => "missing: `marfa server install` restores it",
+        (false, _) => "off",
+    }
+}
+
 fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let folder = Folder::new(&args)?;
     let (state, _) = folder.require_state()?;
@@ -1156,12 +1165,12 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         None
     };
     let address = settings.get("MARFA_AUTH_BASE_URL").map(str::to_string);
-    let autostart = match (state.autostart, boot::installed(&state.name)) {
-        (true, true) if boot::loaded(&state.name) => "on",
-        (true, true) => "installed, not loaded",
-        (true, false) => "missing: `marfa server install` restores it",
-        (false, _) => "off",
+    let login = if boot::supported() {
+        format!("\n  Login     {}", autostart_word(&state))
+    } else {
+        String::new()
     };
+    let autostart = autostart_word(&state);
     let report = json!({
         "dir": folder.dir,
         "name": state.name,
@@ -1183,7 +1192,7 @@ fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
             (Some(c), false) => format!("{}, not answering", c.status),
         };
         format!(
-            "{} {}: {word}\n  Address   {}\n  Folder    {}\n  Owner     {}\n  Backup    {}\n  Login     {autostart}",
+            "{} {}: {word}\n  Address   {}\n  Folder    {}\n  Owner     {}\n  Backup    {}{login}",
             state.name,
             state.release,
             address.as_deref().unwrap_or("unknown"),

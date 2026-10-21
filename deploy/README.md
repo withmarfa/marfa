@@ -2,6 +2,17 @@
 
 The container recipe here runs the server with its database streamed off-site and its blobs replicated to the same bucket, so an instance can be rebuilt from the bucket alone. `conformance/scripts/restore-drill.ts` is the proof: it boots an instance, writes to it, restores a second from the bucket and compares the two to the byte, and the `restore-drill` job in `ci.yml` runs it against a local object store on every pull request that can affect it and every push to `main`.
 
+## Installing with the command line
+
+`marfa server install` sets up everything below on a Mac or Linux machine with Docker, and prints the link that claims the instance. The sections that follow describe what it sets up and the manual route.
+
+- **Files.** It writes three files into one folder (`~/marfa-server` unless `--dir` says otherwise): `compose.yaml`, which is the same for every install and runs the pinned release image with `restart: unless-stopped`; `.env`, which Docker Compose reads for the install's name, release and port, and holds no secret; and `marfa.env`, readable by its owner only, which holds the server's settings.
+- **Secrets.** It makes `API_KEY_SALT` and `MARFA_AUTH_SECRET` once, writes them to `marfa.env` and never prints them. A later run keeps them. If the data volume exists and `marfa.env` does not, it refuses, because new secrets would make every key stop working.
+- **Proxy trust.** It asks how the instance is reached and sets the proxy setting to match: nothing for this machine only; `TRUSTED_PROXY_CIDRS` set to the range of a Docker network of its own, `<name>-net`, for Tailscale Serve or another proxy on this machine; and `TRUSTED_PROXY_HEADER=CF-Connecting-IP` for a Cloudflare Tunnel. The network is made once and kept, so its range does not change when the container is replaced.
+- **Settings written elsewhere.** `--external-settings` leaves `marfa.env` to something else, such as a secrets manager. The command then never makes or changes the file. It checks that the file has the secrets, the address and a proxy setting that fits, and names what is missing without printing a value.
+- **Start at login.** On a Mac it writes a launchd agent, `so.marfa.server.<name>`, that runs `marfa server start`. That starts OrbStack or Docker Desktop if the engine is down, then the container. `--no-autostart` skips it. On Linux, `systemctl enable docker` brings the container back at boot, because of its restart policy.
+- **Run again.** `install` changes only what is not already as asked. `upgrade` moves to a newer release and refuses an older one. `status` shows the container, its health and whether the instance has an owner. `uninstall` removes the container and keeps the data; `--delete-data` removes the data too.
+
 ## What runs in the container
 
 - **The server**, `node dist/index.js`, on SQLite at `SQLITE_PATH` with its disk store at `BLOB_PATH`. Both sit on the volume mounted at `/data`. On Railway the disk store is a volume, not the container's filesystem: a redeploy keeps it, and the bucket holds a second copy of every blob regardless.
